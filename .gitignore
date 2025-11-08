@@ -1,0 +1,86 @@
+# =======================
+# Django (backend)
+# =======================
+crimsotech_django/__pycache__/
+crimsotech_django/*.py[cod]
+crimsotech_django/*$py.class
+crimsotech_django/*.log
+crimsotech_django/local_settings.py
+crimsotech_django/db.sqlite3
+crimsotech_django/media/
+crimsotech_django/staticfiles/
+crimsotech_django/backend/backend/.env
+crimsotech_django/myenv/
+crimsotech_django/env/
+crimsotech_django/ENV/
+crimsotech_django/.venv/
+crimsotech_django/.idea/
+crimsotech_django/.vscode/
+crimsotech_django/*.DS_Store
+crimsotech_django/.coverage
+crimsotech_django/.tox/
+crimsotech_django/nosetests.xml
+crimsotech_django/coverage.xml
+crimsotech_django/*.cover
+crimsotech_django/*.py,cover
+# Optional migrations
+# crimsotech_django/*/migrations/*
+# !crimsotech_django/*/migrations/__init__.py
+
+# =======================
+# React web app (React Router)
+# =======================
+crimsotech-app/.DS_Store
+crimsotech-app/.env
+crimsotech-app/node_modules/
+crimsotech-app/.react-router/
+crimsotech-app/build/
+crimsotech-app/dist/
+crimsotech-app/.cache/
+crimsotech-app/.vite/
+crimsotech-app/.next/
+
+# =======================
+# React Native / Expo app
+# =======================
+crimsotech_react_native/node_modules/
+
+# Expo
+crimsotech_react_native/.expo/
+crimsotech_react_native/dist/
+crimsotech_react_native/web-build/
+crimsotech_react_native/expo-env.d.ts
+
+# Native build / keys
+crimsotech_react_native/.kotlin/
+crimsotech_react_native/*.orig.*
+crimsotech_react_native/*.jks
+crimsotech_react_native/*.p8
+crimsotech_react_native/*.p12
+crimsotech_react_native/*.key
+crimsotech_react_native/*.mobileprovision
+
+# Metro
+crimsotech_react_native/.metro-health-check*
+
+# Debug / logs
+crimsotech_react_native/npm-debug.*
+crimsotech_react_native/yarn-debug.*
+crimsotech_react_native/yarn-error.*
+
+# macOS
+crimsotech_react_native/.DS_Store
+crimsotech_react_native/*.pem
+
+# Local env files
+crimsotech_react_native/.env*.local
+
+# TypeScript
+crimsotech_react_native/*.tsbuildinfo
+
+# Example app folder
+crimsotech_react_native/app-example
+
+# Generated native folders
+crimsotech_react_native/ios/
+crimsotech_react_native/android/
