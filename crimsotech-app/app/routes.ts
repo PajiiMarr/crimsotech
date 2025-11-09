@@ -1,5 +1,5 @@
 // app/routes.ts
-import { type RouteConfig, index, route } from "@react-router/dev/routes";
+import { type RouteConfig, index, route, prefix } from "@react-router/dev/routes";
 
 export default [
     index('routes/client/landing.tsx'),
@@ -11,10 +11,23 @@ export default [
     route('apply', 'routes/auth/vehicle.tsx'),
     
     
-    route('home', 'routes/home/home.tsx'),
+    route('home', 'routes/customer/home.tsx'),
     
     route('profiling', 'routes/profiling/profiling.tsx'),
     route('number', 'routes/profiling/number.tsx'),
 
     route('logout', 'routes/logout.tsx'),
+
+    ...prefix("admin", [
+        index("routes/admin/home.tsx"),
+        
+    ]),
+    ...prefix("moderator", [
+        index("routes/moderator/home.tsx"),
+
+    ]),
+    ...prefix("rider", [
+        index("routes/rider/home.tsx"),
+
+    ])
 ] satisfies RouteConfig;
