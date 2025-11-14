@@ -1,13 +1,9 @@
-// app/components/layouts/sidebar.tsx
 "use client";
+import { useEffect, useState } from "react";
 import { SidebarProvider, SidebarTrigger } from "~/components/ui/sidebar";
 import { AppSidebar } from "~/components/navigations/sidebar";
 
-export default function SidebarLayout({ 
-  children 
-}: { 
-  children: React.ReactNode;
-}) {
+export default function SidebarLayout({ children }: { children: React.ReactNode }) {
   return (
     <SidebarProvider 
       style={{
@@ -27,7 +23,7 @@ export default function SidebarLayout({
             text-gray-700 hover:text-gray-900
              transition-all duration-100
           "/>
-        <div className="p-4 pr-15 w-full">{children}</div>
+        <div className="p-4 w-full">{children}</div>
       </main>
     </SidebarProvider>
   );

@@ -24,7 +24,6 @@ from django.conf import settings
 router = DefaultRouter()
 router.register(r'verify', VerifyNumber, basename='verify')
 router.register(r'rider', RiderRegistration, basename='rider')
-router.register(r'admin-products', AdminProduct, basename='admin-products')
 
 
 urlpatterns = [
@@ -32,8 +31,5 @@ urlpatterns = [
     path('api/', include(router.urls)),
     path('', UserView.as_view(), name='user-list'),
     path('api/register/', Register.as_view(), name='register'),
-    path('api/login/', Login.as_view(), name='login'),
     path('api/profiling/', Profiling.as_view(), name='profiling'),
-    path('api/get-role/', GetRole.as_view(), name='get-role'),
-    path('api/get-registration/', GetRegistration.as_view(), name='get-registration'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

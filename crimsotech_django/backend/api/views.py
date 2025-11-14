@@ -1,5 +1,4 @@
 from django.shortcuts import render
-from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework import viewsets
 from . models import *
@@ -10,122 +9,20 @@ from django.conf import settings
 import random
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
-from django.contrib.auth.hashers import check_password
 import hashlib
 import os
-from django.db.models import Count, Avg, Q, Sum
+
+
 
 class UserView(APIView):
     def get(self, request):
         user = [{"user_id": user.user_id, "username": user.username, "email": user.email, "registration_stage": user.registration_stage, "is_rider": user.is_rider} for user in User.objects.all()]
         return Response(user)
     def post(self, request):
-        serialiazer = UserSerializer(data=request.data)
+        serialiazer = UserSeriaLizer(data=request.data)
         if serialiazer.is_valid(raise_exception=True):
             serialiazer.save()
             return Response(serialiazer.data)
-
-class GetRole(APIView):
-    def get(self, request):
-        user_id = request.headers.get("X-User-Id")
-
-        if user_id:
-            try:
-                user = User.objects.get(user_id=user_id)
-                data = {
-                    "user_id": user.user_id,
-                    "isAdmin": getattr(user, "is_admin", False),
-                    "isCustomer": getattr(user, "is_customer", False),
-                    "isRider": getattr(user, "is_rider", False),
-                    "isModerator": getattr(user, "isModerator", False),
-                }
-                return Response(data)
-            except User.DoesNotExist:
-                return Response({"error": "User not found"}, status=404)
-
-class GetRegistration(APIView):
-    def get(self, request):
-        user_id = request.headers.get("X-User-Id")
-
-        if user_id:
-            try:
-                user = User.objects.get(user_id=user_id)
-                data = {
-                    "user_id": user.user_id,
-                    "registration_stage": getattr(user, "registration_stage", 1),
-                    "is_rider": getattr(user, "is_rider", False),
-                    "is_customer": getattr(user, "is_customer", False),
-                }
-                return Response(data)
-            except User.DoesNotExist:
-                return Response({"error": "User not found"}, status=404)
-
-
-
-
-class Login(APIView):
-    def get(self, request):
-        user_id = request.headers.get("X-User-Id")  # get from headers
-
-        if user_id:
-            try:
-                user = User.objects.get(user_id=user_id)
-                data = {
-                    "user_id": str(user.user_id),
-                    "username": user.username,
-                    "email": user.email,
-                    "is_admin": user.is_admin,
-                    "is_customer": user.is_customer,
-                    "is_rider": user.is_rider,
-                    "is_moderator": user.is_moderator,
-                    "registration_stage": user.registration_stage
-                }
-                return Response(data)
-            except User.DoesNotExist:
-                return Response({"error": "User not found"}, status=404)
-    
-    def post(self, request):
-        """
-        Logs in a user using email/username and password
-        """
-        username = request.data.get('username')
-        password = request.data.get('password')
-        
-        if not username or not password:
-            return Response(
-                {"error": "Username and password are required"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            # Find user by username
-            user = User.objects.get(username=username)
-            
-            # Check password using Django's check_password
-            if not check_password(password, user.password):
-                return Response(
-                    {"error": "Invalid credentials"}, 
-                    status=status.HTTP_401_UNAUTHORIZED
-                )
-                
-        except User.DoesNotExist:
-            return Response(
-                {"error": "Invalid credentials"}, 
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        
-        # Login successful
-        return Response({
-            "message": "Login successful",
-            "user_id": str(user.user_id),
-            "username": user.username,
-            "email": user.email,
-            "is_admin": user.is_admin,
-            "is_customer": user.is_customer,
-            "is_rider": user.is_rider,
-            "is_moderator": user.is_moderator,
-            "registration_stage": user.registration_stage
-        })
         
 class Register(APIView):
     def get(self, request):
@@ -157,7 +54,7 @@ class Register(APIView):
         return Response(users)
 
     def post(self, request):
-        serializer = UserSerializer(data=request.data)
+        serializer = UserSeriaLizer(data=request.data)
         if serializer.is_valid(raise_exception=True):
             user = serializer.save()
         customer_serializer = CustomerSerializer(data={"customer_id": user.user_id})
@@ -183,7 +80,7 @@ class Register(APIView):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
             
-        serializer = UserSerializer(user, data=request.data, partial=True)
+        serializer = UserSeriaLizer(user, data=request.data, partial=True)
         if serializer.is_valid(raise_exception=True):
             serializer.save()
             return Response(serializer.data)
@@ -209,7 +106,7 @@ class Profiling(APIView):
         return Response(data)
     
     def post(self, request):
-        serializer = UserSerializer(data=request.data)
+        serializer = UserSeriaLizer(data=request.data)
         if serializer.is_valid(raise_exception=True):
             serializer.save()
             return Response(serializer.data)
@@ -225,7 +122,7 @@ class Profiling(APIView):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
             
-        serializer = UserSerializer(user, data=request.data, partial=True)
+        serializer = UserSeriaLizer(user, data=request.data, partial=True)
         if serializer.is_valid(raise_exception=True):
             serializer.save()
             return Response(serializer.data)
@@ -371,7 +268,7 @@ class RiderRegistration(viewsets.ViewSet):
                 'password': ''
             }
             
-            user_serializer = UserSerializer(data=user_data)
+            user_serializer = UserSeriaLizer(data=user_data)
             if not user_serializer.is_valid():
                 return Response(user_serializer.errors, status=400)
                 
@@ -479,179 +376,3 @@ class RiderRegistration(viewsets.ViewSet):
         if not image_file:
             return None
         return hashlib.sha256(image_file.read()).hexdigest()
-    
-# for admin
-class AdminProduct(viewsets.ViewSet):
-    """
-    ViewSet for admin product metrics and analytics
-    """
-    
-    @action(detail=False, methods=['get'])
-    def get_metrics(self, request):
-        """
-        Get comprehensive product metrics for admin dashboard
-        """
-        try:
-            # Total Products with fallback
-            total_products = Product.objects.count()
-            
-            # Low Stock Alert (quantity < 5) with fallback
-            low_stock_count = Product.objects.filter(quantity__lt=5).count()
-            
-            # Active Boosts with fallback
-            active_boosts_count = Boost.objects.filter(
-                product_id__isnull=False
-            ).count()
-            
-            # Average Rating with fallback (handle division by zero)
-            rating_agg = Product.objects.aggregate(avg_rating=Avg('rating'))
-            avg_rating = rating_agg['avg_rating'] or 0.0
-            
-            # Top Products by Engagement with fallback
-            top_products = Product.objects.annotate(
-                total_engagement=Sum('views') + Sum('purchases') + Sum('favorites')
-            ).order_by('-total_engagement')[:5]
-            
-            top_products_data = [
-                {
-                    'name': product.name,
-                    'views': product.views or 0,
-                    'purchases': product.purchases or 0,
-                    'favorites': product.favorites or 0,
-                    'total_engagement': product.total_engagement or 0
-                }
-                for product in top_products
-            ] if top_products else []
-            
-            # Rating Distribution with fallback
-            rating_distribution = Product.objects.values('rating').annotate(
-                count=Count('rating')
-            ).order_by('-rating')
-            
-            rating_distribution_data = [
-                {
-                    'name': f'{rating["rating"] or 0} Stars',
-                    'value': rating['count']
-                }
-                for rating in rating_distribution
-                if rating['rating'] is not None
-            ] if rating_distribution else []
-            
-            # If no rating distribution data, provide default structure
-            if not rating_distribution_data:
-                rating_distribution_data = [
-                    {'name': '5 Stars', 'value': 0},
-                    {'name': '4 Stars', 'value': 0},
-                    {'name': '3 Stars', 'value': 0},
-                    {'name': '2 Stars', 'value': 0},
-                    {'name': '1 Star', 'value': 0}
-                ]
-            
-            response_data = {
-                'success': True,
-                'metrics': {
-                    'total_products': total_products,
-                    'low_stock_alert': low_stock_count,
-                    'active_boosts': active_boosts_count,
-                    'avg_rating': round(avg_rating, 1),
-                    'top_products': top_products_data,
-                    'rating_distribution': rating_distribution_data,
-                    'has_data': any([
-                        total_products > 0,
-                        low_stock_count > 0,
-                        active_boosts_count > 0,
-                        avg_rating > 0,
-                        len(top_products_data) > 0
-                    ])
-                },
-                'message': 'Metrics retrieved successfully'
-            }
-            
-            return Response(response_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            # Fallback response in case of any errors
-            fallback_response = {
-                'success': False,
-                'metrics': {
-                    'total_products': 0,
-                    'low_stock_alert': 0,
-                    'active_boosts': 0,
-                    'avg_rating': 0.0,
-                    'top_products': [],
-                    'rating_distribution': [
-                        {'name': '5 Stars', 'value': 0},
-                        {'name': '4 Stars', 'value': 0},
-                        {'name': '3 Stars', 'value': 0},
-                        {'name': '2 Stars', 'value': 0},
-                        {'name': '1 Star', 'value': 0}
-                    ],
-                    'has_data': False
-                },
-                'message': f'Error retrieving metrics: {str(e)}',
-                'fallback_used': True
-            }
-            return Response(fallback_response, status=status.HTTP_200_OK)
-    
-    @action(detail=False, methods=['get'])
-    def get_products_list(self, request):
-        """
-        Get paginated list of products for admin with search and filter
-        """
-        try:
-            # Get query parameters
-            search = request.query_params.get('search', '')
-            category = request.query_params.get('category', 'all')
-            page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', 10))
-            
-            # Start with all products
-            products = Product.objects.all()
-            
-            # Apply search filter
-            if search:
-                products = products.filter(
-                    Q(name__icontains=search) | 
-                    Q(category__icontains=search)
-                )
-            
-            # Apply category filter
-            if category != 'all':
-                products = products.filter(category=category)
-            
-            # Pagination
-            start_index = (page - 1) * page_size
-            end_index = start_index + page_size
-            
-            paginated_products = products[start_index:end_index]
-            total_count = products.count()
-            
-            serializer = ProductSerializer(paginated_products, many=True)
-            
-            response_data = {
-                'success': True,
-                'products': serializer.data,
-                'pagination': {
-                    'page': page,
-                    'page_size': page_size,
-                    'total_count': total_count,
-                    'total_pages': (total_count + page_size - 1) // page_size
-                },
-                'message': 'Products retrieved successfully'
-            }
-            
-            return Response(response_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            return Response({
-                'success': False,
-                'products': [],
-                'pagination': {
-                    'page': 1,
-                    'page_size': 10,
-                    'total_count': 0,
-                    'total_pages': 0
-                },
-                'message': f'Error retrieving products: {str(e)}',
-                'fallback_used': True
-            }, status=status.HTTP_200_OK)
