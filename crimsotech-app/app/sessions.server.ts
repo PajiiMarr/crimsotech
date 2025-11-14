@@ -4,7 +4,8 @@ type SessionData = {
   userId: string;
   riderId: string;
   registration_stage: number;
-
+  isCustomer: boolean;
+  isRider: boolean;
 };
 
 type SessionFlashData = {

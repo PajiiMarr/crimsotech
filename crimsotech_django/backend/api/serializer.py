@@ -2,8 +2,9 @@ from rest_framework import serializers
 from .models import *
 from django.contrib.auth.hashers import make_password
 
-class UserSeriaLizer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)  # Make password optional
+# Existing serializers (don't modify)
+class UserSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = User
@@ -45,8 +46,203 @@ class CustomerSerializer(serializers.ModelSerializer):
         model = Customer
         fields = '__all__'
 
-
 class RiderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Rider
+        fields = '__all__'
+
+# NEW BASIC SERIALIZERS
+class ModeratorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Moderator
+        fields = '__all__'
+
+class AdminSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Admin
+        fields = '__all__'
+
+class LogsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Logs
+        fields = '__all__'
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = '__all__'
+
+class OTPSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OTP
+        fields = '__all__'
+
+class ShopSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Shop
+        fields = '__all__'
+
+class ShopFollowSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShopFollow
+        fields = '__all__'
+
+class ReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = '__all__'
+
+class CategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = '__all__'
+
+class ProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = '__all__'
+
+class FavoritesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Favorites
+        fields = '__all__'
+
+class ProductMediaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductMedia
+        fields = '__all__'
+
+class VariantsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Variants
+        fields = '__all__'
+
+class VariantOptionsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VariantOptions
+        fields = '__all__'
+
+class IssuesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Issues
+        fields = '__all__'
+
+class BoostPlanSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BoostPlan
+        fields = '__all__'
+
+class BoostSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Boost
+        fields = '__all__'
+
+class VoucherSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Voucher
+        fields = '__all__'
+
+class RefundPolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundPolicy
+        fields = '__all__'
+
+class CustomerActivitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerActivity
+        fields = '__all__'
+
+class AiRecommendationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AiRecommendation
+        fields = '__all__'
+
+class CartItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CartItem
+        fields = '__all__'
+
+class CheckoutSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Checkout
+        fields = '__all__'
+
+# ENHANCED SERIALIZERS WITH NESTED RELATIONSHIPS
+class ShopDetailSerializer(serializers.ModelSerializer):
+    customer_id = CustomerSerializer(read_only=True)
+    
+    class Meta:
+        model = Shop
+        fields = '__all__'
+
+class ProductDetailSerializer(serializers.ModelSerializer):
+    shop_id = ShopSerializer(read_only=True)
+    customer_id = CustomerSerializer(read_only=True)
+    category_id = CategorySerializer(read_only=True)
+    
+    class Meta:
+        model = Product
+        fields = '__all__'
+
+class ReviewDetailSerializer(serializers.ModelSerializer):
+    customer_id = CustomerSerializer(read_only=True)
+    shop_id = ShopSerializer(read_only=True)
+    
+    class Meta:
+        model = Review
+        fields = '__all__'
+
+class BoostDetailSerializer(serializers.ModelSerializer):
+    product_id = ProductSerializer(read_only=True)
+    boost_plan_id = BoostPlanSerializer(read_only=True)
+    shop_id = ShopSerializer(read_only=True)
+    customer_id = CustomerSerializer(read_only=True)
+    
+    class Meta:
+        model = Boost
+        fields = '__all__'
+
+class CheckoutDetailSerializer(serializers.ModelSerializer):
+    voucher_id = VoucherSerializer(read_only=True)
+    cartitem_id = CartItemSerializer(read_only=True)
+    
+    class Meta:
+        model = Checkout
+        fields = '__all__'
+
+class CustomerActivityDetailSerializer(serializers.ModelSerializer):
+    customer_id = CustomerSerializer(read_only=True)
+    product_id = ProductSerializer(read_only=True)
+    
+    class Meta:
+        model = CustomerActivity
+        fields = '__all__'
+
+class AiRecommendationDetailSerializer(serializers.ModelSerializer):
+    customer_id = CustomerSerializer(read_only=True)
+    product_id = ProductSerializer(read_only=True)
+    
+    class Meta:
+        model = AiRecommendation
+        fields = '__all__'
+
+# WRITE SERIALIZERS FOR CREATION (WITHOUT NESTED RELATIONSHIPS)
+class ShopCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Shop
+        fields = '__all__'
+
+class ProductCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = '__all__'
+
+class ReviewCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = '__all__'
+
+class BoostCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Boost
         fields = '__all__'

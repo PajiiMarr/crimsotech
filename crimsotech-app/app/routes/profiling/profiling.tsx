@@ -99,8 +99,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       }
     });
 
-
-
     if(response.data.is_rider == true) {
       if(response.data.registration_stage == 1) throw redirect('/signup')
       if(response.data.registration_stage == 2) return { profilingData: userProfiling.data }; 
