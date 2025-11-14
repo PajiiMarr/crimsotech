@@ -108,4 +108,314 @@ class OTP(models.Model):
         return timezone.now() > self.expired_at
 
     def __str__(self):
-        return f"OTP for {self.user.username} (Expires at {self.expired_at})"
+        return f"OTP for {self.user_otp_id.username} (Expires at {self.expired_at})"
+    
+class Shop(models.Model):
+    shop_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    shop_picture = models.ImageField(upload_to='shop/picture/', null=True, blank=True)
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='owned_shops'  # ✅ clearer and unique
+    )
+    description = models.CharField(max_length=200, blank=True, null=True)
+    name = models.CharField(max_length=50)
+    province = models.CharField(max_length=50)
+    city = models.CharField(max_length=50)
+    barangay = models.CharField(max_length=50)
+    street = models.CharField(max_length=50)
+    contact_number = models.CharField(max_length=20, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class ShopFollow(models.Model): 
+    shop_follow_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    followed_at = models.DateTimeField(auto_now_add=True)
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='shop_follows'  # ✅ unique name to avoid clash
+    )
+    shop_id = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='followers'  # ✅ unique name to avoid clash
+    )
+
+
+class Review(models.Model):
+    review_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='reviews'  # ✅ unique name to avoid clash
+    )
+    shop_id = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='reviews'  # ✅ unique name to avoid clash
+    )
+    rating = models.IntegerField()
+    comment = models.CharField(max_length=200, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class Category(models.Model):
+    category_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    name = models.CharField(max_length=50)
+    shop_id = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+    )
+    user_id = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+    )
+
+
+class Product(models.Model):
+    product_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    shop_id = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='added_by'  # ✅ unique name to avoid clashx``
+    )
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='added_by'  # ✅ unique name to avoid clashx``
+    )
+    category_id = models.ForeignKey(
+        Category,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='categorized'  # ✅ unique name to avoid clashx``
+    )
+    name = models.CharField(max_length=100)
+    description = models.CharField(max_length=1000)
+    quantity = models.IntegerField(default=0)
+    used_for = models.CharField(max_length=1000)
+    price = models.DecimalField(decimal_places=2, max_digits=9)
+    status = models.TextField()
+    condition = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    # queries:
+    # ano yang product_type
+
+class Favorites(models.Model):
+    favorite_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    
+    
+
+class ProductMedia(models.Model):
+    pm_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    file_data = models.FileField(upload_to="product/")
+    file_type = models.TextField()
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+    )
+
+class Variants(models.Model):
+    variant_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    shop_id = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    title = models.CharField(max_length=100)
+
+class VariantOptions(models.Model):
+    variant_option_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    variant_id = models.ForeignKey(
+        Variants,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    title = models.CharField(max_length=100)
+    quantity = models.IntegerField()
+    price = models.DecimalField(decimal_places=2, max_digits=9)
+
+class Issues(models.Model):
+    issue_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    description = models.CharField(max_length=300)
+
+class BoostPlan(models.Model):
+    boost_plan_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
+    name = models.CharField(max_length=50)
+    price = models.DecimalField(decimal_places=2, max_digits=9)
+    duration = models.IntegerField()
+    time_unit = models.TextField()
+    status = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class Boost(models.Model):
+    boost_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    boost_plan_id = models.ForeignKey(
+        BoostPlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    shop_id = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+class Voucher(models.Model):
+    voucher_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
+    shop_id = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    name = models.CharField(max_length=50)
+    code = models.CharField(max_length=20)
+    discount_type = models.TextField()
+    value = models.DecimalField(decimal_places=2, max_digits=9)
+    valid_until = models.DateField()
+    added_at = models.DateField(auto_now_add=True)
+    
+class RefundPolicy(models.Model):
+    policy_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
+    # balance = models.DecimalField(decimal_places=2, max_digits=9)
+    main_title = models.CharField(max_length=100)
+    section_title = models.CharField(max_length=100)
+    content = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class CustomerActivity(models.Model):
+    ca_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    activity_type = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class AiRecommendation(models.Model):
+    ar_id   = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    score = models.FloatField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class CartItem(models.Model):
+    cartitem_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    user_id = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+class Checkout(models.Model):
+    checkout_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
+    voucher_id = models.ForeignKey(
+        Voucher,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    cartitem_id = models.ForeignKey(
+        CartItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    quantity = models.IntegerField(default=0)
+    total_amount = models.DecimalField(decimal_places=2, max_digits=9)
+    status = models.TextField()
+    remarks = models.CharField(max_length=500, null=True, blank=True)
+    created_at = models.DateField(auto_now_add=True)
