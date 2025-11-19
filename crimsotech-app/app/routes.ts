@@ -23,7 +23,7 @@ export default [
         route('analytics', 'routes/admin/analytics.tsx'),
         route('products', 'routes/admin/products.tsx'),
         route('shops', 'routes/admin/shops.tsx'),
-        route('subscriptions', 'routes/admin/subscription.tsx'),
+        route('boosting', 'routes/admin/boosting.tsx'),
     ]),
     ...prefix("moderator", [
         index("routes/moderator/home.tsx"),

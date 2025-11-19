@@ -127,9 +127,12 @@ class Shop(models.Model):
     barangay = models.CharField(max_length=50)
     street = models.CharField(max_length=50)
     contact_number = models.CharField(max_length=20, blank=True, default='')
+    verified = models.BooleanField(default=False)
+    status = models.CharField(max_length=10, default="Active")
+    total_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+ 
 
 class ShopFollow(models.Model): 
     shop_follow_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -150,26 +153,7 @@ class ShopFollow(models.Model):
     )
 
 
-class Review(models.Model):
-    review_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
-    customer_id = models.ForeignKey(
-        Customer,
-        on_delete=models.SET_NULL,
-        null=True,  # ✅ required for SET_NULL
-        blank=True,
-        related_name='reviews'  # ✅ unique name to avoid clash
-    )
-    shop_id = models.ForeignKey(
-        Shop,
-        on_delete=models.SET_NULL,
-        null=True,  # ✅ required for SET_NULL
-        blank=True,
-        related_name='reviews'  # ✅ unique name to avoid clash
-    )
-    rating = models.IntegerField()
-    comment = models.CharField(max_length=200, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+
 
 class Category(models.Model):
     category_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -220,6 +204,7 @@ class Product(models.Model):
     condition = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
     # queries:
     # ano yang product_type
 
@@ -294,11 +279,25 @@ class BoostPlan(models.Model):
     name = models.CharField(max_length=50)
     price = models.DecimalField(decimal_places=2, max_digits=9)
     duration = models.IntegerField()
-    time_unit = models.TextField()
-    status = models.TextField()
+    time_unit = models.CharField(max_length=10, choices=[
+        ('hours', 'Hours'),
+        ('days', 'Days'), 
+        ('weeks', 'Weeks'),
+        ('months', 'Months')
+    ])
+    status = models.CharField(max_length=20, choices=[
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+        ('archived', 'Archived')
+    ])
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
 
 class Boost(models.Model):
     boost_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
@@ -326,6 +325,29 @@ class Boost(models.Model):
         null=True,
         blank=True,
     )
+    status = models.CharField(max_length=20, choices=[
+        ('active', 'Active'),
+        ('expired', 'Expired'),
+        ('cancelled', 'Cancelled'),
+        ('pending', 'Pending')
+    ], default='active')
+    start_date = models.DateTimeField(default=timezone.now)
+    end_date = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(default=timezone.now)  # Changed from auto_now_add=True
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def save(self, *args, **kwargs):
+        if not self.end_date and self.boost_plan_id:
+            # Calculate end date based on boost plan duration
+            duration_map = {
+                'hours': timedelta(hours=self.boost_plan_id.duration),
+                'days': timedelta(days=self.boost_plan_id.duration),
+                'weeks': timedelta(weeks=self.boost_plan_id.duration),
+                ('months', 'Months'): timedelta(days=self.boost_plan_id.duration * 30)
+            }
+            self.end_date = self.start_date + duration_map.get(self.boost_plan_id.time_unit, timedelta(days=7))
+        super().save(*args, **kwargs)
+
 
 class Voucher(models.Model):
     voucher_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
@@ -419,3 +441,32 @@ class Checkout(models.Model):
     status = models.TextField()
     remarks = models.CharField(max_length=500, null=True, blank=True)
     created_at = models.DateField(auto_now_add=True)
+
+
+class Review(models.Model):
+    review_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    customer_id = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='reviews'  # ✅ unique name to avoid clash
+    )
+    shop_id = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,  # ✅ required for SET_NULL
+        blank=True,
+        related_name='reviews'  # ✅ unique name to avoid clash
+    )
+    product_id = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviews'
+    )
+    rating = models.IntegerField()
+    comment = models.CharField(max_length=200, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

@@ -22,6 +22,7 @@
     "@react-router/serve": "^7.9.2",
     "@remix-run/file-storage": "^0.11.0",
     "@remix-run/node": "^2.17.2",
+    "@tanstack/react-table": "^8.21.3",
     "axios": "^1.13.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

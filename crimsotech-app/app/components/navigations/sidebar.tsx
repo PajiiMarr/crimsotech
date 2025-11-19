@@ -42,7 +42,7 @@ const menuItems = [
     children: [
       { title: "Products", url: "/admin/products", icon: Package, roles: ["admin"] },
       { title: "Shops", url: "/admin/shops", icon: Store, roles: ["admin"] },
-      { title: "Subscription Plans", url: "/admin/subscriptions", icon: CreditCard, roles: ["admin"] },
+      { title: "Boosting Plans", url: "/admin/boosting", icon: CreditCard, roles: ["admin"] },
     ]
   },
   {

@@ -9,14 +9,16 @@ import {
   CardContent, 
   CardDescription 
 } from '~/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '~/components/ui/table';
+import { DataTable } from '~/components/ui/data-table'
+import { type ColumnDef } from "@tanstack/react-table"
+// import {
+//   Table,
+//   TableBody,
+//   TableCell,
+//   TableHead,
+//   TableHeader,
+//   TableRow,
+// } from '~/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -75,7 +77,8 @@ import {
   Zap,
   Image,
   Download,
-  MoreHorizontal
+  MoreHorizontal,
+  ArrowUpDown
 } from 'lucide-react';
 import { useState } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
@@ -102,10 +105,12 @@ interface Product {
   purchases: number;
   favorites: number;
   rating: number;
-  boostPlan: string;
+  // boostPlan: string;
   variants: number;
   issues: number;
   lowStock: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 function ProductsSkeleton() {
@@ -325,15 +330,6 @@ if (!loaderData) {
         { name: '1 Star', value: 0 }
       ];
 
-  // Filter products based on search and category
-  const filteredProducts = products.filter(product => {
-    const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         product.category.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
-
-
   const handleUpdateProduct = (productData: Partial<Product>) => {
     if (!editingProduct) return;
     
@@ -349,14 +345,7 @@ if (!loaderData) {
     setEditingProduct(null);
   };
 
-  const handleDeleteProduct = (productId: number) => {
-    setProducts(products.filter(product => product.id !== productId));
-  };
-
-  const lowStockProducts = products.filter(product => product.lowStock);
-  const topRatedProducts = [...products].sort((a, b) => b.rating - a.rating).slice(0, 3);
-  const mostViewedProducts = [...products].sort((a, b) => b.views - a.views).slice(0, 3);
-
+  
   return (
     <UserProvider user={user}>
       <SidebarLayout>
@@ -510,141 +499,161 @@ if (!loaderData) {
           <Card>
             <CardHeader>
               <CardTitle>All Products</CardTitle>
-              <CardDescription>
-                Manage your product inventory and details
-              </CardDescription>
-              <div className="flex gap-4 mt-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search products..."
-                    className="pl-9"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Filter by category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    <SelectItem value="Electronics">Electronics</SelectItem>
-                    <SelectItem value="Accessories">Accessories</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" className="gap-2">
-                  <Filter className="w-4 h-4" />
-                  Filters
-                </Button>
-              </div>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Shop</TableHead>
-                    <TableHead>Price</TableHead>
-                    <TableHead>Quantity</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Rating</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredProducts.map((product) => (
-                    <TableRow key={product.id}>
-                      <TableCell className="font-medium">{product.name}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{product.category}</Badge>
-                      </TableCell>
-                      <TableCell>{product.shop}</TableCell>
-                      <TableCell>₱{product.price.toFixed(2)}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {product.quantity}
-                          {product.lowStock && (
-                            <AlertTriangle className="w-4 h-4 text-red-500" />
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge 
-                          variant={product.status === 'Active' ? 'default' : 'secondary'}
-                        >
-                          {product.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Star className="w-4 h-4 text-yellow-500 fill-current" />
-                          <span>{product.rating}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {/* <div className="flex gap-2">
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button variant="outline" size="sm">
-                                <Eye className="w-4 h-4" />
-                              </Button>
-                            </DialogTrigger>
-                            <ProductDetailsDialog product={product} />
-                          </Dialog>
-
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => setEditingProduct(product)}
-                              >
-                                <Edit className="w-4 h-4" />
-                              </Button>
-                            </DialogTrigger>
-                            <EditProductDialog 
-                              product={editingProduct}
-                              onSubmit={handleUpdateProduct}
-                              onCancel={() => setEditingProduct(null)}
-                            />
-                          </Dialog>
-
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="outline" size="sm">
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  This will permanently delete {product.name}. This action cannot be undone.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => handleDeleteProduct(product.id)}
-                                  className="bg-red-600 hover:bg-red-700"
-                                >
-                                  Delete
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div> */}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                <DataTable 
+                columns={columns} 
+                data={products} 
+                filterConfig={productFilterConfig}
+                searchConfig={{
+                  column: "name",
+                  placeholder: "Search products..."
+                }}
+                />
             </CardContent>
           </Card>
         </div>
       </SidebarLayout>
     </UserProvider>
   );
+}
+
+
+const columns: ColumnDef<Product>[] = [
+  {
+    accessorKey: "name",
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Product
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }) => (
+      <div className="font-medium">{row.getValue("name")}</div>
+    ),
+  },
+  {
+    accessorKey: "category",
+    header: "Category",
+    cell: ({ row }) => (
+      <Badge variant="outline">{row.getValue("category")}</Badge>
+    ),
+  },
+  {
+    accessorKey: "shop",
+    header: "Shop",
+  },
+  {
+    accessorKey: "price",
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Price
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }) => {
+      const price = parseFloat(row.getValue("price"))
+      const formatted = new Intl.NumberFormat('en-PH', {
+        style: 'currency',
+        currency: 'PHP',
+      }).format(price)
+      
+      return (
+        <div className="flex items-center gap-2">
+          <span>
+            {formatted}
+          </span>
+        </div>
+      )
+    },
+  },
+  {
+    accessorKey: "quantity",
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Quantity
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }) => {
+      const quantity: number = row.getValue("quantity")
+      const product = row.original
+      
+      return (
+        <div className="flex items-center gap-2">
+          <span className={product.lowStock ? "text-red-600 font-medium" : ""}>
+            {quantity}
+          </span>
+          {product.lowStock && (
+            <AlertTriangle className="w-4 h-4 text-red-500" />
+          )}
+        </div>
+      )
+    },
+    filterFn: (row, id, value) => {
+      if (value === "all") return true
+      const quantity: number = row.getValue(id)
+      const isLowStock = quantity < 5
+      
+      if (value === "low") return isLowStock
+      if (value === "in-stock") return !isLowStock
+      return true
+    },
+  },
+  {
+    accessorKey: "status",
+    header: "Status",
+    cell: ({ row }) => (
+      <Badge variant={row.getValue("status") === 'Active' ? 'default' : 'secondary'}>
+        {row.getValue("status")}
+      </Badge>
+    ),
+  },
+  {
+    accessorKey: "rating",
+    header: "Rating",
+    cell: ({ row }) => (
+      <div className="flex items-center gap-1">
+        <Star className="w-4 h-4 text-yellow-500 fill-current" />
+        <span>{row.getValue("rating")}</span>
+      </div>
+    ),
+  },
+  {
+    id: "actions",
+  },
+]
+
+const productFilterConfig = {
+  category: {
+    options: ['Electronics', 'Accessories', 'Fashion', 'Home & Living', 'Sports'],
+    placeholder: 'Category'
+  },
+  status: {
+    options: ['Active', 'Inactive'],
+    placeholder: 'Status'
+  },
+  shop: {
+    options: [], // Will be populated from data
+    placeholder: 'Shop'
+  },
+  boostPlan: {
+    options: ['Basic', 'Premium', 'Ultimate', 'None'],
+    placeholder: 'Boost Plan'
+  }
 }
