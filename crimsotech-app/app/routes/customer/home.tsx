@@ -1,5 +1,9 @@
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
+import SearchForm from '~/components/customer/search-bar'
+import { ProductCard } from '~/components/customer/product-card'
+import { ProductCategory } from '~/components/customer/product-category'
+import { TopProductCard } from '~/components/customer/top-product'
 import { UserProvider } from '~/components/providers/user-role-provider';
 // import { requireRole } from '~/middleware/role-require.server';
 // import { userContext } from '~/contexts/user-role';
@@ -40,9 +44,56 @@ export default function Home ({loaderData}: Route.ComponentProps) {
   return (
     <UserProvider user={user}>
       <SidebarLayout>
-        <section className='w-full h-20'>
-          <div>
-            hello
+        <section className="w-full p-1">
+          {/* Search bar */}
+          <div className="mb-6">
+            <SearchForm />
+          </div>
+
+          <h2 className="mb-4 text-lg font-semibold text-gray-700">
+          Categories
+        </h2>
+
+        <div className="flex gap-4 mb- overflow-x-auto py-2">
+          <ProductCategory title="Wires" image="/public/wire.jpg" />
+          <ProductCategory title="Appliances" image="/public/appliances.jpg" />
+          <ProductCategory title="Smartphones" image="/public/phon.jpg" />
+          <ProductCategory title="Accessories" image="/public/controller.jpg" />
+          <ProductCategory title="Watches" image="/public/controller.jpg" />
+        </div>
+
+
+        {/* Top Products */}
+          <h2 className="mb-4 text-lg font-semibold text-gray-700">
+            Top Products
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <TopProductCard />
+            <TopProductCard />
+            <TopProductCard />
+            <TopProductCard />
+          </div>
+
+
+          {/* Suggested For You label */}
+          <h2 className="mt-5 mb-4 text-lg font-semibold text-gray-700">
+            Suggested For You
+          </h2>
+
+          {/* Grid for multiple product cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
+            <ProductCard />
           </div>
         </section>
       </SidebarLayout>

@@ -4,7 +4,7 @@ import {
   Home, ShoppingCart, TicketCheck, Star, Gift, Package,
   Store, CreditCard, List, MessageSquare, Users, 
   Shield, AlertCircle, FileText, Settings, Bell,
-  BarChart, Bike, MapPin, Calendar, DollarSign
+  BarChart, Bike, MapPin, Calendar, DollarSign, ClipboardList
 } from "lucide-react"
 import { Link, useLocation } from 'react-router'
 import { useUser } from '~/components/providers/user-role-provider';
@@ -94,6 +94,22 @@ const menuItems = [
       { title: "ComGift", url: "/customer/comgift", icon: Gift, roles: ["customer"] },
     ]
   },
+  {
+    group: "Product Listing",
+    children: [
+      { title: "My products", url: "/customer/products", icon: Package  , roles: ["customer"] },
+      { title: "Order Lists", url: "/customer/order_lists", icon: ClipboardList, roles: ["customer"] },
+      { title: "Subscription Plans", url: "/customer/subscription_plans", icon: DollarSign, roles: ["customer"] },
+    ]
+  },
+
+   {
+    group: "Settings",
+    children: [
+      { title: "Notification", url: "/customer/notification", icon: Bell , roles: ["customer"] },
+    ]
+  },
+
 
   // RIDER
   {
