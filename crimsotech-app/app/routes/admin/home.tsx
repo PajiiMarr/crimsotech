@@ -151,7 +151,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <div className="space-y-6">
           <div>
             <h1 className="text-3xl font-bold">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">Overview of your marketplace performance</p>
           </div>
 
           {/* Key Metrics Overview */}

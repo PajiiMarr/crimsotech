@@ -7,6 +7,7 @@ from decimal import Decimal
 import uuid
 from datetime import datetime, timedelta
 from django.utils import timezone
+import random
 
 class Command(BaseCommand):
     help = "Seed the database with comprehensive shop and product data"
@@ -18,6 +19,9 @@ class Command(BaseCommand):
             with transaction.atomic():
                 # Create admin user first
                 admin_user = self.create_admin_user()
+
+                self.create_engagement_data()
+                
                 
                 # Create customers and shops matching frontend data
                 customers, shops = self.create_customers_and_shops()
@@ -29,7 +33,7 @@ class Command(BaseCommand):
                 products = self.create_products(customers, shops, categories)
                 
                 # Create boosts and boost plans
-                self.create_boosts_and_plans(products, shops, customers)
+                self.create_boosts_and_plans(products, shops, customers, admin_user)
                 
                 # Create shop follows (followers)
                 self.create_shop_follows(shops, customers)
@@ -40,6 +44,9 @@ class Command(BaseCommand):
                 # Create additional data
                 self.create_additional_data(products, customers, shops)
                 
+                # Create customer activities
+                self.create_customer_activities(products, customers)
+                
                 # Create comprehensive boost analytics data
                 self.create_boost_analytics_data(products, shops, customers, admin_user)
                 
@@ -48,6 +55,7 @@ class Command(BaseCommand):
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"❌ Error seeding data: {str(e)}"))
             raise
+
     def create_admin_user(self):
         """Create admin user if not exists"""
         user, created = User.objects.get_or_create(
@@ -67,11 +75,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("⚠️ Admin user already exists."))
 
         admin, admin_created = Admin.objects.get_or_create(
-            admin_id=user,
+            user=user,
         )
 
         if admin_created:
-            self.stdout.write(self.style.SUCCESS(f"✅ Admin record created for user_id={user.user_id}!"))
+            self.stdout.write(self.style.SUCCESS(f"✅ Admin record created for user_id={user.id}!"))
         else:
             self.stdout.write(self.style.WARNING("⚠️ Admin record already exists."))
         
@@ -161,7 +169,7 @@ class Command(BaseCommand):
             
             # Create or get customer - this ensures we have a real Customer object
             customer, cust_created = Customer.objects.get_or_create(
-                customer_id=user
+                user=user
             )
             
             if cust_created or user_created:
@@ -169,12 +177,12 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f"✅ Created customer: {data['first_name']} {data['last_name']}"))
             
             # Check if shop already exists for this customer
-            existing_shop = Shop.objects.filter(customer_id=customer, name=data['shop_name']).first()
+            existing_shop = Shop.objects.filter(customer=customer, name=data['shop_name']).first()
             
             if not existing_shop:
                 # Create shop with the real customer reference
                 shop = Shop.objects.create(
-                    customer_id=customer,  # This is the real Customer object
+                    customer=customer,  # This is the real Customer object
                     name=data['shop_name'],
                     description=f"Official {data['shop_name']} store - {data['location']}",
                     province="Metro Manila",
@@ -191,7 +199,7 @@ class Command(BaseCommand):
                     shop.save()
                 
                 shops.append(shop)
-                self.stdout.write(self.style.SUCCESS(f"✅ Created shop: {data['shop_name']} for customer {customer.customer_id.username}"))
+                self.stdout.write(self.style.SUCCESS(f"✅ Created shop: {data['shop_name']} for customer {customer.user.username}"))
             else:
                 shops.append(existing_shop)
                 self.stdout.write(self.style.WARNING(f"⚠️ Shop already exists: {data['shop_name']}"))
@@ -216,8 +224,8 @@ class Command(BaseCommand):
             if not existing_category:
                 category = Category.objects.create(
                     name=name,
-                    shop_id=shops[0] if shops else None,
-                    user_id=admin_user
+                    shop=shops[0] if shops else None,
+                    user=admin_user
                 )
                 categories.append(category)
                 self.stdout.write(self.style.SUCCESS(f"✅ Created category: {name}"))
@@ -347,20 +355,20 @@ class Command(BaseCommand):
             
             if category and shop:
                 # Get the real customer from the shop
-                customer = shop.customer_id
+                customer = shop.customer
                 
                 # Check if product already exists
                 existing_product = Product.objects.filter(
                     name=product_data['name'],
-                    shop_id=shop,
-                    customer_id=customer
+                    shop=shop,
+                    customer=customer
                 ).first()
                 
                 if not existing_product:
                     product = Product.objects.create(
-                        customer_id=customer,  # Real customer from shop
-                        shop_id=shop,         # Real shop
-                        category_id=category,  # Real category
+                        customer=customer,  # Real customer from shop
+                        shop=shop,         # Real shop
+                        category=category,  # Real category
                         name=product_data['name'],
                         description=product_data['description'],
                         quantity=product_data['quantity'],
@@ -378,16 +386,16 @@ class Command(BaseCommand):
         
         return products
 
-    def create_boosts_and_plans(self, products, shops, customers):
+    def create_boosts_and_plans(self, products, shops, customers, admin_user):
         """Create boost plans and active boosts with real references"""
         # First, let's clean up duplicate BoostPlans if they exist
         self.cleanup_duplicate_boost_plans()
         
         # Create boost plans - use first() to handle any remaining duplicates
         boost_plans_data = [
-            {'name': 'Basic', 'price': Decimal('9.99'), 'duration': 7, 'time_unit': 'days', 'status': 'Active'},
-            {'name': 'Premium', 'price': Decimal('19.99'), 'duration': 14, 'time_unit': 'days', 'status': 'Active'},
-            {'name': 'Ultimate', 'price': Decimal('29.99'), 'duration': 30, 'time_unit': 'days', 'status': 'Active'},
+            {'name': 'Basic', 'price': Decimal('9.99'), 'duration': 7, 'time_unit': 'days', 'status': 'active'},
+            {'name': 'Premium', 'price': Decimal('19.99'), 'duration': 14, 'time_unit': 'days', 'status': 'active'},
+            {'name': 'Ultimate', 'price': Decimal('29.99'), 'duration': 30, 'time_unit': 'days', 'status': 'active'},
         ]
         
         boost_plans = []
@@ -399,7 +407,14 @@ class Command(BaseCommand):
                 boost_plans.append(existing_plan)
                 self.stdout.write(self.style.WARNING(f"⚠️ Boost plan already exists: {plan_data['name']}"))
             else:
-                plan = BoostPlan.objects.create(**plan_data)
+                plan = BoostPlan.objects.create(
+                    name=plan_data['name'],
+                    price=plan_data['price'],
+                    duration=plan_data['duration'],
+                    time_unit=plan_data['time_unit'],
+                    status=plan_data['status'],
+                    user=admin_user
+                )
                 boost_plans.append(plan)
                 self.stdout.write(self.style.SUCCESS(f"✅ Created boost plan: {plan_data['name']}"))
         
@@ -415,7 +430,7 @@ class Command(BaseCommand):
         for shop_name, boost_count, plan_name in boost_assignments:
             shop = Shop.objects.filter(name=shop_name).first()
             if shop:
-                shop_products = Product.objects.filter(shop_id=shop)
+                shop_products = Product.objects.filter(shop=shop)
                 plan = BoostPlan.objects.filter(name=plan_name).first()
                 
                 if shop_products.exists() and plan:
@@ -423,17 +438,17 @@ class Command(BaseCommand):
                     for i in range(min(boost_count, len(shop_products))):
                         # Check if boost already exists
                         existing_boost = Boost.objects.filter(
-                            product_id=shop_products[i],
-                            shop_id=shop,
-                            customer_id=shop.customer_id
+                            product=shop_products[i],
+                            shop=shop,
+                            customer=shop.customer
                         ).first()
                         
                         if not existing_boost:
                             Boost.objects.create(
-                                product_id=shop_products[i],
-                                boost_plan_id=plan,
-                                shop_id=shop,
-                                customer_id=shop.customer_id,  # Real customer from shop
+                                product=shop_products[i],
+                                boost_plan=plan,
+                                shop=shop,
+                                customer=shop.customer,  # Real customer from shop
                             )
                             created_count += 1
                     
@@ -453,7 +468,7 @@ class Command(BaseCommand):
                 
                 # Keep the first one and delete the rest
                 first_plan = duplicates.first()
-                duplicates.exclude(boost_plan_id=first_plan.boost_plan_id).delete()
+                duplicates.exclude(id=first_plan.id).delete()
                 
                 self.stdout.write(self.style.SUCCESS(f"✅ Cleaned up duplicate BoostPlans for {plan_name}"))
 
@@ -478,14 +493,14 @@ class Command(BaseCommand):
                     
                     # Check if follow already exists
                     existing_follow = ShopFollow.objects.filter(
-                        customer_id=customer,
-                        shop_id=shop
+                        customer=customer,
+                        shop=shop
                     ).first()
                     
                     if not existing_follow:
                         ShopFollow.objects.create(
-                            customer_id=customer,  # Real customer
-                            shop_id=shop,         # Real shop
+                            customer=customer,  # Real customer
+                            shop=shop,         # Real shop
                         )
                         created_count += 1
                 
@@ -520,14 +535,14 @@ class Command(BaseCommand):
                     if customer:  # Only proceed if we have a customer
                         # Check if review already exists
                         existing_review = Review.objects.filter(
-                            customer_id=customer,
-                            shop_id=shop
+                            customer=customer,
+                            shop=shop
                         ).first()
                         
                         if not existing_review:
                             Review.objects.create(
-                                customer_id=customer,  # Real customer
-                                shop_id=shop,         # Real shop
+                                customer=customer,  # Real customer
+                                shop=shop,         # Real shop
                                 rating=rating,
                                 comment=f"Great shop! Rating: {rating} stars for {shop_name}",
                             )
@@ -549,15 +564,22 @@ class Command(BaseCommand):
         
         ratings = []
         base_rating = math.floor(target_avg)
+        decimal_part = target_avg - base_rating
         
-        for i in range(total_ratings):
-            if i < total_ratings * (target_avg - base_rating):
-                ratings.append(base_rating + 1)
-            else:
-                ratings.append(base_rating)
+        # Calculate how many of each rating we need
+        higher_count = int(total_ratings * decimal_part)
+        base_count = total_ratings - higher_count
         
+        # Add ratings
+        for i in range(higher_count):
+            ratings.append(base_rating + 1)
+        for i in range(base_count):
+            ratings.append(base_rating)
+        
+        # Shuffle to mix ratings
+        random.shuffle(ratings)
         return ratings
-
+    
     def create_additional_data(self, products, customers, shops):
         """Create additional related data with real references"""
         # Create variants
@@ -565,8 +587,8 @@ class Command(BaseCommand):
         for product in products:
             for i in range(min(3, 2)):
                 variant, created = Variants.objects.get_or_create(
-                    product_id=product,
-                    shop_id=product.shop_id,
+                    product=product,
+                    shop=product.shop,
                     title=f"{product.name} - Variant {i+1}"
                 )
                 
@@ -575,7 +597,7 @@ class Command(BaseCommand):
                     # Create variant options
                     for j in range(2):
                         VariantOptions.objects.get_or_create(
-                            variant_id=variant,
+                            variant=variant,
                             title=f"Option {j+1}",
                             defaults={
                                 'quantity': 10,
@@ -591,7 +613,7 @@ class Command(BaseCommand):
         for product in products[:8]:
             for i in range(min(2, 1)):
                 issue, created = Issues.objects.get_or_create(
-                    product_id=product,
+                    product=product,
                     description=f"Reported issue with {product.name}"
                 )
                 if created:
@@ -606,8 +628,8 @@ class Command(BaseCommand):
             for j in range(3):
                 if products:
                     favorite, created = Favorites.objects.get_or_create(
-                        customer_id=customer,
-                        product_id=products[(i + j) % len(products)],
+                        customer=customer,
+                        product=products[(i + j) % len(products)],
                     )
                     if created:
                         favorite_count += 1
@@ -622,8 +644,8 @@ class Command(BaseCommand):
             view_count = 100
             for i in range(min(view_count, len(customers))):
                 activity, created = CustomerActivity.objects.get_or_create(
-                    customer_id=customers[i % len(customers)],
-                    product_id=product,
+                    customer=customers[i % len(customers)],
+                    product=product,
                     activity_type='view'
                 )
                 if created:
@@ -631,7 +653,6 @@ class Command(BaseCommand):
         
         if activity_count > 0:
             self.stdout.write(self.style.SUCCESS(f"✅ Created {activity_count} customer activities"))
-
 
     def create_boost_analytics_data(self, products, shops, customers, admin_user):
         """Create comprehensive boost analytics data for AdminBoosting ViewSet"""
@@ -683,7 +704,7 @@ class Command(BaseCommand):
         # Map shops to their products
         shop_products = {}
         for shop in shops:
-            shop_products[shop.name] = Product.objects.filter(shop_id=shop)
+            shop_products[shop.name] = Product.objects.filter(shop=shop)
         
         # Create boosts for different scenarios
         boost_assignments = [
@@ -724,10 +745,10 @@ class Command(BaseCommand):
                     
                     # Check if boost already exists
                     existing_boost = Boost.objects.filter(
-                        product_id=product,
-                        shop_id=shop,
-                        customer_id=shop.customer_id,
-                        boost_plan_id=plan
+                        product=product,
+                        shop=shop,
+                        customer=shop.customer,
+                        boost_plan=plan
                     ).first()
                     
                     if not existing_boost:
@@ -742,10 +763,10 @@ class Command(BaseCommand):
                             end_date = start_date + timedelta(days=plan.duration)
                         
                         boost = Boost.objects.create(
-                            product_id=product,
-                            boost_plan_id=plan,
-                            shop_id=shop,
-                            customer_id=shop.customer_id,
+                            product=product,
+                            boost_plan=plan,
+                            shop=shop,
+                            customer=shop.customer,
                             status=status,
                             start_date=start_date,
                             end_date=end_date
@@ -786,7 +807,7 @@ class Command(BaseCommand):
             for i in range(new_boosts_count):
                 shop = shops[i % len(shops)]
                 plan = boost_plans[i % len(boost_plans)]
-                shop_products = Product.objects.filter(shop_id=shop)
+                shop_products = Product.objects.filter(shop=shop)
                 
                 if shop_products.exists():
                     product = shop_products[i % len(shop_products)]
@@ -806,19 +827,19 @@ class Command(BaseCommand):
                     
                     # Check if historical boost already exists
                     existing_boost = Boost.objects.filter(
-                        product_id=product,
-                        shop_id=shop,
-                        customer_id=shop.customer_id,
-                        boost_plan_id=plan,
+                        product=product,
+                        shop=shop,
+                        customer=shop.customer,
+                        boost_plan=plan,
                         created_at__date=created_date.date()
                     ).first()
                     
                     if not existing_boost:
                         boost = Boost.objects.create(
-                            product_id=product,
-                            boost_plan_id=plan,
-                            shop_id=shop,
-                            customer_id=shop.customer_id,
+                            product=product,
+                            boost_plan=plan,
+                            shop=shop,
+                            customer=shop.customer,
                             status=status,
                             start_date=start_date,
                             end_date=end_date
@@ -859,7 +880,7 @@ class Command(BaseCommand):
             
             if plan:
                 # Check current usage
-                current_usage = Boost.objects.filter(boost_plan_id=plan).count()
+                current_usage = Boost.objects.filter(boost_plan=plan).count()
                 needed_usage = max(0, usage_count - current_usage)
                 
                 if needed_usage > 0:
@@ -867,7 +888,7 @@ class Command(BaseCommand):
                     for i in range(needed_usage):
                         shop_index = i % len(shops)
                         shop = shops[shop_index]
-                        shop_products = Product.objects.filter(shop_id=shop)
+                        shop_products = Product.objects.filter(shop=shop)
                         
                         if shop_products.exists():
                             product = shop_products[i % len(shop_products)]
@@ -880,10 +901,10 @@ class Command(BaseCommand):
                             status = 'active' if end_date > timezone.now() else 'expired'
                             
                             boost = Boost.objects.create(
-                                product_id=product,
-                                boost_plan_id=plan,
-                                shop_id=shop,
-                                customer_id=shop.customer_id,
+                                product=product,
+                                boost_plan=plan,
+                                shop=shop,
+                                customer=shop.customer,
                                 status=status,
                                 start_date=start_date,
                                 end_date=end_date
@@ -950,8 +971,8 @@ class Command(BaseCommand):
             monthly_data = recent_boosts.annotate(
                 month=TruncMonth('created_at')
             ).values('month').annotate(
-                new_boosts=Count('boost_id'),
-                expired_boosts=Count('boost_id', filter=Q(status='expired'))
+                new_boosts=Count('id'),
+                expired_boosts=Count('id', filter=Q(status='expired'))
             ).order_by('month')
             
             self.stdout.write("📈 Trend Data Available:")
@@ -962,3 +983,235 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(f"⚠️ Could not generate trend data: {str(e)}"))
         
         self.stdout.write(self.style.SUCCESS("✅ Analytics data verification complete!"))
+
+    def create_engagement_data(self):
+        """Create only the engagement data that's missing"""
+        self.stdout.write("🎯 Creating missing engagement data...")
+        
+        # Get existing products and customers
+        products = Product.objects.all()
+        customers = Customer.objects.all()
+        
+        if not products.exists():
+            self.stdout.write(self.style.ERROR("❌ No products found. Please run full seeder first."))
+            return
+            
+        if not customers.exists():
+            self.stdout.write(self.style.ERROR("❌ No customers found. Please run full seeder first."))
+            return
+        
+        # 1. Create Customer Activities (views)
+        self.stdout.write("👀 Creating customer view activities...")
+        activity_count = 0
+        
+        # Define view counts for each product to make it realistic
+        view_counts = {
+            'Running Shoes': 150,
+            'Designer Handbag': 120,
+            'Wireless Earbuds': 200,
+            '4K Gaming Monitor': 80,
+            'Mechanical Keyboard Pro': 95,
+            'iPhone 15 Leather Case': 180,
+            'Samsung Galaxy S24 Ultra': 220,
+            'MacBook Pro 16" M3 Max': 75,
+            'iPhone 15 Pro Max 1TB': 160,
+        }
+        
+        for product in products:
+            view_count = view_counts.get(product.name, 100)
+            existing_views = CustomerActivity.objects.filter(product=product, activity_type='view').count()
+            
+            # Only create additional views if we don't have enough
+            if existing_views < view_count:
+                views_to_create = view_count - existing_views
+                
+                for i in range(min(views_to_create, len(customers) * 3)):
+                    customer = customers[i % len(customers)]
+                    
+                    # Create view activity with random date in the past 30 days
+                    activity_date = timezone.now() - timedelta(days=random.randint(1, 30))
+                    
+                    activity, created = CustomerActivity.objects.get_or_create(
+                        customer=customer,
+                        product=product,
+                        activity_type='view',
+                        created_at=activity_date,
+                        defaults={}
+                    )
+                    if created:
+                        activity_count += 1
+        
+        self.stdout.write(self.style.SUCCESS(f"✅ Created {activity_count} customer view activities"))
+        
+        # 2. Create Favorites
+        self.stdout.write("❤️ Creating favorites...")
+        favorite_count = 0
+        
+        favorite_counts = {
+            'Running Shoes': 25,
+            'Designer Handbag': 18,
+            'Wireless Earbuds': 30,
+            '4K Gaming Monitor': 12,
+            'Mechanical Keyboard Pro': 15,
+            'iPhone 15 Leather Case': 22,
+            'Samsung Galaxy S24 Ultra': 28,
+            'MacBook Pro 16" M3 Max': 10,
+            'iPhone 15 Pro Max 1TB': 20,
+        }
+        
+        for product in products:
+            target_favorites = favorite_counts.get(product.name, 15)
+            existing_favorites = Favorites.objects.filter(product=product).count()
+            
+            if existing_favorites < target_favorites:
+                favorites_to_create = target_favorites - existing_favorites
+                
+                for i in range(min(favorites_to_create, len(customers))):
+                    customer = customers[i]
+                    
+                    favorite, created = Favorites.objects.get_or_create(
+                        customer=customer,
+                        product=product,
+                    )
+                    if created:
+                        favorite_count += 1
+        
+        self.stdout.write(self.style.SUCCESS(f"✅ Created {favorite_count} favorites"))
+        
+        # 3. Create Cart Items and Checkouts (simulating purchases)
+        self.stdout.write("🛒 Creating cart items and checkouts...")
+        cart_item_count = 0
+        checkout_count = 0
+        
+        purchase_counts = {
+            'Running Shoes': 45,
+            'Designer Handbag': 28,
+            'Wireless Earbuds': 35,
+            '4K Gaming Monitor': 12,
+            'Mechanical Keyboard Pro': 18,
+            'iPhone 15 Leather Case': 40,
+            'Samsung Galaxy S24 Ultra': 25,
+            'MacBook Pro 16" M3 Max': 8,
+            'iPhone 15 Pro Max 1TB': 15,
+        }
+        
+        for product in products:
+            target_purchases = purchase_counts.get(product.name, 10)
+            existing_cart_items = CartItem.objects.filter(product=product).count()
+            
+            if existing_cart_items < target_purchases:
+                cart_items_to_create = target_purchases - existing_cart_items
+                
+                for i in range(min(cart_items_to_create, len(customers))):
+                    customer = customers[i]
+                    
+                    # Get the user from customer
+                    user = customer.user
+                    
+                    # Create cart item
+                    cart_item, created = CartItem.objects.get_or_create(
+                        product=product,
+                        user=user,
+                        defaults={
+                            'quantity': 1,
+                        }
+                    )
+                    if created:
+                        cart_item_count += 1
+                        
+                        # Create checkout for this cart item (simulating completed purchase)
+                        checkout_date = timezone.now() - timedelta(days=random.randint(1, 60))
+                        
+                        checkout, checkout_created = Checkout.objects.get_or_create(
+                            cart_item=cart_item,
+                            defaults={
+                                'quantity': cart_item.quantity,
+                                'total_amount': product.price * cart_item.quantity,
+                                'status': 'completed',
+                                'created_at': checkout_date,
+                            }
+                        )
+                        if checkout_created:
+                            checkout_count += 1
+        
+        self.stdout.write(self.style.SUCCESS(f"✅ Created {cart_item_count} cart items and {checkout_count} checkouts"))
+        
+        # 4. Create Reviews with proper distribution
+        self.stdout.write("⭐ Creating reviews with proper rating distribution...")
+        review_count = 0
+        
+        shop_rating_data = [
+            ('Tech Haven', 4.8, 23),
+            ('Gadget World', 4.5, 17),
+            ('KeyClack', 4.9, 21),
+            ('Display Masters', 4.7, 14),
+            ('Connect Tech', 4.2, 8),
+            ('Fashion Hub', 4.6, 31),
+        ]
+        
+        for shop_name, avg_rating, total_ratings in shop_rating_data:
+            shop = Shop.objects.filter(name=shop_name).first()
+            if shop and customers:
+                existing_reviews = Review.objects.filter(shop=shop).count()
+                
+                if existing_reviews < total_ratings:
+                    reviews_to_create = total_ratings - existing_reviews
+                    ratings_to_create = self._calculate_ratings_for_average(avg_rating, reviews_to_create)
+                    
+                    for rating in ratings_to_create:
+                        customer_index = review_count % len(customers)
+                        customer = customers[customer_index]
+                        
+                        review, created = Review.objects.get_or_create(
+                            customer=customer,
+                            shop=shop,
+                            rating=rating,
+                            defaults={
+                                'comment': f"Great shop! Rating: {rating} stars for {shop_name}",
+                            }
+                        )
+                        if created:
+                            review_count += 1
+        
+        self.stdout.write(self.style.SUCCESS(f"✅ Created {review_count} reviews"))
+        
+        # 5. Verify the data was created
+        self.verify_engagement_data()
+
+    def verify_engagement_data(self):
+        """Verify that engagement data was created properly"""
+        self.stdout.write("🔍 Verifying engagement data...")
+        
+        # Check product engagement data
+        products_with_engagement = Product.objects.annotate(
+            view_count=Count('customeractivity'),
+            favorite_count=Count('favorites'),
+            cart_item_count=Count('cartitem')
+        ).order_by('-view_count')
+        
+        self.stdout.write("📊 Product Engagement Summary:")
+        for product in products_with_engagement:
+            # Get checkout count for this product
+            checkout_count = Checkout.objects.filter(
+                cart_item__product=product,
+                status='completed'
+            ).count()
+            
+            total_engagement = product.view_count + product.favorite_count + product.cart_item_count
+            self.stdout.write(f"   • {product.name}:")
+            self.stdout.write(f"     - Views: {product.view_count}")
+            self.stdout.write(f"     - Favorites: {product.favorite_count}")
+            self.stdout.write(f"     - Cart Items: {product.cart_item_count}")
+            self.stdout.write(f"     - Completed Checkouts: {checkout_count}")
+            self.stdout.write(f"     - Total Engagement: {total_engagement}")
+        
+        # Check rating distribution
+        rating_distribution = Review.objects.values('rating').annotate(
+            count=Count('id')
+        ).order_by('-rating')
+        
+        self.stdout.write("⭐ Rating Distribution:")
+        for rating_data in rating_distribution:
+            self.stdout.write(f"   • {rating_data['rating']} Stars: {rating_data['count']} reviews")
+        
+        self.stdout.write(self.style.SUCCESS("✅ Engagement data verification complete!"))

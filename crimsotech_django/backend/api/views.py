@@ -17,13 +17,14 @@ from django.db.models import Count, Avg, Q, Sum
 
 class UserView(APIView):
     def get(self, request):
-        user = [{"user_id": user.user_id, "username": user.username, "email": user.email, "registration_stage": user.registration_stage, "is_rider": user.is_rider} for user in User.objects.all()]
+        user = [{"user_id": user.id, "username": user.username, "email": user.email, "registration_stage": user.registration_stage, "is_rider": user.is_rider} for user in User.objects.all()]
         return Response(user)
+    
     def post(self, request):
-        serialiazer = UserSerializer(data=request.data)
-        if serialiazer.is_valid(raise_exception=True):
-            serialiazer.save()
-            return Response(serialiazer.data)
+        serializer = UserSerializer(data=request.data)
+        if serializer.is_valid(raise_exception=True):
+            serializer.save()
+            return Response(serializer.data)
 
 class GetRole(APIView):
     def get(self, request):
@@ -31,13 +32,13 @@ class GetRole(APIView):
 
         if user_id:
             try:
-                user = User.objects.get(user_id=user_id)
+                user = User.objects.get(id=user_id)
                 data = {
-                    "user_id": user.user_id,
-                    "isAdmin": getattr(user, "is_admin", False),
-                    "isCustomer": getattr(user, "is_customer", False),
-                    "isRider": getattr(user, "is_rider", False),
-                    "isModerator": getattr(user, "isModerator", False),
+                    "user_id": user.id,  # Keep key as "user_id" but value from user.id
+                    "isAdmin": user.is_admin,
+                    "isCustomer": user.is_customer,
+                    "isRider": user.is_rider,
+                    "isModerator": user.is_moderator,
                 }
                 return Response(data)
             except User.DoesNotExist:
@@ -49,19 +50,16 @@ class GetRegistration(APIView):
 
         if user_id:
             try:
-                user = User.objects.get(user_id=user_id)
+                user = User.objects.get(id=user_id)
                 data = {
-                    "user_id": user.user_id,
-                    "registration_stage": getattr(user, "registration_stage", 1),
-                    "is_rider": getattr(user, "is_rider", False),
-                    "is_customer": getattr(user, "is_customer", False),
+                    "user_id": user.id,  # Keep key as "user_id" but value from user.id
+                    "registration_stage": user.registration_stage,
+                    "is_rider": user.is_rider,
+                    "is_customer": user.is_customer,
                 }
                 return Response(data)
             except User.DoesNotExist:
                 return Response({"error": "User not found"}, status=404)
-
-
-
 
 class Login(APIView):
     def get(self, request):
@@ -69,9 +67,9 @@ class Login(APIView):
 
         if user_id:
             try:
-                user = User.objects.get(user_id=user_id)
+                user = User.objects.get(id=user_id)
                 data = {
-                    "user_id": str(user.user_id),
+                    "user_id": str(user.id),  # Keep key as "user_id" but value from user.id
                     "username": user.username,
                     "email": user.email,
                     "is_admin": user.is_admin,
@@ -117,7 +115,7 @@ class Login(APIView):
         # Login successful
         return Response({
             "message": "Login successful",
-            "user_id": str(user.user_id),
+            "user_id": str(user.id),  # Keep key as "user_id" but value from user.id
             "username": user.username,
             "email": user.email,
             "is_admin": user.is_admin,
@@ -126,7 +124,7 @@ class Login(APIView):
             "is_moderator": user.is_moderator,
             "registration_stage": user.registration_stage
         })
-        
+    
 class Register(APIView):
     def get(self, request):
         user_id = request.headers.get("X-User-Id")  # get from headers
@@ -135,7 +133,7 @@ class Register(APIView):
             try:
                 user = User.objects.get(user_id=user_id)
                 data = {
-                    "user_id": user.user_id,
+                    "user_id": user.id,
                     "username": user.username,
                     "email": user.email,
                     "is_rider": getattr(user, "is_rider", False),
@@ -148,7 +146,7 @@ class Register(APIView):
         # fallback: if no user_id header provided, return all users
         users = [
             {
-                "user_id": u.user_id,
+                "user_id": u.id,
                 "username": u.username,
                 "email": u.email,
             }
@@ -160,12 +158,12 @@ class Register(APIView):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid(raise_exception=True):
             user = serializer.save()
-        customer_serializer = CustomerSerializer(data={"customer_id": user.user_id})
+        customer_serializer = CustomerSerializer(data={"customer_id": user.id})
         if customer_serializer.is_valid(raise_exception=True):
             customer_serializer.save()
             
             return Response({
-                "user_id": user.user_id,
+                "user_id": user.id,
                 "username": user.username,
                 "email": user.email,
                 "registration_stage": user.registration_stage,
@@ -197,12 +195,12 @@ class Profiling(APIView):
             return Response({"error": "User ID not provided"}, status=400)
         
         try:
-            user = User.objects.get(user_id=user_id)
+            user = User.objects.get(id=user_id)  # Changed from user_id to id
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
         
         data = {
-            "user_id": user.user_id, 
+            "user_id": user.id,  # Changed from user.user_id to user.id
             "registration_stage": user.registration_stage,
             "username": user.username,
         }
@@ -211,8 +209,14 @@ class Profiling(APIView):
     def post(self, request):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid(raise_exception=True):
-            serializer.save()
-            return Response(serializer.data)
+            saved_user = serializer.save()
+            
+            # Transform response to maintain frontend compatibility
+            response_data = serializer.data.copy()
+            if 'id' in response_data:
+                response_data['user_id'] = response_data.pop('id')
+            
+            return Response(response_data)
         
     def put(self, request):
         user_id = request.headers.get("X-User-Id")  # get from headers
@@ -221,14 +225,20 @@ class Profiling(APIView):
             return Response({"error": "User ID is required"}, status=400)
         
         try:
-            user = User.objects.get(user_id=user_id)
+            user = User.objects.get(id=user_id)  # Changed from user_id to id
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
             
         serializer = UserSerializer(user, data=request.data, partial=True)
         if serializer.is_valid(raise_exception=True):
-            serializer.save()
-            return Response(serializer.data)
+            saved_user = serializer.save()
+            
+            # Transform response to maintain frontend compatibility
+            response_data = serializer.data.copy()
+            if 'id' in response_data:
+                response_data['user_id'] = response_data.pop('id')
+            
+            return Response(response_data)
 
 class VerifyNumber(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
@@ -239,12 +249,12 @@ class VerifyNumber(viewsets.ViewSet):
             return Response({"error": "User ID not provided"}, status=400)
 
         try:
-            user = User.objects.get(user_id=user_id)
+            user = User.objects.get(id=user_id)  # Changed from user_id to id
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
 
         return Response({
-            "user_id": user.user_id,
+            "user_id": user.id,  # Changed from user.user_id to user.id
             "registration_stage": user.registration_stage,
         })
 
@@ -281,7 +291,7 @@ class VerifyNumber(viewsets.ViewSet):
             return Response({"error": "User ID header is required!"}, status=400)
 
         try:
-            user = User.objects.get(user_id=user_id)
+            user = User.objects.get(id=user_id)  # Changed from user_id to id
         except User.DoesNotExist:
             return Response({"error": "User not found!"}, status=404)
 
@@ -290,7 +300,7 @@ class VerifyNumber(viewsets.ViewSet):
             if not contact_number:
                 return Response({"error": "Contact number is required!"}, status=400)
 
-            if User.objects.filter(contact_number=contact_number).exclude(user_id=user_id).exists():
+            if User.objects.filter(contact_number=contact_number).exclude(id=user_id).exists():  # Changed from user_id to id
                 return Response({"error": "Contact number already exists!"}, status=400)
 
             # Save user's contact number
@@ -303,7 +313,7 @@ class VerifyNumber(viewsets.ViewSet):
                 return Response({"error": "Failed to send OTP. Please try again later."}, status=500)
 
             OTP.objects.update_or_create(
-                user_otp_id=user,
+                user=user,  # Changed from user_otp_id to user
                 defaults={
                     'otp': 'pending',
                     'sent_at': timezone.now(),
@@ -313,7 +323,7 @@ class VerifyNumber(viewsets.ViewSet):
 
             return Response({
                 "message": f"OTP sent successfully to +63{contact_number}",
-                "user_id": str(user.user_id),
+                "user_id": str(user.id),  # Changed from user.user_id to user.id
                 "contact_number": contact_number
             })
 
@@ -336,7 +346,7 @@ class VerifyNumber(viewsets.ViewSet):
                     user.registration_stage = 3  # Mark as verified
                     user.save()
                     
-                    OTP.objects.filter(user_otp_id=user).update(
+                    OTP.objects.filter(user=user).update(  # Changed from user_otp_id to user
                         otp=otp_code, 
                         expired_at=timezone.now()
                     )
@@ -441,13 +451,13 @@ class RiderRegistration(viewsets.ViewSet):
             
             # Create rider data
             rider_data = {
-                'rider_id': user.user_id,
+                'user': user.id,  # Changed from rider_id to user
                 'vehicle_type': vehicle_type,
                 'plate_number': plate_number,
                 'vehicle_brand': vehicle_brand,
                 'vehicle_model': vehicle_model,
                 'license_number': license_number,
-                'verified': False,  # Fixed: your field is 'verified' not 'is_verified'
+                'verified': False,
                 'vehicle_image': vehicle_image,
                 'license_image': license_image
             }
@@ -458,8 +468,8 @@ class RiderRegistration(viewsets.ViewSet):
                 
                 return Response({
                     "message": "Rider registration completed successfully",
-                    "user_id": str(user.user_id),
-                    "rider_id": str(rider.rider_id),
+                    "user_id": str(user.id),  # Changed from user.user_id to user.id
+                    "rider_id": str(rider.user.id),  # Changed from rider.rider_id to rider.user.id
                     "registration_stage": user.registration_stage,
                     "status": "pending_verification"
                 })
@@ -492,15 +502,6 @@ class AdminProduct(viewsets.ViewSet):
         Get comprehensive product metrics for admin dashboard
         """
         try:
-            # Check if we have real data in database
-            has_real_data = Product.objects.exists()
-            
-            if not has_real_data:
-                # Return sample data for testing
-                sample_data = self._get_sample_metrics_data()
-                return Response(sample_data, status=status.HTTP_200_OK)
-            
-            # Total Products with fallback
             total_products = Product.objects.count()
             
             # Low Stock Alert (quantity < 5) with fallback
@@ -508,25 +509,28 @@ class AdminProduct(viewsets.ViewSet):
             
             # Active Boosts with fallback
             active_boosts_count = Boost.objects.filter(
-                product_id__isnull=False
+                product__isnull=False,
+                status='active'
             ).count()
             
-            # Compute average rating from Reviews (using shop-based reviews as fallback)
-            rating_agg = Review.objects.aggregate(
+            # Compute average rating from Reviews (using product-based reviews)
+            rating_agg = Review.objects.filter(product__isnull=False).aggregate(
                 avg_rating=Avg('rating'),
-                total_reviews=Count('review_id')
+                total_reviews=Count('id')
             )
             avg_rating = rating_agg['avg_rating'] or 0.0
             
             # Compute engagement metrics from CustomerActivity
-            engagement_data = CustomerActivity.objects.values('product_id', 'activity_type').annotate(
+            engagement_data = CustomerActivity.objects.filter(
+                product__isnull=False
+            ).values('product', 'activity_type').annotate(
                 count=Count('activity_type')
             )
             
             # Create a dictionary to store engagement metrics per product
             product_engagement = {}
             for engagement in engagement_data:
-                product_id = engagement['product_id']
+                product_id = engagement['product']  # Changed from 'product_id' to 'product'
                 activity_type = engagement['activity_type']
                 count = engagement['count']
                 
@@ -562,8 +566,8 @@ class AdminProduct(viewsets.ViewSet):
                     reverse=True
                 )[:5]
                 
-                top_products = Product.objects.filter(product_id__in=top_product_ids)
-                product_map = {product.product_id: product for product in top_products}
+                top_products = Product.objects.filter(id__in=top_product_ids)  # Changed from product_id to id
+                product_map = {product.id: product for product in top_products}  # Changed from product_id to id
                 
                 for product_id in top_product_ids:
                     if product_id in product_map:
@@ -591,8 +595,9 @@ class AdminProduct(viewsets.ViewSet):
                     for product in top_products
                 ]
             
-            # Rating Distribution from Reviews (shop-based as fallback)
-            rating_distribution = Review.objects.values('rating').annotate(
+            # Rating Distribution from Reviews (product-based)
+            rating_distribution = Review.objects.filter(
+            ).values('rating').annotate(
                 count=Count('rating')
             ).order_by('-rating')
             
@@ -637,14 +642,16 @@ class AdminProduct(viewsets.ViewSet):
                 'message': 'Metrics retrieved successfully',
                 'data_source': 'database'
             }
+
+            print(rating_distribution_data)
             
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
-            sample_data = self._get_sample_metrics_data()
-            sample_data['message'] = f'Error retrieving metrics, showing sample data: {str(e)}'
-            sample_data['fallback_used'] = True
-            return Response(sample_data, status=status.HTTP_200_OK)
+            return Response(
+                {'success': False, 'error': f'Error retrieving metrics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=False, methods=['get'])
     def get_products_list(self, request):
@@ -658,15 +665,7 @@ class AdminProduct(viewsets.ViewSet):
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 10))
             
-            # Check if we have real data
-            has_real_data = Product.objects.exists()
-            
-            if not has_real_data:
-                sample_products = self._get_sample_products_data(search, category, page, page_size)
-                return Response(sample_products, status=status.HTTP_200_OK)
-            
-            # Start with all products
-            products = Product.objects.all().order_by('name').select_related('shop_id', 'category_id')
+            products = Product.objects.all().order_by('name').select_related('shop', 'category')
             
             # Apply search filter
             if search:
@@ -677,21 +676,21 @@ class AdminProduct(viewsets.ViewSet):
             
             # Apply category filter
             if category != 'all':
-                products = products.filter(category_id__name=category)
+                products = products.filter(category__name=category)
             
             # Get product IDs for related data queries
-            product_ids = list(products.values_list('product_id', flat=True))
+            product_ids = list(products.values_list('id', flat=True))  # Changed from product_id to id
             
             # Compute engagement data from CustomerActivity
             engagement_data = CustomerActivity.objects.filter(
-                product_id__in=product_ids
-            ).values('product_id', 'activity_type').annotate(
+                product__in=product_ids
+            ).values('product', 'activity_type').annotate(
                 count=Count('activity_type')
             )
             
             engagement_map = {}
             for engagement in engagement_data:
-                product_id = engagement['product_id']
+                product_id = engagement['product']  # Changed from product_id to product
                 activity_type = engagement['activity_type']
                 count = engagement['count']
                 
@@ -707,31 +706,31 @@ class AdminProduct(viewsets.ViewSet):
             
             # Compute variants count
             variants_data = Variants.objects.filter(
-                product_id__in=product_ids
-            ).values('product_id').annotate(
-                variants_count=Count('variant_id')
+                product__in=product_ids
+            ).values('product').annotate(
+                variants_count=Count('id')
             )
             
-            variants_map = {vd['product_id']: vd['variants_count'] for vd in variants_data}
+            variants_map = {vd['product']: vd['variants_count'] for vd in variants_data}
             
             # Compute issues count
             issues_data = Issues.objects.filter(
-                product_id__in=product_ids
-            ).values('product_id').annotate(
-                issues_count=Count('issue_id')
+                product__in=product_ids
+            ).values('product').annotate(
+                issues_count=Count('id')
             )
             
-            issues_map = {id['product_id']: id['issues_count'] for id in issues_data}
+            issues_map = {id['product']: id['issues_count'] for id in issues_data}
             
-            # Compute boost plan - FIXED: Use the exact field name 'boostPlan'
+            # Compute boost plan
             boost_data = Boost.objects.filter(
-                product_id__in=product_ids
-            ).select_related('boost_plan_id')
+                product__in=product_ids
+            ).select_related('boost_plan')
             
             boost_map = {}
             for boost in boost_data:
-                if boost.boost_plan_id:
-                    boost_map[boost.product_id.product_id] = boost.boost_plan_id.name
+                if boost.boost_plan:
+                    boost_map[boost.product.id] = boost.boost_plan.name  # Changed from product_id to id
             
             # Pagination
             start_index = (page - 1) * page_size
@@ -743,19 +742,21 @@ class AdminProduct(viewsets.ViewSet):
             # Serialize with computed fields - MATCHING REACT EXPECTATIONS EXACTLY
             products_data = []
             for product in paginated_products:
-                product_id = product.product_id
+                product_id = product.id  # Changed from product_id to id
                 
                 # Get computed engagement data
                 engagement = engagement_map.get(product_id, {'views': 0, 'purchases': 0, 'favorites': 0})
                 
-                # Use default rating for now (since Review doesn't link to Product)
-                rating = 4.0
+                # Get product rating from reviews
+                product_rating = Review.objects.filter(product=product).aggregate(
+                    avg_rating=Avg('rating')
+                )['avg_rating'] or 0.0
                 
                 # Get computed counts
                 variants_count = variants_map.get(product_id, 0)
                 issues_count = issues_map.get(product_id, 0)
                 
-                # Get boost plan - FIXED: Use exact field name 'boostPlan'
+                # Get boost plan
                 boost_plan = boost_map.get(product_id, 'None')
                 
                 # Determine low stock
@@ -763,10 +764,10 @@ class AdminProduct(viewsets.ViewSet):
                 
                 # Build product data EXACTLY matching React expectations
                 product_data = {
-                    'id': product_id,
+                    'id': str(product_id),  # Convert to string for consistency
                     'name': product.name,
-                    'category': product.category_id.name if product.category_id else 'Uncategorized',
-                    'shop': product.shop_id.name if product.shop_id else 'No Shop',
+                    'category': product.category.name if product.category else 'Uncategorized',
+                    'shop': product.shop.name if product.shop else 'No Shop',
                     'price': str(product.price),  # Keep as string for React
                     'quantity': product.quantity,
                     'condition': product.condition,
@@ -774,8 +775,8 @@ class AdminProduct(viewsets.ViewSet):
                     'views': engagement['views'],
                     'purchases': engagement['purchases'],
                     'favorites': engagement['favorites'],
-                    'rating': rating,
-                    'boostPlan': boost_plan,  # FIXED: Exact field name React expects
+                    'rating': round(product_rating, 1),
+                    'boostPlan': boost_plan,  # Exact field name React expects
                     'variants': variants_count,
                     'issues': issues_count,
                     'lowStock': low_stock,
@@ -800,151 +801,11 @@ class AdminProduct(viewsets.ViewSet):
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
-            try:
-                sample_products = self._get_sample_products_data(
-                    request.query_params.get('search', ''),
-                    request.query_params.get('category', 'all'),
-                    int(request.query_params.get('page', 1)),
-                    int(request.query_params.get('page_size', 10))
-                )
-                if sample_products:
-                    sample_products['message'] = f'Error retrieving products, showing sample data: {str(e)}'
-                    sample_products['fallback_used'] = True
-                return Response(sample_products, status=status.HTTP_200_OK)
-            except Exception:
-                return Response({
-                    'success': False,
-                    'products': [],
-                    'pagination': {
-                        'page': 1,
-                        'page_size': 10,
-                        'total_count': 0,
-                        'total_pages': 0
-                    },
-                    'message': f'Error retrieving products: {str(e)}',
-                    'fallback_used': True
-                }, status=status.HTTP_200_OK)
-    
-    def _get_sample_metrics_data(self):
-        """Generate sample metrics data for testing"""
-        return {
-            'success': True,
-            'metrics': {
-                'total_products': 156,
-                'low_stock_alert': 23,
-                'active_boosts': 34,
-                'avg_rating': 4.2,
-                'top_products': [
-                    {
-                        'name': 'iPhone 15 Pro Max',
-                        'views': 12500,
-                        'purchases': 450,
-                        'favorites': 890,
-                        'total_engagement': 13840
-                    },
-                    {
-                        'name': 'Samsung Galaxy S24 Ultra',
-                        'views': 9800,
-                        'purchases': 320,
-                        'favorites': 670,
-                        'total_engagement': 10790
-                    },
-                    {
-                        'name': 'MacBook Pro 16"',
-                        'views': 7600,
-                        'purchases': 210,
-                        'favorites': 450,
-                        'total_engagement': 8260
-                    },
-                    {
-                        'name': 'Sony WH-1000XM5',
-                        'views': 11200,
-                        'purchases': 680,
-                        'favorites': 920,
-                        'total_engagement': 12800
-                    },
-                    {
-                        'name': 'Nintendo Switch OLED',
-                        'views': 8900,
-                        'purchases': 540,
-                        'favorites': 780,
-                        'total_engagement': 10220
-                    }
-                ],
-                'rating_distribution': [
-                    {'name': '5 Stars', 'value': 67},
-                    {'name': '4 Stars', 'value': 45},
-                    {'name': '3 Stars', 'value': 28},
-                    {'name': '2 Stars', 'value': 12},
-                    {'name': '1 Star', 'value': 4}
-                ],
-                'has_data': True
-            },
-            'message': 'Sample metrics data loaded successfully',
-            'data_source': 'sample_data'
-        }
-    
-    def _get_sample_products_data(self, search='', category='all', page=1, page_size=10):
-        """Generate comprehensive sample products data for testing"""
-        # Make sure this includes ALL the fields your React columns expect
-        all_sample_products = [
-            {
-                'id': 1,
-                'name': 'iPhone 15 Pro Max 1TB',
-                'category': 'Electronics',
-                'shop': 'Apple Premium Reseller',
-                'price': '1599.99',
-                'quantity': 8,
-                'condition': 'New',
-                'status': 'Active',
-                'views': 12500,
-                'purchases': 450,
-                'favorites': 890,
-                'rating': 4.8,
-                'boostPlan': 'Premium',  # FIXED: Exact field name
-                'variants': 3,
-                'issues': 2,
-                'lowStock': False,
-                'created_at': '2024-01-15T10:30:00Z',
-                'updated_at': '2024-11-10T14:20:00Z'
-            },
-            # ... include all your other sample products with 'boostPlan' field
-        ]
+            return Response(
+                {'success': False, 'error': f'Error retrieving products: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
-        # Apply filters
-        filtered_products = all_sample_products
-        
-        if search:
-            filtered_products = [
-                p for p in filtered_products 
-                if search.lower() in p['name'].lower() or search.lower() in p['category'].lower()
-            ]
-        
-        if category != 'all':
-            filtered_products = [
-                p for p in filtered_products 
-                if p['category'] == category
-            ]
-        
-        # Apply pagination
-        total_count = len(filtered_products)
-        start_index = (page - 1) * page_size
-        end_index = start_index + page_size
-        paginated_products = filtered_products[start_index:end_index]
-        
-        return {
-            'success': True,
-            'products': paginated_products,
-            'pagination': {
-                'page': page,
-                'page_size': page_size,
-                'total_count': total_count,
-                'total_pages': (total_count + page_size - 1) // page_size
-            },
-            'message': 'Sample products data loaded successfully',
-            'data_source': 'sample_data'
-        }
-
 class AdminShops(viewsets.ViewSet):
     """
     ViewSet for admin shop management and analytics
@@ -965,7 +826,7 @@ class AdminShops(viewsets.ViewSet):
             # Calculate average rating from Reviews
             rating_agg = Review.objects.aggregate(
                 avg_rating=Avg('rating'),
-                total_reviews=Count('review_id')
+                total_reviews=Count('id')
             )
             avg_rating = rating_agg['avg_rating'] or 0.0
             
@@ -1007,53 +868,53 @@ class AdminShops(viewsets.ViewSet):
         """
         try:
             # Get all shops with customer data AND user data
-            shops = Shop.objects.all().select_related('customer_id__customer_id')
+            shops = Shop.objects.all().select_related('customer__user')
             
             # Get shop IDs for related data queries
-            shop_ids = list(shops.values_list('shop_id', flat=True))
+            shop_ids = list(shops.values_list('id', flat=True))
             
             # Compute followers count for each shop
             followers_data = ShopFollow.objects.filter(
-                shop_id__in=shop_ids
-            ).values('shop_id').annotate(
-                followers_count=Count('shop_follow_id')
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                followers_count=Count('id')
             )
-            followers_map = {fd['shop_id']: fd['followers_count'] for fd in followers_data}
+            followers_map = {fd['shop']: fd['followers_count'] for fd in followers_data}
             
             # Compute products count for each shop
             products_data = Product.objects.filter(
-                shop_id__in=shop_ids
-            ).values('shop_id').annotate(
-                products_count=Count('product_id')
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                products_count=Count('id')
             )
-            products_map = {pd['shop_id']: pd['products_count'] for pd in products_data}
+            products_map = {pd['shop']: pd['products_count'] for pd in products_data}
             
             # Compute ratings for each shop
             ratings_data = Review.objects.filter(
-                shop_id__in=shop_ids
-            ).values('shop_id').annotate(
+                shop__in=shop_ids
+            ).values('shop').annotate(
                 avg_rating=Avg('rating'),
-                total_ratings=Count('review_id')
+                total_ratings=Count('id')
             )
-            ratings_map = {rd['shop_id']: rd for rd in ratings_data}
+            ratings_map = {rd['shop']: rd for rd in ratings_data}
             
             # Compute active boosts for each shop
             boosts_data = Boost.objects.filter(
-                shop_id__in=shop_ids
-            ).values('shop_id').annotate(
-                active_boosts=Count('boost_id')
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                active_boosts=Count('id')
             )
-            boosts_map = {bd['shop_id']: bd['active_boosts'] for bd in boosts_data}
+            boosts_map = {bd['shop']: bd['active_boosts'] for bd in boosts_data}
             
             # Build shops data matching React structure exactly
             shops_data = []
             for shop in shops:
-                shop_id = shop.shop_id
+                shop_id = shop.id
                 
-                # Get owner name - FIXED: Access through User model
-                customer = shop.customer_id
-                if customer and customer.customer_id:
-                    user = customer.customer_id
+                # Get owner name - Access through Customer -> User model
+                customer = shop.customer
+                if customer and customer.user:
+                    user = customer.user
                     owner_name = f"{user.first_name} {user.last_name}".strip()
                     if not owner_name:
                         owner_name = user.username or "Unknown"
@@ -1075,9 +936,9 @@ class AdminShops(viewsets.ViewSet):
                     'products': products_count,
                     'rating': float(rating_info['avg_rating']),
                     'totalRatings': rating_info['total_ratings'],
-                    'status': getattr(shop, 'status', 'Active'),  # Use actual status if field exists
+                    'status': shop.status,
                     'joinedDate': shop.created_at.isoformat() if shop.created_at else None,
-                    'totalSales': float(getattr(shop, 'total_sales', 0)),  # Use actual sales if field exists
+                    'totalSales': float(shop.total_sales),
                     'activeBoosts': active_boosts,
                     'verified': shop.verified
                 }
@@ -1095,7 +956,8 @@ class AdminShops(viewsets.ViewSet):
             return Response(
                 {'success': False, 'error': f'Error retrieving shops: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+            )
+    
     @action(detail=False, methods=['get'])
     def get_analytics_data(self, request):
         """
@@ -1164,7 +1026,7 @@ class AdminShops(viewsets.ViewSet):
     def _get_shops_by_location(self):
         """Get shop count by location"""
         locations = Shop.objects.values('city').annotate(
-            count=Count('shop_id')
+            count=Count('id')
         ).exclude(city__isnull=True).exclude(city='')
         
         return [
@@ -1173,8 +1035,8 @@ class AdminShops(viewsets.ViewSet):
                 'value': loc['count']
             }
             for loc in locations
-        ]
-    
+        ]    
+
 class AdminBoosting(viewsets.ViewSet):
     """
     ViewSet for admin boost management and analytics
@@ -1235,23 +1097,23 @@ class AdminBoosting(viewsets.ViewSet):
             boost_plans = BoostPlan.objects.all().select_related('user')
             
             # Calculate usage count for each plan
-            plan_usage = Boost.objects.values('boost_plan_id').annotate(
-                usage_count=Count('boost_id')
+            plan_usage = Boost.objects.values('boost_plan').annotate(
+                usage_count=Count('id')
             )
-            usage_map = {item['boost_plan_id']: item['usage_count'] for item in plan_usage}
+            usage_map = {item['boost_plan']: item['usage_count'] for item in plan_usage}
             
             plans_data = []
             for plan in boost_plans:
                 plan_data = {
-                    'boost_plan_id': str(plan.boost_plan_id),
+                    'boost_plan_id': str(plan.id),
                     'name': plan.name,
                     'price': float(plan.price),
                     'duration': plan.duration,
                     'time_unit': plan.time_unit,
                     'status': plan.status,
-                    'user_id': str(plan.user.user_id) if plan.user else None,
+                    'user_id': str(plan.user.id) if plan.user else None,
                     'user_name': plan.user.username if plan.user else 'System',
-                    'usage_count': usage_map.get(plan.boost_plan_id, 0),
+                    'usage_count': usage_map.get(plan.id, 0),
                     'created_at': plan.created_at.isoformat(),
                     'updated_at': plan.updated_at.isoformat(),
                 }
@@ -1278,43 +1140,43 @@ class AdminBoosting(viewsets.ViewSet):
         """
         try:
             boosts = Boost.objects.all().order_by('created_at').select_related(
-                'product_id',
-                'boost_plan_id',
-                'shop_id',
-                'customer_id',
-                'customer_id__customer_id'
+                'product',
+                'boost_plan',
+                'shop',
+                'customer',
+                'customer__user'
             )
             
             boosts_data = []
             for boost in boosts:
                 customer_name = "Unknown"
                 customer_email = "No email"
-                if boost.customer_id and boost.customer_id.customer_id:
-                    user = boost.customer_id.customer_id
+                if boost.customer and boost.customer.user:
+                    user = boost.customer.user
                     customer_name = f"{user.first_name} {user.last_name}".strip()
                     if not customer_name:
                         customer_name = user.username
                     customer_email = user.email or "No email"
                 
                 # Get shop info
-                shop_name = boost.shop_id.name if boost.shop_id else None
+                shop_name = boost.shop.name if boost.shop else None
                 
                 # Get product info
-                product_name = boost.product_id.name if boost.product_id else None
+                product_name = boost.product.name if boost.product else None
                 
                 # Get boost plan info
-                boost_plan_name = boost.boost_plan_id.name if boost.boost_plan_id else None
-                boost_plan_price = float(boost.boost_plan_id.price) if boost.boost_plan_id else 0.0
+                boost_plan_name = boost.boost_plan.name if boost.boost_plan else None
+                boost_plan_price = float(boost.boost_plan.price) if boost.boost_plan else 0.0
                 
                 boost_data = {
-                    'boost_id': str(boost.boost_id),
-                    'product_id': str(boost.product_id.product_id) if boost.product_id else None,
+                    'boost_id': str(boost.id),
+                    'product_id': str(boost.product.id) if boost.product else None,
                     'product_name': product_name,
-                    'boost_plan_id': str(boost.boost_plan_id.boost_plan_id) if boost.boost_plan_id else None,
+                    'boost_plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
                     'boost_plan_name': boost_plan_name,
-                    'shop_id': str(boost.shop_id.shop_id) if boost.shop_id else None,
+                    'shop_id': str(boost.shop.id) if boost.shop else None,
                     'shop_name': shop_name,
-                    'customer_id': str(boost.customer_id.customer_id) if boost.customer_id else None,
+                    'customer_id': str(boost.customer.user.id) if boost.customer and boost.customer.user else None,
                     'customer_name': customer_name,
                     'customer_email': customer_email,
                     'status': boost.status,
@@ -1481,7 +1343,7 @@ class AdminBoosting(viewsets.ViewSet):
             response_data = {
                 'success': True,
                 'boost_plan': {
-                    'boost_plan_id': str(boost_plan.boost_plan_id),
+                    'boost_plan_id': str(boost_plan.id),
                     'name': boost_plan.name,
                     'price': float(boost_plan.price),
                     'duration': boost_plan.duration,
@@ -1514,7 +1376,7 @@ class AdminBoosting(viewsets.ViewSet):
                 )
             
             try:
-                boost_plan = BoostPlan.objects.get(boost_plan_id=boost_plan_id)
+                boost_plan = BoostPlan.objects.get(id=boost_plan_id)
             except BoostPlan.DoesNotExist:
                 return Response(
                     {'success': False, 'error': 'Boost plan not found'},
@@ -1532,7 +1394,7 @@ class AdminBoosting(viewsets.ViewSet):
             response_data = {
                 'success': True,
                 'boost_plan': {
-                    'boost_plan_id': str(boost_plan.boost_plan_id),
+                    'boost_plan_id': str(boost_plan.id),
                     'name': boost_plan.name,
                     'price': float(boost_plan.price),
                     'duration': boost_plan.duration,
@@ -1565,7 +1427,7 @@ class AdminBoosting(viewsets.ViewSet):
                 )
             
             try:
-                boost_plan = BoostPlan.objects.get(boost_plan_id=boost_plan_id)
+                boost_plan = BoostPlan.objects.get(id=boost_plan_id)
             except BoostPlan.DoesNotExist:
                 return Response(
                     {'success': False, 'error': 'Boost plan not found'},
@@ -1573,7 +1435,7 @@ class AdminBoosting(viewsets.ViewSet):
                 )
             
             # Check if plan is being used
-            active_boosts = Boost.objects.filter(boost_plan_id=boost_plan, status='active').count()
+            active_boosts = Boost.objects.filter(boost_plan=boost_plan, status='active').count()
             if active_boosts > 0:
                 return Response(
                     {'success': False, 'error': f'Cannot delete plan with {active_boosts} active boosts'},
@@ -1596,3 +1458,9 @@ class AdminBoosting(viewsets.ViewSet):
                 {'success': False, 'error': f'Error deleting boost plan: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+             
+
+class AdminCheckouts(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def hi():
+        return "hello"

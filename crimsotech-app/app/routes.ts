@@ -24,6 +24,7 @@ export default [
         route('products', 'routes/admin/products.tsx'),
         route('shops', 'routes/admin/shops.tsx'),
         route('boosting', 'routes/admin/boosting.tsx'),
+        route('checkouts', 'routes/admin/checkouts.tsx'),
     ]),
     ...prefix("moderator", [
         index("routes/moderator/home.tsx"),
@@ -34,3 +35,4 @@ export default [
 
     ])
 ] satisfies RouteConfig;
+

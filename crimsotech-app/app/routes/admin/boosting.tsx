@@ -37,7 +37,6 @@ import {
   Package,
   Calendar,
 } from 'lucide-react';
-import { useState, useEffect } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
@@ -202,7 +201,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     boostsList = [];
   }
 
-  console.log('Transformed Boosts Data:', boostsList);
+  // console.log('Transformed Boosts Data:', boostsList);
 
   return { 
     user, 
@@ -264,12 +263,11 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
   return (
     <UserProvider user={user}>
       <SidebarLayout>
-        <div className="space-y-6 p-4 sm:p-6">
+        <div className="space-y-6">
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">Boosts</h1>
-              <p className="text-sm text-muted-foreground mt-1">Manage and monitor shop boost campaigns</p>
             </div>
           </div>
 
@@ -470,7 +468,7 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
               <CardDescription>Manage and view all boost campaigns</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border">
+              <div className="rounded-md">
                 <DataTable 
                   columns={columns} 
                   data={safeBoosts}

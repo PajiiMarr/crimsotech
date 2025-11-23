@@ -240,6 +240,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
     if (metricsResponse.data.success) {
       productMetrics = metricsResponse.data.metrics;
+      console.log(productMetrics)
     }
 
     // Fetch products list
