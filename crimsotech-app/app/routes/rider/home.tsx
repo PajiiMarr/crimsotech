@@ -1,6 +1,5 @@
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
-import { registrationMiddleware } from '~/middleware/registration.server';
 import { UserProvider } from '~/components/providers/user-role-provider';
 
 

@@ -30,7 +30,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       if(response.data.registration_stage == 1) return
       if(response.data.registration_stage == 2) throw redirect('/profiling')
       if(response.data.registration_stage == 3) throw redirect('/number')
-      if(response.data.registration_stage == 4) throw redirect('/home')
+      if(response.data.registration_stage == 4) throw redirect('/rider')
       }
     if(response.data.registration_stage == 1) throw redirect('/profiling')
     if(response.data.registration_stage == 2) throw redirect('/number')

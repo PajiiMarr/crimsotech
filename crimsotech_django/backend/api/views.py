@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from decimal import Decimal
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework import viewsets
@@ -131,7 +132,7 @@ class Register(APIView):
 
         if user_id:
             try:
-                user = User.objects.get(user_id=user_id)
+                user = User.objects.get(id=user_id)
                 data = {
                     "user_id": user.id,
                     "username": user.username,
@@ -158,18 +159,21 @@ class Register(APIView):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid(raise_exception=True):
             user = serializer.save()
-        customer_serializer = CustomerSerializer(data={"customer_id": user.id})
-        if customer_serializer.is_valid(raise_exception=True):
-            customer_serializer.save()
             
-            return Response({
-                "user_id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "registration_stage": user.registration_stage,
-                "message": "User registered successfully"
-            })
-        
+            # Create customer for new user - use 'customer' field instead of 'user'
+            customer_data = {"customer": user.id}  # Changed from "user" to "customer"
+            customer_serializer = CustomerSerializer(data=customer_data)
+            if customer_serializer.is_valid(raise_exception=True):
+                customer_serializer.save()
+                
+                return Response({
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "registration_stage": user.registration_stage,
+                    "message": "User registered successfully"
+                })
+            
     def put(self, request):
         user_id = request.headers.get("X-User-Id")  # get from headers
         
@@ -177,7 +181,7 @@ class Register(APIView):
             return Response({"error": "User ID is required"}, status=400)
         
         try:
-            user = User.objects.get(user_id=user_id)
+            user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
             
@@ -451,7 +455,7 @@ class RiderRegistration(viewsets.ViewSet):
             
             # Create rider data
             rider_data = {
-                'user': user.id,  # Changed from rider_id to user
+                'rider': user.id,  # Changed from rider_id to user
                 'vehicle_type': vehicle_type,
                 'plate_number': plate_number,
                 'vehicle_brand': vehicle_brand,
@@ -469,7 +473,7 @@ class RiderRegistration(viewsets.ViewSet):
                 return Response({
                     "message": "Rider registration completed successfully",
                     "user_id": str(user.id),  # Changed from user.user_id to user.id
-                    "rider_id": str(rider.user.id),  # Changed from rider.rider_id to rider.user.id
+                    "rider_id": str(rider.rider),  # Changed from rider.rider_id to rider.user.id
                     "registration_stage": user.registration_stage,
                     "status": "pending_verification"
                 })
@@ -868,7 +872,7 @@ class AdminShops(viewsets.ViewSet):
         """
         try:
             # Get all shops with customer data AND user data
-            shops = Shop.objects.all().select_related('customer__user')
+            shops = Shop.objects.all().select_related('customer__customer')
             
             # Get shop IDs for related data queries
             shop_ids = list(shops.values_list('id', flat=True))
@@ -913,8 +917,8 @@ class AdminShops(viewsets.ViewSet):
                 
                 # Get owner name - Access through Customer -> User model
                 customer = shop.customer
-                if customer and customer.user:
-                    user = customer.user
+                if customer and customer.customer:
+                    user = customer.customer
                     owner_name = f"{user.first_name} {user.last_name}".strip()
                     if not owner_name:
                         owner_name = user.username or "Unknown"
@@ -1144,15 +1148,15 @@ class AdminBoosting(viewsets.ViewSet):
                 'boost_plan',
                 'shop',
                 'customer',
-                'customer__user'
+                'customer__customer'
             )
             
             boosts_data = []
             for boost in boosts:
                 customer_name = "Unknown"
                 customer_email = "No email"
-                if boost.customer and boost.customer.user:
-                    user = boost.customer.user
+                if boost.customer and boost.customer.customer:
+                    user = boost.customer.customer
                     customer_name = f"{user.first_name} {user.last_name}".strip()
                     if not customer_name:
                         customer_name = user.username
@@ -1176,7 +1180,7 @@ class AdminBoosting(viewsets.ViewSet):
                     'boost_plan_name': boost_plan_name,
                     'shop_id': str(boost.shop.id) if boost.shop else None,
                     'shop_name': shop_name,
-                    'customer_id': str(boost.customer.user.id) if boost.customer and boost.customer.user else None,
+                    'customer_id': str(boost.customer.customer) if boost.customer and boost.customer.customer else None,
                     'customer_name': customer_name,
                     'customer_email': customer_email,
                     'status': boost.status,
@@ -1461,6 +1465,375 @@ class AdminBoosting(viewsets.ViewSet):
              
 
 class AdminCheckouts(viewsets.ViewSet):
+    
     @action(detail=False, methods=['get'])
-    def hi():
-        return "hello"
+    def get_metrics(self, request):
+        """Get checkout metrics and analytics data for admin dashboard"""
+        try:
+            # Calculate date ranges
+            today = timezone.now().date()
+            week_ago = today - timedelta(days=7)
+            month_ago = today - timedelta(days=30)
+            
+            # Calculate metrics
+            total_checkouts = Checkout.objects.count()
+            completed_checkouts = Checkout.objects.filter(status='completed').count()
+            pending_checkouts = Checkout.objects.filter(status='pending').count()
+            cancelled_checkouts = Checkout.objects.filter(status='cancelled').count()
+            
+            # Calculate revenue
+            revenue_data = Checkout.objects.filter(status='completed').aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            total_revenue = revenue_data['total_revenue'] or Decimal('0')
+            
+            # Today's checkouts - FIXED: removed __date lookup
+            today_checkouts = Checkout.objects.filter(
+                created_at=today
+            ).count()
+            
+            # Monthly checkouts - FIXED: removed __date lookup
+            monthly_checkouts = Checkout.objects.filter(
+                created_at__gte=month_ago
+            ).count()
+            
+            # Average checkout value
+            avg_checkout_value = Decimal('0')
+            if completed_checkouts > 0:
+                avg_checkout_value = total_revenue / completed_checkouts
+            
+            # Success rate
+            success_rate = Decimal('0')
+            if total_checkouts > 0:
+                success_rate = (completed_checkouts / total_checkouts) * 100
+            
+            # Compile metrics
+            checkout_metrics = {
+                'total_checkouts': total_checkouts,
+                'pending_checkouts': pending_checkouts,
+                'completed_checkouts': completed_checkouts,
+                'cancelled_checkouts': cancelled_checkouts,
+                'total_revenue': float(total_revenue),
+                'today_checkouts': today_checkouts,
+                'monthly_checkouts': monthly_checkouts,
+                'avg_checkout_value': float(avg_checkout_value),
+                'success_rate': float(success_rate),
+            }
+            
+            # Get analytics data
+            analytics_data = self._get_analytics_data()
+            
+            # Get recent checkouts with related data
+            recent_checkouts = self._get_recent_checkouts()
+            
+            return Response({
+                'success': True,
+                'metrics': checkout_metrics,
+                'analytics': analytics_data,
+                'checkouts': recent_checkouts
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_analytics_data(self):
+        """Generate analytics data for charts"""
+        # Daily checkouts for the past 7 days - FIXED: removed __date lookup
+        daily_checkouts = []
+        today = timezone.now().date()
+        
+        for i in range(6, -1, -1):  # Last 7 days including today
+            date = today - timedelta(days=i)
+            day_data = Checkout.objects.filter(created_at=date).aggregate(
+                count=Count('id'),
+                revenue=Sum('total_amount')
+            )
+            
+            daily_checkouts.append({
+                'date': date.strftime('%b %d'),
+                'count': day_data['count'] or 0,
+                'revenue': float(day_data['revenue'] or 0)
+            })
+        
+        # Status distribution
+        status_distribution = []
+        status_counts = Checkout.objects.values('status').annotate(count=Count('id'))
+        
+        for status_data in status_counts:
+            status_distribution.append({
+                'name': status_data['status'].capitalize(),
+                'value': status_data['count']
+            })
+        
+        # Payment method distribution (placeholder - you'll need to add payment_method field to Checkout model)
+        # For now, we'll create a simple distribution based on checkout counts
+        total_checkouts = Checkout.objects.count()
+        if total_checkouts > 0:
+            payment_method_distribution = [
+                {'name': 'GCash', 'value': int(total_checkouts * 0.4)},
+                {'name': 'Credit Card', 'value': int(total_checkouts * 0.3)},
+                {'name': 'Bank Transfer', 'value': int(total_checkouts * 0.2)},
+                {'name': 'Cash', 'value': int(total_checkouts * 0.1)},
+            ]
+        else:
+            payment_method_distribution = [
+                {'name': 'GCash', 'value': 0},
+                {'name': 'Credit Card', 'value': 0},
+                {'name': 'Bank Transfer', 'value': 0},
+                {'name': 'Cash', 'value': 0},
+            ]
+        
+        return {
+            'daily_checkouts': daily_checkouts,
+            'status_distribution': status_distribution,
+            'payment_method_distribution': payment_method_distribution
+        }
+    
+    def _get_recent_checkouts(self, limit=50):
+        """Get recent checkouts with all related data"""
+        checkouts = Checkout.objects.select_related(
+            'cart_item',
+            'cart_item__product',
+            'cart_item__product__shop',
+            'cart_item__user',
+            'voucher'
+        ).order_by('-created_at')
+        
+        checkout_list = []
+        
+        for checkout in checkouts:
+            # Safely handle potential None values
+            cart_item = checkout.cart_item
+            product = cart_item.product if cart_item else None
+            shop = product.shop if product else None
+            user = cart_item.user if cart_item else None
+            
+            checkout_data = {
+                'id': str(checkout.id),
+                'cart_item': {
+                    'id': str(cart_item.id) if cart_item else None,
+                    'product': {
+                        'id': str(product.id) if product else None,
+                        'name': product.name if product else 'Unknown Product',
+                        'price': float(product.price) if product else 0,
+                        'shop': {
+                            'id': str(shop.id) if shop else None,
+                            'name': shop.name if shop else 'Unknown Shop'
+                        }
+                    },
+                    'quantity': cart_item.quantity if cart_item else 0,
+                    'user': {
+                        'id': str(user.id) if user else None,
+                        'username': user.username if user else 'Unknown User',
+                        'email': user.email if user else '',
+                        'first_name': user.first_name if user else '',
+                        'last_name': user.last_name if user else ''
+                    }
+                },
+                'quantity': checkout.quantity,
+                'total_amount': float(checkout.total_amount),
+                'status': checkout.status,
+                'remarks': checkout.remarks or '',
+                'created_at': checkout.created_at.isoformat() if checkout.created_at else None
+            }
+            
+            # Add voucher data if exists
+            if checkout.voucher:
+                checkout_data['voucher'] = {
+                    'id': str(checkout.voucher.id),
+                    'name': checkout.voucher.name,
+                    'code': checkout.voucher.code,
+                    'value': float(checkout.voucher.value)
+                }
+            
+            checkout_list.append(checkout_data)
+        
+        return checkout_list
+    
+    @action(detail=False, methods=['get'])
+    def get_checkout_details(self, request):
+        """Get detailed checkout information"""
+        checkout_id = request.query_params.get('checkout_id')
+        
+        if not checkout_id:
+            return Response({
+                'success': False,
+                'error': 'Checkout ID is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            checkout = Checkout.objects.select_related(
+                'cart_item',
+                'cart_item__product',
+                'cart_item__product__shop',
+                'cart_item__user',
+                'voucher'
+            ).get(id=checkout_id)
+            
+            # Safely handle related objects
+            cart_item = checkout.cart_item
+            product = cart_item.product if cart_item else None
+            shop = product.shop if product else None
+            user = cart_item.user if cart_item else None
+            
+            checkout_data = {
+                'id': str(checkout.id),
+                'cart_item': {
+                    'id': str(cart_item.id) if cart_item else None,
+                    'product': {
+                        'id': str(product.id) if product else None,
+                        'name': product.name if product else 'Unknown Product',
+                        'description': product.description if product else '',
+                        'price': float(product.price) if product else 0,
+                        'quantity': product.quantity if product else 0,
+                        'condition': product.condition if product else '',
+                        'shop': {
+                            'id': str(shop.id) if shop else None,
+                            'name': shop.name if shop else 'Unknown Shop',
+                            'contact_number': shop.contact_number if shop else ''
+                        }
+                    },
+                    'quantity': cart_item.quantity if cart_item else 0,
+                    'user': {
+                        'id': str(user.id) if user else None,
+                        'username': user.username if user else 'Unknown User',
+                        'email': user.email if user else '',
+                        'first_name': user.first_name if user else '',
+                        'last_name': user.last_name if user else '',
+                        'contact_number': user.contact_number if user else ''
+                    }
+                },
+                'quantity': checkout.quantity,
+                'total_amount': float(checkout.total_amount),
+                'status': checkout.status,
+                'remarks': checkout.remarks or '',
+                'created_at': checkout.created_at.isoformat() if checkout.created_at else None
+            }
+            
+            if checkout.voucher:
+                checkout_data['voucher'] = {
+                    'id': str(checkout.voucher.id),
+                    'name': checkout.voucher.name,
+                    'code': checkout.voucher.code,
+                    'value': float(checkout.voucher.value),
+                    'discount_type': checkout.voucher.discount_type
+                }
+            
+            return Response({
+                'success': True,
+                'checkout': checkout_data
+            })
+            
+        except Checkout.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Checkout not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def update_checkout_status(self, request):
+        """Update checkout status"""
+        checkout_id = request.data.get('checkout_id')
+        new_status = request.data.get('status')
+        remarks = request.data.get('remarks', '')
+        
+        if not checkout_id or not new_status:
+            return Response({
+                'success': False,
+                'error': 'Checkout ID and status are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            checkout = Checkout.objects.get(id=checkout_id)
+            checkout.status = new_status
+            if remarks:
+                checkout.remarks = remarks
+            checkout.save()
+            
+            return Response({
+                'success': True,
+                'message': f'Checkout status updated to {new_status}'
+            })
+            
+        except Checkout.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Checkout not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def get_checkout_stats(self, request):
+        """Get additional checkout statistics"""
+        try:
+            # Time-based statistics
+            today = timezone.now().date()
+            week_ago = today - timedelta(days=7)
+            month_ago = today - timedelta(days=30)
+            
+            # Revenue statistics - FIXED: removed __date lookup
+            daily_revenue = Checkout.objects.filter(
+                status='completed',
+                created_at=today
+            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
+            
+            weekly_revenue = Checkout.objects.filter(
+                status='completed',
+                created_at__gte=week_ago
+            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
+            
+            monthly_revenue = Checkout.objects.filter(
+                status='completed',
+                created_at__gte=month_ago
+            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
+            
+            # Top products by checkout count
+            top_products = Checkout.objects.filter(
+                cart_item__product__isnull=False
+            ).values(
+                'cart_item__product__name'
+            ).annotate(
+                checkout_count=Count('id')
+            ).order_by('-checkout_count')[:10]
+            
+            # Top shops by revenue
+            top_shops = Checkout.objects.filter(
+                status='completed',
+                cart_item__product__shop__isnull=False
+            ).values(
+                'cart_item__product__shop__name'
+            ).annotate(
+                revenue=Sum('total_amount')
+            ).order_by('-revenue')[:10]
+            
+            stats = {
+                'revenue_today': float(daily_revenue),
+                'revenue_week': float(weekly_revenue),
+                'revenue_month': float(monthly_revenue),
+                'top_products': list(top_products),
+                'top_shops': list(top_shops)
+            }
+            
+            return Response({
+                'success': True,
+                'stats': stats
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        

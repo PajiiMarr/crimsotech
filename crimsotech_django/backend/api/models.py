@@ -36,7 +36,7 @@ class User(models.Model):
         return f"User {self.username or self.id}"
 
 class Customer(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
+    customer = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     product_limit = models.IntegerField(default=10)  # Maximum products a customer can sell
     current_product_count = models.IntegerField(default=0)  # Track current product count
 
@@ -59,16 +59,16 @@ class Customer(models.Model):
             self.save()
 
     def __str__(self):
-        return f"{self.user.username}"
+        return f"{self.customer.username}"
 
 class Moderator(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)  # Add this default)
+    moderator = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)  # Add this default)
 
     def __str__(self):
-        return f"Moderator: {self.user.username}"
+        return f"Moderator: {self.moderator.username}"
 
 class Rider(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
+    rider = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     vehicle_type = models.CharField(max_length=50, blank=True)
     plate_number = models.CharField(max_length=20, blank=True)
     vehicle_brand = models.CharField(max_length=50, blank=True)
@@ -81,13 +81,13 @@ class Rider(models.Model):
     approval_date = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
-        return f"Rider: {self.user.username}"
+        return f"Rider: {self.rider.username}"
     
 class Admin(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
+    admin = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
 
     def __str__(self):
-        return f"Admin: {self.user.username}"
+        return f"Admin: {self.admin.username}"
     
 class Logs(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -430,10 +430,19 @@ class Voucher(models.Model):
     value = models.DecimalField(decimal_places=2, max_digits=9)
     valid_until = models.DateField()
     added_at = models.DateField(auto_now_add=True)
+    # Add the missing attributes
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_vouchers'
+    )
+    is_active = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.name} ({self.code})"
-    
+        
 class RefundPolicy(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     main_title = models.CharField(max_length=100)
@@ -500,6 +509,7 @@ class CartItem(models.Model):
         blank=True,
     )
     quantity = models.IntegerField(default=1)
+    added_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ['product', 'user']

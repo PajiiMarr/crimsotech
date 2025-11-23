@@ -1,11 +1,11 @@
 // app/routes.ts
 import { type RouteConfig, index, route, prefix } from "@react-router/dev/routes";
-import { requireAuth } from "./middleware/auth.server";
 
 export default [
     index('routes/client/landing.tsx'),
     route('about', 'routes/client/about.tsx'),
-    route('rider', 'routes/client/rider.tsx'),
+    route('riders', 'routes/client/rider.tsx'),
+    route('riders', 'routes/client/riders.tsx'),
 
     route('login', 'routes/auth/login.tsx'),
     route('signup', 'routes/auth/signup.tsx'),

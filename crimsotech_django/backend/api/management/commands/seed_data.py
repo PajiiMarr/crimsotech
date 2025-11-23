@@ -49,6 +49,11 @@ class Command(BaseCommand):
                 
                 # Create comprehensive boost analytics data
                 self.create_boost_analytics_data(products, shops, customers, admin_user)
+
+                self.create_checkout_data(products, customers, shops, admin_user)
+            
+                # Create checkout analytics data
+                self.create_checkout_analytics_data()
                 
                 self.stdout.write(self.style.SUCCESS("✅ Comprehensive shop data seeded successfully!"))
                 
@@ -75,7 +80,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("⚠️ Admin user already exists."))
 
         admin, admin_created = Admin.objects.get_or_create(
-            user=user,
+            admin=user,
         )
 
         if admin_created:
@@ -169,7 +174,7 @@ class Command(BaseCommand):
             
             # Create or get customer - this ensures we have a real Customer object
             customer, cust_created = Customer.objects.get_or_create(
-                user=user
+                customer=user
             )
             
             if cust_created or user_created:
@@ -1106,7 +1111,7 @@ class Command(BaseCommand):
                     customer = customers[i]
                     
                     # Get the user from customer
-                    user = customer.user
+                    user = customer.customer
                     
                     # Create cart item
                     cart_item, created = CartItem.objects.get_or_create(
@@ -1215,3 +1220,326 @@ class Command(BaseCommand):
             self.stdout.write(f"   • {rating_data['rating']} Stars: {rating_data['count']} reviews")
         
         self.stdout.write(self.style.SUCCESS("✅ Engagement data verification complete!"))
+
+    def create_checkout_data(self, products, customers, shops, admin_user):
+        """Create checkout data matching frontend structure"""
+        self.stdout.write("🛒 Creating checkout data...")
+        
+        # Create vouchers first
+        vouchers = [
+            Voucher.objects.create(
+                name="Winter Sale",
+                code="WINTER50",
+                discount_type="fixed",
+                value=50.00,
+                valid_until=timezone.now().date() + timedelta(days=30),
+                created_by=admin_user,
+                is_active=True
+            ),
+            Voucher.objects.create(
+                name="Summer Discount",
+                code="SUMMER25",
+                discount_type="fixed",
+                value=25.00,
+                valid_until=timezone.now().date() + timedelta(days=30),
+                created_by=admin_user,
+                is_active=True
+            ),
+            Voucher.objects.create(
+                name="New User",
+                code="WELCOME10",
+                discount_type="fixed",
+                value=10.00,
+                valid_until=timezone.now().date() + timedelta(days=30),
+                created_by=admin_user,
+                is_active=True
+            )
+        ]
+        
+        # Create cart items first - check if we have customers
+        cart_items = []
+        if customers:
+            for i, customer in enumerate(customers[:10]):  # Use first 10 customers
+                product = products[i % len(products)]
+                cart_item = CartItem.objects.create(
+                    product=product,
+                    user=customer.customer,  # Use the User object from Customer
+                    quantity=random.randint(1, 3),
+                    added_at=timezone.now() - timedelta(days=random.randint(1, 30))
+                )
+                cart_items.append(cart_item)
+                self.stdout.write(f"   ✅ Created cart item for {customer.customer.username}")
+        else:
+            # If no customers, create some test customers first
+            self.stdout.write("   ⚠️ No customers found, creating test customers...")
+            test_customers = []
+            for i in range(5):
+                user = User.objects.create(
+                    username=f'test_customer_{i}',
+                    email=f'test{i}@example.com',
+                    first_name=f'Test{i}',
+                    last_name='Customer',
+                    password=make_password('password123'),
+                    is_customer=True
+                )
+                customer = Customer.objects.create(
+                    customer=user,
+                    product_limit=10,
+                    current_product_count=0
+                )
+                test_customers.append(customer)
+                self.stdout.write(f"   ✅ Created test customer: {user.username}")
+            
+            # Now create cart items with test customers
+            for i, customer in enumerate(test_customers):
+                product = products[i % len(products)]
+                cart_item = CartItem.objects.create(
+                    product=product,
+                    user=customer.customer,
+                    quantity=random.randint(1, 3),
+                    added_at=timezone.now()
+                )
+                cart_items.append(cart_item)
+        
+        # Check if we have cart items before proceeding
+        if not cart_items:
+            self.stdout.write("   ❌ No cart items could be created, skipping checkout creation")
+            return
+        
+        # Create checkouts with different statuses
+        status_weights = [985, 23, 194, 45, 12]  # Matching frontend distribution
+        
+        all_checkouts = []
+        
+        # Create completed checkouts (majority) - but limit to a smaller number for testing
+        checkout_count = min(50, len(cart_items) * 10)  # Limit to prevent too many checkouts
+        self.stdout.write(f"   📦 Creating {checkout_count} checkouts...")
+        
+        for i in range(min(50, checkout_count)):  # Limit to 50 for testing
+            cart_item = random.choice(cart_items)
+            checkout = Checkout.objects.create(
+                cart_item=cart_item,
+                quantity=cart_item.quantity,
+                total_amount=cart_item.product.price * cart_item.quantity,
+                status='completed',
+                created_at=timezone.now()
+            )
+            all_checkouts.append(checkout)
+        
+        # Create pending checkouts
+        for i in range(min(5, checkout_count // 10)):
+            cart_item = random.choice(cart_items)
+            checkout = Checkout.objects.create(
+                cart_item=cart_item,
+                quantity=cart_item.quantity,
+                total_amount=cart_item.product.price * cart_item.quantity,
+                status='pending',
+                created_at=timezone.now()
+            )
+            all_checkouts.append(checkout)
+        
+        # Create paid checkouts
+        for i in range(min(10, checkout_count // 5)):
+            cart_item = random.choice(cart_items)
+            use_voucher = random.choice([True, False])
+            base_amount = cart_item.product.price * cart_item.quantity
+            
+            # Convert voucher value to Decimal for proper arithmetic
+            voucher_value = Decimal(str(vouchers[0].value)) if use_voucher else Decimal('0')
+            total_amount = max(base_amount - voucher_value, Decimal('0'))
+            
+            checkout = Checkout.objects.create(
+                cart_item=cart_item,
+                quantity=cart_item.quantity,
+                total_amount=total_amount,
+                status='paid',
+                voucher=vouchers[0] if use_voucher else None,
+                created_at=timezone.now()
+            )
+            all_checkouts.append(checkout)
+        
+        # Create cancelled checkouts
+        for i in range(min(5, checkout_count // 10)):
+            cart_item = random.choice(cart_items)
+            checkout = Checkout.objects.create(
+                cart_item=cart_item,
+                quantity=cart_item.quantity,
+                total_amount=cart_item.product.price * cart_item.quantity,
+                status='cancelled',
+                remarks=random.choice([
+                    'Customer changed mind',
+                    'Out of stock',
+                    'Duplicate order',
+                    'Shipping address issue',
+                    'Price mismatch'
+                ]),
+                created_at=timezone.now()
+            )
+            all_checkouts.append(checkout)
+        
+        # Create failed checkouts
+        for i in range(min(3, checkout_count // 15)):
+            cart_item = random.choice(cart_items)
+            checkout = Checkout.objects.create(
+                cart_item=cart_item,
+                quantity=cart_item.quantity,
+                total_amount=cart_item.product.price * cart_item.quantity,
+                status='failed',
+                remarks=random.choice([
+                    'Payment failed',
+                    'Insufficient funds',
+                    'Card declined',
+                    'Network error',
+                    'Bank rejection'
+                ]),
+                created_at=timezone.now()
+            )
+            all_checkouts.append(checkout)
+        
+        # Create specific checkouts matching frontend examples
+        self.stdout.write("   🎯 Creating specific example checkouts...")
+        specific_products_data = [
+            {
+                'name': 'iPhone 15 Pro',
+                'price': Decimal('1499.99'),
+                'shop_name': 'Tech Store'
+            },
+            {
+                'name': 'MacBook Pro', 
+                'price': Decimal('2299.99'),
+                'shop_name': 'Apple Store'
+            },
+            {
+                'name': 'Samsung TV',
+                'price': Decimal('899.99'),
+                'shop_name': 'Electronics Hub'
+            },
+            {
+                'name': 'Nike Shoes',
+                'price': Decimal('199.99'),
+                'shop_name': 'Sports Gear'
+            },
+            {
+                'name': 'Gaming Laptop',
+                'price': Decimal('1599.99'),
+                'shop_name': 'Game World'
+            }
+        ]
+        
+        # Find or create specific products
+        specific_cart_items = []
+        for product_data in specific_products_data:
+            shop = Shop.objects.filter(name=product_data['shop_name']).first()
+            if not shop:
+                # Use first customer or create one
+                shop_customer = customers[0] if customers else Customer.objects.first()
+                shop = Shop.objects.create(
+                    name=product_data['shop_name'],
+                    description=f"{product_data['shop_name']} description",
+                    customer=shop_customer
+                )
+            
+            product = Product.objects.filter(name=product_data['name'], shop=shop).first()
+            if not product:
+                product_customer = customers[0] if customers else Customer.objects.first()
+                product = Product.objects.create(
+                    name=product_data['name'],
+                    description=f"{product_data['name']} description",
+                    price=product_data['price'],
+                    shop=shop,
+                    customer=product_customer
+                )
+            
+            # Use first available user for cart item
+            user_for_cart = customers[0].customer if customers else User.objects.filter(is_customer=True).first()
+            if not user_for_cart:
+                user_for_cart = admin_user
+                
+            cart_item = CartItem.objects.create(
+                product=product,
+                user=user_for_cart,
+                quantity=1,
+                added_at=timezone.now()
+            )
+            specific_cart_items.append(cart_item)
+        
+        # Create specific checkouts matching frontend examples
+        specific_checkouts = [
+            {
+                'cart_item': specific_cart_items[0],  # iPhone
+                'status': 'completed',
+                'remarks': 'Fast shipping requested',
+                'created_at': timezone.make_aware(datetime(2024, 1, 15, 10, 30))
+            },
+            {
+                'cart_item': specific_cart_items[1],  # MacBook
+                'status': 'pending',
+                'remarks': '',
+                'created_at': timezone.make_aware(datetime(2024, 1, 15, 14, 20))
+            },
+            {
+                'cart_item': specific_cart_items[2],  # Samsung TV
+                'status': 'paid',
+                'voucher': vouchers[0],
+                'remarks': '',
+                'created_at': timezone.make_aware(datetime(2024, 1, 14, 9, 15))
+            },
+            {
+                'cart_item': specific_cart_items[3],  # Nike Shoes
+                'status': 'cancelled',
+                'remarks': 'Customer changed mind',
+                'created_at': timezone.make_aware(datetime(2024, 1, 14, 11, 45))
+            },
+            {
+                'cart_item': specific_cart_items[4],  # Gaming Laptop
+                'status': 'failed',
+                'remarks': 'Payment failed',
+                'created_at': timezone.make_aware(datetime(2024, 1, 13, 16, 20))
+            }
+        ]
+        
+        for checkout_data in specific_checkouts:
+            cart_item = checkout_data['cart_item']
+            base_amount = cart_item.product.price * cart_item.quantity
+            voucher_discount = Decimal(str(checkout_data.get('voucher').value)) if checkout_data.get('voucher') else Decimal('0')
+            total_amount = max(base_amount - voucher_discount, Decimal('0'))
+            
+            Checkout.objects.create(
+                cart_item=cart_item,
+                quantity=cart_item.quantity,
+                total_amount=total_amount,
+                status=checkout_data['status'],
+                voucher=checkout_data.get('voucher'),
+                remarks=checkout_data['remarks'],
+                created_at=checkout_data['created_at']
+            )
+        
+        self.stdout.write(self.style.SUCCESS(f"✅ Created {Checkout.objects.count()} checkouts"))        
+        
+    def create_checkout_analytics_data(self):
+            """Create analytics data for checkouts dashboard"""
+            self.stdout.write("📊 Creating checkout analytics data...")
+            
+            # This would typically be calculated from actual checkout data
+            # For seeding, we'll create some analytics records
+            today = timezone.now().date()
+            
+            # Create daily checkout trends for the past week
+            daily_data = [
+                {'date': 'Jan 10', 'count': 42, 'revenue': 8450},
+                {'date': 'Jan 11', 'count': 38, 'revenue': 7210},
+                {'date': 'Jan 12', 'count': 45, 'revenue': 8920},
+                {'date': 'Jan 13', 'count': 51, 'revenue': 10250},
+                {'date': 'Jan 14', 'count': 47, 'revenue': 9340},
+                {'date': 'Jan 15', 'count': 18, 'revenue': 3610},
+            ]
+            
+            # Create payment method distribution
+            payment_data = [
+                {'name': 'GCash', 'value': 567},
+                {'name': 'Credit Card', 'value': 432},
+                {'name': 'Bank Transfer', 'value': 198},
+                {'name': 'Cash', 'value': 50},
+            ]
+            
+            self.stdout.write(self.style.SUCCESS("✅ Checkout analytics data prepared"))

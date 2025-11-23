@@ -22,11 +22,11 @@ export async function registrationMiddleware(args: LoaderFunctionArgs | ActionFu
       if(response.data.registration_stage == 1) throw redirect('/signup')
       if(response.data.registration_stage == 2) throw redirect('profiling'); 
       if(response.data.registration_stage == 3) throw redirect('/number')
-      if(response.data.registration_stage == 4) throw redirect('/home')
+      if(response.data.registration_stage == 4) return redirect('/rider')
     } else if (response.data.is_customer) {
       if(response.data.registration_stage == 1) throw redirect('/profiling')
       if(response.data.registration_stage == 2) throw redirect('/number')
-      if(response.data.registration_stage == 4) throw redirect('/home')
+      if(response.data.registration_stage == 4) return redirect('/home')
     }
   }
 }

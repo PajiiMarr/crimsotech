@@ -23,8 +23,6 @@ import {
   Pie,
   Cell,
   Legend,
-  LineChart,
-  Line,
   CartesianGrid,
 } from 'recharts';
 import { 
@@ -40,8 +38,8 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
+  Store,
 } from 'lucide-react';
-import { useState, useEffect } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
@@ -54,18 +52,40 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
+// Interface that matches Django models
 interface Checkout {
   id: string;
-  customerName: string;
-  customerEmail: string;
-  items: string[];
-  amount: number;
-  paymentMethod: 'gcash' | 'card' | 'cash' | 'bank_transfer';
-  status: 'pending' | 'paid' | 'completed' | 'cancelled' | 'failed';
-  createdAt: string;
-  updatedAt: string;
-  referenceNumber: string;
-  organization: string;
+  cart_item: {
+    id: string;
+    product: {
+      id: string;
+      name: string;
+      price: number;
+      shop: {
+        id: string;
+        name: string;
+      };
+    };
+    quantity: number;
+    user: {
+      id: string;
+      username: string;
+      email: string;
+      first_name: string;
+      last_name: string;
+    };
+  };
+  voucher?: {
+    id: string;
+    name: string;
+    code: string;
+    value: number;
+  };
+  quantity: number;
+  total_amount: number;
+  status: string;
+  remarks?: string;
+  created_at: string;
 }
 
 interface LoaderData {
@@ -118,110 +138,43 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
-  // Mock data for placeholders - replace with actual API calls
-  const checkoutMetrics = {
-    total_checkouts: 1247,
-    pending_checkouts: 23,
-    completed_checkouts: 985,
-    cancelled_checkouts: 45,
-    total_revenue: 254780,
-    today_checkouts: 18,
-    monthly_checkouts: 347,
-    avg_checkout_value: 204.5,
-    success_rate: 78.9,
+  // Initialize empty data structures
+  let checkoutMetrics = {
+    total_checkouts: 0,
+    pending_checkouts: 0,
+    completed_checkouts: 0,
+    cancelled_checkouts: 0,
+    total_revenue: 0,
+    today_checkouts: 0,
+    monthly_checkouts: 0,
+    avg_checkout_value: 0,
+    success_rate: 0,
   };
 
-  const checkoutsList: Checkout[] = [
-    {
-      id: 'CHK-001',
-      customerName: 'John Doe',
-      customerEmail: 'john@example.com',
-      items: ['iPhone 15 Pro', 'AirPods Pro'],
-      amount: 1499.99,
-      paymentMethod: 'gcash',
-      status: 'completed',
-      createdAt: '2024-01-15T10:30:00Z',
-      updatedAt: '2024-01-15T11:45:00Z',
-      referenceNumber: 'REF-001234',
-      organization: 'Tech Store'
-    },
-    {
-      id: 'CHK-002',
-      customerName: 'Jane Smith',
-      customerEmail: 'jane@example.com',
-      items: ['MacBook Pro'],
-      amount: 2299.99,
-      paymentMethod: 'card',
-      status: 'pending',
-      createdAt: '2024-01-15T14:20:00Z',
-      updatedAt: '2024-01-15T14:20:00Z',
-      referenceNumber: 'REF-001235',
-      organization: 'Apple Store'
-    },
-    {
-      id: 'CHK-003',
-      customerName: 'Mike Johnson',
-      customerEmail: 'mike@example.com',
-      items: ['Samsung TV', 'Soundbar'],
-      amount: 899.99,
-      paymentMethod: 'bank_transfer',
-      status: 'paid',
-      createdAt: '2024-01-14T09:15:00Z',
-      updatedAt: '2024-01-14T16:30:00Z',
-      referenceNumber: 'REF-001236',
-      organization: 'Electronics Hub'
-    },
-    {
-      id: 'CHK-004',
-      customerName: 'Sarah Wilson',
-      customerEmail: 'sarah@example.com',
-      items: ['Nike Shoes', 'Sports Bag'],
-      amount: 199.99,
-      paymentMethod: 'cash',
-      status: 'cancelled',
-      createdAt: '2024-01-14T11:45:00Z',
-      updatedAt: '2024-01-14T12:30:00Z',
-      referenceNumber: 'REF-001237',
-      organization: 'Sports Gear'
-    },
-    {
-      id: 'CHK-005',
-      customerName: 'David Brown',
-      customerEmail: 'david@example.com',
-      items: ['Gaming Laptop', 'Mouse'],
-      amount: 1599.99,
-      paymentMethod: 'gcash',
-      status: 'failed',
-      createdAt: '2024-01-13T16:20:00Z',
-      updatedAt: '2024-01-13T16:25:00Z',
-      referenceNumber: 'REF-001238',
-      organization: 'Game World'
+  let checkoutsList: Checkout[] = [];
+  let analyticsData: LoaderData['analytics'] = {
+    daily_checkouts: [],
+    status_distribution: [],
+    payment_method_distribution: []
+  };
+
+  try {
+    // Fetch real data from API
+    const response = await AxiosInstance.get('/admin-checkouts/get_metrics/', {
+      headers: {
+        "X-User-Id": session.get("userId")
+      }
+    });
+
+    if (response.data.success) {
+      checkoutMetrics = response.data.metrics || checkoutMetrics;
+      checkoutsList = response.data.checkouts || [];
+      analyticsData = response.data.analytics || analyticsData;
     }
-  ];
-
-  const analyticsData = {
-    daily_checkouts: [
-      { date: 'Jan 10', count: 42, revenue: 8450 },
-      { date: 'Jan 11', count: 38, revenue: 7210 },
-      { date: 'Jan 12', count: 45, revenue: 8920 },
-      { date: 'Jan 13', count: 51, revenue: 10250 },
-      { date: 'Jan 14', count: 47, revenue: 9340 },
-      { date: 'Jan 15', count: 18, revenue: 3610 },
-    ],
-    status_distribution: [
-      { name: 'Completed', value: 985 },
-      { name: 'Pending', value: 23 },
-      { name: 'Paid', value: 194 },
-      { name: 'Cancelled', value: 45 },
-      { name: 'Failed', value: 12 },
-    ],
-    payment_method_distribution: [
-      { name: 'GCash', value: 567 },
-      { name: 'Credit Card', value: 432 },
-      { name: 'Bank Transfer', value: 198 },
-      { name: 'Cash', value: 50 },
-    ],
-  };
+  } catch (error) {
+    console.log('API fetch failed, using empty data fallback');
+    // Empty fallback - no mock data
+  }
 
   return { 
     user, 
@@ -233,6 +186,23 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
 const COLORS = ['#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6'];
 const PAYMENT_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b'];
+
+// Empty state components
+const EmptyChart = ({ message }: { message: string }) => (
+  <div className="flex items-center justify-center h-64">
+    <div className="text-center text-muted-foreground">
+      <p>{message}</p>
+    </div>
+  </div>
+);
+
+const EmptyTable = () => (
+  <div className="flex items-center justify-center h-32">
+    <div className="text-center text-muted-foreground">
+      <p>No checkouts found</p>
+    </div>
+  </div>
+);
 
 export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
   const { user, checkoutMetrics, checkouts, analytics } = loaderData;
@@ -263,18 +233,28 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
     success_rate: 0,
   };
 
+ 
+
+  const hasCheckouts = safeCheckouts.length > 0;
+  const hasAnalyticsData = safeAnalytics.daily_checkouts.length > 0 || 
+                          safeAnalytics.status_distribution.length > 0 || 
+                          safeAnalytics.payment_method_distribution.length > 0;
+
+  
+// Before the component return, transform the data to include shopName
+  const transformedCheckouts = safeCheckouts.map(checkout => ({
+    ...checkout,
+    shopName: checkout.cart_item?.product?.shop?.name || 'Unknown Shop'
+  }));
+
   const checkoutFilterConfig = {
     status: {
       options: [...new Set(safeCheckouts.map(checkout => checkout.status))],
       placeholder: 'Status'
     },
-    paymentMethod: {
-      options: [...new Set(safeCheckouts.map(checkout => checkout.paymentMethod))],
-      placeholder: 'Payment Method'
-    },
-    organization: {
-      options: [...new Set(safeCheckouts.map(checkout => checkout.organization))],
-      placeholder: 'Organization'
+    shopName: { // Changed from 'shop' to 'shopName' to match the accessor
+      options: [...new Set(transformedCheckouts.map(checkout => checkout.shopName))].filter(Boolean),
+      placeholder: 'Shop'
     }
   };
 
@@ -286,6 +266,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">Checkouts</h1>
+              <p className="text-muted-foreground mt-1">Manage and monitor all customer checkouts</p>
             </div>
           </div>
 
@@ -409,15 +390,24 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                 <CardDescription>Checkout activity over the past week</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={safeAnalytics.daily_checkouts}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" fontSize={12} />
-                    <YAxis fontSize={12} />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#3b82f6" name="Checkouts" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {safeAnalytics.daily_checkouts.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={safeAnalytics.daily_checkouts}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" fontSize={12} />
+                      <YAxis fontSize={12} />
+                      <Tooltip 
+                        formatter={(value, name) => {
+                          if (name === 'revenue') return [`₱${Number(value).toLocaleString()}`, 'Revenue'];
+                          return [value, 'Checkouts'];
+                        }}
+                      />
+                      <Bar dataKey="count" fill="#3b82f6" name="Checkouts" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyChart message="No checkout trend data available" />
+                )}
               </CardContent>
             </Card>
 
@@ -428,26 +418,30 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                 <CardDescription>Breakdown of checkout statuses</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <PieChart>
-                    <Pie
-                      data={safeAnalytics.status_distribution}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }) => `${name} (${value})`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {safeAnalytics.status_distribution.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
+                {safeAnalytics.status_distribution.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <PieChart>
+                      <Pie
+                        data={safeAnalytics.status_distribution}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, value }) => `${name} (${value})`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {safeAnalytics.status_distribution.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyChart message="No status distribution data available" />
+                )}
               </CardContent>
             </Card>
           </div>
@@ -459,28 +453,32 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
               <CardDescription>Distribution of payment methods used</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={safeAnalytics.payment_method_distribution}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }) => `${name} (${value})`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {safeAnalytics.payment_method_distribution.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={PAYMENT_COLORS[index % PAYMENT_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
+              {safeAnalytics.payment_method_distribution.length > 0 ? (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={safeAnalytics.payment_method_distribution}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, value }) => `${name} (${value})`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {safeAnalytics.payment_method_distribution.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={PAYMENT_COLORS[index % PAYMENT_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <EmptyChart message="No payment method data available" />
+              )}
             </CardContent>
           </Card>
 
@@ -491,17 +489,21 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
               <CardDescription>Manage and view all customer checkouts</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md">
-                <DataTable 
-                  columns={columns} 
-                  data={safeCheckouts}
-                  filterConfig={checkoutFilterConfig}
-                  searchConfig={{
-                    column: "customerName",
-                    placeholder: "Search by customer name..."
-                  }}
-                />
-              </div>
+              {hasCheckouts ? (
+                <div className="rounded-md">
+                  <DataTable 
+                    columns={columns} 
+                    data={transformedCheckouts}
+                    filterConfig={checkoutFilterConfig}
+                    searchConfig={{
+                      column: "customerName",
+                      placeholder: "Search by customer name..."
+                    }}
+                  />
+                </div>
+              ) : (
+                <EmptyTable />
+              )}
             </CardContent>
           </Card>
         </div>
@@ -526,34 +528,71 @@ const columns: ColumnDef<Checkout>[] = [
       )
     },
     cell: ({ row }: { row: any}) => (
-      <div className="font-medium text-xs sm:text-sm">{row.getValue("id")}</div>
+      <div className="font-medium text-xs sm:text-sm">{row.getValue("id")?.slice(0, 8)}...</div>
     ),
   },
   {
     accessorKey: "customerName",
     header: "Customer",
-    cell: ({ row }: { row: any}) => (
-      <div className="flex items-center gap-1 text-xs sm:text-sm">
-        <User className="w-3 h-3 text-muted-foreground" />
-        <div>
-          <div className="font-medium">{row.getValue("customerName")}</div>
-          <div className="text-xs text-muted-foreground">{row.original.customerEmail}</div>
+    cell: ({ row }: { row: any}) => {
+      const customer = row.original.cart_item?.user;
+      if (!customer) return <div className="text-muted-foreground">N/A</div>;
+      
+      return (
+        <div className="flex items-center gap-1 text-xs sm:text-sm">
+          <User className="w-3 h-3 text-muted-foreground" />
+          <div>
+            <div className="font-medium">{customer.first_name} {customer.last_name}</div>
+            <div className="text-xs text-muted-foreground">{customer.email}</div>
+          </div>
         </div>
-      </div>
-    ),
+      );
+    },
   },
   {
-    accessorKey: "items",
-    header: "Items",
+    accessorKey: "product",
+    header: "Product",
+    cell: ({ row }: { row: any}) => {
+      const product = row.original.cart_item?.product;
+      if (!product) return <div className="text-muted-foreground">N/A</div>;
+      
+      return (
+        <div className="flex items-center gap-1 text-xs sm:text-sm">
+          <Package className="w-3 h-3 text-muted-foreground" />
+          <div>
+            <div className="font-medium">{product.name}</div>
+            <div className="text-xs text-muted-foreground">₱{product.price}</div>
+          </div>
+        </div>
+      );
+    },
+  },
+  {
+    accessorKey: "shopName", // Add this accessor for filtering
+    header: "Shop",
+    cell: ({ row }: { row: any}) => {
+      const shop = row.original.cart_item?.product?.shop;
+      if (!shop) return <div className="text-muted-foreground">N/A</div>;
+      
+      return (
+        <div className="flex items-center gap-1 text-xs sm:text-sm">
+          <Store className="w-3 h-3 text-muted-foreground" />
+          <span>{shop.name}</span>
+        </div>
+      );
+    },
+  },
+  {
+    accessorKey: "quantity",
+    header: "Qty",
     cell: ({ row }: { row: any}) => (
-      <div className="text-xs sm:text-sm">
-        {row.getValue("items").slice(0, 2).join(', ')}
-        {row.getValue("items").length > 2 && ` +${row.getValue("items").length - 2} more`}
+      <div className="text-xs sm:text-sm text-center">
+        {row.original.cart_item?.quantity || 0}
       </div>
     ),
   },
   {
-    accessorKey: "amount",
+    accessorKey: "total_amount",
     header: ({ column }) => {
       return (
         <Button
@@ -569,36 +608,14 @@ const columns: ColumnDef<Checkout>[] = [
     cell: ({ row }: { row: any}) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
         <DollarSign className="w-3 h-3 text-muted-foreground" />
-        ₱{row.getValue("amount")}
+        ₱{row.getValue("total_amount")}
+        {row.original.voucher && (
+          <Badge variant="outline" className="ml-1 text-xs">
+            -₱{row.original.voucher.value}
+          </Badge>
+        )}
       </div>
     ),
-  },
-  {
-    accessorKey: "paymentMethod",
-    header: "Payment Method",
-    cell: ({ row }: { row: any}) => {
-      const method = row.getValue("paymentMethod") as string;
-      const getColor = (method: string) => {
-        switch(method) {
-          case 'gcash': return '#10b981';
-          case 'card': return '#3b82f6';
-          case 'bank_transfer': return '#8b5cf6';
-          case 'cash': return '#f59e0b';
-          default: return '#6b7280';
-        }
-      };
-      const color = getColor(method);
-      
-      return (
-        <Badge 
-          variant="secondary" 
-          className="text-xs capitalize"
-          style={{ backgroundColor: `${color}20`, color: color }}
-        >
-          {method.replace('_', ' ')}
-        </Badge>
-      );
-    },
   },
   {
     accessorKey: "status",
@@ -606,7 +623,7 @@ const columns: ColumnDef<Checkout>[] = [
     cell: ({ row }: { row: any}) => {
       const status = row.getValue("status") as string;
       const getColor = (status: string) => {
-        switch(status) {
+        switch(status?.toLowerCase()) {
           case 'completed': return '#10b981';
           case 'paid': return '#3b82f6';
           case 'pending': return '#f59e0b';
@@ -616,7 +633,7 @@ const columns: ColumnDef<Checkout>[] = [
         }
       };
       const getIcon = (status: string) => {
-        switch(status) {
+        switch(status?.toLowerCase()) {
           case 'completed': return <CheckCircle className="w-3 h-3" />;
           case 'paid': return <DollarSign className="w-3 h-3" />;
           case 'pending': return <Clock className="w-3 h-3" />;
@@ -635,13 +652,13 @@ const columns: ColumnDef<Checkout>[] = [
           style={{ backgroundColor: `${color}20`, color: color }}
         >
           {icon}
-          {status}
+          {status || 'Unknown'}
         </Badge>
       );
     },
   },
   {
-    accessorKey: "createdAt",
+    accessorKey: "created_at",
     header: ({ column }) => {
       return (
         <Button
@@ -655,10 +672,13 @@ const columns: ColumnDef<Checkout>[] = [
       )
     },
     cell: ({ row }: { row: any}) => {
-      const date = new Date(row.getValue("createdAt"));
+      const date = new Date(row.getValue("created_at"));
+      if (isNaN(date.getTime())) return <div className="text-muted-foreground">N/A</div>;
+      
       const formattedDate = date.toLocaleDateString('en-US', {
         month: 'short',
-        day: 'numeric'
+        day: 'numeric',
+        year: 'numeric'
       });
       
       return (
@@ -670,11 +690,11 @@ const columns: ColumnDef<Checkout>[] = [
     },
   },
   {
-    accessorKey: "referenceNumber",
-    header: "Reference",
+    accessorKey: "remarks",
+    header: "Remarks",
     cell: ({ row }: { row: any}) => (
-      <div className="text-xs sm:text-sm font-mono">
-        {row.getValue("referenceNumber")}
+      <div className="text-xs sm:text-sm max-w-[120px] truncate">
+        {row.original.remarks || '-'}
       </div>
     ),
   },
