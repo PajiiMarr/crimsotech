@@ -16,26 +16,30 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
-  let response;
-  if (session.has("userId")) {
-    response = await AxiosInstance.get('/login/', {
-      headers: {
-        "X-User-Id": session.get("userId")
-      }
-    });
-    if(response.data.is_customer == true) {
-      return redirect("/home")
-    } else if(response.data.is_rider == true) {
-      return redirect("/rider")
-    } else if(response.data.is_moderator == true) {
-      return redirect("/moderator")
-    } else if(response.data.is_admin == true) {
-      return redirect("/admin")
-    }
+  const { registrationMiddleware } = await import("~/middleware/registration.server");
+  
+  // Apply the middleware and return its result
+  const middlewareResult = await registrationMiddleware({ 
+    request, 
+    context, 
+    params: {}, 
+    unstable_pattern: undefined 
+  } as any);
+  
+  // If middleware returned a redirect, return it
+  if (middlewareResult) {
+    return middlewareResult;
   }
+
+  // If no redirect, return empty data
+  return data({}, {
+    headers: {
+      "Set-Cookie": await commitSession(session),
+    },
+  });
 }
 
 export async function action({ request }: Route.ActionArgs) {

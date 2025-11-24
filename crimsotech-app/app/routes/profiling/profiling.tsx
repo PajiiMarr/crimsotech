@@ -91,24 +91,80 @@ export async function loader({ request }: Route.LoaderArgs) {
     'X-User-Id': userId,
     },
   });
-    
+
   if (session.has("userId")) {
-    const response = await AxiosInstance.get('/register/', {
-      headers: {
-        "X-User-Id": userId
-      }
-    });
+    let response;
+    
+    // Try to get user data from login endpoint first (for role-based redirection)
+    try {
+      response = await AxiosInstance.get('/login/', {
+        headers: {
+          "X-User-Id": session.get("userId")
+        }
+      });
 
-    if(response.data.is_rider == true) {
-      if(response.data.registration_stage == 1) throw redirect('/signup')
-      if(response.data.registration_stage == 2) return { profilingData: userProfiling.data }; 
-      if(response.data.registration_stage == 3) throw redirect('/number')
-      if(response.data.registration_stage == 4) throw redirect('/rider')
+      // Role-based redirection for completed registrations
+      if (response.data.is_customer === true) {
+        if (response.data.registration_stage < 4) {
+          // Throw an error to jump to the catch block and try registration endpoint
+          throw new Error('Customer registration not complete');
+        }
+        return redirect("/home");
+      } else if (response.data.is_rider === true) {
+        if (response.data.registration_stage < 4) {
+          // Throw an error to jump to the catch block and try registration endpoint
+          throw new Error('Customer registration not complete');
+        }
+        return redirect("/rider");
+      } else if (response.data.is_moderator === true) {
+        return redirect("/moderator");
+      } else if (response.data.is_admin === true) {
+        return redirect("/admin");
       }
-    if(response.data.registration_stage == 2) throw redirect('/number')
-    if(response.data.registration_stage == 4) throw redirect('/home')
+    } catch (error) {
+      // If login endpoint fails or doesn't have role data, try registration endpoint
+      try {
+        response = await AxiosInstance.get('/get-registration/', {
+          headers: {
+            "X-User-Id": session.get("userId")
+          }
+        });
 
+        // Registration stage redirection
+        if (response.data.is_rider) {
+          if (response.data.registration_stage == 1) throw redirect('/signup');
+          if (response.data.registration_stage == 2) return { profilingData: userProfiling.data }; 
+          if (response.data.registration_stage == 3) throw redirect('/number');
+          if (response.data.registration_stage == 4) throw redirect('/rider');
+        } else if (response.data.is_customer) {
+          if (response.data.registration_stage == 1) throw redirect('/profiling');
+          if (response.data.registration_stage == 2) throw redirect('/number');
+          if (response.data.registration_stage == 4) throw redirect('/home');
+        }
+      } catch (regError) {
+        // If both endpoints fail, continue without redirection
+        console.log("Could not fetch user data for redirection");
+      }
+    }
   }
+    
+//   if (session.has("userId")) {
+//     const response = await AxiosInstance.get('/register/', {
+//       headers: {
+//         "X-User-Id": userId
+//       }
+//     });
+
+//     if(response.data.is_rider == true) {
+//       if(response.data.registration_stage == 1) throw redirect('/signup')
+//       if(response.data.registration_stage == 2) return { profilingData: userProfiling.data }; 
+//       if(response.data.registration_stage == 3) throw redirect('/number')
+//       if(response.data.registration_stage == 4) throw redirect('/rider')
+//       }
+//     if(response.data.registration_stage == 2) throw redirect('/number')
+//     if(response.data.registration_stage == 4) throw redirect('/home')
+
+//   }
 
 
   return { profilingData: userProfiling.data };

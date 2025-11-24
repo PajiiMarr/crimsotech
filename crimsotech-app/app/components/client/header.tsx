@@ -9,7 +9,7 @@ export function Header() {
                 <Link to="/about" className='hover:text-orange-500 p-3'>About us</Link>
                 <Link to="/" className='hover:text-orange-500 p-3'>Services</Link>
                 <Link to="/" className='hover:text-orange-500 p-3'>Volunteer</Link>
-                <Link to="/rider" className='hover:text-orange-500 p-3'>Be a Rider</Link>
+                <Link to="/riders" className='hover:text-orange-500 p-3'>Be a Rider</Link>
             </div>
             <div className='p-3'>
                 <Link to="/login">

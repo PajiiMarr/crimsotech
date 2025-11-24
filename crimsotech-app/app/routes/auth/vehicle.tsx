@@ -62,13 +62,28 @@ function VehicleTypeSelector({ selected, onSelect, error }: VehicleTypeSelectorP
   );
 }
 
-export async function loader({request}: Route.ActionArgs) {
+export async function loader({request, context}: Route.ActionArgs) {
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"))
 
   // If rider already has a vehicle, redirect to signup
-  if (session.has("riderId")) {
-    return redirect("/signup");
+  // if (session.has("riderId")) {
+  //   return redirect("/signup");
+  // }
+
+  const { registrationMiddleware } = await import("~/middleware/registration.server");
+  
+  // Apply the middleware
+  const middlewareResult = await registrationMiddleware({ 
+    request, 
+    context, 
+    params: {}, 
+    unstable_pattern: undefined 
+  } as any);
+  
+  // If middleware returned a redirect, return it
+  if (middlewareResult) {
+    return middlewareResult;
   }
 
   return data({}, {

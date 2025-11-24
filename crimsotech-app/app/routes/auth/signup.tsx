@@ -1,4 +1,4 @@
-import type { Route } from './+types/login';
+import type { Route } from './+types/signup';
 import { SignupForm } from '~/components/auth/signup-form';
 import { Card } from '~/components/ui/card';
 import { Link } from 'react-router';
@@ -15,26 +15,23 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
-  if (session.has("userId")) {
-    const response = await AxiosInstance.get('/register/', {
-      headers: {
-        "X-User-Id": session.get("userId")
-      }
-    });
-
-    if(response.data.is_rider == true) {
-      if(response.data.registration_stage == 1) return
-      if(response.data.registration_stage == 2) throw redirect('/profiling')
-      if(response.data.registration_stage == 3) throw redirect('/number')
-      if(response.data.registration_stage == 4) throw redirect('/rider')
-      }
-    if(response.data.registration_stage == 1) throw redirect('/profiling')
-    if(response.data.registration_stage == 2) throw redirect('/number')
-    if(response.data.registration_stage == 4) throw redirect('/home')
+  const { registrationMiddleware } = await import("~/middleware/registration.server");
+  
+  // Apply the middleware
+  const middlewareResult = await registrationMiddleware({ 
+    request, 
+    context, 
+    params: {}, 
+    unstable_pattern: undefined 
+  } as any);
+  
+  // If middleware returned a redirect, return it
+  if (middlewareResult) {
+    return middlewareResult;
   }
 
   return data({}, {
