@@ -1,5 +1,5 @@
 // app/routes/admin/checkouts.tsx
-import type { Route } from './+types/checkouts';
+import type { Route } from './+types/orders';
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { 
@@ -52,8 +52,8 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
-// Interface that matches Django models
-interface Checkout {
+// Interface that matches Django AdminOrders response
+interface OrderItem {
   id: string;
   cart_item: {
     id: string;
@@ -88,22 +88,40 @@ interface Checkout {
   created_at: string;
 }
 
+interface Order {
+  order_id: string;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+  };
+  status: string;
+  total_amount: number;
+  payment_method: string;
+  delivery_address: string;
+  created_at: string;
+  updated_at: string;
+  items: OrderItem[];
+}
+
 interface LoaderData {
   user: any;
-  checkoutMetrics: {
-    total_checkouts: number;
-    pending_checkouts: number;
-    completed_checkouts: number;
-    cancelled_checkouts: number;
+  orderMetrics: {
+    total_orders: number;
+    pending_orders: number;
+    completed_orders: number;
+    cancelled_orders: number;
     total_revenue: number;
-    today_checkouts: number;
-    monthly_checkouts: number;
-    avg_checkout_value: number;
+    today_orders: number;
+    monthly_orders: number;
+    avg_order_value: number;
     success_rate: number;
   };
-  checkouts: Checkout[];
+  orders: Order[];
   analytics: {
-    daily_checkouts: Array<{
+    daily_orders: Array<{
       date: string;
       count: number;
       revenue: number;
@@ -139,36 +157,36 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const session = await getSession(request.headers.get("Cookie"));
 
   // Initialize empty data structures
-  let checkoutMetrics = {
-    total_checkouts: 0,
-    pending_checkouts: 0,
-    completed_checkouts: 0,
-    cancelled_checkouts: 0,
+  let orderMetrics = {
+    total_orders: 0,
+    pending_orders: 0,
+    completed_orders: 0,
+    cancelled_orders: 0,
     total_revenue: 0,
-    today_checkouts: 0,
-    monthly_checkouts: 0,
-    avg_checkout_value: 0,
+    today_orders: 0,
+    monthly_orders: 0,
+    avg_order_value: 0,
     success_rate: 0,
   };
 
-  let checkoutsList: Checkout[] = [];
+  let ordersList: Order[] = [];
   let analyticsData: LoaderData['analytics'] = {
-    daily_checkouts: [],
+    daily_orders: [],
     status_distribution: [],
     payment_method_distribution: []
   };
 
   try {
-    // Fetch real data from API
-    const response = await AxiosInstance.get('/admin-checkouts/get_metrics/', {
+    // Fetch real data from API - Updated endpoint to match your Django URL
+    const response = await AxiosInstance.get('/admin-orders/get_metrics/', {
       headers: {
         "X-User-Id": session.get("userId")
       }
     });
 
     if (response.data.success) {
-      checkoutMetrics = response.data.metrics || checkoutMetrics;
-      checkoutsList = response.data.checkouts || [];
+      orderMetrics = response.data.metrics || orderMetrics;
+      ordersList = response.data.orders || [];
       analyticsData = response.data.analytics || analyticsData;
     }
   } catch (error) {
@@ -178,8 +196,8 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
   return { 
     user, 
-    checkoutMetrics,
-    checkouts: checkoutsList,
+    orderMetrics,
+    orders: ordersList,
     analytics: analyticsData
   };
 }
@@ -199,62 +217,78 @@ const EmptyChart = ({ message }: { message: string }) => (
 const EmptyTable = () => (
   <div className="flex items-center justify-center h-32">
     <div className="text-center text-muted-foreground">
-      <p>No checkouts found</p>
+      <p>No orders found</p>
     </div>
   </div>
 );
 
 export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
-  const { user, checkoutMetrics, checkouts, analytics } = loaderData;
+  const { user, orderMetrics, orders, analytics } = loaderData;
 
   if (!loaderData) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div>Loading checkouts...</div>
+        <div>Loading orders...</div>
       </div>
     );
   }
 
-  const safeCheckouts = checkouts || [];
+  const safeOrders = orders || [];
   const safeAnalytics = analytics || {
-    daily_checkouts: [],
+    daily_orders: [],
     status_distribution: [],
     payment_method_distribution: []
   };
-  const safeMetrics = checkoutMetrics || {
-    total_checkouts: 0,
-    pending_checkouts: 0,
-    completed_checkouts: 0,
-    cancelled_checkouts: 0,
+  const safeMetrics = orderMetrics || {
+    total_orders: 0,
+    pending_orders: 0,
+    completed_orders: 0,
+    cancelled_orders: 0,
     total_revenue: 0,
-    today_checkouts: 0,
-    monthly_checkouts: 0,
-    avg_checkout_value: 0,
+    today_orders: 0,
+    monthly_orders: 0,
+    avg_order_value: 0,
     success_rate: 0,
   };
 
- 
+  // Flatten orders into individual items for the table
+  const orderItems = safeOrders.flatMap(order => 
+    order.items.map(item => ({
+      ...item,
+      order_id: order.order_id,
+      order_user: order.user,
+      payment_method: order.payment_method,
+      delivery_address: order.delivery_address,
+      order_created_at: order.created_at,
+      order_status: order.status
+    }))
+  );
 
-  const hasCheckouts = safeCheckouts.length > 0;
-  const hasAnalyticsData = safeAnalytics.daily_checkouts.length > 0 || 
+  const hasOrders = safeOrders.length > 0;
+  const hasOrderItems = orderItems.length > 0;
+  const hasAnalyticsData = safeAnalytics.daily_orders.length > 0 || 
                           safeAnalytics.status_distribution.length > 0 || 
                           safeAnalytics.payment_method_distribution.length > 0;
 
-  
-// Before the component return, transform the data to include shopName
-  const transformedCheckouts = safeCheckouts.map(checkout => ({
-    ...checkout,
-    shopName: checkout.cart_item?.product?.shop?.name || 'Unknown Shop'
+  // Transform data to include shopName for filtering
+  const transformedOrderItems = orderItems.map(item => ({
+    ...item,
+    shopName: item.cart_item?.product?.shop?.name || 'Unknown Shop',
+    customerName: `${item.cart_item?.user?.first_name || ''} ${item.cart_item?.user?.last_name || ''}`.trim() || 'Unknown Customer'
   }));
 
-  const checkoutFilterConfig = {
+  const orderFilterConfig = {
     status: {
-      options: [...new Set(safeCheckouts.map(checkout => checkout.status))],
+      options: [...new Set(transformedOrderItems.map(item => item.status))],
       placeholder: 'Status'
     },
-    shopName: { // Changed from 'shop' to 'shopName' to match the accessor
-      options: [...new Set(transformedCheckouts.map(checkout => checkout.shopName))].filter(Boolean),
+    shopName: {
+      options: [...new Set(transformedOrderItems.map(item => item.shopName))].filter(Boolean),
       placeholder: 'Shop'
+    },
+    order_status: {
+      options: [...new Set(transformedOrderItems.map(item => item.order_status))],
+      placeholder: 'Order Status'
     }
   };
 
@@ -265,8 +299,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">Checkouts</h1>
-              <p className="text-muted-foreground mt-1">Manage and monitor all customer checkouts</p>
+              <h1 className="text-2xl sm:text-3xl font-bold">Orders</h1>
             </div>
           </div>
 
@@ -276,9 +309,9 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
               <CardContent className="p-4 sm:p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">Total Checkouts</p>
-                    <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_checkouts}</p>
-                    <p className="text-xs text-muted-foreground mt-2">{safeMetrics.today_checkouts} today</p>
+                    <p className="text-sm text-muted-foreground">Total Orders</p>
+                    <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_orders}</p>
+                    <p className="text-xs text-muted-foreground mt-2">{safeMetrics.today_orders} today</p>
                   </div>
                   <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
                     <ShoppingCart className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
@@ -293,7 +326,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                   <div>
                     <p className="text-sm text-muted-foreground">Total Revenue</p>
                     <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.total_revenue.toLocaleString()}</p>
-                    <p className="text-xs text-muted-foreground mt-2">From all checkouts</p>
+                    <p className="text-xs text-muted-foreground mt-2">From all orders</p>
                   </div>
                   <div className="p-2 sm:p-3 bg-green-100 rounded-full">
                     <DollarSign className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
@@ -308,7 +341,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                   <div>
                     <p className="text-sm text-muted-foreground">Success Rate</p>
                     <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.success_rate}%</p>
-                    <p className="text-xs text-muted-foreground mt-2">Checkout completion</p>
+                    <p className="text-xs text-muted-foreground mt-2">Order completion</p>
                   </div>
                   <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
                     <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
@@ -322,8 +355,8 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Avg. Order Value</p>
-                    <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.avg_checkout_value}</p>
-                    <p className="text-xs text-muted-foreground mt-2">Per checkout</p>
+                    <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.avg_order_value}</p>
+                    <p className="text-xs text-muted-foreground mt-2">Per order</p>
                   </div>
                   <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
                     <CreditCard className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
@@ -340,7 +373,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Completed</p>
-                    <p className="text-lg font-bold mt-1 text-green-600">{safeMetrics.completed_checkouts}</p>
+                    <p className="text-lg font-bold mt-1 text-green-600">{safeMetrics.completed_orders}</p>
                   </div>
                   <CheckCircle className="w-4 h-4 text-green-600" />
                 </div>
@@ -351,7 +384,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Pending</p>
-                    <p className="text-lg font-bold mt-1 text-yellow-600">{safeMetrics.pending_checkouts}</p>
+                    <p className="text-lg font-bold mt-1 text-yellow-600">{safeMetrics.pending_orders}</p>
                   </div>
                   <Clock className="w-4 h-4 text-yellow-600" />
                 </div>
@@ -362,7 +395,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Cancelled</p>
-                    <p className="text-lg font-bold mt-1 text-red-600">{safeMetrics.cancelled_checkouts}</p>
+                    <p className="text-lg font-bold mt-1 text-red-600">{safeMetrics.cancelled_orders}</p>
                   </div>
                   <XCircle className="w-4 h-4 text-red-600" />
                 </div>
@@ -373,7 +406,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">This Month</p>
-                    <p className="text-lg font-bold mt-1 text-blue-600">{safeMetrics.monthly_checkouts}</p>
+                    <p className="text-lg font-bold mt-1 text-blue-600">{safeMetrics.monthly_orders}</p>
                   </div>
                   <Calendar className="w-4 h-4 text-blue-600" />
                 </div>
@@ -383,30 +416,30 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
 
           {/* Analytics Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            {/* Daily Checkouts Trend */}
+            {/* Daily Orders Trend */}
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-lg sm:text-xl">Daily Checkouts Trend</CardTitle>
-                <CardDescription>Checkout activity over the past week</CardDescription>
+                <CardTitle className="text-lg sm:text-xl">Daily Orders Trend</CardTitle>
+                <CardDescription>Order activity over the past week</CardDescription>
               </CardHeader>
               <CardContent>
-                {safeAnalytics.daily_checkouts.length > 0 ? (
+                {safeAnalytics.daily_orders.length > 0 ? (
                   <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={safeAnalytics.daily_checkouts}>
+                    <BarChart data={safeAnalytics.daily_orders}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="date" fontSize={12} />
                       <YAxis fontSize={12} />
                       <Tooltip 
                         formatter={(value, name) => {
                           if (name === 'revenue') return [`₱${Number(value).toLocaleString()}`, 'Revenue'];
-                          return [value, 'Checkouts'];
+                          return [value, 'Orders'];
                         }}
                       />
-                      <Bar dataKey="count" fill="#3b82f6" name="Checkouts" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="count" fill="#3b82f6" name="Orders" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <EmptyChart message="No checkout trend data available" />
+                  <EmptyChart message="No order trend data available" />
                 )}
               </CardContent>
             </Card>
@@ -415,7 +448,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg sm:text-xl">Status Distribution</CardTitle>
-                <CardDescription>Breakdown of checkout statuses</CardDescription>
+                <CardDescription>Breakdown of order statuses</CardDescription>
               </CardHeader>
               <CardContent>
                 {safeAnalytics.status_distribution.length > 0 ? (
@@ -482,19 +515,19 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
             </CardContent>
           </Card>
 
-          {/* Checkouts Table */}
+          {/* Orders Table */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg sm:text-xl">All Checkouts</CardTitle>
-              <CardDescription>Manage and view all customer checkouts</CardDescription>
+              <CardTitle className="text-lg sm:text-xl">All Order Items</CardTitle>
+              <CardDescription>Manage and view all customer order items</CardDescription>
             </CardHeader>
             <CardContent>
-              {hasCheckouts ? (
+              {hasOrderItems ? (
                 <div className="rounded-md">
                   <DataTable 
                     columns={columns} 
-                    data={transformedCheckouts}
-                    filterConfig={checkoutFilterConfig}
+                    data={transformedOrderItems}
+                    filterConfig={orderFilterConfig}
                     searchConfig={{
                       column: "customerName",
                       placeholder: "Search by customer name..."
@@ -512,9 +545,9 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
   );
 }
 
-const columns: ColumnDef<Checkout>[] = [
+const columns: ColumnDef<any>[] = [
   {
-    accessorKey: "id",
+    accessorKey: "order_id",
     header: ({ column }) => {
       return (
         <Button
@@ -522,11 +555,18 @@ const columns: ColumnDef<Checkout>[] = [
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           className="text-xs sm:text-sm"
         >
-          Checkout ID
+          Order ID
           <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
         </Button>
       )
     },
+    cell: ({ row }: { row: any}) => (
+      <div className="font-medium text-xs sm:text-sm">{row.getValue("order_id")?.slice(0, 8)}...</div>
+    ),
+  },
+  {
+    accessorKey: "id",
+    header: "Item ID",
     cell: ({ row }: { row: any}) => (
       <div className="font-medium text-xs sm:text-sm">{row.getValue("id")?.slice(0, 8)}...</div>
     ),
@@ -568,7 +608,7 @@ const columns: ColumnDef<Checkout>[] = [
     },
   },
   {
-    accessorKey: "shopName", // Add this accessor for filtering
+    accessorKey: "shopName",
     header: "Shop",
     cell: ({ row }: { row: any}) => {
       const shop = row.original.cart_item?.product?.shop;
@@ -619,7 +659,7 @@ const columns: ColumnDef<Checkout>[] = [
   },
   {
     accessorKey: "status",
-    header: "Status",
+    header: "Item Status",
     cell: ({ row }: { row: any}) => {
       const status = row.getValue("status") as string;
       const getColor = (status: string) => {
@@ -658,7 +698,47 @@ const columns: ColumnDef<Checkout>[] = [
     },
   },
   {
-    accessorKey: "created_at",
+    accessorKey: "order_status",
+    header: "Order Status",
+    cell: ({ row }: { row: any}) => {
+      const status = row.getValue("order_status") as string;
+      const getColor = (status: string) => {
+        switch(status?.toLowerCase()) {
+          case 'completed': return '#10b981';
+          case 'paid': return '#3b82f6';
+          case 'pending': return '#f59e0b';
+          case 'cancelled': return '#ef4444';
+          case 'failed': return '#6b7280';
+          default: return '#6b7280';
+        }
+      };
+      const getIcon = (status: string) => {
+        switch(status?.toLowerCase()) {
+          case 'completed': return <CheckCircle className="w-3 h-3" />;
+          case 'paid': return <DollarSign className="w-3 h-3" />;
+          case 'pending': return <Clock className="w-3 h-3" />;
+          case 'cancelled': return <XCircle className="w-3 h-3" />;
+          case 'failed': return <AlertCircle className="w-3 h-3" />;
+          default: return <AlertCircle className="w-3 h-3" />;
+        }
+      };
+      const color = getColor(status);
+      const icon = getIcon(status);
+      
+      return (
+        <Badge 
+          variant="secondary"
+          className="text-xs capitalize flex items-center gap-1"
+          style={{ backgroundColor: `${color}20`, color: color }}
+        >
+          {icon}
+          {status || 'Unknown'}
+        </Badge>
+      );
+    },
+  },
+  {
+    accessorKey: "order_created_at",
     header: ({ column }) => {
       return (
         <Button
@@ -672,7 +752,7 @@ const columns: ColumnDef<Checkout>[] = [
       )
     },
     cell: ({ row }: { row: any}) => {
-      const date = new Date(row.getValue("created_at"));
+      const date = new Date(row.getValue("order_created_at"));
       if (isNaN(date.getTime())) return <div className="text-muted-foreground">N/A</div>;
       
       const formattedDate = date.toLocaleDateString('en-US', {

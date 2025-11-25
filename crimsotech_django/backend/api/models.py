@@ -517,10 +517,29 @@ class CartItem(models.Model):
     def __str__(self):
         return f"{self.quantity} x {self.product.name if self.product else 'Unknown Product'}"
 
+class Order(models.Model):
+    order = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    status = models.CharField(max_length=20, choices=[('pending','Pending'),('completed','Completed'),('cancelled','Cancelled')])
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=50)
+    delivery_address = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Order {self.order} by {self.user.username}"
+    
 class Checkout(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     voucher = models.ForeignKey(
         'Voucher',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    order = models.ForeignKey(
+        Order,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -570,3 +589,4 @@ class Review(models.Model):
 
     def __str__(self):
         return f"Review by {self.customer} - {self.rating} stars"
+

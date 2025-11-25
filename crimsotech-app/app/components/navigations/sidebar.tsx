@@ -48,7 +48,7 @@ const menuItems = [
   {
     group: "Orders & Delivery",
     children: [
-      { title: "Checkouts", url: "/admin/checkouts", icon: List, roles: ["admin"] },
+      { title: "Orders", url: "/admin/orders", icon: List, roles: ["admin"] },
       { title: "Riders", url: "/admin/riders", icon: Bike, roles: ["admin"] },
       { title: "Ratings", url: "/admin/ratings", icon: Star, roles: ["admin"] },
     ]
