@@ -590,3 +590,27 @@ class Review(models.Model):
     def __str__(self):
         return f"Review by {self.customer} - {self.rating} stars"
 
+class Delivery(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE)
+    rider = models.ForeignKey(Rider, on_delete=models.SET_NULL, null=True)
+    status = models.CharField(max_length=20, choices=[('pending','Pending'),('picked_up','Picked Up'),('delivered','Delivered')])
+    picked_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Delivery {self.id} for Order {self.order.order}"
+    
+class Payment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=50)
+    status = models.CharField(max_length=20, choices=[('success','Success'),('failed','Failed')])
+    transaction_date = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    def __str__(self):
+        return f"Payment {self.id} for Order {self.order.order}"

@@ -1881,3 +1881,406 @@ class AdminOrders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class AdminRiders(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """Get rider metrics and analytics data for admin dashboard"""
+        try:
+            # Calculate date ranges
+            today = timezone.now().date()
+            month_ago = today - timedelta(days=30)
+            
+            # Get all riders
+            all_riders = Rider.objects.all()
+            total_riders = all_riders.count()
+            
+            # Calculate rider status counts based on verification and approval
+            pending_riders = all_riders.filter(verified=False, approval_date__isnull=True).count()
+            approved_riders = all_riders.filter(verified=True, approval_date__isnull=False).count()
+            
+            # Get active riders (those with deliveries in the last 30 days)
+            active_rider_ids = Delivery.objects.filter(
+                created_at__date__gte=month_ago
+            ).values_list('rider_id', flat=True).distinct()
+            active_riders = all_riders.filter(rider_id__in=active_rider_ids).count()
+            
+            # Delivery statistics
+            total_deliveries = Delivery.objects.count()
+            completed_deliveries = Delivery.objects.filter(status='delivered').count()
+            
+            # Success rate
+            success_rate = Decimal('0')
+            if total_deliveries > 0:
+                success_rate = (completed_deliveries / total_deliveries) * 100
+            
+            # Average rating from reviews (assuming reviews can be for riders via deliveries)
+            # This would need a proper relationship between reviews and riders
+            average_rating = Decimal('4.5')  # Placeholder - you'd need to implement this
+            
+            # Total earnings (from completed deliveries)
+            # This would need a proper earnings model or calculation
+            total_earnings = Decimal('0')  # Placeholder
+            
+            # Compile metrics
+            rider_metrics = {
+                'total_riders': total_riders,
+                'pending_riders': pending_riders,
+                'approved_riders': approved_riders,
+                'active_riders': active_riders,
+                'total_deliveries': total_deliveries,
+                'completed_deliveries': completed_deliveries,
+                'success_rate': float(success_rate),
+                'average_rating': float(average_rating),
+                'total_earnings': float(total_earnings),
+            }
+            
+            # Get analytics data
+            analytics_data = self._get_analytics_data()
+            
+            # Get riders with related data
+            riders_data = self._get_riders_data()
+            
+            return Response({
+                'success': True,
+                'metrics': rider_metrics,
+                'analytics': analytics_data,
+                'riders': riders_data
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_analytics_data(self):
+        """Generate analytics data for charts"""
+        today = timezone.now().date()
+        
+        # Rider registrations for the past 30 days
+        rider_registrations = []
+        for i in range(29, -1, -1):  # Last 30 days including today
+            date = today - timedelta(days=i)
+            count = Rider.objects.filter(
+                rider__created_at__date=date
+            ).count()
+            
+            rider_registrations.append({
+                'date': date.strftime('%b %d'),
+                'count': count
+            })
+        
+        # Status distribution
+        status_distribution = [
+            {
+                'name': 'Approved',
+                'value': Rider.objects.filter(verified=True, approval_date__isnull=False).count()
+            },
+            {
+                'name': 'Pending',
+                'value': Rider.objects.filter(verified=False, approval_date__isnull=True).count()
+            },
+            {
+                'name': 'Rejected',
+                'value': Rider.objects.filter(verified=False, approval_date__isnull=False).count()
+            }
+        ]
+        
+        # Vehicle type distribution
+        vehicle_type_distribution = []
+        vehicle_counts = Rider.objects.exclude(vehicle_type='').values('vehicle_type').annotate(count=Count('rider'))
+        
+        for vehicle_data in vehicle_counts:
+            vehicle_type_distribution.append({
+                'name': vehicle_data['vehicle_type'],
+                'value': vehicle_data['count']
+            })
+        
+        # Performance trends (last 6 months)
+        performance_trends = []
+        for i in range(5, -1, -1):
+            month_start = today.replace(day=1) - timedelta(days=30*i)
+            month_name = month_start.strftime('%b %Y')
+            
+            # This would need proper implementation based on your business logic
+            performance_trends.append({
+                'month': month_name,
+                'deliveries': Delivery.objects.filter(
+                    created_at__year=month_start.year,
+                    created_at__month=month_start.month
+                ).count(),
+                'earnings': 0,  # Placeholder - implement based on your earnings model
+                'rating': 4.5   # Placeholder - implement based on your rating system
+            })
+        
+        return {
+            'rider_registrations': rider_registrations,
+            'status_distribution': status_distribution,
+            'vehicle_type_distribution': vehicle_type_distribution,
+            'performance_trends': performance_trends
+        }
+    
+    def _get_riders_data(self, limit=50):
+        """Get riders with all related data"""
+        riders = Rider.objects.select_related(
+            'rider',
+            'approved_by'
+        ).prefetch_related(
+            'delivery_set'
+        ).order_by('-rider__created_at')[:limit]
+        
+        rider_list = []
+        
+        for rider in riders:
+            # Calculate performance metrics for this rider
+            rider_deliveries = rider.delivery_set.all()
+            total_deliveries = rider_deliveries.count()
+            completed_deliveries = rider_deliveries.filter(status='delivered').count()
+            
+            # Compute rider status based on verification and approval
+            if rider.verified and rider.approval_date:
+                rider_status = 'approved'
+            elif not rider.verified and not rider.approval_date:
+                rider_status = 'pending'
+            elif not rider.verified and rider.approval_date:
+                rider_status = 'rejected'
+            else:
+                rider_status = 'pending'
+            
+            rider_data = {
+                'rider': {
+                    'id': str(rider.rider.id),
+                    'username': rider.rider.username,
+                    'email': rider.rider.email,
+                    'first_name': rider.rider.first_name,
+                    'last_name': rider.rider.last_name,
+                    'contact_number': rider.rider.contact_number,
+                    'created_at': rider.rider.created_at.isoformat() if rider.rider.created_at else None,
+                    'is_rider': rider.rider.is_rider,
+                },
+                'vehicle_type': rider.vehicle_type,
+                'plate_number': rider.plate_number,
+                'vehicle_brand': rider.vehicle_brand,
+                'vehicle_model': rider.vehicle_model,
+                'vehicle_image': rider.vehicle_image.url if rider.vehicle_image else None,
+                'license_number': rider.license_number,
+                'license_image': rider.license_image.url if rider.license_image else None,
+                'verified': rider.verified,
+                'approved_by': {
+                    'id': str(rider.approved_by.id),
+                    'username': rider.approved_by.username,
+                } if rider.approved_by else None,
+                'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
+                # Computed fields for frontend
+                'total_deliveries': total_deliveries,
+                'completed_deliveries': completed_deliveries,
+                'average_rating': 4.5,  # Placeholder - implement proper rating calculation
+                'total_earnings': 0,    # Placeholder - implement proper earnings calculation
+                'rider_status': rider_status,
+            }
+            
+            rider_list.append(rider_data)
+        
+        return rider_list
+    
+    @action(detail=False, methods=['get'])
+    def get_rider_details(self, request):
+        """Get detailed rider information"""
+        rider_id = request.query_params.get('rider_id')
+        
+        if not rider_id:
+            return Response({
+                'success': False,
+                'error': 'Rider ID is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            rider = Rider.objects.select_related(
+                'rider',
+                'approved_by'
+            ).prefetch_related(
+                'delivery_set',
+                'delivery_set__order'
+            ).get(rider_id=rider_id)
+            
+            # Get rider's delivery history
+            deliveries = rider.delivery_set.select_related('order').all()
+            delivery_history = []
+            
+            for delivery in deliveries:
+                delivery_data = {
+                    'id': str(delivery.id),
+                    'order_id': str(delivery.order.order),
+                    'status': delivery.status,
+                    'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
+                    'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                    'created_at': delivery.created_at.isoformat(),
+                }
+                delivery_history.append(delivery_data)
+            
+            # Calculate performance metrics
+            total_deliveries = deliveries.count()
+            completed_deliveries = deliveries.filter(status='delivered').count()
+            success_rate = (completed_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0
+            
+            rider_details = {
+                'rider': {
+                    'id': str(rider.rider.id),
+                    'username': rider.rider.username,
+                    'email': rider.rider.email,
+                    'first_name': rider.rider.first_name,
+                    'last_name': rider.rider.last_name,
+                    'contact_number': rider.rider.contact_number,
+                    'created_at': rider.rider.created_at.isoformat(),
+                    'is_rider': rider.rider.is_rider,
+                },
+                'vehicle_info': {
+                    'type': rider.vehicle_type,
+                    'plate_number': rider.plate_number,
+                    'brand': rider.vehicle_brand,
+                    'model': rider.vehicle_model,
+                    'vehicle_image': rider.vehicle_image.url if rider.vehicle_image else None,
+                },
+                'license_info': {
+                    'number': rider.license_number,
+                    'image': rider.license_image.url if rider.license_image else None,
+                },
+                'verification_info': {
+                    'verified': rider.verified,
+                    'approved_by': rider.approved_by.username if rider.approved_by else None,
+                    'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
+                },
+                'performance': {
+                    'total_deliveries': total_deliveries,
+                    'completed_deliveries': completed_deliveries,
+                    'success_rate': float(success_rate),
+                    'average_rating': 4.5,  # Placeholder
+                    'total_earnings': 0,    # Placeholder
+                },
+                'delivery_history': delivery_history,
+            }
+            
+            return Response({
+                'success': True,
+                'rider': rider_details
+            })
+            
+        except Rider.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Rider not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def update_rider_status(self, request):
+        """Approve or reject rider"""
+        rider_id = request.data.get('rider_id')
+        action_type = request.data.get('action')  # 'approve' or 'reject'
+        
+        if not rider_id or not action_type:
+            return Response({
+                'success': False,
+                'error': 'Rider ID and action are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            rider = Rider.objects.get(rider_id=rider_id)
+            
+            if action_type == 'approve':
+                rider.verified = True
+                rider.approval_date = timezone.now()
+                rider.approved_by = request.user
+                message = 'Rider approved successfully'
+            elif action_type == 'reject':
+                rider.verified = False
+                rider.approval_date = timezone.now()
+                rider.approved_by = request.user
+                message = 'Rider rejected successfully'
+            else:
+                return Response({
+                    'success': False,
+                    'error': 'Invalid action. Use "approve" or "reject"'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            rider.save()
+            
+            return Response({
+                'success': True,
+                'message': message
+            })
+            
+        except Rider.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Rider not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def get_rider_stats(self, request):
+        """Get additional rider statistics"""
+        try:
+            # Time-based statistics
+            today = timezone.now().date()
+            week_ago = today - timedelta(days=7)
+            month_ago = today - timedelta(days=30)
+            
+            # Delivery statistics
+            weekly_deliveries = Delivery.objects.filter(
+                created_at__date__gte=week_ago
+            ).count()
+            
+            monthly_deliveries = Delivery.objects.filter(
+                created_at__date__gte=month_ago
+            ).count()
+            
+            # Top riders by delivery count
+            top_riders = Rider.objects.annotate(
+                delivery_count=Count('delivery'),
+                completed_deliveries=Count('delivery', filter=Q(delivery__status='delivered'))
+            ).filter(delivery_count__gt=0).order_by('-delivery_count')[:10]
+            
+            top_riders_data = []
+            for rider in top_riders:
+                top_riders_data.append({
+                    'username': rider.rider.username,
+                    'first_name': rider.rider.first_name,
+                    'last_name': rider.rider.last_name,
+                    'delivery_count': rider.delivery_count,
+                    'completed_deliveries': rider.completed_deliveries,
+                    'success_rate': (rider.completed_deliveries / rider.delivery_count * 100) if rider.delivery_count > 0 else 0
+                })
+            
+            # Vehicle type statistics
+            vehicle_stats = Rider.objects.exclude(vehicle_type='').values('vehicle_type').annotate(
+                count=Count('rider'),
+                active_count=Count('rider', filter=Q(delivery__created_at__date__gte=month_ago))
+            )
+            
+            stats = {
+                'weekly_deliveries': weekly_deliveries,
+                'monthly_deliveries': monthly_deliveries,
+                'top_riders': top_riders_data,
+                'vehicle_stats': list(vehicle_stats)
+            }
+            
+            return Response({
+                'success': True,
+                'stats': stats
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

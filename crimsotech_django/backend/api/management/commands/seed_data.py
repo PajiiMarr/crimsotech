@@ -1,3 +1,4 @@
+from django.apps import apps
 from django.db.models import Count, Q, Sum
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -13,6 +14,9 @@ class Command(BaseCommand):
     help = "Seed the database with comprehensive shop and product data"
 
     def handle(self, *args, **kwargs):
+
+        self.cleanup_existing_data()
+        
         self.stdout.write("🌱 Starting comprehensive shop data seeding...")
         
         try:
@@ -58,6 +62,8 @@ class Command(BaseCommand):
                 self.create_checkout_data(products, customers, shops, admin_user)
                 # Create checkout analytics data
                 self.create_order_analytics_data()
+
+                self.create_rider_data(products, customers, shops, admin_user)
                 
                 self.stdout.write(self.style.SUCCESS("✅ Comprehensive shop data seeded successfully!"))
                 
@@ -1473,3 +1479,242 @@ class Command(BaseCommand):
             self.stdout.write(f"   ✅ Created {num_checkouts} checkouts for order {order.order}")
         
         self.stdout.write(self.style.SUCCESS(f"✅ Created {checkout_count} checkouts with order associations"))
+
+    def create_rider_data(self, products, customers, shops, admin_user):
+        """Create comprehensive rider data with all related entities"""
+        self.stdout.write("🏍️ Creating rider data...")
+        
+        # Create simple placeholder images (text-based)
+        self.stdout.write("   🖼️ Creating placeholder images...")
+        
+        # Create rider users
+        rider_users = []
+        rider_data = [
+            {
+                'username': 'rider_john',
+                'email': 'john.rider@example.com',
+                'first_name': 'John',
+                'last_name': 'Dela Cruz',
+                'contact_number': '+639171234567',
+                'vehicle_type': 'Motorcycle',
+                'plate_number': 'ABC123',
+                'vehicle_brand': 'Honda',
+                'vehicle_model': 'Click 125',
+                'license_number': 'L123456789',
+                'verified': True,
+            },
+            {
+                'username': 'rider_maria',
+                'email': 'maria.santos@example.com',
+                'first_name': 'Maria',
+                'last_name': 'Santos',
+                'contact_number': '+639271234568',
+                'vehicle_type': 'Motorcycle',
+                'plate_number': 'XYZ789',
+                'vehicle_brand': 'Yamaha',
+                'vehicle_model': 'NMAX',
+                'license_number': 'L987654321',
+                'verified': True,
+            },
+            {
+                'username': 'rider_carlos',
+                'email': 'carlos.gomez@example.com',
+                'first_name': 'Carlos',
+                'last_name': 'Gomez',
+                'contact_number': '+639371234569',
+                'vehicle_type': 'Motorcycle',
+                'plate_number': 'DEF456',
+                'vehicle_brand': 'Suzuki',
+                'vehicle_model': 'Skydrive',
+                'license_number': 'L456789123',
+                'verified': False,
+            },
+            {
+                'username': 'rider_anna',
+                'email': 'anna.reyes@example.com',
+                'first_name': 'Anna',
+                'last_name': 'Reyes',
+                'contact_number': '+639471234570',
+                'vehicle_type': 'Bicycle',
+                'plate_number': 'GHI789',
+                'vehicle_brand': 'Trinx',
+                'vehicle_model': 'M136',
+                'license_number': 'L789123456',
+                'verified': True,
+            },
+            {
+                'username': 'rider_miguel',
+                'email': 'miguel.tan@example.com',
+                'first_name': 'Miguel',
+                'last_name': 'Tan',
+                'contact_number': '+639571234571',
+                'vehicle_type': 'Motorcycle',
+                'plate_number': 'JKL012',
+                'vehicle_brand': 'Kawasaki',
+                'vehicle_model': 'Rouser',
+                'license_number': 'L321654987',
+                'verified': False,
+            }
+        ]
+        
+        riders = []
+        for data in rider_data:
+            # Create user
+            user, created = User.objects.get_or_create(
+                username=data['username'],
+                defaults={
+                    'email': data['email'],
+                    'password': make_password('rider123'),
+                    'first_name': data['first_name'],
+                    'last_name': data['last_name'],
+                    'contact_number': data['contact_number'],
+                    'is_rider': True,
+                }
+            )
+            
+            if created:
+                rider_users.append(user)
+                self.stdout.write(f"   ✅ Created rider user: {user.username}")
+            
+            # Create placeholder image file names
+            vehicle_image_name = f"vehicle_{data['plate_number']}.jpg"
+            license_image_name = f"license_{data['license_number']}.jpg"
+            
+            # Create rider profile
+            rider, rider_created = Rider.objects.get_or_create(
+                rider=user,
+                defaults={
+                    'vehicle_type': data['vehicle_type'],
+                    'plate_number': data['plate_number'],
+                    'vehicle_brand': data['vehicle_brand'],
+                    'vehicle_model': data['vehicle_model'],
+                    'vehicle_image': f"riders/vehicles/{vehicle_image_name}",
+                    'license_number': data['license_number'],
+                    'license_image': f"riders/licenses/{license_image_name}",
+                    'verified': data['verified'],
+                    'approved_by': admin_user if data['verified'] else None,
+                    'approval_date': timezone.now() if data['verified'] else None,
+                }
+            )
+            
+            if rider_created:
+                riders.append(rider)
+                status = "approved" if data['verified'] else "pending"
+                self.stdout.write(f"   ✅ Created {status} rider: {user.first_name} {user.last_name}")
+                self.stdout.write(f"      Vehicle: {data['vehicle_brand']} {data['vehicle_model']} ({data['plate_number']})")
+                self.stdout.write(f"      License: {data['license_number']}")
+        
+        # Create actual placeholder image files
+        self.create_placeholder_images(riders)
+        
+        # Rest of the method remains the same...
+        self.stdout.write("   📦 Creating deliveries...")
+        # ... (keep all the existing delivery, log, notification, review creation code)
+        
+        return riders
+
+    def create_placeholder_images(self, riders):
+        """Create simple placeholder image files for riders"""
+        import os
+        from django.conf import settings
+        from PIL import Image, ImageDraw, ImageFont
+        import random
+        
+        # Create directories if they don't exist
+        vehicle_dir = os.path.join(settings.MEDIA_ROOT, 'riders/vehicles')
+        license_dir = os.path.join(settings.MEDIA_ROOT, 'riders/licenses')
+        
+        os.makedirs(vehicle_dir, exist_ok=True)
+        os.makedirs(license_dir, exist_ok=True)
+        
+        # Colors for different vehicle types
+        vehicle_colors = {
+            'Motorcycle': ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'],
+            'Bicycle': ['#A29BFE', '#FD79A8', '#FDCB6E', '#00B894', '#74B9FF']
+        }
+        
+        created_count = 0
+        
+        for rider in riders:
+            # Vehicle Image
+            vehicle_color = random.choice(vehicle_colors.get(rider.vehicle_type, ['#3498db']))
+            vehicle_image = Image.new('RGB', (400, 300), color=vehicle_color)
+            draw = ImageDraw.Draw(vehicle_image)
+            
+            # Add some simple graphics
+            draw.rectangle([50, 100, 350, 180], fill='#2c3e50')  # Vehicle body
+            draw.ellipse([80, 200, 150, 270], fill='#34495e')    # Wheel
+            draw.ellipse([250, 200, 320, 270], fill='#34495e')   # Wheel
+            
+            # Add text
+            try:
+                # Try to use a default font
+                font = ImageFont.load_default()
+                draw.text((200, 50), f"{rider.vehicle_brand}", fill='white', font=font, anchor='mm')
+                draw.text((200, 250), rider.plate_number, fill='white', font=font, anchor='mm')
+            except:
+                # Fallback if font loading fails
+                draw.text((200, 50), f"{rider.vehicle_brand}", fill='white', anchor='mm')
+                draw.text((200, 250), rider.plate_number, fill='white', anchor='mm')
+            
+            vehicle_filename = f"vehicle_{rider.plate_number}.jpg"
+            vehicle_path = os.path.join(vehicle_dir, vehicle_filename)
+            vehicle_image.save(vehicle_path, 'JPEG', quality=85)
+            
+            # License Image
+            license_image = Image.new('RGB', (400, 250), color='#f8f9fa')
+            draw = ImageDraw.Draw(license_image)
+            
+            # License card design
+            draw.rectangle([10, 10, 390, 240], outline='#dee2e6', width=2)
+            draw.rectangle([15, 15, 385, 60], fill='#007bff')
+            
+            try:
+                font = ImageFont.load_default()
+                draw.text((200, 35), "DRIVER'S LICENSE", fill='white', font=font, anchor='mm')
+                draw.text((50, 90), f"Name: {rider.rider.first_name} {rider.rider.last_name}", fill='black', font=font)
+                draw.text((50, 120), f"License No: {rider.license_number}", fill='black', font=font)
+                draw.text((50, 150), f"Vehicle: {rider.vehicle_type}", fill='black', font=font)
+                draw.text((50, 180), f"Expires: 12/2026", fill='black', font=font)
+            except:
+                draw.text((200, 35), "DRIVER'S LICENSE", fill='white', anchor='mm')
+                draw.text((50, 90), f"Name: {rider.rider.first_name} {rider.rider.last_name}", fill='black')
+                draw.text((50, 120), f"License No: {rider.license_number}", fill='black')
+                draw.text((50, 150), f"Vehicle: {rider.vehicle_type}", fill='black')
+                draw.text((50, 180), f"Expires: 12/2026", fill='black')
+            
+            license_filename = f"license_{rider.license_number}.jpg"
+            license_path = os.path.join(license_dir, license_filename)
+            license_image.save(license_path, 'JPEG', quality=85)
+            
+            created_count += 1
+        
+        self.stdout.write(f"   🖼️ Created {created_count * 2} placeholder images (vehicles & licenses)")
+
+    def cleanup_existing_data(self):
+        """Delete existing data to prevent duplicates"""
+        self.stdout.write("🧹 Cleaning up existing data...")
+        
+        # Define deletion order (respect foreign key constraints)
+        models_to_clean = [
+            'Checkout', 'Order', 'CartItem', 'CustomerActivity', 'Favorite', 'Review',
+            'ShopReview', 'ShopFollower', 'Boost', 'BoostPlan', 'Product', 'Category', 
+            'Shop', 'Customer', 'Rider', 'Voucher'
+        ]
+        
+        for model_name in models_to_clean:
+            try:
+                model = apps.get_model('api', model_name)
+                count, _ = model.objects.all().delete()
+                if count:
+                    self.stdout.write(f"   🗑️  Deleted {count} {model_name} records")
+            except Exception as e:
+                self.stdout.write(f"   ⚠️  Could not delete {model_name}: {e}")
+        
+        # Keep admin user but delete other users (except superusers)
+        try:
+            user_count = User.objects.filter(is_superuser=False).delete()[0]
+            if user_count:
+                self.stdout.write(f"   🗑️  Deleted {user_count} non-admin users")
+        except Exception as e:
+            self.stdout.write(f"   ⚠️  Could not delete users: {e}")

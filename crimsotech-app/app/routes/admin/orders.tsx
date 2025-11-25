@@ -47,7 +47,7 @@ import AxiosInstance from '~/components/axios/Axios';
 export function meta(): Route.MetaDescriptors {
   return [
     {
-      title: "Checkouts | Admin",
+      title: "Orders | Admin",
     },
   ];
 }

@@ -28,6 +28,7 @@ router.register(r'admin-products', AdminProduct, basename='admin-products')
 router.register(r'admin-shops', AdminShops, basename='admin-shops')
 router.register(r'admin-boosting', AdminBoosting, basename='admin-boosting')
 router.register(r'admin-orders', AdminOrders, basename='admin-orders')
+router.register(r'admin-riders', AdminRiders, basename='admin-riders')
 
 
 urlpatterns = [

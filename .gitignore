@@ -7,7 +7,7 @@ crimsotech_django/*$py.class
 crimsotech_django/*.log
 crimsotech_django/local_settings.py
 crimsotech_django/db.sqlite3
-crimsotech_django/media/
+crimsotech_django/backend/media/
 crimsotech_django/staticfiles/
 crimsotech_django/backend/backend/.env
 crimsotech_django/myenv/
