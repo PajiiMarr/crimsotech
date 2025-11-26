@@ -39,6 +39,7 @@ crimsotech-app/dist/
 crimsotech-app/.cache/
 crimsotech-app/.vite/
 crimsotech-app/.next/
+crimsotech-app/app/routes/admin/starters.tsx
 
 # =======================
 # React Native / Expo app

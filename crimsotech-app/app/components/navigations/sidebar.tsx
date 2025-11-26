@@ -56,13 +56,13 @@ const menuItems = [
     group: "Financial",
     children: [
       { title: "Vouchers", url: "/admin/vouchers", icon: Gift, roles: ["admin"] },
-      { title: "Refund Requests", url: "/admin/refund-requests", icon: AlertCircle, roles: ["admin"] },
-      { title: "Refund Verification", url: "/admin/refund-verification", icon: TicketCheck, roles: ["admin"] },
+      { title: "Refunds", url: "/admin/refunds", icon: AlertCircle, roles: ["admin"] },
     ]
   },
   {
     group: "Management",
     children: [
+      { title: "Users", url: "/admin/users", icon: Users, roles: ["admin"] },
       { title: "Manage Team", url: "/admin/team", icon: Users, roles: ["admin"] },
       { title: "Volunteers", url: "/admin/volunteers", icon: Users, roles: ["admin"] },
       { title: "Reports", url: "/admin/reports", icon: FileText, roles: ["admin"] },

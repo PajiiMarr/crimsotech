@@ -435,6 +435,8 @@ class Voucher(models.Model):
     code = models.CharField(max_length=20)
     discount_type = models.TextField()
     value = models.DecimalField(decimal_places=2, max_digits=9)
+    minimum_spend = models.DecimalField(decimal_places=2, max_digits=9, default=0.00)
+    maximum_usage = models.IntegerField(default=0)
     valid_until = models.DateField()
     added_at = models.DateField(auto_now_add=True)
     # Add the missing attributes
@@ -621,3 +623,23 @@ class Payment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     def __str__(self):
         return f"Payment {self.id} for Order {self.order.order}"
+
+class Refund(models.Model):
+    refund = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True)
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='refunds_requested')
+    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='refunds_processed')
+    reason = models.CharField(max_length=500)
+    status = models.CharField(max_length=20, choices=[('pending','Pending'),('approved','Approved'),('rejected','Rejected'), ('waiting','Waiting'), ('to process','To Process'), ('completed','Completed')])
+    requested_at = models.DateTimeField(auto_now_add=True)
+    logistic_service = models.CharField(max_length=100, null=True, blank=True)
+    tracking_number = models.CharField(max_length=100, null=True, blank=True)
+    preferred_refund_method = models.CharField(max_length=100, null=True, blank=True)
+    final_refund_method = models.CharField(max_length=100, null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+class RefundMedias(models.Model):
+    refund_media = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    refund = models.ForeignKey(Refund, on_delete=models.CASCADE)
+    file_data = models.FileField(upload_to="refunds/")
+    file_type = models.TextField()

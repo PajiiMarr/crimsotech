@@ -29,6 +29,8 @@ router.register(r'admin-shops', AdminShops, basename='admin-shops')
 router.register(r'admin-boosting', AdminBoosting, basename='admin-boosting')
 router.register(r'admin-orders', AdminOrders, basename='admin-orders')
 router.register(r'admin-riders', AdminRiders, basename='admin-riders')
+router.register(r'admin-vouchers', AdminVouchers, basename='admin-vouchers')
+router.register(r'admin-refunds', AdminRefunds, basename='admin-refunds')
 router.register(r'customer-products', CustomerProducts, basename='customer-products')
 
 

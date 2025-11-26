@@ -26,6 +26,9 @@ export default [
         route('boosting', 'routes/admin/boosting.tsx'),
         route('orders', 'routes/admin/orders.tsx'),
         route('riders', 'routes/admin/riders.tsx'),
+        route('vouchers', 'routes/admin/vouchers.tsx'),
+        route('refunds', 'routes/admin/refunds.tsx'),
+        route('users', 'routes/admin/users.tsx'),
     ]),
     ...prefix("moderator", [
         index("routes/moderator/home.tsx"),

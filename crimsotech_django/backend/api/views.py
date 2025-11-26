@@ -2286,6 +2286,553 @@ class AdminRiders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class AdminVouchers(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """
+        Get voucher metrics for admin dashboard
+        """
+        try:
+            # Calculate total vouchers
+            total_vouchers = Voucher.objects.count()
+            
+            # Calculate active vouchers (is_active=True and not expired)
+            now = timezone.now().date()
+            active_vouchers = Voucher.objects.filter(
+                is_active=True,
+                valid_until__gte=now
+            ).count()
+            
+            # Calculate expired vouchers
+            expired_vouchers = Voucher.objects.filter(
+                valid_until__lt=now
+            ).count()
+            
+            # Calculate total usage from Checkout model
+            total_usage = Checkout.objects.filter(
+                voucher__isnull=False
+            ).count()
+            
+            # Calculate total discount amount
+            # This would need to be calculated based on actual usage
+            # For now, we'll use a placeholder calculation
+            total_discount = Checkout.objects.filter(
+                voucher__isnull=False
+            ).aggregate(
+                total_discount=Sum('voucher__value')
+            )['total_discount'] or 0
+            
+            metrics = {
+                'total_vouchers': total_vouchers,
+                'active_vouchers': active_vouchers,
+                'expired_vouchers': expired_vouchers,
+                'total_usage': total_usage,
+                'total_discount': float(total_discount),
+            }
+            
+            return Response({
+                'success': True,
+                'metrics': metrics
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'])
+    def vouchers_list(self, request):
+        """
+        Get paginated list of vouchers with all required fields
+        """
+        try:
+            # Get query parameters
+            page = int(request.GET.get('page', 1))
+            page_size = int(request.GET.get('page_size', 10))
+            search = request.GET.get('search', '')
+            status_filter = request.GET.get('status', '')
+            discount_type = request.GET.get('discount_type', '')
+            shop_filter = request.GET.get('shop', '')
+            
+            # Start with all vouchers
+            vouchers_qs = Voucher.objects.select_related(
+                'shop', 'created_by'
+            ).prefetch_related(
+                'checkout_set'
+            ).all()
+            
+            # Apply search filter
+            if search:
+                vouchers_qs = vouchers_qs.filter(
+                    Q(name__icontains=search) |
+                    Q(code__icontains=search)
+                )
+            
+            # Apply status filter
+            now = timezone.now().date()
+            if status_filter:
+                if status_filter == 'active':
+                    vouchers_qs = vouchers_qs.filter(
+                        is_active=True,
+                        valid_until__gte=now
+                    )
+                elif status_filter == 'expired':
+                    vouchers_qs = vouchers_qs.filter(
+                        valid_until__lt=now
+                    )
+                elif status_filter == 'scheduled':
+                    vouchers_qs = vouchers_qs.filter(
+                        is_active=False,
+                        valid_until__gte=now
+                    )
+            
+            # Apply discount type filter
+            if discount_type:
+                vouchers_qs = vouchers_qs.filter(discount_type=discount_type)
+            
+            # Apply shop filter
+            if shop_filter:
+                if shop_filter == 'Global':
+                    vouchers_qs = vouchers_qs.filter(shop__isnull=True)
+                else:
+                    vouchers_qs = vouchers_qs.filter(shop__name=shop_filter)
+            
+            # Calculate total count before pagination
+            total_count = vouchers_qs.count()
+            
+            # Apply pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            vouchers_page = vouchers_qs[start_index:end_index]
+            
+            # Serialize voucher data
+            vouchers_data = []
+            for voucher in vouchers_page:
+                # Calculate usage count for this voucher
+                usage_count = voucher.checkout_set.count()
+                
+                # Get shop data if exists
+                shop_data = None
+                if voucher.shop:
+                    shop_data = {
+                        'id': str(voucher.shop.id),
+                        'name': voucher.shop.name
+                    }
+                
+                # Get created_by data if exists
+                created_by_data = None
+                if voucher.created_by:
+                    created_by_data = {
+                        'id': str(voucher.created_by.id),
+                        'username': voucher.created_by.username,
+                        'first_name': voucher.created_by.first_name,
+                        'last_name': voucher.created_by.last_name
+                    }
+                
+                # Determine status
+                status_value = 'active'
+                if not voucher.is_active:
+                    if voucher.valid_until >= now:
+                        status_value = 'scheduled'
+                    else:
+                        status_value = 'expired'
+                elif voucher.valid_until < now:
+                    status_value = 'expired'
+                
+                voucher_data = {
+                    'id': str(voucher.id),
+                    'name': voucher.name,
+                    'code': voucher.code,
+                    'shop': shop_data,
+                    'discount_type': voucher.discount_type,
+                    'value': float(voucher.value),
+                    'minimum_spend': float(voucher.minimum_spend),
+                    'maximum_usage': voucher.maximum_usage,
+                    'valid_until': voucher.valid_until.isoformat(),
+                    'added_at': voucher.added_at.isoformat(),
+                    'created_by': created_by_data,
+                    'is_active': voucher.is_active,
+                    'usage_count': usage_count,
+                    'status': status_value,
+                    'shopName': shop_data['name'] if shop_data else 'Global'
+                }
+                vouchers_data.append(voucher_data)
+            
+            # Get filter options for frontend
+            filter_options = {
+                'discount_types': list(Voucher.objects.values_list('discount_type', flat=True).distinct()),
+                'shops': list(Shop.objects.values_list('name', flat=True).distinct()),
+                'statuses': ['active', 'expired', 'scheduled']
+            }
+            
+            return Response({
+                'success': True,
+                'vouchers': vouchers_data,
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_count': total_count,
+                    'total_pages': (total_count + page_size - 1) // page_size
+                },
+                'filter_options': filter_options
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def toggle_active(self, request, pk=None):
+        """
+        Toggle voucher active status
+        """
+        try:
+            voucher = Voucher.objects.get(id=pk)
+            voucher.is_active = not voucher.is_active
+            voucher.save()
+            
+            return Response({
+                'success': True,
+                'is_active': voucher.is_active,
+                'message': f'Voucher {"activated" if voucher.is_active else "deactivated"} successfully'
+            })
+            
+        except Voucher.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Voucher not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['delete'])
+    def delete_voucher(self, request, pk=None):
+        """
+        Delete a voucher
+        """
+        try:
+            voucher = Voucher.objects.get(id=pk)
+            voucher_name = voucher.name
+            voucher.delete()
+            
+            return Response({
+                'success': True,
+                'message': f'Voucher "{voucher_name}" deleted successfully'
+            })
+            
+        except Voucher.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Voucher not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def bulk_action(self, request):
+        """
+        Perform bulk actions on vouchers
+        """
+        try:
+            voucher_ids = request.data.get('voucher_ids', [])
+            action_type = request.data.get('action', '')
+            
+            if not voucher_ids:
+                return Response({
+                    'success': False,
+                    'error': 'No vouchers selected'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            vouchers = Voucher.objects.filter(id__in=voucher_ids)
+            
+            if action_type == 'activate':
+                vouchers.update(is_active=True)
+                message = f'{vouchers.count()} vouchers activated successfully'
+            elif action_type == 'deactivate':
+                vouchers.update(is_active=False)
+                message = f'{vouchers.count()} vouchers deactivated successfully'
+            elif action_type == 'delete':
+                count = vouchers.count()
+                vouchers.delete()
+                message = f'{count} vouchers deleted successfully'
+            else:
+                return Response({
+                    'success': False,
+                    'error': 'Invalid action'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            return Response({
+                'success': True,
+                'message': message
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+  
+class AdminRefunds(viewsets.ViewSet):    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """Get refund metrics for admin dashboard"""
+        try:
+            # Calculate all metrics with proper model relationships
+            refunds_queryset = Refund.objects.select_related(
+                'order', 
+                'requested_by', 
+                'processed_by'
+            )
+            
+            # Total counts by status
+            status_counts = refunds_queryset.values('status').annotate(
+                count=Count('refund')
+            )
+            
+            status_count_map = {item['status']: item['count'] for item in status_counts}
+            
+            # Total refund amount (only approved/completed refunds)
+            total_refund_amount = refunds_queryset.filter(
+                status__in=['approved', 'completed']
+            ).aggregate(
+                total_amount=Sum('order__total_amount')
+            )['total_amount'] or Decimal('0.00')
+            
+            # Average processing time in hours (for completed refunds)
+            completed_refunds = refunds_queryset.filter(
+                status='completed',
+                processed_at__isnull=False,
+                requested_at__isnull=False
+            )
+            
+            if completed_refunds.exists():
+                total_seconds = sum(
+                    (refund.processed_at - refund.requested_at).total_seconds()
+                    for refund in completed_refunds
+                )
+                avg_processing_hours = total_seconds / (len(completed_refunds) * 3600)
+            else:
+                avg_processing_hours = Decimal('0.00')
+            
+            # Most common reason (excluding empty reasons)
+            common_reason = refunds_queryset.exclude(
+                Q(reason__isnull=True) | Q(reason__exact='')
+            ).values('reason').annotate(
+                count=Count('refund')
+            ).order_by('-count').first()
+            
+            # This month's refunds
+            current_month = timezone.now().month
+            current_year = timezone.now().year
+            
+            refunds_this_month = refunds_queryset.filter(
+                requested_at__month=current_month,
+                requested_at__year=current_year
+            ).count()
+            
+            # Average refund amount
+            avg_refund_amount = refunds_queryset.filter(
+                status__in=['approved', 'completed']
+            ).aggregate(
+                avg_amount=Avg('order__total_amount')
+            )['avg_amount'] or Decimal('0.00')
+            
+            metrics = {
+                'total_refunds': refunds_queryset.count(),
+                'pending_refunds': status_count_map.get('pending', 0),
+                'approved_refunds': status_count_map.get('approved', 0),
+                'rejected_refunds': status_count_map.get('rejected', 0),
+                'waiting_refunds': status_count_map.get('waiting', 0),
+                'to_process_refunds': status_count_map.get('to process', 0),
+                'completed_refunds': status_count_map.get('completed', 0),
+                'total_refund_amount': float(total_refund_amount),
+                'avg_processing_time_hours': round(float(avg_processing_hours), 1),
+                'most_common_reason': common_reason['reason'] if common_reason else "No refunds available",
+                'refunds_this_month': refunds_this_month,
+                'avg_refund_amount': round(float(avg_refund_amount), 2),
+            }
+            
+            return Response(metrics, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Metrics error: {str(e)}")  # Debug print
+            return Response(
+                {
+                    'error': f'Model access error: {str(e)}',
+                    'model_check': 'Refund model may not be properly defined or imported',
+                    'fallback_metrics': {
+                        'total_refunds': 0,
+                        'pending_refunds': 0,
+                        'approved_refunds': 0,
+                        'rejected_refunds': 0,
+                        'waiting_refunds': 0,
+                        'to_process_refunds': 0,
+                        'completed_refunds': 0,
+                        'total_refund_amount': 0.0,
+                        'avg_processing_time_hours': 0.0,
+                        'most_common_reason': "System configuration issue",
+                        'refunds_this_month': 0,
+                        'avg_refund_amount': 0.0,
+                    }
+                }, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+    @action(detail=False, methods=['get'])
+    def get_analytics(self, request):
+        """Get analytics data for charts"""
+        try:
+            # Use the correct model reference (based on which solution you chose)
+            # If you used Solution 1 (explicit imports), use Refund
+            # If you used Solution 2 (alias), use RefundModel
+            
+            # Status distribution - ACTUALLY QUERY THE DATABASE
+            status_distribution = Refund.objects.values('status').annotate(
+                count=Count('refund')
+            ).order_by('status')
+            
+            total_refunds = sum(item['count'] for item in status_distribution)
+            
+            status_data = []
+            for item in status_distribution:
+                percentage = (item['count'] / total_refunds * 100) if total_refunds > 0 else 0
+                status_data.append({
+                    'status': item['status'],
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+            
+            # Monthly trend data (last 12 months)
+            from django.db.models.functions import TruncMonth
+            from datetime import timedelta
+            
+            twelve_months_ago = timezone.now() - timedelta(days=365)
+            
+            monthly_data = Refund.objects.filter(
+                requested_at__gte=twelve_months_ago
+            ).annotate(
+                month=TruncMonth('requested_at')
+            ).values('month').annotate(
+                requested=Count('refund'),
+                processed=Count('refund', filter=Q(status__in=['completed', 'approved']))
+            ).order_by('month')
+            
+            monthly_trend = []
+            for item in monthly_data:
+                monthly_trend.append({
+                    'month': item['month'].strftime('%b %Y'),
+                    'requested': item['requested'],
+                    'processed': item['processed'],
+                    'full_month': item['month'].strftime('%B %Y')
+                })
+            
+            # Refund reasons (top 10)
+            refund_reasons = Refund.objects.exclude(
+                Q(reason__isnull=True) | Q(reason__exact='')
+            ).values('reason').annotate(
+                count=Count('refund')
+            ).order_by('-count')[:10]
+            
+            total_with_reasons = sum(item['count'] for item in refund_reasons)
+            
+            reasons_data = []
+            for item in refund_reasons:
+                percentage = (item['count'] / total_with_reasons * 100) if total_with_reasons > 0 else 0
+                reasons_data.append({
+                    'reason': item['reason'],
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+            
+            # Refund methods distribution
+            refund_methods = Refund.objects.exclude(
+                Q(preferred_refund_method__isnull=True) | 
+                Q(preferred_refund_method__exact='')
+            ).values('preferred_refund_method').annotate(
+                count=Count('refund')
+            ).order_by('-count')
+            
+            total_with_methods = sum(item['count'] for item in refund_methods)
+            
+            methods_data = []
+            for item in refund_methods:
+                percentage = (item['count'] / total_with_methods * 100) if total_with_methods > 0 else 0
+                methods_data.append({
+                    'method': item['preferred_refund_method'],
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+            
+            analytics_data = {
+                'status_distribution': status_data,
+                'monthly_trend_data': monthly_trend,
+                'refund_reasons': reasons_data,
+                'refund_methods': methods_data
+            }
+            
+            return Response(analytics_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Analytics error: {str(e)}")  # Debug print
+            # Return fallback data with error info
+            return Response(
+                {
+                    'error': f'Analytics error: {str(e)}',
+                    'fallback_data': {
+                        'status_distribution': [
+                            {'status': 'pending', 'count': 0, 'percentage': 0},
+                            {'status': 'approved', 'count': 0, 'percentage': 0},
+                            {'status': 'rejected', 'count': 0, 'percentage': 0},
+                            {'status': 'waiting', 'count': 0, 'percentage': 0},
+                            {'status': 'to process', 'count': 0, 'percentage': 0},
+                            {'status': 'completed', 'count': 0, 'percentage': 0}
+                        ],
+                        'monthly_trend_data': [],
+                        'refund_reasons': [],
+                        'refund_methods': []
+                    }
+                }, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def refund_list(self, request):
+        """Simple refund list endpoint"""
+        try:
+            # Return empty array if models work but no data
+            refunds_data = []
+            
+            # Try to get actual data if models are accessible
+            if hasattr(Refund, 'objects'):
+                refunds = Refund.objects.all()
+                for refund in refunds:
+                    refunds_data.append({
+                        'refund': str(refund.refund),
+                        'order_id': str(refund.order.order) if refund.order else 'N/A',
+                        'order_total_amount': float(refund.order.total_amount) if refund.order else 0.0,
+                        'requested_by_username': refund.requested_by.username if refund.requested_by else 'Unknown',
+                        'status': refund.status or 'pending',
+                        'requested_at': refund.requested_at.isoformat() if refund.requested_at else None,
+                        'reason': refund.reason or 'No reason provided',
+                    })
+            
+            return Response(refunds_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Refund list error: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
 class CustomerProducts(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
@@ -2305,7 +2852,7 @@ class CustomerProducts(viewsets.ViewSet):
             'success': True,
             'products': serializer.data
         })
-        
+    
 
     @action(detail=False, methods=['post'])
     def create_product(self, request):
@@ -2469,3 +3016,5 @@ class CustomerProducts(viewsets.ViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+        
