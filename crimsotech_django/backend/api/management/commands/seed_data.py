@@ -34,7 +34,7 @@ class Command(BaseCommand):
                 categories = self.create_categories(shops, admin_user)
                 
                 # Create products matching frontend data
-                products = self.create_products(customers, shops, categories)
+                products = self.create_products(customers, shops, categories,admin_user)
 
                 self.create_engagement_data()
                 
@@ -251,8 +251,16 @@ class Command(BaseCommand):
         
         return categories
 
-    def create_products(self, customers, shops, categories):
+    def create_products(self, customers, shops, categories, admin_user):
         """Create products with real customer and shop references"""
+        # First, get or create admin categories dynamically
+        try:
+            admin_user_obj = User.objects.get(id=admin_user.id)
+        except User.DoesNotExist:
+            self.stdout.write(self.style.ERROR(f"❌ Admin user with ID {admin_user.user_id} not found"))
+            return []
+        
+        # Define products data first to extract unique categories
         products_data = [
             # Tech Haven products
             {
@@ -361,6 +369,25 @@ class Command(BaseCommand):
             },
         ]
         
+        # Extract unique categories from products data dynamically
+        unique_categories = set(product['category'] for product in products_data)
+        
+        # Create admin categories dynamically based on the unique categories found
+        admin_categories = {}
+        for category_name in unique_categories:
+            admin_category, created = Category.objects.get_or_create(
+                name=category_name,
+                user=admin_user_obj,
+                defaults={'name': category_name}
+            )
+            if created:
+                self.stdout.write(self.style.SUCCESS(f"✅ Created admin category: {category_name}"))
+            else:
+                self.stdout.write(self.style.WARNING(f"⚠️ Admin category already exists: {category_name}"))
+            admin_categories[category_name] = admin_category
+        
+        self.stdout.write(self.style.SUCCESS(f"📊 Created {len(admin_categories)} admin categories: {', '.join(admin_categories.keys())}"))
+        
         products = []
         category_map = {cat.name: cat for cat in categories}
         shop_map = {shop.name: shop for shop in shops}
@@ -368,8 +395,9 @@ class Command(BaseCommand):
         for product_data in products_data:
             category = category_map.get(product_data['category'])
             shop = shop_map.get(product_data['shop'])
+            admin_category = admin_categories.get(product_data['category'])
             
-            if category and shop:
+            if category and shop and admin_category:
                 # Get the real customer from the shop
                 customer = shop.customer
                 
@@ -382,9 +410,10 @@ class Command(BaseCommand):
                 
                 if not existing_product:
                     product = Product.objects.create(
-                        customer=customer,  # Real customer from shop
-                        shop=shop,         # Real shop
-                        category=category,  # Real category
+                        customer=customer,           # Real customer from shop
+                        shop=shop,                  # Real shop
+                        category=category,          # Real category (customer category)
+                        category_admin=admin_category,  # Admin category
                         name=product_data['name'],
                         description=product_data['description'],
                         quantity=product_data['quantity'],
@@ -395,11 +424,28 @@ class Command(BaseCommand):
                     )
                     
                     products.append(product)
-                    self.stdout.write(self.style.SUCCESS(f"✅ Created product: {product_data['name']} for shop {shop.name}"))
+                    self.stdout.write(self.style.SUCCESS(
+                        f"✅ Created product: {product_data['name']} for shop {shop.name} "
+                        f"(Customer Category: {category.name}, Admin Category: {admin_category.name})"
+                    ))
                 else:
+                    # Update existing product with admin category
+                    existing_product.category_admin = admin_category
+                    existing_product.save()
                     products.append(existing_product)
-                    self.stdout.write(self.style.WARNING(f"⚠️ Product already exists: {product_data['name']}"))
+                    self.stdout.write(self.style.WARNING(
+                        f"⚠️ Updated existing product: {product_data['name']} with admin category {admin_category.name}"
+                    ))
+            else:
+                missing = []
+                if not category: missing.append('category')
+                if not shop: missing.append('shop')
+                if not admin_category: missing.append('admin_category')
+                self.stdout.write(self.style.ERROR(
+                    f"❌ Skipping product {product_data['name']}: Missing {', '.join(missing)}"
+                ))
         
+        self.stdout.write(self.style.SUCCESS(f"🎉 Successfully created/updated {len(products)} products"))
         return products
 
     def create_boosts_and_plans(self, products, shops, customers, admin_user):

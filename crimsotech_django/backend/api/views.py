@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.db import transaction
 from decimal import Decimal
 from rest_framework import status
 from rest_framework.views import APIView
@@ -15,6 +16,7 @@ from django.contrib.auth.hashers import check_password
 import hashlib
 import os
 from django.db.models import Count, Avg, Q, Sum
+
 
 class UserView(APIView):
     def get(self, request):
@@ -2284,3 +2286,186 @@ class AdminRiders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+class CustomerProducts(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_products(self, request):
+        shop_id = request.query_params.get('shop_id')
+
+        products = (
+            Product.objects
+            .filter(shop=shop_id)            # WHERE shop_id = ?
+            .order_by('name')
+            .select_related('shop', 'category')
+        )
+
+        serializer = ProductSerializer(products, many=True)
+
+        return Response({
+            'success': True,
+            'products': serializer.data
+        })
+        
+
+    @action(detail=False, methods=['post'])
+    def create_product(self, request):
+        """
+        Create a new product without authentication
+        POST /api/your-endpoint/create_product/
+        """
+        try:
+            # Validate required fields
+            required_fields = ['shop', 'category', 'category_admin', 'name', 'price', 'quantity', 'customer']
+            missing_fields = [field for field in required_fields if field not in request.data]
+            
+            if missing_fields:
+                return Response(
+                    {
+                        "error": "Missing required fields",
+                        "missing_fields": missing_fields
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get customer
+            customer_id = request.data.get('customer')
+            try:
+                customer = Customer.objects.get(customer_id=customer_id)
+            except Customer.DoesNotExist:
+                return Response(
+                    {"error": "Customer not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check product limit
+            if not customer.can_add_product():
+                return Response(
+                    {
+                        "error": "Product limit reached",
+                        "detail": f"Customer has reached the limit of {customer.product_limit} products",
+                        "current_count": customer.current_product_count,
+                        "limit": customer.product_limit
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate shop ownership
+            shop_id = request.data.get('shop')
+            try:
+                shop = Shop.objects.get(id=shop_id)
+                if shop.customer != customer:
+                    return Response(
+                        {
+                            "error": "Shop ownership validation failed",
+                            "detail": "Customer can only add products to their own shops"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except Shop.DoesNotExist:
+                return Response(
+                    {"error": "Shop not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Validate category exists
+            category_id = request.data.get('category')
+            category_admin_id = request.data.get('category_admin')
+            
+            try:
+                category = Category.objects.get(id=category_id)
+                category_admin = Category.objects.get(id=category_admin_id)
+            except Category.DoesNotExist:
+                return Response(
+                    {"error": "Category not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Validate category user types
+            # For category (customer category) - should be created by the same customer
+            if category.user:
+                if category.user.is_customer and category.user.customer != customer:
+                    return Response(
+                        {
+                            "error": "Category ownership validation failed",
+                            "detail": "You can only use your own customer categories"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            
+            # For category_admin - should be created by an admin
+            if category_admin.user:
+                if not category_admin.user.is_admin:
+                    return Response(
+                        {
+                            "error": "Admin category validation failed",
+                            "detail": "category_admin must be created by an admin"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                # category_admin has no user - might be system category
+                # You can decide whether to allow this or not
+                pass
+            
+            # Use serializer for creation
+            serializer = ProductCreateSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                try:
+                    with transaction.atomic():
+                        product = serializer.save()
+                        
+                        # Success response
+                        return Response(
+                            {
+                                "success": True,
+                                "message": "Product created successfully",
+                                "product": {
+                                    "id": str(product.id),
+                                    "name": product.name,
+                                    "shop": shop.name,
+                                    "category": category.name,
+                                    "category_type": "Customer" if category.user and category.user.is_customer else "System",
+                                    "category_admin": category_admin.name,
+                                    "category_admin_type": "Admin" if category_admin.user and category_admin.user.is_admin else "System",
+                                    "price": str(product.price),
+                                    "quantity": product.quantity,
+                                    "status": product.status,
+                                    "condition": product.condition,
+                                    "created_at": product.created_at
+                                },
+                                "customer_stats": {
+                                    "customer_id": str(customer.customer_id),
+                                    "current_product_count": customer.current_product_count,
+                                    "product_limit": customer.product_limit,
+                                    "remaining_slots": customer.product_limit - customer.current_product_count
+                                }
+                            },
+                            status=status.HTTP_201_CREATED
+                        )
+                        
+                except Exception as e:
+                    return Response(
+                        {
+                            "error": "Failed to create product",
+                            "detail": str(e)
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            return Response(
+                {
+                    "error": "Validation failed",
+                    "details": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        except Exception as e:
+            return Response(
+                {
+                    "error": "Internal server error",
+                    "detail": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

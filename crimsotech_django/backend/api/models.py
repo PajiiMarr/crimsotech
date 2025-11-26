@@ -213,6 +213,13 @@ class Product(models.Model):
         blank=True,
         related_name='products'
     )
+    category_admin = models.ForeignKey(
+        'Category',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='admin_products'
+    )
     category = models.ForeignKey(
         'Category',
         on_delete=models.SET_NULL,
