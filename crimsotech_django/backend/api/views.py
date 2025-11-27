@@ -3190,6 +3190,320 @@ class AdminUsers(viewsets.ViewSet):
         }
         return stages.get(stage, f'Stage {stage}')
 
+class AdminTeam(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_team_metrics(self, request):
+        """Get team metrics for admin dashboard"""
+        try:
+            # Calculate today's date for new team members
+            today = timezone.now().date()
+            today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
+            
+            # Get team members (admins and moderators only)
+            team_queryset = User.objects.filter(Q(is_admin=True) | Q(is_moderator=True))
+            
+            # Calculate metrics
+            total_team_members = team_queryset.count()
+            total_admins = team_queryset.filter(is_admin=True).count()
+            total_moderators = team_queryset.filter(is_moderator=True).count()
+            
+            # New team members today
+            new_team_members_today = team_queryset.filter(created_at__gte=today_start).count()
+            
+            # Active team members (based on recent activity and registration stage)
+            active_team_members = team_queryset.filter(
+                registration_stage__gte=3,
+                updated_at__gte=timezone.now() - timedelta(days=30)
+            ).count()
+            
+            inactive_team_members = total_team_members - active_team_members
+            
+            # Average registration stage
+            avg_registration_stage = team_queryset.aggregate(
+                avg_stage=Avg('registration_stage')
+            )['avg_stage'] or 0
+            
+            # Pending moderator approvals
+            pending_moderator_approvals = Moderator.objects.filter(
+                approval_status='pending'
+            ).count()
+            
+            metrics = {
+                'total_team_members': total_team_members,
+                'total_admins': total_admins,
+                'total_moderators': total_moderators,
+                'new_team_members_today': new_team_members_today,
+                'active_team_members': active_team_members,
+                'inactive_team_members': inactive_team_members,
+                'avg_registration_stage': round(float(avg_registration_stage), 1),
+                'pending_moderator_approvals': pending_moderator_approvals,
+            }
+            
+            return Response(metrics, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error calculating team metrics: {str(e)}")
+            return Response(
+                {'error': f'Error calculating team metrics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_team_analytics(self, request):
+        """Get analytics data for team charts"""
+        try:
+            # Team role distribution
+            total_team_members = User.objects.filter(Q(is_admin=True) | Q(is_moderator=True)).count()
+            
+            role_distribution = []
+            if total_team_members > 0:
+                admin_count = User.objects.filter(is_admin=True).count()
+                moderator_count = User.objects.filter(is_moderator=True).count()
+                
+                role_distribution = [
+                    {
+                        'role': 'Admins',
+                        'count': admin_count,
+                        'percentage': round((admin_count / total_team_members) * 100, 1)
+                    },
+                    {
+                        'role': 'Moderators',
+                        'count': moderator_count,
+                        'percentage': round((moderator_count / total_team_members) * 100, 1)
+                    }
+                ]
+            
+            # Registration trend (last 12 months for team members)
+            twelve_months_ago = timezone.now() - timedelta(days=365)
+            
+            registration_trend = User.objects.filter(
+                Q(is_admin=True) | Q(is_moderator=True),
+                created_at__gte=twelve_months_ago
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                new_members=Count('id')
+            ).order_by('month')
+            
+            monthly_trend = []
+            for item in registration_trend:
+                monthly_trend.append({
+                    'month': item['month'].strftime('%b %Y'),
+                    'new_members': item['new_members'],
+                    'full_month': item['month'].strftime('%B %Y')
+                })
+            
+            # Approval status distribution for moderators
+            approval_status_distribution = Moderator.objects.values('approval_status').annotate(
+                count=Count('moderator')
+            ).order_by('approval_status')
+            
+            approval_data = []
+            for item in approval_status_distribution:
+                # Safely get the approval_status with a default value
+                approval_status = item.get('approval_status', 'unknown')
+                status_label = approval_status.capitalize() if approval_status != 'unknown' else 'Unknown'
+                
+                # Calculate percentage safely
+                total_moderators = Moderator.objects.count()
+                percentage = (item['count'] / total_moderators * 100) if total_moderators > 0 else 0
+                
+                approval_data.append({
+                    'status': status_label,
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+            
+            # If no moderator records exist, provide default approval data
+            if not approval_data:
+                approval_data = [
+                    {
+                        'status': 'Pending',
+                        'count': 0,
+                        'percentage': 0.0
+                    },
+                    {
+                        'status': 'Approved', 
+                        'count': 0,
+                        'percentage': 0.0
+                    },
+                    {
+                        'status': 'Rejected',
+                        'count': 0,
+                        'percentage': 0.0
+                    }
+                ]
+            
+            # Activity distribution
+            active_members = User.objects.filter(
+                Q(is_admin=True) | Q(is_moderator=True),
+                registration_stage__gte=3,
+                updated_at__gte=timezone.now() - timedelta(days=30)
+            ).count()
+            
+            inactive_members = total_team_members - active_members
+            
+            activity_data = [
+                {
+                    'status': 'Active',
+                    'count': active_members,
+                    'percentage': round((active_members / total_team_members * 100), 1) if total_team_members > 0 else 0
+                },
+                {
+                    'status': 'Inactive',
+                    'count': inactive_members,
+                    'percentage': round((inactive_members / total_team_members * 100), 1) if total_team_members > 0 else 0
+                }
+            ]
+            
+            analytics_data = {
+                'role_distribution': role_distribution,
+                'registration_trend': monthly_trend,
+                'approval_status_distribution': approval_data,
+                'activity_distribution': activity_data
+            }
+            
+            return Response(analytics_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error generating team analytics: {str(e)}")
+            return Response(
+                {'error': f'Error generating team analytics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def team_list(self, request):
+        """Get paginated list of team members (admins and moderators)"""
+        try:
+            # Get query parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            role_filter = request.query_params.get('role')
+            status_filter = request.query_params.get('status')
+            approval_filter = request.query_params.get('approval_status')
+            search = request.query_params.get('search')
+            
+            # Build queryset for team members only (admins and moderators)
+            team_queryset = User.objects.filter(
+                Q(is_admin=True) | Q(is_moderator=True)
+            ).select_related().prefetch_related(
+                Prefetch('moderator', queryset=Moderator.objects.all()),
+                Prefetch('admin', queryset=Admin.objects.all())
+            ).order_by('-created_at')
+            
+            # Apply filters
+            if role_filter:
+                if role_filter.lower() == 'admin':
+                    team_queryset = team_queryset.filter(is_admin=True)
+                elif role_filter.lower() == 'moderator':
+                    team_queryset = team_queryset.filter(is_moderator=True)
+            
+            if status_filter:
+                if status_filter.lower() == 'active':
+                    team_queryset = team_queryset.filter(
+                        registration_stage__gte=3,
+                        updated_at__gte=timezone.now() - timedelta(days=30)
+                    )
+                elif status_filter.lower() == 'inactive':
+                    team_queryset = team_queryset.filter(
+                        Q(registration_stage__lt=3) | 
+                        Q(updated_at__lt=timezone.now() - timedelta(days=30))
+                    )
+            
+            if approval_filter:
+                if approval_filter.lower() in ['pending', 'approved', 'rejected']:
+                    team_queryset = team_queryset.filter(
+                        moderator__approval_status=approval_filter.lower()
+                    )
+            
+            if search:
+                team_queryset = team_queryset.filter(
+                    Q(username__icontains=search) |
+                    Q(email__icontains=search) |
+                    Q(first_name__icontains=search) |
+                    Q(last_name__icontains=search)
+                )
+            
+            # Pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            
+            total_count = team_queryset.count()
+            team_page = team_queryset[start_index:end_index]
+            
+            # Serialize data
+            team_data = []
+            for user in team_page:
+                user_data = {
+                    # Core User model fields
+                    'id': str(user.id),
+                    'username': user.username,
+                    'email': user.email,
+                    'password': user.password,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'middle_name': user.middle_name,
+                    'contact_number': user.contact_number,
+                    'date_of_birth': user.date_of_birth.isoformat() if user.date_of_birth else None,
+                    'age': user.age,
+                    'sex': user.sex,
+                    'street': user.street,
+                    'barangay': user.barangay,
+                    'city': user.city,
+                    'province': user.province,
+                    'state': user.state,
+                    'zip_code': user.zip_code,
+                    'country': user.country,
+                    'is_admin': user.is_admin,
+                    'is_customer': user.is_customer,
+                    'is_moderator': user.is_moderator,
+                    'is_rider': user.is_rider,
+                    'registration_stage': user.registration_stage,
+                    'created_at': user.created_at.isoformat(),
+                    'updated_at': user.updated_at.isoformat(),
+                    
+                    # Related model data
+                    'moderator_data': None,
+                    'admin_data': None,
+                }
+                
+                # Add moderator data if exists
+                if hasattr(user, 'moderator'):
+                    user_data['moderator_data'] = {
+                        'approval_status': user.moderator.approval_status
+                    }
+                
+                # Add admin data if exists
+                if hasattr(user, 'admin'):
+                    user_data['admin_data'] = {
+                        # Add admin specific fields if needed
+                    }
+                
+                team_data.append(user_data)
+            
+            response_data = {
+                'results': team_data,
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_count': total_count,
+                    'total_pages': (total_count + page_size - 1) // page_size,
+                    'has_next': end_index < total_count,
+                    'has_previous': page > 1
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error fetching team list: {str(e)}")
+            return Response(
+                {'error': f'Error fetching team list: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class CustomerProducts(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_products(self, request):
@@ -3209,7 +3523,6 @@ class CustomerProducts(viewsets.ViewSet):
             'products': serializer.data
         })
     
-
     @action(detail=False, methods=['post'])
     def create_product(self, request):
         """

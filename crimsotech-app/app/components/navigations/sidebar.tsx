@@ -63,8 +63,7 @@ const menuItems = [
     group: "Management",
     children: [
       { title: "Users", url: "/admin/users", icon: Users, roles: ["admin"] },
-      { title: "Manage Team", url: "/admin/team", icon: Users, roles: ["admin"] },
-      { title: "Volunteers", url: "/admin/volunteers", icon: Users, roles: ["admin"] },
+      { title: "Team", url: "/admin/team", icon: Users, roles: ["admin"] },
       { title: "Reports", url: "/admin/reports", icon: FileText, roles: ["admin"] },
       { title: "Activity Log", url: "/admin/activity-log", icon: FileText, roles: ["admin"] },
     ]

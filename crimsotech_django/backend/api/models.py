@@ -63,6 +63,7 @@ class Customer(models.Model):
 
 class Moderator(models.Model):
     moderator = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)  # Add this default)
+    approval_status = models.CharField(max_length=20, choices=[('pending','Pending'),('approved','Approved'),('rejected','Rejected')], default='pending')
 
     def __str__(self):
         return f"Moderator: {self.moderator.username}"
