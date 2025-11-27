@@ -1,4 +1,7 @@
 from django.shortcuts import render
+from django.db.models import Prefetch
+
+from django.db.models.functions import TruncMonth
 from django.db import transaction
 from decimal import Decimal
 from rest_framework import status
@@ -2834,6 +2837,359 @@ class AdminRefunds(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
+class AdminUsers(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """Get user metrics for admin dashboard"""
+        try:
+            # Calculate today's date for new users calculation
+            today = timezone.now().date()
+            today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
+            
+            # Get base queryset
+            users_queryset = User.objects.all()
+            
+            # Calculate metrics using actual model fields
+            total_users = users_queryset.count()
+            
+            # Count users by role using the actual boolean fields
+            total_customers = users_queryset.filter(is_customer=True).count()
+            total_riders = users_queryset.filter(is_rider=True).count()
+            total_moderators = users_queryset.filter(is_moderator=True).count()
+            total_admins = users_queryset.filter(is_admin=True).count()
+            
+            # New users today
+            new_users_today = users_queryset.filter(created_at__gte=today_start).count()
+            
+            # Profile completion metrics
+            users_with_complete_profile = users_queryset.filter(
+                Q(username__isnull=False) & ~Q(username=''),
+                Q(email__isnull=False) & ~Q(email=''),
+                Q(contact_number__isnull=False) & ~Q(contact_number=''),
+                registration_stage=5
+            ).count()
+            
+            users_with_incomplete_profile = total_users - users_with_complete_profile
+            
+            # Average registration stage
+            avg_registration_stage = users_queryset.aggregate(
+                avg_stage=Avg('registration_stage')
+            )['avg_stage'] or 0
+            
+            # Most common city
+            most_common_city_data = users_queryset.exclude(
+                Q(city__isnull=True) | Q(city='')
+            ).values('city').annotate(
+                count=Count('id')
+            ).order_by('-count').first()
+            
+            most_common_city = most_common_city_data['city'] if most_common_city_data else "No data"
+            
+            metrics = {
+                'total_users': total_users,
+                'total_customers': total_customers,
+                'total_riders': total_riders,
+                'total_moderators': total_moderators,
+                'total_admins': total_admins,
+                'new_users_today': new_users_today,
+                'users_with_complete_profile': users_with_complete_profile,
+                'users_with_incomplete_profile': users_with_incomplete_profile,
+                'avg_registration_stage': round(float(avg_registration_stage), 1),
+                'most_common_city': most_common_city,
+            }
+            
+            return Response(metrics, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error calculating user metrics: {str(e)}")
+            return Response(
+                {'error': f'Error calculating metrics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_analytics(self, request):
+        """Get analytics data for charts"""
+        try:
+            # Role distribution based on actual boolean fields
+            role_distribution = []
+            total_users = User.objects.count()
+            
+            if total_users > 0:
+                # Count users for each role (users can have multiple roles)
+                customer_count = User.objects.filter(is_customer=True).count()
+                rider_count = User.objects.filter(is_rider=True).count()
+                moderator_count = User.objects.filter(is_moderator=True).count()
+                admin_count = User.objects.filter(is_admin=True).count()
+                
+                # Count incomplete profiles (no roles assigned and low registration stage)
+                incomplete_count = User.objects.filter(
+                    is_customer=False,
+                    is_rider=False, 
+                    is_moderator=False,
+                    is_admin=False,
+                    registration_stage__lt=3
+                ).count()
+                
+                role_distribution = [
+                    {
+                        'role': 'Customers',
+                        'count': customer_count,
+                        'percentage': round((customer_count / total_users) * 100, 1)
+                    },
+                    {
+                        'role': 'Riders', 
+                        'count': rider_count,
+                        'percentage': round((rider_count / total_users) * 100, 1)
+                    },
+                    {
+                        'role': 'Moderators',
+                        'count': moderator_count, 
+                        'percentage': round((moderator_count / total_users) * 100, 1)
+                    },
+                    {
+                        'role': 'Admins',
+                        'count': admin_count,
+                        'percentage': round((admin_count / total_users) * 100, 1)
+                    },
+                    {
+                        'role': 'Incomplete',
+                        'count': incomplete_count,
+                        'percentage': round((incomplete_count / total_users) * 100, 1)
+                    }
+                ]
+            
+            # Registration trend (last 12 months)
+            twelve_months_ago = timezone.now() - timedelta(days=365)
+            
+            registration_trend = User.objects.filter(
+                created_at__gte=twelve_months_ago
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                new_users=Count('id')
+            ).order_by('month')
+            
+            monthly_trend = []
+            for item in registration_trend:
+                monthly_trend.append({
+                    'month': item['month'].strftime('%b %Y'),
+                    'new_users': item['new_users'],
+                    'full_month': item['month'].strftime('%B %Y')
+                })
+            
+            # Location distribution
+            location_distribution = User.objects.exclude(
+                Q(city__isnull=True) | Q(city='')
+            ).values('city').annotate(
+                count=Count('id')
+            ).order_by('-count')[:6]  # Top 6 cities
+            
+            total_with_location = sum(item['count'] for item in location_distribution)
+            
+            location_data = []
+            for item in location_distribution:
+                percentage = (item['count'] / total_with_location * 100) if total_with_location > 0 else 0
+                location_data.append({
+                    'city': item['city'],
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+            
+            # Registration stage distribution
+            stage_distribution = User.objects.values('registration_stage').annotate(
+                count=Count('id')
+            ).order_by('registration_stage')
+            
+            stage_data = []
+            for item in stage_distribution:
+                stage = item['registration_stage'] or 0
+                stage_label = self._get_stage_label(stage)
+                percentage = (item['count'] / total_users * 100) if total_users > 0 else 0
+                stage_data.append({
+                    'stage': stage_label,
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+            
+            analytics_data = {
+                'role_distribution': role_distribution,
+                'registration_trend': monthly_trend,
+                'location_distribution': location_data,
+                'registration_stage_distribution': stage_data
+            }
+            
+            return Response(analytics_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error generating user analytics: {str(e)}")
+            return Response(
+                {'error': f'Error generating analytics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def users_list(self, request):
+        """Get paginated list of users with related data"""
+        try:
+            
+            # Get query parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            user_type = request.query_params.get('user_type')
+            status_filter = request.query_params.get('status')
+            search = request.query_params.get('search')
+            
+            # Build queryset with all necessary relationships
+            users_queryset = User.objects.select_related().prefetch_related(
+                Prefetch('customer', queryset=Customer.objects.all()),
+                Prefetch('rider', queryset=Rider.objects.all()),
+                Prefetch('moderator', queryset=Moderator.objects.all()),
+                Prefetch('admin', queryset=Admin.objects.all())
+            ).order_by('-created_at')
+            
+            # Apply filters
+            if user_type:
+                if user_type.lower() == 'customer':
+                    users_queryset = users_queryset.filter(is_customer=True)
+                elif user_type.lower() == 'rider':
+                    users_queryset = users_queryset.filter(is_rider=True)
+                elif user_type.lower() == 'moderator':
+                    users_queryset = users_queryset.filter(is_moderator=True)
+                elif user_type.lower() == 'admin':
+                    users_queryset = users_queryset.filter(is_admin=True)
+            
+            if status_filter:
+                if status_filter.lower() == 'active':
+                    users_queryset = users_queryset.filter(
+                        registration_stage__gte=3,
+                        updated_at__gte=timezone.now() - timedelta(days=30)
+                    )
+                elif status_filter.lower() == 'inactive':
+                    users_queryset = users_queryset.filter(
+                        Q(registration_stage__lt=3) | 
+                        Q(updated_at__lt=timezone.now() - timedelta(days=30))
+                    )
+            
+            if search:
+                users_queryset = users_queryset.filter(
+                    Q(username__icontains=search) |
+                    Q(email__icontains=search) |
+                    Q(first_name__icontains=search) |
+                    Q(last_name__icontains=search)
+                )
+            
+            # Pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            
+            total_count = users_queryset.count()
+            users_page = users_queryset[start_index:end_index]
+            
+            # Serialize data with all model fields
+            users_data = []
+            for user in users_page:
+                user_data = {
+                    # Core User model fields
+                    'id': str(user.id),
+                    'username': user.username,
+                    'email': user.email,
+                    'password': user.password,  # Included but should be handled securely in production
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'middle_name': user.middle_name,
+                    'contact_number': user.contact_number,
+                    'date_of_birth': user.date_of_birth.isoformat() if user.date_of_birth else None,
+                    'age': user.age,
+                    'sex': user.sex,
+                    'street': user.street,
+                    'barangay': user.barangay,
+                    'city': user.city,
+                    'province': user.province,
+                    'state': user.state,
+                    'zip_code': user.zip_code,
+                    'country': user.country,
+                    'is_admin': user.is_admin,
+                    'is_customer': user.is_customer,
+                    'is_moderator': user.is_moderator,
+                    'is_rider': user.is_rider,
+                    'registration_stage': user.registration_stage,
+                    'created_at': user.created_at.isoformat(),
+                    'updated_at': user.updated_at.isoformat(),
+                    
+                    # Related model data
+                    'customer_data': None,
+                    'rider_data': None,
+                    'moderator_data': None,
+                    'admin_data': None,
+                }
+                
+                # Add customer data if exists
+                if hasattr(user, 'customer'):
+                    user_data['customer_data'] = {
+                        'product_limit': user.customer.product_limit,
+                        'current_product_count': user.customer.current_product_count
+                    }
+                
+                # Add rider data if exists
+                if hasattr(user, 'rider'):
+                    user_data['rider_data'] = {
+                        'vehicle_type': user.rider.vehicle_type,
+                        'plate_number': user.rider.plate_number,
+                        'vehicle_brand': user.rider.vehicle_brand,
+                        'vehicle_model': user.rider.vehicle_model,
+                        'license_number': user.rider.license_number,
+                        'verified': user.rider.verified
+                    }
+                
+                # Add moderator data if exists
+                if hasattr(user, 'moderator'):
+                    user_data['moderator_data'] = {
+                        # Add moderator specific fields if needed
+                    }
+                
+                # Add admin data if exists
+                if hasattr(user, 'admin'):
+                    user_data['admin_data'] = {
+                        # Add admin specific fields if needed
+                    }
+                
+                users_data.append(user_data)
+            
+            response_data = {
+                'results': users_data,
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_count': total_count,
+                    'total_pages': (total_count + page_size - 1) // page_size,
+                    'has_next': end_index < total_count,
+                    'has_previous': page > 1
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error fetching user list: {str(e)}")
+            return Response(
+                {'error': f'Error fetching user list: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_stage_label(self, stage):
+        """Helper method to get registration stage label"""
+        if not stage:
+            return 'Not Started'
+        stages = {
+            1: 'Started',
+            2: 'Basic Info', 
+            3: 'Address',
+            4: 'Verification',
+            5: 'Complete'
+        }
+        return stages.get(stage, f'Stage {stage}')
+
 class CustomerProducts(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_products(self, request):
