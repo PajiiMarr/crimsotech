@@ -4,7 +4,6 @@ import { type RouteConfig, index, route, prefix } from "@react-router/dev/routes
 export default [
     index('routes/client/landing.tsx'),
     route('about', 'routes/client/about.tsx'),
-    route('riders', 'routes/client/rider.tsx'),
     route('riders', 'routes/client/riders.tsx'),
 
     route('login', 'routes/auth/login.tsx'),
@@ -30,14 +29,15 @@ export default [
         route('refunds', 'routes/admin/refunds.tsx'),
         route('users', 'routes/admin/users.tsx'),
         route('team', 'routes/admin/team.tsx'),
+        route('reports', 'routes/admin/reports.tsx'),
+        
     ]),
     ...prefix("moderator", [
         index("routes/moderator/home.tsx"),
-
     ]),
     ...prefix("rider", [
         index("routes/rider/home.tsx"),
-
-    ])
+        route('pendings', 'routes/rider/pendings.tsx'),
+    ]),
 ] satisfies RouteConfig;
 

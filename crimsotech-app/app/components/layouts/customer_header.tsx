@@ -5,6 +5,7 @@ import { Separator } from "~/components/ui/separator";
 import { SidebarTrigger } from "~/components/ui/sidebar";
 import { Bell, User } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,} from "~/components/ui/dropdown-menu";
+import { Link } from "react-router";
 
 export default function CustomerHeader() {
   return (
@@ -49,7 +50,11 @@ export default function CustomerHeader() {
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem>Profile</DropdownMenuItem>
             <DropdownMenuItem>Settings</DropdownMenuItem>
-            <DropdownMenuItem>Sign Out</DropdownMenuItem>
+            <DropdownMenuItem>
+              <Link to='/logout'>
+                Sign Out
+              </Link>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

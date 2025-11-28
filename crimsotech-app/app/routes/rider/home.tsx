@@ -2,8 +2,6 @@ import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
 
-
-
 export function meta(): Route.MetaDescriptors {
   return [
     {
@@ -14,14 +12,21 @@ export function meta(): Route.MetaDescriptors {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
-  // registrationMiddleware expects the full Remix args shape; include params and unstable_pattern to satisfy the signature
-  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
   const { userContext } = await import("~/contexts/user-role");
+  const { riderStatusMiddleware } = await import("~/middleware/rider_apply.server");
 
-  // Fetch once and store in context
+  // 1. Check registration first
+  const registrationResult = await registrationMiddleware({ 
+    request, context, params: {}, unstable_pattern: undefined 
+  } as any);
+  if (registrationResult) {
+    console.log('Registration middleware redirected:', registrationResult);
+    return registrationResult;
+  }
+
+  // 2. Check user role and fetch user data
   let user = context.get(userContext);
   if (!user) {
     user = await fetchUserRole({ request, context });
@@ -29,6 +34,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   await requireRole(request, context, ["isRider"]);
 
+  // 3. Check rider verification status
+  const riderStatusResult = await riderStatusMiddleware({ 
+    request, context, params: {}, unstable_pattern: undefined 
+  } as any);
+  if (riderStatusResult) {
+    console.log('Rider status middleware redirected:', riderStatusResult);
+    return riderStatusResult;
+  }
+
+  console.log('No redirection - returning user data');
   return user;
 }
 
@@ -39,7 +54,7 @@ export default function Home ({loaderData}: Route.ComponentProps) {
       <SidebarLayout>
         <section className='w-full h-20'>
           <div>
-            Rider
+            Rider Dashboard
           </div>
         </section>
       </SidebarLayout>

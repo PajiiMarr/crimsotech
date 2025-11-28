@@ -3687,3 +3687,20 @@ class CustomerProducts(viewsets.ViewSet):
             )
 
         
+class RiderStatus(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_rider_status(self, request):
+        rider_id = request.headers.get('X-User-Id')
+
+        try: 
+            rider_status = Rider.objects.get(rider_id=rider_id)
+
+            return Response({
+                'success': True,
+                'rider_status': rider_status.verified
+            }, status=status.HTTP_200_OK)
+        except Rider.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Rider not found'
+            }, status=status.HTTP_404_NOT_FOUND)
