@@ -24,6 +24,8 @@ from django.conf import settings
 router = DefaultRouter()
 router.register(r'verify', VerifyNumber, basename='verify')
 router.register(r'rider', RiderRegistration, basename='rider')
+router.register(r'admin-dashboard', AdminDashboard, basename='admin-dashboard')
+router.register(r'admin-analytics', AdminAnalytics, basename='admin-analytics')
 router.register(r'admin-products', AdminProduct, basename='admin-products')
 router.register(r'admin-shops', AdminShops, basename='admin-shops')
 router.register(r'admin-boosting', AdminBoosting, basename='admin-boosting')

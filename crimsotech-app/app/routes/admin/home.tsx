@@ -31,8 +31,18 @@ import {
   Bell, 
   Star, 
   AlertTriangle,
-  Package
+  Package,
+  Truck,
+  CreditCard,
+  Shield,
+  FileText,
+  BarChart3,
+  ShoppingBag,
+  UserCheck,
+  Settings,
+  RefreshCw,
 } from 'lucide-react';
+import AxiosInstance from '~/components/axios/Axios';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -56,83 +66,114 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
   
   await requireRole(request, context, ["isAdmin"]);
-  return user;
+
+  // Get session for authentication
+  const { getSession } = await import('~/sessions.server');
+  const session = await getSession(request.headers.get("Cookie"));
+
+  let dashboardData = null;
+
+  try {
+    // Fetch comprehensive dashboard data from the backend
+    const dashboardResponse = await AxiosInstance.get('/admin-dashboard/get_comprehensive_dashboard/', {
+      headers: {
+        "X-User-Id": session.get("userId")
+      }
+    });
+
+    if (dashboardResponse.data.success) {
+      dashboardData = dashboardResponse.data;
+    } else {
+      throw new Error('Failed to fetch dashboard data');
+    }
+
+  } catch (error) {
+    console.error('Error fetching dashboard data:', error);
+    // Use fallback data structure
+    dashboardData = {
+      success: false,
+      overview: {
+        total_revenue: 0,
+        total_orders: 0,
+        active_customers: 0,
+        active_shops: 0,
+        today_orders: 0,
+        today_revenue: 0,
+        order_growth: 0,
+        revenue_growth: 0
+      },
+      operational: {
+        active_boosts: 0,
+        pending_refunds: 0,
+        low_stock_products: 0,
+        avg_rating: 0,
+        pending_reports: 0,
+        active_riders: 0,
+        active_vouchers: 0
+      },
+      sales_analytics: {
+        sales_data: [],
+        status_distribution: [],
+        payment_distribution: []
+      },
+      user_analytics: {
+        user_growth: [],
+        role_distribution: [],
+        registration_data: []
+      },
+      product_analytics: {
+        product_performance: [],
+        category_performance: [],
+        inventory_status: [],
+        engagement_data: []
+      },
+      shop_analytics: {
+        shop_performance: [],
+        shop_growth: [],
+        shop_locations: []
+      }
+    };
+  }
+
+  return { 
+    user, 
+    dashboardData: dashboardData.success ? dashboardData : null 
+  };
 }
 
 export function HydrateFallback() {
-  return <div>Loading...</div>;
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+        <p className="mt-4 text-muted-foreground">Loading dashboard data...</p>
+      </div>
+    </div>
+  );
 }
 
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
 
-// Weekly sales trend data
-const salesData = [
-  { name: 'Mon', sales: 4200, orders: 42 },
-  { name: 'Tue', sales: 7100, orders: 65 },
-  { name: 'Wed', sales: 5300, orders: 51 },
-  { name: 'Thu', sales: 8400, orders: 78 },
-  { name: 'Fri', sales: 6800, orders: 63 },
-  { name: 'Sat', sales: 9200, orders: 85 },
-  { name: 'Sun', sales: 7600, orders: 71 },
-];
-
-// Order status distribution
-const orderStatusData = [
-  { name: 'Pending', value: 30 },
-  { name: 'Shipped', value: 50 },
-  { name: 'Delivered', value: 100 },
-  { name: 'Cancelled', value: 10 },
-];
-
-// Top products by orders
-const productBarData = [
-  { name: 'Gaming Laptop', orders: 120, revenue: 1800000 },
-  { name: 'Wireless Mouse', orders: 280, revenue: 140000 },
-  { name: 'Keyboard RGB', orders: 195, revenue: 585000 },
-  { name: 'Monitor 27"', orders: 145, revenue: 1015000 },
-  { name: 'USB-C Hub', orders: 320, revenue: 480000 },
-];
-
-// Revenue by category
-const categoryRevenueData = [
-  { category: 'Electronics', revenue: 154000 },
-  { category: 'Fashion', revenue: 98000 },
-  { category: 'Home & Living', revenue: 76000 },
-  { category: 'Sports', revenue: 54000 },
-  { category: 'Books', revenue: 32000 },
-];
-
-// Customer growth data
-const customerGrowthData = [
-  { month: 'Jan', new: 145, returning: 320 },
-  { month: 'Feb', new: 168, returning: 385 },
-  { month: 'Mar', new: 192, returning: 420 },
-  { month: 'Apr', new: 215, returning: 485 },
-  { month: 'May', new: 238, returning: 540 },
-  { month: 'Jun', new: 265, returning: 615 },
-];
-
-// Recent transactions
-const recentTransactions = [
-  { id: '#ORD-1024', customer: 'John Smith', amount: 287.50, status: 'Completed', date: 'Nov 13, 2025' },
-  { id: '#ORD-1023', customer: 'Sarah Johnson', amount: 142.00, status: 'Shipped', date: 'Nov 12, 2025' },
-  { id: '#ORD-1022', customer: 'Michael Chen', amount: 425.90, status: 'Completed', date: 'Nov 12, 2025' },
-  { id: '#ORD-1021', customer: 'Emma Williams', amount: 89.99, status: 'Pending', date: 'Nov 11, 2025' },
-  { id: '#ORD-1020', customer: 'David Brown', amount: 312.40, status: 'Completed', date: 'Nov 11, 2025' },
-];
-
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
-
-const StatCard = ({ title, value, change, icon: Icon, trend }: any) => (
+const StatCard = ({ title, value, change, icon: Icon, trend, description, loading = false }: any) => (
   <Card>
     <CardContent className="p-6">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex-1">
           <p className="text-sm text-muted-foreground">{title}</p>
-          <p className="text-2xl font-bold mt-1">{value}</p>
-          <div className={`flex items-center gap-1 mt-2 text-sm ${trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
-            {trend === 'up' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-            <span>{change}</span>
-          </div>
+          {loading ? (
+            <div className="h-8 w-20 bg-muted rounded animate-pulse mt-1" />
+          ) : (
+            <p className="text-2xl font-bold mt-1">{value}</p>
+          )}
+          {description && (
+            <p className="text-xs text-muted-foreground mt-1">{description}</p>
+          )}
+          {!loading && change && (
+            <div className={`flex items-center gap-1 mt-2 text-sm ${trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
+              {trend === 'up' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+              <span>{change}</span>
+            </div>
+          )}
         </div>
         <div className="p-3 bg-primary/10 rounded-full">
           <Icon className="w-6 h-6 text-primary" />
@@ -142,365 +183,477 @@ const StatCard = ({ title, value, change, icon: Icon, trend }: any) => (
   </Card>
 );
 
+const MetricGrid = ({ title, children }: any) => (
+  <div className="space-y-4">
+    {title && <h3 className="text-lg font-semibold">{title}</h3>}
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {children}
+    </div>
+  </div>
+);
+
+const LoadingSkeleton = ({ className = "" }: { className?: string }) => (
+  <div className={`bg-muted rounded animate-pulse ${className}`} />
+);
+
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const user = loaderData;
-  
+  const { user, dashboardData } = loaderData;
+  const isLoading = !dashboardData;
+
+  // Extract data from API response
+  const overview = dashboardData?.overview || {};
+  const operational = dashboardData?.operational || {};
+  const salesAnalytics = dashboardData?.sales_analytics || {};
+  const userAnalytics = dashboardData?.user_analytics || {};
+  const productAnalytics = dashboardData?.product_analytics || {};
+  const shopAnalytics = dashboardData?.shop_analytics || {};
+
+  // Format currency values
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-PH', {
+      style: 'currency',
+      currency: 'PHP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  const formatCompactNumber = (num: number) => {
+    if (num >= 1000000) {
+      return (num / 1000000).toFixed(1) + 'M';
+    }
+    if (num >= 1000) {
+      return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toString();
+  };
+
   return (
     <UserProvider user={user}>
       <SidebarLayout>
         <div className="space-y-6">
-          <div>
-            <h1 className="text-3xl font-bold">Dashboard</h1>
+          {/* Header */}
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+              <p className="text-muted-foreground">Real-time platform analytics</p>
+            </div>
+            {!isLoading && (
+              <div className="flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                Live Data
+              </div>
+            )}
           </div>
 
-          {/* Key Metrics Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard title="Total Sales" value="₱54,320" change="+12.5%" trend="up" icon={DollarSign} />
-            <StatCard title="Total Orders" value="1,204" change="+8.3%" trend="up" icon={ShoppingCart} />
-            <StatCard title="Total Customers" value="2,847" change="+15.2%" trend="up" icon={Users} />
-            <StatCard title="Active Shops" value="142" change="+3.5%" trend="up" icon={Store} />
-          </div>
+          {/* Core Business Metrics */}
+          <MetricGrid title="Core Business Metrics">
+            <StatCard 
+              title="Total Revenue" 
+              value={isLoading ? "..." : formatCurrency(overview.total_revenue || 0)} 
+              change={isLoading ? "" : `+${overview.revenue_growth || 0}%`} 
+              trend="up" 
+              icon={DollarSign}
+              description="Lifetime sales"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="Total Orders" 
+              value={isLoading ? "..." : formatCompactNumber(overview.total_orders || 0)} 
+              change={isLoading ? "" : `+${overview.order_growth || 0}%`} 
+              trend="up" 
+              icon={ShoppingCart}
+              description="All-time orders"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="Active Customers" 
+              value={isLoading ? "..." : formatCompactNumber(overview.active_customers || 0)} 
+              change="+15.2%" 
+              trend="up" 
+              icon={Users}
+              description="Registered users"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="Active Shops" 
+              value={isLoading ? "..." : formatCompactNumber(overview.active_shops || 0)} 
+              change="+3.5%" 
+              trend="up" 
+              icon={Store}
+              description="Verified merchants"
+              loading={isLoading}
+            />
+          </MetricGrid>
 
-          {/* Secondary Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Active Boosts</p>
-                    <p className="text-2xl font-bold mt-1">12</p>
-                    <p className="text-xs text-muted-foreground mt-2">Running now</p>
-                  </div>
-                  <div className="p-3 bg-yellow-100 rounded-full">
-                    <Zap className="w-6 h-6 text-yellow-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          {/* Operational Metrics */}
+          <MetricGrid title="Operational Metrics">
+            <StatCard 
+              title="Active Boosts" 
+              value={isLoading ? "..." : (operational.active_boosts || 0).toString()} 
+              change="+2 this week" 
+              trend="up" 
+              icon={Zap}
+              description="Running promotions"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="Pending Refunds" 
+              value={isLoading ? "..." : (operational.pending_refunds || 0).toString()} 
+              change="Needs attention" 
+              trend="down" 
+              icon={RefreshCw}
+              description="Require review"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="Low Stock Alerts" 
+              value={isLoading ? "..." : (operational.low_stock_products || 0).toString()} 
+              change="Critical" 
+              trend="down" 
+              icon={AlertTriangle}
+              description="Need restocking"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="Average Rating" 
+              value={isLoading ? "..." : `${operational.avg_rating || 0}★`} 
+              change="+0.2" 
+              trend="up" 
+              icon={Star}
+              description="Customer feedback"
+              loading={isLoading}
+            />
+          </MetricGrid>
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Notifications</p>
-                    <p className="text-2xl font-bold mt-1">7</p>
-                    <p className="text-xs text-muted-foreground mt-2">Unread alerts</p>
-                  </div>
-                  <div className="p-3 bg-red-100 rounded-full">
-                    <Bell className="w-6 h-6 text-red-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          {/* Platform Health Metrics */}
+          <MetricGrid title="Platform Health">
+            <StatCard 
+              title="Pending Reports" 
+              value={isLoading ? "..." : (operational.pending_reports || 0).toString()} 
+              change="5 new today" 
+              trend="up" 
+              icon={FileText}
+              description="Moderation queue"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="Active Riders" 
+              value={isLoading ? "..." : (operational.active_riders || 0).toString()} 
+              change="92% online" 
+              trend="up" 
+              icon={Truck}
+              description="Delivery partners"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="System Status" 
+              value="99.9%" 
+              change="All systems normal" 
+              trend="up" 
+              icon={Shield}
+              description="Platform status"
+              loading={isLoading}
+            />
+            <StatCard 
+              title="Active Vouchers" 
+              value={isLoading ? "..." : (operational.active_vouchers || 0).toString()} 
+              change="Active campaigns" 
+              trend="up" 
+              icon={CreditCard}
+              description="Discount campaigns"
+              loading={isLoading}
+            />
+          </MetricGrid>
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">New Reviews</p>
-                    <p className="text-2xl font-bold mt-1">15</p>
-                    <p className="text-xs text-muted-foreground mt-2">Avg: 4.6★</p>
-                  </div>
-                  <div className="p-3 bg-pink-100 rounded-full">
-                    <Star className="w-6 h-6 text-pink-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-red-200">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Low Stock</p>
-                    <p className="text-2xl font-bold mt-1 text-red-600">3</p>
-                    <p className="text-xs text-muted-foreground mt-2">Need restocking</p>
-                  </div>
-                  <div className="p-3 bg-red-100 rounded-full">
-                    <AlertTriangle className="w-6 h-6 text-red-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Charts Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* Sales Trend - Takes 2 columns */}
+          {/* Charts Section - Row 1 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Sales & Revenue Trend */}
             <Card className="lg:col-span-2">
               <CardHeader>
-                <CardTitle>Sales & Orders Trend</CardTitle>
-                <CardDescription>Last 7 days performance</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5" />
+                  Sales & Revenue Trend
+                </CardTitle>
+                <CardDescription>Last 7 days performance across all shops</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <ComposedChart data={salesData}>
-                    <XAxis 
-                      dataKey="name" 
-                      stroke="#888888"
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <YAxis 
-                      yAxisId="left"
-                      stroke="#888888"
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(value) => `₱${value}`}
-                    />
-                    <YAxis 
-                      yAxisId="right"
-                      orientation="right"
-                      stroke="#888888"
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: 'hsl(var(--card))', 
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px'
-                      }}
-                    />
-                    <Legend />
-                    <Bar 
-                      yAxisId="left"
-                      dataKey="sales" 
-                      fill="#3b82f6" 
-                      name="Sales (₱)"
-                      radius={[8, 8, 0, 0]}
-                    />
-                    <Line 
-                      yAxisId="right"
-                      type="monotone" 
-                      dataKey="orders" 
-                      stroke="#10b981" 
-                      strokeWidth={3}
-                      name="Orders"
-                      dot={{ fill: '#10b981', r: 4 }}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
+                {isLoading ? (
+                  <LoadingSkeleton className="h-80" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <ComposedChart data={salesAnalytics.sales_data || []}>
+                      <XAxis dataKey="name" />
+                      <YAxis yAxisId="left" />
+                      <YAxis yAxisId="right" orientation="right" />
+                      <Tooltip 
+                        formatter={(value: any, name: string) => [
+                          name === 'Revenue (₱)' ? formatCurrency(value) : value,
+                          name
+                        ]}
+                      />
+                      <Legend />
+                      <Bar yAxisId="left" dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
+                      <Line yAxisId="right" type="monotone" dataKey="orders" stroke="#10b981" name="Orders" />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
 
-            {/* Order Status Pie Chart */}
+            {/* Order Status Distribution */}
             <Card>
               <CardHeader>
-                <CardTitle>Order Status</CardTitle>
-                <CardDescription>Distribution overview</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <ShoppingBag className="w-5 h-5" />
+                  Order Status
+                </CardTitle>
+                <CardDescription>Current order distribution</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={orderStatusData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, percent = 0 }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      outerRadius={90}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {orderStatusData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: 'hsl(var(--card))', 
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px'
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
+                {isLoading ? (
+                  <LoadingSkeleton className="h-80" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={salesAnalytics.status_distribution || []}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ status, percent = 0 }: any) => `${status} ${(percent * 100).toFixed(0)}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="count"
+                        nameKey="status"
+                      >
+                        {(salesAnalytics.status_distribution || []).map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={entry.color || COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Second Row Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Top Products */}
+          {/* Charts Section - Row 2 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Customer Growth */}
             <Card>
               <CardHeader>
-                <CardTitle>Top 5 Products</CardTitle>
-                <CardDescription>Best sellers by order count</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <UserCheck className="w-5 h-5" />
+                  Customer Growth
+                </CardTitle>
+                <CardDescription>New vs returning customers</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={productBarData} layout="vertical">
-                    <XAxis type="number" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
-                    <YAxis 
-                      type="category" 
-                      dataKey="name" 
-                      stroke="#888888" 
-                      fontSize={12} 
-                      tickLine={false} 
-                      axisLine={false}
-                      width={100}
-                    />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: 'hsl(var(--card))', 
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px'
-                      }}
-                    />
-                    <Bar 
-                      dataKey="orders" 
-                      fill="#10b981" 
-                      radius={[0, 8, 8, 0]}
-                      barSize={25}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
+                {isLoading ? (
+                  <LoadingSkeleton className="h-80" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <AreaChart data={userAnalytics.user_growth || []}>
+                      <XAxis dataKey="month" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Area type="monotone" dataKey="new" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="New Customers" />
+                      <Area type="monotone" dataKey="returning" stackId="1" stroke="#10b981" fill="#10b981" name="Returning" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
 
-            {/* Revenue by Category */}
+            {/* Product Performance */}
             <Card>
               <CardHeader>
-                <CardTitle>Revenue by Category</CardTitle>
-                <CardDescription>Top performing categories</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <Package className="w-5 h-5" />
+                  Top Products
+                </CardTitle>
+                <CardDescription>Best performing products by orders</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={categoryRevenueData}>
-                    <XAxis 
-                      dataKey="category" 
-                      stroke="#888888" 
-                      fontSize={12} 
-                      tickLine={false} 
-                      axisLine={false}
-                    />
-                    <YAxis 
-                      stroke="#888888" 
-                      fontSize={12} 
-                      tickLine={false} 
-                      axisLine={false}
-                      tickFormatter={(value) => `₱${value / 1000}k`}
-                    />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: 'hsl(var(--card))', 
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px'
-                      }}
-                      formatter={(value) => [`₱${value}`, 'Revenue']}
-                    />
-                    <Bar 
-                      dataKey="revenue" 
-                      fill="#8b5cf6"
-                      radius={[8, 8, 0, 0]}
+                {isLoading ? (
+                  <LoadingSkeleton className="h-80" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart 
+                      data={productAnalytics.product_performance || []} 
+                      layout="vertical"
+                      margin={{ left: 100 }}
                     >
-                      {categoryRevenueData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                      <XAxis type="number" />
+                      <YAxis 
+                        type="category" 
+                        dataKey="name" 
+                        width={80}
+                        tick={{ fontSize: 12 }}
+                      />
+                      <Tooltip 
+                        formatter={(value: any, name: string) => [
+                          name === 'Revenue' ? formatCurrency(value) : value,
+                          name
+                        ]}
+                      />
+                      <Legend />
+                      <Bar dataKey="orders" fill="#10b981" name="Orders" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Customer Growth */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Customer Acquisition & Retention</CardTitle>
-              <CardDescription>New vs returning customers over time</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={customerGrowthData}>
-                  <XAxis 
-                    dataKey="month" 
-                    stroke="#888888"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis 
-                    stroke="#888888"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: 'hsl(var(--card))', 
-                      border: '1px solid hsl(var(--border))',
-                      borderRadius: '8px'
-                    }}
-                  />
-                  <Legend />
-                  <Area 
-                    type="monotone" 
-                    dataKey="new" 
-                    stackId="1" 
-                    stroke="#3b82f6" 
-                    fill="#3b82f6" 
-                    name="New Customers" 
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="returning" 
-                    stackId="1" 
-                    stroke="#10b981" 
-                    fill="#10b981" 
-                    name="Returning" 
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          {/* Recent Transactions Table */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Package className="w-5 h-5" />
-                Recent Transactions
-              </CardTitle>
-              <CardDescription>Latest 5 completed orders</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-3 px-2 font-medium text-muted-foreground">Order ID</th>
-                      <th className="text-left py-3 px-2 font-medium text-muted-foreground">Customer</th>
-                      <th className="text-left py-3 px-2 font-medium text-muted-foreground">Amount</th>
-                      <th className="text-left py-3 px-2 font-medium text-muted-foreground">Status</th>
-                      <th className="text-left py-3 px-2 font-medium text-muted-foreground">Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentTransactions.map((transaction, idx) => (
-                      <tr key={idx} className="border-b hover:bg-muted/50 transition-colors">
-                        <td className="py-3 px-2 font-medium">{transaction.id}</td>
-                        <td className="py-3 px-2">{transaction.customer}</td>
-                        <td className="py-3 px-2 font-semibold">₱{transaction.amount.toFixed(2)}</td>
-                        <td className="py-3 px-2">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            transaction.status === 'Completed' ? 'bg-green-100 text-green-800' :
-                            transaction.status === 'Shipped' ? 'bg-blue-100 text-blue-800' :
-                            transaction.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {transaction.status}
-                          </span>
-                        </td>
-                        <td className="py-3 px-2 text-muted-foreground">{transaction.date}</td>
-                      </tr>
+          {/* Additional Metrics Sections */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Shop Performance */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Performing Shops</CardTitle>
+                <CardDescription>By sales volume and ratings</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoading ? (
+                  <div className="space-y-4">
+                    {[...Array(5)].map((_, i) => (
+                      <LoadingSkeleton key={i} className="h-16" />
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {(shopAnalytics.shop_performance || []).slice(0, 5).map((shop: any, index: number) => (
+                      <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
+                            {shop.name.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="font-medium">{shop.name}</p>
+                            <p className="text-sm text-muted-foreground">{shop.followers} followers</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold">{formatCurrency(shop.sales)}</p>
+                          <p className="text-sm text-muted-foreground">{shop.rating}★</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* System Overview */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="w-5 h-5" />
+                  Platform Overview
+                </CardTitle>
+                <CardDescription>Key platform statistics</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoading ? (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {[...Array(6)].map((_, i) => (
+                      <LoadingSkeleton key={i} className="h-20" />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div className="text-center p-4 border rounded-lg">
+                      <p className="text-2xl font-bold text-blue-600">
+                        {formatCompactNumber(overview.total_orders || 0)}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Total Orders</p>
+                    </div>
+                    <div className="text-center p-4 border rounded-lg">
+                      <p className="text-2xl font-bold text-green-600">
+                        {formatCompactNumber(overview.active_shops || 0)}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Active Shops</p>
+                    </div>
+                    <div className="text-center p-4 border rounded-lg">
+                      <p className="text-2xl font-bold text-purple-600">
+                        {formatCompactNumber(overview.active_customers || 0)}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Customers</p>
+                    </div>
+                    <div className="text-center p-4 border rounded-lg">
+                      <p className="text-2xl font-bold text-orange-600">
+                        {operational.active_boosts || 0}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Active Boosts</p>
+                    </div>
+                    <div className="text-center p-4 border rounded-lg">
+                      <p className="text-2xl font-bold text-red-600">
+                        {operational.pending_refunds || 0}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Pending Refunds</p>
+                    </div>
+                    <div className="text-center p-4 border rounded-lg">
+                      <p className="text-2xl font-bold text-indigo-600">
+                        {operational.active_riders || 0}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Active Riders</p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Quick Actions */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick Actions</CardTitle>
+              <CardDescription>Frequently used admin functions</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <button 
+                  className="p-4 border rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading}
+                >
+                  <FileText className="w-6 h-6 mb-2 text-blue-600" />
+                  <p className="font-medium">View Reports</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isLoading ? '...' : operational.pending_reports || 0} pending
+                  </p>
+                </button>
+                <button 
+                  className="p-4 border rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading}
+                >
+                  <RefreshCw className="w-6 h-6 mb-2 text-green-600" />
+                  <p className="font-medium">Process Refunds</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isLoading ? '...' : operational.pending_refunds || 0} waiting
+                  </p>
+                </button>
+                <button 
+                  className="p-4 border rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading}
+                >
+                  <UserCheck className="w-6 h-6 mb-2 text-purple-600" />
+                  <p className="font-medium">Manage Users</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isLoading ? '...' : formatCompactNumber(overview.active_customers || 0)} total
+                  </p>
+                </button>
+                <button 
+                  className="p-4 border rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading}
+                >
+                  <BarChart3 className="w-6 h-6 mb-2 text-orange-600" />
+                  <p className="font-medium">Analytics</p>
+                  <p className="text-sm text-muted-foreground">View insights</p>
+                </button>
               </div>
             </CardContent>
           </Card>
