@@ -14,69 +14,71 @@ class Command(BaseCommand):
     help = "Seed the database with comprehensive shop and product data"
 
     def handle(self, *args, **kwargs):
-            """Updated handle method with refund data creation"""
-            self.cleanup_existing_data()
-            
-            self.stdout.write("🌱 Starting comprehensive shop data seeding...")
-            
-            try:
-                with transaction.atomic():
-                    # Create admin user first
-                    admin_user = self.create_admin_user()
-                    
-                    # Create customers and shops matching frontend data
-                    customers, shops = self.create_customers_and_shops()
-                    
-                    # Create categories
-                    categories = self.create_categories(shops, admin_user)
-                    
-                    # Create products matching frontend data
-                    products = self.create_products(customers, shops, categories, admin_user)
+        """Updated handle method with report data creation"""
+        self.cleanup_existing_data()
+        
+        self.stdout.write("🌱 Starting comprehensive shop data seeding...")
+        
+        try:
+            with transaction.atomic():
+                # Create admin user first
+                admin_user = self.create_admin_user()
+                
+                # Create customers and shops matching frontend data
+                customers, shops = self.create_customers_and_shops()
+                
+                # Create categories
+                categories = self.create_categories(shops, admin_user)
+                
+                # Create products matching frontend data
+                products = self.create_products(customers, shops, categories, admin_user)
 
-                    self.create_engagement_data()
-                    
-                    # Create boosts and boost plans
-                    self.create_boosts_and_plans(products, shops, customers, admin_user)
-                    
-                    # Create shop follows (followers)
-                    self.create_shop_follows(shops, customers)
-                    
-                    # Create reviews for shops and products
-                    self.create_reviews(products, shops, customers)
-                    
-                    # Create additional data
-                    self.create_additional_data(products, customers, shops)
-                    
-                    # Create customer activities
-                    self.create_customer_activities(products, customers)
-                    
-                    # Create comprehensive boost analytics data
-                    self.create_boost_analytics_data(products, shops, customers, admin_user)
+                self.create_engagement_data()
+                
+                # Create boosts and boost plans
+                self.create_boosts_and_plans(products, shops, customers, admin_user)
+                
+                # Create shop follows (followers)
+                self.create_shop_follows(shops, customers)
+                
+                # Create reviews for shops and products
+                self.create_reviews(products, shops, customers)
+                
+                # Create additional data
+                self.create_additional_data(products, customers, shops)
+                
+                # Create customer activities
+                self.create_customer_activities(products, customers)
+                
+                # Create comprehensive boost analytics data
+                self.create_boost_analytics_data(products, shops, customers, admin_user)
 
-                    # Create order data
-                    self.create_order_data(products, customers, shops, admin_user)
+                # Create order data
+                self.create_order_data(products, customers, shops, admin_user)
 
-                    # Create checkout data
-                    self.create_checkout_data(products, customers, shops, admin_user)
-                    
-                    # Create checkout analytics data
-                    self.create_order_analytics_data()
+                # Create checkout data
+                self.create_checkout_data(products, customers, shops, admin_user)
+                
+                # Create checkout analytics data
+                self.create_order_analytics_data()
 
-                    # Create rider data
-                    self.create_rider_data(products, customers, shops, admin_user)
-                    
-                    # CREATE REFUND DATA - ADD THIS LINE
-                    self.create_refund_data(products, customers, shops, admin_user)
-                    
-                    # CREATE REFUND ANALYTICS DATA - ADD THIS LINE
-                    self.create_refund_analytics_data()
-                    
-                    self.stdout.write(self.style.SUCCESS("✅ Comprehensive shop data seeded successfully!"))
-                    
-            except Exception as e:
-                self.stdout.write(self.style.ERROR(f"❌ Error seeding data: {str(e)}"))
-                raise
-
+                # Create rider data
+                self.create_rider_data(products, customers, shops, admin_user)
+                
+                # CREATE REFUND DATA
+                self.create_refund_data(products, customers, shops, admin_user)
+                
+                # CREATE REFUND ANALYTICS DATA
+                self.create_refund_analytics_data()
+                
+                # CREATE REPORT DATA - ADD ALL REPORT FUNCTIONS HERE
+                self.create_report_data(products, customers, shops, admin_user)
+                
+                self.stdout.write(self.style.SUCCESS("✅ Comprehensive shop data seeded successfully!"))
+                
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"❌ Error seeding data: {str(e)}"))
+            raise
 
     def create_admin_user(self):
         """Create admin user if not exists"""
@@ -2075,3 +2077,283 @@ class Command(BaseCommand):
                 )
 
 
+    def create_report_data(self, products, customers, shops, admin_user):
+        """Create comprehensive report data for admin dashboard"""
+        self.stdout.write("📊 Creating report data...")
+        
+        # Get or create moderators
+        moderator_users = self.get_or_create_moderators()
+        existing_users = User.objects.filter(is_customer=True)[:50]
+        
+        # Create reports
+        reports = self.create_reports(existing_users, shops, products, moderator_users)
+        
+        # Create report actions
+        self.create_report_actions(reports, admin_user, moderator_users)
+        
+        # Create report comments
+        self.create_report_comments(reports, admin_user, moderator_users)
+        
+        # Update user and shop status based on reports
+        self.update_suspension_status(reports)
+
+    def get_or_create_moderators(self):
+        """Get or create moderator users"""
+        moderators = User.objects.filter(is_moderator=True)
+        if not moderators.exists():
+            moderators = []
+            for i in range(3):
+                moderator_user = User.objects.create(
+                    username=f'moderator_{i+1}',
+                    email=f'moderator_{i+1}@example.com',
+                    password='temp_password_123',
+                    first_name=f'Moderator',
+                    last_name=f'User {i+1}',
+                    is_moderator=True
+                )
+                Moderator.objects.create(
+                    moderator=moderator_user,
+                    approval_status='approved'
+                )
+                moderators.append(moderator_user)
+        return list(moderators)
+
+    def create_reports(self, users, shops, products, moderators):
+        """Create realistic report data"""
+        self.stdout.write("📝 Creating reports...")
+        
+        report_reasons = [
+            ('spam', 'Spam'),
+            ('inappropriate_content', 'Inappropriate Content'),
+            ('harassment', 'Harassment'),
+            ('fake_account', 'Fake Account'),
+            ('fraud', 'Fraud'),
+            ('counterfeit', 'Counterfeit Items'),
+            ('misleading', 'Misleading Information'),
+            ('intellectual_property', 'Intellectual Property Violation'),
+            ('other', 'Other'),
+        ]
+        
+        status_weights = [
+            ('pending', 25),
+            ('under_review', 20),
+            ('resolved', 20),
+            ('dismissed', 15),
+            ('action_taken', 20),
+        ]
+        
+        reports = []
+        
+        # Create account reports (67 as per your metrics)
+        for i in range(67):
+            reporter = random.choice(users)
+            reported_user = random.choice([u for u in users if u != reporter])
+            
+            reason, reason_display = random.choice(report_reasons)
+            status = self.weighted_choice(status_weights)
+            
+            report = Report.objects.create(
+                reporter=reporter,
+                report_type='account',
+                reason=reason,
+                description=f"User {reported_user.username} reported for {reason_display}. Additional details: {self.get_report_description(reason)}",
+                status=status,
+                reported_account=reported_user,
+                assigned_moderator=random.choice(moderators) if status in ['under_review', 'resolved', 'action_taken'] else None,
+                created_at=timezone.now() - timedelta(days=random.randint(1, 180)),
+                resolved_at=timezone.now() - timedelta(days=random.randint(1, 30)) if status in ['resolved', 'action_taken', 'dismissed'] else None
+            )
+            reports.append(report)
+        
+        # Create product reports (45 as per your metrics)
+        for i in range(45):
+            reporter = random.choice(users)
+            reported_product = random.choice(products)
+            
+            reason, reason_display = random.choice([r for r in report_reasons if r[0] in ['counterfeit', 'misleading', 'fraud', 'other']])
+            status = self.weighted_choice(status_weights)
+            
+            report = Report.objects.create(
+                reporter=reporter,
+                report_type='product',
+                reason=reason,
+                description=f"Product '{reported_product.name}' reported for {reason_display}. Issues: {self.get_product_issues(reason)}",
+                status=status,
+                reported_product=reported_product,
+                assigned_moderator=random.choice(moderators) if status in ['under_review', 'resolved', 'action_taken'] else None,
+                created_at=timezone.now() - timedelta(days=random.randint(1, 180)),
+                resolved_at=timezone.now() - timedelta(days=random.randint(1, 30)) if status in ['resolved', 'action_taken', 'dismissed'] else None
+            )
+            reports.append(report)
+        
+        # Create shop reports (44 as per your metrics)
+        for i in range(44):
+            reporter = random.choice(users)
+            reported_shop = random.choice(shops)
+            
+            reason, reason_display = random.choice([r for r in report_reasons if r[0] in ['fraud', 'counterfeit', 'misleading', 'other']])
+            status = self.weighted_choice(status_weights)
+            
+            report = Report.objects.create(
+                reporter=reporter,
+                report_type='shop',
+                reason=reason,
+                description=f"Shop '{reported_shop.name}' reported for {reason_display}. Concerns: {self.get_shop_issues(reason)}",
+                status=status,
+                reported_shop=reported_shop,
+                assigned_moderator=random.choice(moderators) if status in ['under_review', 'resolved', 'action_taken'] else None,
+                created_at=timezone.now() - timedelta(days=random.randint(1, 180)),
+                resolved_at=timezone.now() - timedelta(days=random.randint(1, 30)) if status in ['resolved', 'action_taken', 'dismissed'] else None
+            )
+            reports.append(report)
+        
+        return reports
+
+    def create_report_actions(self, reports, admin_user, moderators):
+        """Create report actions for resolved reports"""
+        self.stdout.write("⚡ Creating report actions...")
+        
+        action_types = [
+            ('warning', 'Warning Issued'),
+            ('suspension', 'Account Suspension'),
+            ('product_removal', 'Product Removed'),
+            ('shop_suspension', 'Shop Suspended'),
+            ('content_removal', 'Content Removed'),
+            ('no_action', 'No Action Taken'),
+            ('other', 'Other'),
+        ]
+        
+        for report in reports:
+            if report.status in ['resolved', 'action_taken']:
+                action_type, action_display = random.choice(action_types)
+                
+                ReportAction.objects.create(
+                    report=report,
+                    action_type=action_type,
+                    description=f"Action taken: {action_display}. {self.get_action_description(action_type, report)}",
+                    taken_by=random.choice([admin_user] + moderators),
+                    duration_days=random.randint(1, 30) if action_type == 'suspension' else None,
+                    taken_at=report.resolved_at or report.created_at + timedelta(days=random.randint(1, 7))
+                )
+
+    def create_report_comments(self, reports, admin_user, moderators):
+        """Create internal comments for reports"""
+        self.stdout.write("💬 Creating report comments...")
+        
+        comment_templates = [
+            "Reviewing this case for potential policy violations.",
+            "Need more information from the reporting user.",
+            "This appears to be a legitimate concern.",
+            "No clear violation detected based on current evidence.",
+            "Escalating to senior moderator for review.",
+            "Contacted the reported user for their response.",
+            "Evidence collected and under analysis.",
+            "Recommend {} action for this case.",
+            "This user has previous similar reports.",
+            "Case appears to be resolved appropriately."
+        ]
+        
+        for report in reports:
+            # Create 1-3 comments per report
+            for _ in range(random.randint(1, 3)):
+                commenter = random.choice([admin_user] + moderators)
+                comment_text = random.choice(comment_templates)
+                
+                ReportComment.objects.create(
+                    report=report,
+                    user=commenter,
+                    comment=comment_text,
+                    is_internal=True,
+                    created_at=report.created_at + timedelta(hours=random.randint(1, 48))
+                )
+
+    def update_suspension_status(self, reports):
+        """Update user and shop suspension status based on reports"""
+        self.stdout.write("🔄 Updating suspension status...")
+        
+        # Suspend some users based on report severity
+        user_reports = [r for r in reports if r.report_type == 'account' and r.status == 'action_taken']
+        for report in random.sample(user_reports, min(5, len(user_reports))):
+            if report.reported_account:
+                report.reported_account.is_suspended = True
+                report.reported_account.suspension_reason = f"Multiple violations reported: {report.reason}"
+                report.reported_account.suspended_until = timezone.now() + timedelta(days=30)
+                report.reported_account.warning_count += 1
+                report.reported_account.save()
+        
+        # Suspend some shops based on report severity
+        shop_reports = [r for r in reports if r.report_type == 'shop' and r.status == 'action_taken']
+        for report in random.sample(shop_reports, min(3, len(shop_reports))):
+            if report.reported_shop:
+                report.reported_shop.is_suspended = True
+                report.reported_shop.suspension_reason = f"Multiple violations reported: {report.reason}"
+                report.reported_shop.suspended_until = timezone.now() + timedelta(days=30)
+                report.reported_shop.save()
+        
+        # Remove some products based on reports
+        product_reports = [r for r in reports if r.report_type == 'product' and r.status == 'action_taken']
+        for report in random.sample(product_reports, min(4, len(product_reports))):
+            if report.reported_product:
+                report.reported_product.is_removed = True
+                report.reported_product.removal_reason = f"Reported for: {report.reason}"
+                report.reported_product.removed_at = timezone.now()
+                report.reported_product.save()
+
+    def weighted_choice(self, choices):
+        """Make a weighted random choice"""
+        total = sum(weight for choice, weight in choices)
+        r = random.uniform(0, total)
+        upto = 0
+        for choice, weight in choices:
+            if upto + weight >= r:
+                return choice
+            upto += weight
+        return choices[-1][0]
+
+    def get_report_description(self, reason):
+        """Get detailed description based on report reason"""
+        descriptions = {
+            'spam': 'User sending unsolicited messages and promotional content repeatedly.',
+            'inappropriate_content': 'User sharing offensive or explicit content in public spaces.',
+            'harassment': 'User engaging in targeted bullying and threatening behavior.',
+            'fake_account': 'Profile appears to be impersonating someone or using fake identity.',
+            'fraud': 'Suspicious financial activities and attempted scams detected.',
+            'counterfeit': 'Selling replica items as genuine products.',
+            'misleading': 'False advertising and inaccurate product descriptions.',
+            'intellectual_property': 'Unauthorized use of copyrighted material or brand names.',
+            'other': 'General community guideline violation requiring review.'
+        }
+        return descriptions.get(reason, 'Report requires moderator review.')
+
+    def get_product_issues(self, reason):
+        """Get product-specific issues"""
+        issues = {
+            'counterfeit': 'Product appears to be counterfeit or unauthorized replica.',
+            'misleading': 'Product images and description do not match actual item.',
+            'fraud': 'Pricing and availability information appears fraudulent.',
+            'other': 'Product violates marketplace policies.'
+        }
+        return issues.get(reason, 'Product requires quality review.')
+
+    def get_shop_issues(self, reason):
+        """Get shop-specific issues"""
+        issues = {
+            'fraud': 'Shop engaging in fraudulent business practices.',
+            'counterfeit': 'Multiple counterfeit products listed in shop.',
+            'misleading': 'Shop information and policies are misleading.',
+            'other': 'Shop operations violate marketplace terms.'
+        }
+        return issues.get(reason, 'Shop requires compliance review.')
+
+    def get_action_description(self, action_type, report):
+        """Get action description based on action type"""
+        descriptions = {
+            'warning': f'Formal warning issued for {report.reason} violation.',
+            'suspension': f'Temporary suspension applied due to severity of {report.reason}.',
+            'product_removal': f'Product removed from marketplace for {report.reason}.',
+            'shop_suspension': f'Shop temporarily suspended pending investigation.',
+            'content_removal': f'Violating content removed and user notified.',
+            'no_action': f'No violation found after thorough investigation.',
+            'other': f'Custom resolution applied based on case specifics.'
+        }
+        return descriptions.get(action_type, 'Action completed.')

@@ -31,9 +31,22 @@ class User(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     registration_stage = models.IntegerField(null=True, blank=True)
+    is_suspended = models.BooleanField(default=False)
+    suspension_reason = models.TextField(blank=True, null=True)
+    suspended_until = models.DateTimeField(blank=True, null=True)
+    warning_count = models.IntegerField(default=0)
+    last_warning_date = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
         return f"User {self.username or self.id}"
+    
+    @property
+    def active_report_count(self):
+        return self.reports_against.filter(status__in=['pending', 'under_review']).count()
+    
+    @property
+    def total_report_count(self):
+        return self.reports_against.count()
 
 class Customer(models.Model):
     customer = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
@@ -151,9 +164,16 @@ class Shop(models.Model):
     total_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    is_suspended = models.BooleanField(default=False)
+    suspension_reason = models.TextField(blank=True, null=True)
+    suspended_until = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
         return f"{self.name}"
+    
+    @property
+    def active_report_count(self):
+        return self.reports_against.filter(status__in=['pending', 'under_review']).count()
 
 class ShopFollow(models.Model): 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -237,6 +257,13 @@ class Product(models.Model):
     condition = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    is_removed = models.BooleanField(default=False)
+    removal_reason = models.TextField(blank=True, null=True)
+    removed_at = models.DateTimeField(blank=True, null=True)
+
+    @property
+    def active_report_count(self):
+        return self.reports_against.filter(status__in=['pending', 'under_review']).count()
 
     def clean(self):
         """Validate product limit before saving"""
@@ -644,3 +671,189 @@ class RefundMedias(models.Model):
     refund = models.ForeignKey(Refund, on_delete=models.CASCADE)
     file_data = models.FileField(upload_to="refunds/")
     file_type = models.TextField()
+
+class Report(models.Model):
+    REPORT_TYPES = [
+        ('account', 'Account'),
+        ('product', 'Product'),
+        ('shop', 'Shop'),
+    ]
+    
+    REPORT_REASONS = [
+        ('spam', 'Spam'),
+        ('inappropriate_content', 'Inappropriate Content'),
+        ('harassment', 'Harassment'),
+        ('fake_account', 'Fake Account'),
+        ('fraud', 'Fraud'),
+        ('counterfeit', 'Counterfeit Items'),
+        ('misleading', 'Misleading Information'),
+        ('intellectual_property', 'Intellectual Property Violation'),
+        ('other', 'Other'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('under_review', 'Under Review'),
+        ('resolved', 'Resolved'),
+        ('dismissed', 'Dismissed'),
+        ('action_taken', 'Action Taken'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    reporter = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reports_made'
+    )
+    report_type = models.CharField(max_length=20, choices=REPORT_TYPES)
+    reason = models.CharField(max_length=50, choices=REPORT_REASONS)
+    description = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    
+    # Generic foreign key fields - only one will be filled based on report_type
+    reported_account = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='reports_against'
+    )
+    reported_product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='reports_against'
+    )
+    reported_shop = models.ForeignKey(
+        Shop,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='reports_against'
+    )
+    
+    assigned_moderator = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_reports',
+        limit_choices_to={'is_moderator': True}
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def clean(self):
+        """Validate that only one report target is set based on report_type"""
+        targets = [self.reported_account, self.reported_product, self.reported_shop]
+        set_targets = [target for target in targets if target is not None]
+        
+        if len(set_targets) != 1:
+            raise ValidationError("Exactly one report target must be set based on report_type")
+        
+        # Validate report_type matches the target
+        if self.report_type == 'account' and not self.reported_account:
+            raise ValidationError("Report type 'account' requires a reported account")
+        elif self.report_type == 'product' and not self.reported_product:
+            raise ValidationError("Report type 'product' requires a reported product")
+        elif self.report_type == 'shop' and not self.reported_shop:
+            raise ValidationError("Report type 'shop' requires a reported shop")
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+    
+    def get_reported_object(self):
+        """Get the actual reported object"""
+        if self.report_type == 'account':
+            return self.reported_account
+        elif self.report_type == 'product':
+            return self.reported_product
+        elif self.report_type == 'shop':
+            return self.reported_shop
+        return None
+    
+    def __str__(self):
+        return f"Report {self.id} - {self.get_report_type_display()} - {self.get_status_display()}"
+
+
+class ReportMedia(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    report = models.ForeignKey(
+        Report,
+        on_delete=models.CASCADE,
+        related_name='media'
+    )
+    file_data = models.FileField(upload_to="reports/")
+    file_type = models.CharField(max_length=50)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"Media for Report {self.report.id}"
+
+
+class ReportAction(models.Model):
+    ACTION_TYPES = [
+        ('warning', 'Warning Issued'),
+        ('suspension', 'Account Suspension'),
+        ('product_removal', 'Product Removed'),
+        ('shop_suspension', 'Shop Suspended'),
+        ('content_removal', 'Content Removed'),
+        ('no_action', 'No Action Taken'),
+        ('other', 'Other'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    report = models.OneToOneField(
+        Report,
+        on_delete=models.CASCADE,
+        related_name='action'
+    )
+    action_type = models.CharField(max_length=50, choices=ACTION_TYPES)
+    description = models.TextField()
+    taken_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='actions_taken',
+        limit_choices_to={'is_admin': True, 'is_moderator': True}
+    )
+    duration_days = models.IntegerField(null=True, blank=True, help_text="Duration in days for temporary actions")
+    taken_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"{self.get_action_type_display()} for Report {self.report.id}"
+
+
+class ReportComment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    report = models.ForeignKey(
+        Report,
+        on_delete=models.CASCADE,
+        related_name='comments'
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='report_comments'
+    )
+    comment = models.TextField()
+    is_internal = models.BooleanField(default=True, help_text="Internal comments are only visible to moderators/admins")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['created_at']
+    
+    def __str__(self):
+        return f"Comment by {self.user.username} on Report {self.report.id}"
+    

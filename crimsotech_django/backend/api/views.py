@@ -3503,6 +3503,304 @@ class AdminTeam(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+class AdminReports(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """Get report metrics for admin dashboard"""
+        try:
+            # Calculate basic metrics
+            total_reports = Report.objects.count()
+            pending_reports = Report.objects.filter(status='pending').count()
+            under_review_reports = Report.objects.filter(status='under_review').count()
+            resolved_reports = Report.objects.filter(status='resolved').count()
+            dismissed_reports = Report.objects.filter(status='dismissed').count()
+            action_taken_reports = Report.objects.filter(status='action_taken').count()
+            
+            # Calculate reports by type
+            accounts_reported = Report.objects.filter(report_type='account').count()
+            products_reported = Report.objects.filter(report_type='product').count()
+            shops_reported = Report.objects.filter(report_type='shop').count()
+            
+            # Calculate weekly resolution rate
+            week_ago = timezone.now() - timedelta(days=7)
+            reports_this_week = Report.objects.filter(created_at__gte=week_ago).count()
+            resolved_this_week = Report.objects.filter(
+                resolved_at__gte=week_ago,
+                status__in=['resolved', 'action_taken']
+            ).count()
+            
+            resolution_rate = 0
+            if reports_this_week > 0:
+                resolution_rate = round((resolved_this_week / reports_this_week) * 100, 1)
+            
+            # Calculate average resolution time (in days)
+            resolved_reports_with_date = Report.objects.filter(
+                status__in=['resolved', 'action_taken'],
+                resolved_at__isnull=False
+            )
+            total_resolution_time = 0
+            count_with_resolution = 0
+            
+            for report in resolved_reports_with_date:
+                if report.resolved_at and report.created_at:
+                    resolution_time = (report.resolved_at - report.created_at).total_seconds() / (24 * 3600)  # Convert to days
+                    total_resolution_time += resolution_time
+                    count_with_resolution += 1
+            
+            avg_resolution_time = round(total_resolution_time / count_with_resolution, 1) if count_with_resolution > 0 else 0
+
+            metrics = {
+                'total_reports': total_reports,
+                'pending_reports': pending_reports + under_review_reports,  # Combine pending and under_review for UI
+                'resolved_this_week': resolved_this_week,
+                'resolution_rate': resolution_rate,
+                'avg_resolution_time': avg_resolution_time,
+                'accounts_reported': accounts_reported,
+                'products_reported': products_reported,
+                'shops_reported': shops_reported,
+                'detailed_status': {
+                    'pending': pending_reports,
+                    'under_review': under_review_reports,
+                    'resolved': resolved_reports,
+                    'dismissed': dismissed_reports,
+                    'action_taken': action_taken_reports,
+                }
+            }
+            
+            return Response(metrics, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error calculating report metrics: {str(e)}")
+            return Response(
+                {'error': f'Error calculating report metrics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])        
+    def get_analytics(self, request):
+        """Get analytics data for charts and graphs"""
+        try:
+            # Reports by type for pie chart
+            reports_by_type = Report.objects.values('report_type').annotate(
+                count=Count('id')
+            ).order_by('-count')
+            
+            total_reports = Report.objects.count()
+            reports_type_data = []
+            for item in reports_by_type:
+                percentage = round((item['count'] / total_reports) * 100) if total_reports > 0 else 0
+                reports_type_data.append({
+                    'type': item['report_type'].title(),
+                    'count': item['count'],
+                    'percentage': percentage
+                })
+
+            # Reports trend over time (last 6 months)
+            six_months_ago = timezone.now() - timedelta(days=180)
+            monthly_reports = Report.objects.filter(
+                created_at__gte=six_months_ago
+            ).extra({
+                'month': "EXTRACT(month FROM created_at)",
+                'year': "EXTRACT(year FROM created_at)"
+            }).values('month', 'year').annotate(
+                new_reports=Count('id'),
+                resolved=Count('id', filter=Q(status__in=['resolved', 'action_taken'])),
+                pending=Count('id', filter=Q(status__in=['pending', 'under_review']))
+            ).order_by('year', 'month')
+            
+            month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+            reports_trend_data = []
+            for item in monthly_reports:
+                month_name = month_names[int(item['month']) - 1]
+                full_month = f"{month_name} {int(item['year'])}"
+                reports_trend_data.append({
+                    'date': month_name,
+                    'full_month': full_month,
+                    'new_reports': item['new_reports'],
+                    'resolved': item['resolved'],
+                    'pending': item['pending']
+                })
+
+            # Top reporting reasons
+            top_reasons = Report.objects.values('reason').annotate(
+                count=Count('id')
+            ).order_by('-count')[:10]
+            
+            top_reasons_data = []
+            for item in top_reasons:
+                # Get the most common type for this reason
+                common_type = Report.objects.filter(reason=item['reason']).values(
+                    'report_type'
+                ).annotate(
+                    type_count=Count('id')
+                ).order_by('-type_count').first()
+                
+                top_reasons_data.append({
+                    'reason': item['reason'].replace('_', ' ').title(),
+                    'count': item['count'],
+                    'type': common_type['report_type'].title() if common_type else 'All'
+                })
+
+            analytics = {
+                'reports_by_type': reports_type_data,
+                'reports_trend': reports_trend_data,
+                'top_reasons': top_reasons_data,
+            }
+            
+            return Response(analytics, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error generating analytics: {str(e)}")
+            return Response(
+                {'error': f'Error generating analytics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def reports_list(self, request):
+        """Get paginated list of reports with filtering and search"""
+        try:
+            # Get query parameters
+            report_type = request.GET.get('type', None)
+            status_filter = request.GET.get('status', None)
+            search = request.GET.get('search', None)
+            page = int(request.GET.get('page', 1))
+            page_size = int(request.GET.get('page_size', 20))
+            
+            # Start with all reports
+            reports = Report.objects.select_related(
+                'reporter',
+                'reported_account',
+                'reported_product',
+                'reported_shop',
+                'assigned_moderator'
+            ).prefetch_related('media', 'action', 'comments').all()
+            
+            # Apply filters
+            if report_type and report_type != 'all':
+                reports = reports.filter(report_type=report_type)
+                
+            if status_filter and status_filter != 'all':
+                reports = reports.filter(status=status_filter)
+                
+            if search:
+                reports = reports.filter(
+                    Q(reported_account__username__icontains=search) |
+                    Q(reported_product__name__icontains=search) |
+                    Q(reported_shop__name__icontains=search) |
+                    Q(reason__icontains=search) |
+                    Q(description__icontains=search)
+                )
+            
+            # Calculate pagination
+            total_count = reports.count()
+            total_pages = (total_count + page_size - 1) // page_size
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            
+            # Get paginated results
+            paginated_reports = reports.order_by('-created_at')[start_index:end_index]
+            
+            # Transform data for frontend
+            reports_data = []
+            for report in paginated_reports:
+                report_data = {
+                    'id': str(report.id),
+                    'report_type': report.report_type,
+                    'reason': report.reason,
+                    'description': report.description,
+                    'status': report.status,
+                    'reporter_username': report.reporter.username if report.reporter else 'Unknown',
+                    'created_at': report.created_at.isoformat(),
+                    'updated_at': report.updated_at.isoformat(),
+                    'resolved_at': report.resolved_at.isoformat() if report.resolved_at else None,
+                    'assigned_moderator': report.assigned_moderator.username if report.assigned_moderator else None,
+                }
+                
+                # Add type-specific data
+                if report.report_type == 'account' and report.reported_account:
+                    report_data.update({
+                        'reported_object': {
+                            'id': str(report.reported_account.id),
+                            'username': report.reported_account.username,
+                            'email': report.reported_account.email,
+                            'user_type': self._get_user_type(report.reported_account),
+                            'is_suspended': report.reported_account.is_suspended,
+                            'warning_count': report.reported_account.warning_count,
+                        }
+                    })
+                elif report.report_type == 'product' and report.reported_product:
+                    report_data.update({
+                        'reported_object': {
+                            'id': str(report.reported_product.id),
+                            'name': report.reported_product.name,
+                            'price': float(report.reported_product.price),
+                            'shop_name': report.reported_product.shop.name if report.reported_product.shop else 'No Shop',
+                            'is_removed': report.reported_product.is_removed,
+                            'category': report.reported_product.category.name if report.reported_product.category else 'Uncategorized',
+                        }
+                    })
+                elif report.report_type == 'shop' and report.reported_shop:
+                    report_data.update({
+                        'reported_object': {
+                            'id': str(report.reported_shop.id),
+                            'name': report.reported_shop.name,
+                            'owner': report.reported_shop.customer.customer.username if report.reported_shop.customer else 'Unknown',
+                            'is_suspended': report.reported_shop.is_suspended,
+                            'total_products': report.reported_shop.products.count(),
+                            'verified': report.reported_shop.verified,
+                        }
+                    })
+                
+                # Add action data if exists
+                if hasattr(report, 'action'):
+                    report_data['action'] = {
+                        'action_type': report.action.action_type,
+                        'description': report.action.description,
+                        'taken_by': report.action.taken_by.username if report.action.taken_by else None,
+                        'taken_at': report.action.taken_at.isoformat(),
+                    }
+                
+                reports_data.append(report_data)
+
+            response_data = {
+                'reports': reports_data,
+                'pagination': {
+                    'current_page': page,
+                    'total_pages': total_pages,
+                    'total_count': total_count,
+                    'page_size': page_size,
+                    'has_next': page < total_pages,
+                    'has_previous': page > 1,
+                },
+                'filters': {
+                    'type': report_type,
+                    'status': status_filter,
+                    'search': search,
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error fetching reports list: {str(e)}")
+            return Response(
+                {'error': f'Error fetching reports list: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_user_type(self, user):
+        """Helper method to determine user type"""
+        if user.is_admin:
+            return 'admin'
+        elif user.is_moderator:
+            return 'moderator'
+        elif user.is_rider:
+            return 'rider'
+        elif user.is_customer:
+            return 'customer'
+        return 'unknown'
+
 
 class CustomerProducts(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

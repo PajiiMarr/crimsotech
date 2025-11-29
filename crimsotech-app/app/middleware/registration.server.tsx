@@ -65,6 +65,5 @@ export async function registrationMiddleware(args: LoaderFunctionArgs | ActionFu
       }
     }
   }
-  
   return null;
 }
