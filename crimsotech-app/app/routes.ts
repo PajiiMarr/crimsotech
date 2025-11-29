@@ -16,6 +16,15 @@ export default [
     route('logout', 'routes/logout.tsx'),
     
     route('home', 'routes/customer/home.tsx'),
+    route('shop-list', 'routes/customer/shop-list.tsx'),
+    route('create-shop', 'routes/customer/create-shop.tsx'),
+    
+    ...prefix("seller", [
+        route("dashboard", "routes/seller/dashboard.tsx"), 
+        route("seller-product-list", "routes/seller/seller-product-list.tsx"), 
+        route("seller-create-product", "routes/seller/seller-create-product.tsx"), 
+         ]),
+
 
     ...prefix("admin", [
         index("routes/admin/home.tsx"),

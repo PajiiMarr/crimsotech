@@ -6,8 +6,10 @@ import { SidebarTrigger } from "~/components/ui/sidebar";
 import { Bell, User } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,} from "~/components/ui/dropdown-menu";
 import { Link } from "react-router";
+import { useNavigate } from "react-router";
 
 export default function CustomerHeader() {
+  const navigate = useNavigate();
   return (
     <header className="flex h-16 shrink-0 items-center justify-between gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
      
@@ -49,7 +51,9 @@ export default function CustomerHeader() {
 
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem>Profile</DropdownMenuItem>
-            <DropdownMenuItem>Settings</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/shop-list")}>
+              Shop
+            </DropdownMenuItem>
             <DropdownMenuItem>
               <Link to='/logout'>
                 Sign Out

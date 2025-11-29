@@ -33,14 +33,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   await requireRole(request, context, ["isCustomer"]);
 
-  // Fetch only shops for the form (remove categories)
+  // Fetch shops for the form
   try {
     const shopsResponse = await AxiosInstance.get('/customer-shops/');
+    const shops = shopsResponse.data.success ? shopsResponse.data.shops : [];
+    
+    // Auto-select the first shop if available
+    const selectedShop = shops.length > 0 ? shops[0] : null;
     
     return data({ 
       user,
-      shops: shopsResponse.data.success ? shopsResponse.data.shops : []
-      // Remove categories since the endpoint doesn't exist
+      shops: shops,
+      selectedShop: selectedShop
     }, {
       headers: {
         "Set-Cookie": await commitSession(session),
@@ -49,7 +53,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   } catch (error) {
     return data({ 
       user,
-      shops: []
+      shops: [],
+      selectedShop: null
     }, {
       headers: {
         "Set-Cookie": await commitSession(session),
@@ -71,7 +76,6 @@ export async function action({ request }: Route.ActionArgs) {
   const used_for = String(formData.get("used_for"));
   const price = String(formData.get("price"));
   const condition = String(formData.get("condition"));
-  const shop = String(formData.get("shop"));
   const category = String(formData.get("category"));
 
   // Get variant fields
@@ -126,10 +130,6 @@ export async function action({ request }: Route.ActionArgs) {
     errors.condition = "Condition is required";
   }
 
-  if (!shop.trim()) {
-    errors.shop = "Shop is required";
-  }
-
   // Validate media files
   media_files.forEach((file, index) => {
     if (file.size > 0) {
@@ -168,6 +168,16 @@ export async function action({ request }: Route.ActionArgs) {
     const userId = session.get("userId");
     if (!userId) return data({ errors: { message: "User not authenticated" } }, { status: 401 });
 
+    // Get the first shop automatically
+    const shopsResponse = await AxiosInstance.get('/customer-shops/');
+    const shops = shopsResponse.data.success ? shopsResponse.data.shops : [];
+    
+    if (shops.length === 0) {
+      return data({ errors: { message: "No shops found. Please create a shop first." } }, { status: 400 });
+    }
+
+    const firstShop = shops[0];
+
     // Prepare payload
     const payload: any = {
       name: name.trim(),
@@ -176,7 +186,7 @@ export async function action({ request }: Route.ActionArgs) {
       used_for: used_for.trim() || "General use",
       price: parseFloat(price),
       condition: condition.trim(),
-      shop: shop.trim(),
+      shop: firstShop.id, // Automatically use the first shop
       status: "active",
       customer: userId
     };
@@ -271,7 +281,7 @@ interface FormErrors {
 }
 
 export default function CreateProduct({ loaderData, actionData }: Route.ComponentProps) {
-  const { user, shops } = loaderData;
+  const { user, shops, selectedShop } = loaderData;
   const errors: FormErrors = actionData?.errors || {};
 
   return (
@@ -293,6 +303,29 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
               <p className="text-red-700">{errors.message}</p>
             </div>
           )}
+
+          {/* Selected Shop Info */}
+          {selectedShop && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+              <h3 className="font-semibold text-blue-800">Creating Product For:</h3>
+              <p className="text-blue-700">Shop: {selectedShop.name}</p>
+              {selectedShop.description && (
+                <p className="text-blue-600 text-sm mt-1">{selectedShop.description}</p>
+              )}
+            </div>
+          )}
+          
+          {!selectedShop && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+              <p className="text-yellow-700">No shops found. Please create a shop first.</p>
+              <Link 
+                to="/seller/create-shop" 
+                className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 mt-2 inline-block"
+              >
+                Create Shop
+              </Link>
+            </div>
+          )}
           
           <div className="bg-white rounded-lg shadow p-6">
             <form method="post" encType="multipart/form-data" className="space-y-6">
@@ -311,26 +344,6 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
                     placeholder="Enter product name"
                   />
                   {errors.name && <p className="text-red-500 text-sm mt-1">{errors.name}</p>}
-                </div>
-
-                {/* Shop Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Shop *
-                  </label>
-                  <select
-                    name="shop"
-                    required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select a shop</option>
-                    {shops.map((shop: any) => (
-                      <option key={shop.id} value={shop.id}>
-                        {shop.name}
-                      </option>
-                    ))}
-                  </select>
-                  {errors.shop && <p className="text-red-500 text-sm mt-1">{errors.shop}</p>}
                 </div>
 
                 {/* Price */}
@@ -385,7 +398,6 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
                 </div>
 
                 {/* Category */}
-                {/* Category - Make it an input field instead of select */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Category
@@ -515,8 +527,9 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
                 <button
                   type="submit"
                   className="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600"
+                  disabled={!selectedShop}
                 >
-                  Create Product
+                  {selectedShop ? "Create Product" : "Create Shop First"}
                 </button>
               </div>
             </form>

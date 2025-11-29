@@ -5094,3 +5094,204 @@ class RiderStatus(viewsets.ViewSet):
                 'success': False,
                 'message': 'Rider not found'
             }, status=status.HTTP_404_NOT_FOUND)
+
+
+class CustomerShops(APIView):
+    def get(self, request):
+        shops_queryset = Shop.objects.all().order_by('name')
+        serializer = ShopSerializer(shops_queryset, many=True, context={'request': request})
+        return Response({
+            "success": True,
+            "shops": serializer.data,
+            "message": "Shops retrieved successfully",
+            "data_source": "database"
+        }, status=status.HTTP_200_OK) 
+
+
+    def post(self, request):
+        # Validate required fields
+        required_fields = ["name", "customer", "province", "city", "barangay", "street", "contact_number"]
+        missing_fields = [f for f in required_fields if f not in request.data]
+
+        if missing_fields:
+            return Response({
+                "error": "Missing required fields",
+                "missing_fields": missing_fields
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        customer_id = request.data.get("customer")
+        try:
+            customer = Customer.objects.get(customer_id=customer_id)
+        except Customer.DoesNotExist:
+            return Response({"error": "Customer not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ShopCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            with transaction.atomic():
+                shop = serializer.save()
+                # Return same format as get_shop_list
+                return Response({
+                    "success": True,
+                    "shops": [
+                        {
+                            "id": str(shop.id),
+                            "shop_picture": request.build_absolute_uri(shop.shop_picture.url) if shop.shop_picture else None,
+                            "name": shop.name,
+                            "description": shop.description,
+                            "province": shop.province,
+                            "city": shop.city,
+                            "barangay": shop.barangay,
+                            "street": shop.street,
+                            "contact_number": shop.contact_number,
+                            "created_at": shop.created_at.isoformat() if shop.created_at else None,
+                        }
+                    ],
+                    "message": "Shop created successfully",
+                    "data_source": "database"
+                }, status=status.HTTP_201_CREATED)
+        else:
+            return Response({
+                "error": "Validation failed",
+                "details": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+
+class SellerProducts(viewsets.ModelViewSet):
+    serializer_class = ProductSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated:
+            try:
+                seller = Customer.objects.get(customer=user)
+                return Product.objects.filter(customer=seller).order_by('-created_at')
+            except Customer.DoesNotExist:
+                return Product.objects.none()
+        return Product.objects.none()
+
+    def create(self, request):
+        # Validate required fields for seller product creation
+        required_fields = ["name", "description", "quantity", "price", "condition", "shop"]
+        missing_fields = [f for f in required_fields if f not in request.data]
+
+        if missing_fields:
+            return Response({
+                "error": "Missing required fields",
+                "missing_fields": missing_fields
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the authenticated seller
+        user = request.user
+        try:
+            seller = Customer.objects.get(customer=user)
+        except Customer.DoesNotExist:
+            return Response({"error": "Seller not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        shop_id = request.data.get("shop")
+        
+        # Verify the shop belongs to the seller
+        try:
+            shop = Shop.objects.get(id=shop_id, customer=seller)
+        except Shop.DoesNotExist:
+            return Response({
+                "error": "Shop not found or does not belong to you"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if seller can add more products
+        if not seller.can_add_product():
+            return Response({
+                "error": f"Cannot add more than {seller.product_limit} products. Current count: {seller.current_product_count}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Prepare data with the authenticated seller
+        product_data = request.data.copy()
+        product_data['customer'] = seller.customer_id
+        
+        serializer = ProductCreateSerializer(data=product_data, context={'request': request})
+        if serializer.is_valid():
+            with transaction.atomic():
+                try:
+                    product = serializer.save()
+                    
+                    # Handle media files if any
+                    media_files = request.FILES.getlist('media_files')
+                    for media_file in media_files:
+                        ProductMedia.objects.create(
+                            product=product,
+                            file_data=media_file,
+                            file_type=media_file.content_type
+                        )
+                    
+                    # Handle variants if any (simple approach)
+                    variant_title = request.data.get('variant_title')
+                    variant_option_title = request.data.get('variant_option_title')
+                    variant_option_quantity = request.data.get('variant_option_quantity')
+                    variant_option_price = request.data.get('variant_option_price')
+                    
+                    if variant_title and variant_option_title:
+                        variant = Variants.objects.create(
+                            product=product,
+                            shop=shop,
+                            title=variant_title
+                        )
+                        
+                        VariantOptions.objects.create(
+                            variant=variant,
+                            title=variant_option_title,
+                            quantity=int(variant_option_quantity) if variant_option_quantity else 0,
+                            price=float(variant_option_price) if variant_option_price else 0
+                        )
+                    
+                    # Return same format as get_product_list
+                    return Response({
+                        "success": True,
+                        "products": [
+                            {
+                                "id": str(product.id),
+                                "name": product.name,
+                                "description": product.description,
+                                "quantity": product.quantity,
+                                "used_for": product.used_for,
+                                "price": str(product.price),
+                                "status": product.status,
+                                "condition": product.condition,
+                                "shop": {
+                                    "id": str(product.shop.id),
+                                    "name": product.shop.name
+                                } if product.shop else None,
+                                "category": {
+                                    "id": str(product.category.id),
+                                    "name": product.category.name
+                                } if product.category else None,
+                                "created_at": product.created_at.isoformat() if product.created_at else None,
+                                "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                            }
+                        ],
+                        "message": "Product created successfully",
+                        "data_source": "database",
+                        "product_limit_info": {
+                            "current_count": seller.current_product_count,
+                            "limit": seller.product_limit,
+                            "remaining": seller.product_limit - seller.current_product_count
+                        }
+                    }, status=status.HTTP_201_CREATED)
+                except ValidationError as e:
+                    return Response({
+                        "error": "Validation failed",
+                        "details": str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({
+                "error": "Validation failed",
+                "details": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def list(self, request):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            "success": True,
+            "products": serializer.data,
+            "message": "Products retrieved successfully",
+            "data_source": "database"
+        }, status=status.HTTP_200_OK)

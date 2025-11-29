@@ -38,12 +38,14 @@ router.register(r'admin-team', AdminTeam, basename='admin-team')
 router.register(r'admin-reports', AdminReports, basename='admin-reports')
 router.register(r'customer-products', CustomerProducts, basename='customer-products')
 router.register(r'rider-status', RiderStatus, basename='rider-status')
+router.register(r'seller-products', SellerProducts, basename='seller-products')
 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
     path('', UserView.as_view(), name='user-list'),
+    path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),
     path('api/register/', Register.as_view(), name='register'),
     path('api/login/', Login.as_view(), name='login'),
     path('api/profiling/', Profiling.as_view(), name='profiling'),
