@@ -5098,72 +5098,105 @@ class RiderStatus(viewsets.ViewSet):
 
 class CustomerShops(APIView):
     def get(self, request):
-        shops_queryset = Shop.objects.all().order_by('name')
-        serializer = ShopSerializer(shops_queryset, many=True, context={'request': request})
-        return Response({
-            "success": True,
-            "shops": serializer.data,
-            "message": "Shops retrieved successfully",
-            "data_source": "database"
-        }, status=status.HTTP_200_OK) 
-
-
-    def post(self, request):
-        # Validate required fields
-        required_fields = ["name", "customer", "province", "city", "barangay", "street", "contact_number"]
-        missing_fields = [f for f in required_fields if f not in request.data]
-
-        if missing_fields:
-            return Response({
-                "error": "Missing required fields",
-                "missing_fields": missing_fields
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        customer_id = request.data.get("customer")
-        try:
-            customer = Customer.objects.get(customer_id=customer_id)
-        except Customer.DoesNotExist:
-            return Response({"error": "Customer not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = ShopCreateSerializer(data=request.data)
-        if serializer.is_valid():
-            with transaction.atomic():
-                shop = serializer.save()
-                # Return same format as get_shop_list
-                return Response({
-                    "success": True,
-                    "shops": [
-                        {
-                            "id": str(shop.id),
-                            "shop_picture": request.build_absolute_uri(shop.shop_picture.url) if shop.shop_picture else None,
-                            "name": shop.name,
-                            "description": shop.description,
-                            "province": shop.province,
-                            "city": shop.city,
-                            "barangay": shop.barangay,
-                            "street": shop.street,
-                            "contact_number": shop.contact_number,
-                            "created_at": shop.created_at.isoformat() if shop.created_at else None,
-                        }
-                    ],
-                    "message": "Shop created successfully",
-                    "data_source": "database"
-                }, status=status.HTTP_201_CREATED)
-        else:
-            return Response({
-                "error": "Validation failed",
-                "details": serializer.errors
-            }, status=status.HTTP_400_BAD_REQUEST)
+        # Get customer_id from query parameters
+        customer_id = request.query_params.get('customer_id')
         
+        if not customer_id:
+            return Response({
+                "success": False,
+                "error": "customer_id parameter is required"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Get the customer object
+            customer = Customer.objects.get(customer_id=customer_id)
+            
+            # Filter shops by this customer
+            shops_queryset = Shop.objects.filter(customer=customer).order_by('name')
+            serializer = ShopSerializer(shops_queryset, many=True, context={'request': request})
+            
+            return Response({
+                "success": True,
+                "shops": serializer.data,
+                "message": "Shops retrieved successfully",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)
+            
+        except Customer.DoesNotExist:
+            return Response({
+                "success": True,
+                "shops": [],
+                "message": "No customer found with this ID",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK) 
+
+class CustomerShopsAddSeller(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_shop(self, request):
+        shop_id = request.headers.get('X-Shop-Id')
+
+        try: 
+            shop = Shop.objects.get(id=shop_id)
+
+            serializer = ShopSerializer(shop, context={'request': request})
+
+            return Response({
+                'success': True,
+                'shop': serializer.data
+            }, status=status.HTTP_200_OK)
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
 
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
+    @action(detail=False, methods=['get'], url_path='global-categories')    
+    def get_global_categories(self, request):
+        """
+        Fetch global categories (where shop_id is null/empty)
+        """
+        try:
+            # Fetch categories where shop is null (global categories)
+            global_categories = Category.objects.filter(shop__isnull=True).order_by('name')
+            
+            # Serialize the data
+            categories_data = []
+            for category in global_categories:
+                category_data = {
+                    "id": str(category.id),
+                    "name": category.name,
+                    "shop": None,  # Explicitly set to null since we're filtering for null shop
+                    "user": {
+                        "id": str(category.user.id),
+                        "username": category.user.username
+                    } if category.user else None,
+                }
+                categories_data.append(category_data)
+            
+            return Response({
+                "success": True,
+                "categories": categories_data,
+                "message": "Global categories retrieved successfully",
+                "total_count": len(categories_data),
+                "is_global": True
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch global categories",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     def get_queryset(self):
-        user = self.request.user
-        if user.is_authenticated:
+        # Get user_id from request data instead of authenticated user
+        user_id = self.request.data.get('customer_id')
+        if user_id:
             try:
-                seller = Customer.objects.get(customer=user)
+                seller = Customer.objects.get(customer_id=user_id)
                 return Product.objects.filter(customer=seller).order_by('-created_at')
             except Customer.DoesNotExist:
                 return Product.objects.none()
@@ -5171,7 +5204,7 @@ class SellerProducts(viewsets.ModelViewSet):
 
     def create(self, request):
         # Validate required fields for seller product creation
-        required_fields = ["name", "description", "quantity", "price", "condition", "shop"]
+        required_fields = ["name", "description", "quantity", "price", "condition", "shop", "customer_id"]
         missing_fields = [f for f in required_fields if f not in request.data]
 
         if missing_fields:
@@ -5180,10 +5213,14 @@ class SellerProducts(viewsets.ModelViewSet):
                 "missing_fields": missing_fields
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Get the authenticated seller
-        user = request.user
+        # Get the user ID from session (sent from frontend)
+        user_id = request.data.get("customer_id")
+        if not user_id:
+            return Response({"error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get seller using the user_id from session
         try:
-            seller = Customer.objects.get(customer=user)
+            seller = Customer.objects.get(customer_id=user_id)
         except Customer.DoesNotExist:
             return Response({"error": "Seller not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -5203,9 +5240,20 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": f"Cannot add more than {seller.product_limit} products. Current count: {seller.current_product_count}"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Prepare data with the authenticated seller
+        # Prepare data with the seller from session user_id
         product_data = request.data.copy()
         product_data['customer'] = seller.customer_id
+        
+        # Handle category_admin_id for global categories
+        category_admin_id = request.data.get('category_admin_id')
+        if category_admin_id and category_admin_id != "none":
+            try:
+                category_admin = Category.objects.get(id=category_admin_id, shop__isnull=True)
+                product_data['category_admin'] = category_admin_id
+            except Category.DoesNotExist:
+                return Response({
+                    "error": "Invalid global category selected"
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         serializer = ProductCreateSerializer(data=product_data, context={'request': request})
         if serializer.is_valid():
@@ -5259,6 +5307,10 @@ class SellerProducts(viewsets.ModelViewSet):
                                     "id": str(product.shop.id),
                                     "name": product.shop.name
                                 } if product.shop else None,
+                                "category_admin": {
+                                    "id": str(product.category_admin.id),
+                                    "name": product.category_admin.name
+                                } if product.category_admin else None,
                                 "category": {
                                     "id": str(product.category.id),
                                     "name": product.category.name
@@ -5287,11 +5339,28 @@ class SellerProducts(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
     def list(self, request):
-        queryset = self.get_queryset()
-        serializer = self.get_serializer(queryset, many=True)
-        return Response({
-            "success": True,
-            "products": serializer.data,
-            "message": "Products retrieved successfully",
-            "data_source": "database"
-        }, status=status.HTTP_200_OK)
+        # For listing, we need to get user_id from request data or query params
+        user_id = request.data.get('customer_id') or request.query_params.get('customer_id')
+        
+        if not user_id:
+            return Response({
+                "error": "User ID is required"
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            seller = Customer.objects.get(customer_id=user_id)
+            queryset = Product.objects.filter(customer=seller).order_by('-created_at')
+            serializer = self.get_serializer(queryset, many=True)
+            return Response({
+                "success": True,
+                "products": serializer.data,
+                "message": "Products retrieved successfully",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)
+        except Customer.DoesNotExist:
+            return Response({
+                "success": True,
+                "products": [],
+                "message": "No seller found for this user",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)

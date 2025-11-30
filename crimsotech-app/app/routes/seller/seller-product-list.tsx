@@ -5,7 +5,7 @@ import { ProductCard } from '~/components/customer/product-card'
 import { ProductCategory } from '~/components/customer/product-category'
 import { TopProductCard } from '~/components/customer/top-product'
 import { UserProvider } from '~/components/providers/user-role-provider';
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link } from "react-router";
 import AxiosInstance from '~/components/axios/Axios';
 import { useEffect, useState } from 'react';
 

@@ -6,6 +6,7 @@ type SessionData = {
   registration_stage: number;
   isCustomer: boolean;
   isRider: boolean;
+  shopId?: string;
 };
 
 type SessionFlashData = {

@@ -1,10 +1,10 @@
-
 import type { Route } from './+types/shop-list';
+import { useFetcher } from "react-router";
 import SidebarLayout from '~/components/layouts/sidebar';
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { useState, useEffect } from "react";
 import { Button } from "~/components/ui/button";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, data } from "react-router";
 
 import AxiosInstance from '~/components/axios/Axios';
 import { 
@@ -34,7 +34,7 @@ export function meta(): Route.MetaDescriptors {
 // Loader function
 // ================================
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const { getSession } = await import('~/sessions.server');
+  const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
   const { registrationMiddleware } = await import("~/middleware/registration.server");
@@ -58,7 +58,39 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
 
   await requireRole(request, context, ["isCustomer"]);
-  return user;
+
+  // Clear shop_id from session when loading shop-list
+  session.unset("shopId");
+
+  return data({ user }, {
+    headers: {
+      "Set-Cookie": await commitSession(session),
+    },
+  });
+}
+
+export async function action({ request }: Route.ActionArgs) {
+  const { getSession, commitSession } = await import('~/sessions.server');
+  const session = await getSession(request.headers.get("Cookie"));
+
+  const formData = await request.formData();
+  const shopId = formData.get("shopId") as string;
+  const intent = formData.get("intent") as string;
+
+  if (intent === "selectShop" && shopId) {
+    session.set("shopId", shopId);
+    
+    // Use redirect instead of returning data
+    return new Response(null, {
+      status: 302,
+      headers: {
+        "Set-Cookie": await commitSession(session),
+        "Location": "/seller/dashboard",
+      },
+    });
+  }
+
+  return data({ success: false }, { status: 400 });
 }
 
 // ================================
@@ -82,16 +114,45 @@ function ShopsContent({ user }: { user: any }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectingShop, setSelectingShop] = useState<string | null>(null);
+  
+  const fetcher = useFetcher();
 
-  // 🔍 Debug log
+  // Functi
   console.log("User object:", user);
 
-  // Fetch shops
+  // Function to set shop ID in session and navigate to dashboard
+  const handleManageShop = async (shopId: string) => {
+    try {
+      setSelectingShop(shopId);
+      
+      // Use fetcher to submit the form
+      fetcher.submit(
+        { shopId, intent: "selectShop" },
+        { method: "POST" }
+      );
+      
+      // The action will handle the redirect automatically
+    } catch (error) {
+      console.error("Error setting shop session:", error);
+      navigate('/seller/dashboard');
+    } finally {
+      setSelectingShop(null);
+    }
+  };
+
+  // Function to handle card click
+  const handleShopCardClick = async (shopId: string) => {
+    await handleManageShop(shopId);
+  };
+
   // Fetch shops
   const fetchShops = async () => {
     try {
       setError(null);
-      const response = await AxiosInstance.get('/customer-shops/');
+      const response = await AxiosInstance.get('/customer-shops/',
+        { params: { customer_id: user.user_id } }
+      );
       if (response.data.success) {
         setShops(response.data.shops || []);
       } else {
@@ -116,7 +177,6 @@ function ShopsContent({ user }: { user: any }) {
     setRefreshing(true);
     fetchShops();
   };
-
 
   if (loading) {
     return (
@@ -211,7 +271,7 @@ function ShopsContent({ user }: { user: any }) {
             <Card
               key={shop.id}
               className="p-4 hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => navigate(`/seller/dashboard?shopId=${shop.id}`)}
+              onClick={() => handleShopCardClick(shop.id)}
             >
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="flex items-center gap-4 flex-1">
@@ -241,11 +301,19 @@ function ShopsContent({ user }: { user: any }) {
                   variant="outline" 
                   onClick={(e) => {
                     e.stopPropagation();
-                    navigate(`/seller/dashboard?shopId=${shop.id}`);
+                    handleManageShop(shop.id);
                   }}
+                  disabled={selectingShop === shop.id}
                   className="flex-shrink-0"
                 >
-                  Manage Shop
+                  {selectingShop === shop.id ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                      Selecting...
+                    </>
+                  ) : (
+                    "Manage Shop"
+                  )}
                 </Button>
               </div>
               {shop.is_active === false && (
@@ -276,7 +344,7 @@ function ShopsContent({ user }: { user: any }) {
 // Default component
 // ================================
 export default function Shops({ loaderData }: Route.ComponentProps) {
-  const user = loaderData;
+  const user = loaderData.user;
   return (
     <UserProvider user={user}>
       <SidebarLayout>

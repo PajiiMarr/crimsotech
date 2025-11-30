@@ -31,30 +31,65 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     user = await fetchUserRole({ request, context });
   }
 
+  const shopId = session.get("shopId");
+  console.log("Loader Session Shop ID:", shopId);
+
   await requireRole(request, context, ["isCustomer"]);
 
   // Fetch shops for the form
   try {
-    const shopsResponse = await AxiosInstance.get('/customer-shops/');
-    const shops = shopsResponse.data.success ? shopsResponse.data.shops : [];
-    
-    // Auto-select the first shop if available
-    const selectedShop = shops.length > 0 ? shops[0] : null;
+    const shopsResponse = await AxiosInstance.get('/shop-add-product/get_shop/',
+      { 
+        headers: {
+          'X-Shop-Id': shopId || '',
+        }
+      }
+    );
+
+    const shop = shopsResponse.data.shop
+    console.log('ShopId', shop)
+
+    const selectedShop = shop
+
+    // Fetch global categories
+    let globalCategories = [];
+    try {
+      const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
+      if (categoriesResponse.data.success) {
+        globalCategories = categoriesResponse.data.categories || [];
+        console.log('Global categories loaded:', globalCategories.length);
+      }
+    } catch (categoryError) {
+      console.error('Failed to fetch global categories:', categoryError);
+      // Continue without categories - the form will still work
+    }
     
     return data({ 
       user,
-      shops: shops,
-      selectedShop: selectedShop
+      selectedShop: selectedShop,
+      globalCategories: globalCategories
     }, {
       headers: {
         "Set-Cookie": await commitSession(session),
       },
     });
   } catch (error) {
+    // Even if shops fail, try to fetch categories
+    let globalCategories = [];
+    try {
+      const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
+      if (categoriesResponse.data.success) {
+        globalCategories = categoriesResponse.data.categories || [];
+      }
+    } catch (categoryError) {
+      console.error('Failed to fetch global categories:', categoryError);
+    }
+
     return data({ 
       user,
       shops: [],
-      selectedShop: null
+      selectedShop: null,
+      globalCategories: globalCategories
     }, {
       headers: {
         "Set-Cookie": await commitSession(session),
@@ -76,7 +111,7 @@ export async function action({ request }: Route.ActionArgs) {
   const used_for = String(formData.get("used_for"));
   const price = String(formData.get("price"));
   const condition = String(formData.get("condition"));
-  const category = String(formData.get("category"));
+  const category_admin_id = String(formData.get("category_admin_id")); // Changed from category to category_admin_id
 
   // Get variant fields
   const variant_title = String(formData.get("variant_title"));
@@ -97,7 +132,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   const errors: Record<string, string> = {};
 
-  // Validation
+  // Validation (keep your existing validation code)
   if (!name.trim()) {
     errors.name = "Product name is required";
   } else if (name.length < 2) {
@@ -168,54 +203,35 @@ export async function action({ request }: Route.ActionArgs) {
     const userId = session.get("userId");
     if (!userId) return data({ errors: { message: "User not authenticated" } }, { status: 401 });
 
-    // Get the first shop automatically
-    const shopsResponse = await AxiosInstance.get('/customer-shops/');
-    const shops = shopsResponse.data.success ? shopsResponse.data.shops : [];
+    const shop_id = session.get("shopId");
+
+    // Create FormData for API request
+    const apiFormData = new FormData();
     
-    if (shops.length === 0) {
-      return data({ errors: { message: "No shops found. Please create a shop first." } }, { status: 400 });
-    }
+    // Append individual fields directly
+    apiFormData.append('name', name.trim());
+    apiFormData.append('description', description.trim());
+    apiFormData.append('quantity', quantity);
+    apiFormData.append('used_for', used_for.trim() || "General use");
+    apiFormData.append('price', price);
+    apiFormData.append('condition', condition.trim());
+    apiFormData.append('shop', shop_id ?? "");
+    apiFormData.append('status', "active");
+    apiFormData.append('customer_id', userId);
 
-    const firstShop = shops[0];
-
-    // Prepare payload
-    const payload: any = {
-      name: name.trim(),
-      description: description.trim(),
-      quantity: parseInt(quantity),
-      used_for: used_for.trim() || "General use",
-      price: parseFloat(price),
-      condition: condition.trim(),
-      shop: firstShop.id, // Automatically use the first shop
-      status: "active",
-      customer: userId
-    };
-
-    // Add category if provided
-    if (category.trim()) {
-      payload.category = category.trim();
+    // Add category_admin_id if provided and not "none" - CHANGED FROM category
+    if (category_admin_id.trim() && category_admin_id !== "none") {
+      apiFormData.append('category_admin_id', category_admin_id.trim());
     }
 
     // Add variants if provided
     if (variant_title.trim() && variant_option_title.trim()) {
-      payload.variants = [{
-        title: variant_title.trim(),
-        options: [{
-          title: variant_option_title.trim(),
-          quantity: parseInt(variant_option_quantity),
-          price: parseFloat(variant_option_price)
-        }]
-      }];
+      apiFormData.append('variant_title', variant_title.trim());
+      apiFormData.append('variant_option_title', variant_option_title.trim());
+      apiFormData.append('variant_option_quantity', variant_option_quantity);
+      apiFormData.append('variant_option_price', variant_option_price);
     }
 
-    console.log("Creating product with payload:", payload);
-
-    // Create FormData for file upload
-    const apiFormData = new FormData();
-    
-    // Append all product data as JSON
-    apiFormData.append('data', JSON.stringify(payload));
-    
     // Append media files
     media_files.forEach(file => {
       if (file.size > 0) {
@@ -223,8 +239,13 @@ export async function action({ request }: Route.ActionArgs) {
       }
     });
 
+    console.log("Sending product data to API with user ID:", userId);
+    console.log("Category admin ID:", category_admin_id);
+    
     const response = await AxiosInstance.post('/seller-products/', apiFormData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: { 
+        'Content-Type': 'multipart/form-data',
+      },
     });
     
     if (response.data.success) {
@@ -272,7 +293,7 @@ interface FormErrors {
   price?: string;
   condition?: string;
   shop?: string;
-  category?: string;
+  category_admin_id?: string; // Changed from category
   variant_title?: string;
   variant_option_title?: string;
   variant_option_quantity?: string;
@@ -280,8 +301,19 @@ interface FormErrors {
   [key: string]: string | undefined;
 }
 
+// Define category type
+interface Category {
+  id: string;
+  name: string;
+  shop: null;
+  user: {
+    id: string;
+    username: string;
+  };
+}
+
 export default function CreateProduct({ loaderData, actionData }: Route.ComponentProps) {
-  const { user, shops, selectedShop } = loaderData;
+  const { user, selectedShop, globalCategories } = loaderData;
   const errors: FormErrors = actionData?.errors || {};
 
   return (
@@ -397,17 +429,28 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
                   {errors.condition && <p className="text-red-500 text-sm mt-1">{errors.condition}</p>}
                 </div>
 
-                {/* Category */}
+                {/* Category - Updated to use category_admin_id */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Category
+                    Global Category
                   </label>
-                  <input
-                    type="text"
-                    name="category"
+                  <select
+                    name="category_admin_id" // Changed from category to category_admin_id
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Enter category name"
-                  />
+                  >
+                    <option value="none">No Category</option>
+                    {globalCategories && globalCategories.map((category: Category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {globalCategories && globalCategories.length > 0 
+                      ? `Select from ${globalCategories.length} available global categories` 
+                      : 'No global categories available'}
+                  </p>
+                  {errors.category_admin_id && <p className="text-red-500 text-sm mt-1">{errors.category_admin_id}</p>}
                 </div>
               </div>
 
@@ -526,7 +569,7 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
                 </Link>
                 <button
                   type="submit"
-                  className="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600"
+                  className="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
                   disabled={!selectedShop}
                 >
                   {selectedShop ? "Create Product" : "Create Shop First"}
