@@ -30,6 +30,7 @@ export default [
         index("routes/admin/home.tsx"),
         route('analytics', 'routes/admin/analytics.tsx'),
         route('products', 'routes/admin/products.tsx'),
+        route('products/:product_id', 'routes/admin/view_products/view_products.tsx'),
         route('shops', 'routes/admin/shops.tsx'),
         route('boosting', 'routes/admin/boosting.tsx'),
         route('orders', 'routes/admin/orders.tsx'),

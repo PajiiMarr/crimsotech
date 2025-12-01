@@ -52,6 +52,7 @@ interface DataTableProps<TData, TValue> {
     }
   }
   defaultSorting?: SortingState
+  // getRowLink?: (row: TData) => string 
 }
 
 export function DataTable<TData, TValue>({
@@ -60,6 +61,7 @@ export function DataTable<TData, TValue>({
   searchConfig,
   filterConfig,
   defaultSorting = [],
+  
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>(defaultSorting)
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -269,6 +271,7 @@ export function DataTable<TData, TValue>({
           <TableBody>
             {table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
+                
                 <TableRow
                   key={row.id}
                   data-state={row.getIsSelected() && "selected"}

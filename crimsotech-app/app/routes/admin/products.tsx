@@ -11,14 +11,9 @@ import {
 } from '~/components/ui/card';
 import { DataTable } from '~/components/ui/data-table'
 import { type ColumnDef } from "@tanstack/react-table"
-// import {
-//   Table,
-//   TableBody,
-//   TableCell,
-//   TableHead,
-//   TableHeader,
-//   TableRow,
-// } from '~/components/ui/table';
+import { Link } from 'react-router'
+
+
 import {
   Dialog,
   DialogContent,
@@ -502,7 +497,7 @@ if (!loaderData) {
               <CardTitle>All Products</CardTitle>
             </CardHeader>
             <CardContent>
-                <DataTable 
+              <DataTable 
                 columns={columns} 
                 data={products} 
                 filterConfig={productFilterConfig}
@@ -510,7 +505,7 @@ if (!loaderData) {
                   column: "name",
                   placeholder: "Search products..."
                 }}
-                />
+              />
             </CardContent>
           </Card>
         </div>
@@ -637,8 +632,22 @@ const columns: ColumnDef<Product>[] = [
   },
   {
     id: "actions",
+    cell: ({ row }) => {
+      const product = row.original
+      return (
+        <div className="flex items-center gap-2">
+          <Link 
+            to={`/admin/products/${product.id}`}
+            className="text-primary hover:underline"
+          >
+            View
+          </Link>
+          {/* Other actions */}
+        </div>
+      )
+    },
   },
-]
+];
 
 const productFilterConfig = {
   category: {

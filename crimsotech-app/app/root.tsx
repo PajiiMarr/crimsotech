@@ -8,6 +8,7 @@ import {
   useNavigate,
   Link,
 } from "react-router";
+import { Toaster } from "~/components/ui/sonner";
 
 import { Button } from '~/components/ui/button'
 
@@ -43,6 +44,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body className="font-inter bg-gray-50 text-gray-800">
         {children}
+        <Toaster />
         <ScrollRestoration />
         <Scripts />
       </body>

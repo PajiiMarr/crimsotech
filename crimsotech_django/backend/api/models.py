@@ -253,6 +253,7 @@ class Product(models.Model):
     quantity = models.IntegerField(default=0)
     used_for = models.CharField(max_length=1000)
     price = models.DecimalField(decimal_places=2, max_digits=9)
+    upload_status = models.CharField(max_length=20, choices=[('draft','Draft'),('published','Published'),('archived','Archived')], default='draft')
     status = models.TextField()
     condition = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)

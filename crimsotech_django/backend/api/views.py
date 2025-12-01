@@ -1,3 +1,5 @@
+from asyncio.log import logger
+import json
 from django.shortcuts import render
 from django.db.models import Prefetch
 
@@ -962,6 +964,30 @@ class AdminDashboard(viewsets.ViewSet):
             print(f"Error in _get_report_analytics_data: {str(e)}")
             return {}
     
+    def _get_rider_analytics_data(self):
+        """Extract rider analytics data"""
+        try:
+            # Rider performance
+            rider_performance = Rider.objects.annotate(
+                delivery_count=Count('delivery'),
+                completed_deliveries=Count('delivery', filter=Q(delivery__status='delivered')),
+            ).filter(
+                delivery_count__gt=0
+            ).order_by('-delivery_count')[:4]
+            
+            rider_data = []
+            for rider in rider_performance:
+                rider_data.append({
+                    'name': f"{rider.rider.first_name} {rider.rider.last_name}",
+                    'deliveries': rider.delivery_count,
+                })
+            
+            return {
+                'rider_performance': rider_data,
+            }
+        except Exception as e:
+            print(f"Error in _get_rider_analytics_data: {str(e)}")
+            return {}
     # Helper methods
     def _get_status_color(self, status):
         color_map = {
@@ -1906,7 +1932,618 @@ class AdminProduct(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving products: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=False, methods=['get'])    
+    def get_product(self, request):
+        product_id = request.query_params.get('product_id')
         
+        # Validate product_id parameter
+        if not product_id:
+            return Response(
+                {"error": "product_id parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate UUID format
+        try:
+            uuid.UUID(product_id)
+        except ValueError:
+            return Response(
+                {"error": "Invalid product ID format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get product with all related data
+            product = Product.objects.select_related(
+                'shop',
+                'customer',
+                'category_admin',
+                'category',
+                'customer__customer'  # Access the User through Customer
+            ).prefetch_related(
+                'productmedia_set',
+                'variants_set',
+                'variants_set__variantoptions_set',
+                'reviews',
+                'reviews__customer__customer',  # Access User through Customer for reviews
+                'favorites_set',
+                'favorites_set__customer__customer',
+                'boost_set',
+                'boost_set__boost_plan',
+                'reports_against',
+                'reports_against__reporter'
+            ).get(id=product_id)
+            
+            # Build the response data
+            product_data = {
+                "id": str(product.id),
+                "name": product.name,
+                "description": product.description,
+                "quantity": product.quantity,
+                "used_for": product.used_for,
+                "price": str(product.price),
+                "upload_status": product.upload_status,
+                "status": product.status,
+                "condition": product.condition,
+                "created_at": product.created_at.isoformat(),
+                "updated_at": product.updated_at.isoformat(),
+                "is_removed": product.is_removed,
+                "removal_reason": product.removal_reason,
+                "removed_at": product.removed_at.isoformat() if product.removed_at else None,
+                "active_report_count": product.active_report_count,
+                "favorites_count": product.favorites_set.count(),
+            }
+            
+            # Shop data
+            if product.shop:
+                product_data["shop"] = {
+                    "id": str(product.shop.id),
+                    "name": product.shop.name,
+                    "verified": product.shop.verified,
+                    "city": product.shop.city,
+                    "barangay": product.shop.barangay,
+                    "total_sales": str(product.shop.total_sales),
+                    "created_at": product.shop.created_at.isoformat(),
+                    "is_suspended": product.shop.is_suspended,
+                }
+            else:
+                product_data["shop"] = None
+            
+            # Customer data
+            if product.customer:
+                product_data["customer"] = {
+                    "username": product.customer.customer.username if product.customer.customer else None,
+                    "email": product.customer.customer.email if product.customer.customer else None,
+                    "contact_number": product.customer.customer.contact_number if product.customer.customer else None,
+                    "product_limit": product.customer.product_limit,
+                    "current_product_count": product.customer.current_product_count,
+                }
+            else:
+                product_data["customer"] = None
+            
+            # Category data
+            if product.category:
+                product_data["category"] = {
+                    "id": str(product.category.id),
+                    "name": product.category.name,
+                }
+            else:
+                product_data["category"] = None
+            
+            # Admin category data
+            if product.category_admin:
+                product_data["category_admin"] = {
+                    "id": str(product.category_admin.id),
+                    "name": product.category_admin.name,
+                }
+            else:
+                product_data["category_admin"] = None
+            
+            # Media files
+            product_data["media"] = [
+                {
+                    "id": str(media.id),
+                    "file_data": media.file_data.url if media.file_data else None,
+                    "file_type": media.file_type,
+                }
+                for media in product.productmedia_set.all()
+            ]
+            
+            # Variants
+            product_data["variants"] = [
+                {
+                    "id": str(variant.id),
+                    "title": variant.title,
+                    "options": [
+                        {
+                            "id": str(option.id),
+                            "title": option.title,
+                            "quantity": option.quantity,
+                            "price": str(option.price),
+                        }
+                        for option in variant.variantoptions_set.all()
+                    ]
+                }
+                for variant in product.variants_set.all()
+            ]
+            
+            # Reviews
+            product_data["reviews"] = [
+                {
+                    "id": str(review.id),
+                    "rating": review.rating,
+                    "comment": review.comment,
+                    "customer": review.customer.customer.username if review.customer and review.customer.customer else None,
+                    "created_at": review.created_at.isoformat(),
+                }
+                for review in product.reviews.all()
+            ]
+            
+            # Active boost
+            active_boost = product.boost_set.filter(
+                status='active',
+                end_date__gt=timezone.now()
+            ).first()
+            
+            if active_boost:
+                product_data["boost"] = {
+                    "id": str(active_boost.id),
+                    "status": active_boost.status,
+                    "plan": active_boost.boost_plan.name if active_boost.boost_plan else None,
+                    "end_date": active_boost.end_date.isoformat(),
+                }
+            else:
+                product_data["boost"] = None
+            
+            # Reports summary
+            product_data["reports"] = {
+                "active": product.reports_against.filter(status__in=['pending', 'under_review']).count(),
+                "total": product.reports_against.count(),
+            }
+            
+            return Response(product_data, status=status.HTTP_200_OK)
+            
+        except Product.DoesNotExist:
+            return Response(
+                {"error": "Product not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": "An error occurred while fetching product data"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['put'])
+    def update_product_status(self, request):
+        """
+        Update product status based on the requested action.
+        Actions: publish, deleteDraft, unpublish, archive, restore, 
+                remove, restoreRemoved, suspend, unsuspend
+        """
+        print(request.body)
+        # Parse request data
+        try:
+            data = json.loads(request.body)
+            product_id = data.get('product_id')
+            action_type = data.get('action_type')
+            user_id = data.get('user_id')  # Get user_id from request data
+            reason = data.get('reason', '')
+            suspension_days = data.get('suspension_days', 7)  # Default 7 days
+            
+            # Validate required fields
+            if not product_id:
+                return Response(
+                    {"error": "product_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not action_type:
+                return Response(
+                    {"error": "action_type is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not user_id:
+                return Response(
+                    {"error": "user_id is required to identify the admin performing the action"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate UUID format
+            try:
+                uuid.UUID(product_id)
+            except ValueError:
+                return Response(
+                    {"error": "Invalid product ID format"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                uuid.UUID(user_id)
+            except ValueError:
+                return Response(
+                    {"error": "Invalid user ID format"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate action type
+            valid_actions = [
+                'publish', 'deleteDraft', 'unpublish', 'archive', 'restore',
+                'remove', 'restoreRemoved', 'suspend', 'unsuspend'
+            ]
+            
+            if action_type not in valid_actions:
+                return Response(
+                    {"error": f"Invalid action_type. Must be one of: {', '.join(valid_actions)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+        except json.JSONDecodeError:
+            return Response(
+                {"error": "Invalid JSON data"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get product with related data
+            product = Product.objects.select_related(
+                'customer',
+                'shop'
+            ).get(id=product_id)
+            
+            # Get admin user from user_id
+            try:
+                admin_user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {"error": "Admin user not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify user is an admin
+            if not admin_user.is_admin:
+                return Response(
+                    {"error": "Only admin users can perform this action"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Perform action based on action_type
+            with transaction.atomic():
+                if action_type == 'publish':
+                    # Validate product can be published
+                    if product.upload_status != 'draft':
+                        return Response(
+                            {"error": f"Product is not in draft status. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Validate product has required fields
+                    if not product.name or not product.description or not product.price:
+                        return Response(
+                            {"error": "Product must have name, description, and price before publishing"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    if product.quantity < 0:
+                        return Response(
+                            {"error": "Product quantity cannot be negative"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.upload_status = 'published'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Published product: {product.name}"
+                    )
+                    
+                    return Response({
+                        "message": "Product published successfully",
+                        "upload_status": product.upload_status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'deleteDraft':
+                    # Validate product can be deleted
+                    if product.upload_status != 'draft':
+                        return Response(
+                            {"error": f"Only draft products can be deleted. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Decrement customer product count
+                    if product.customer:
+                        product.customer.decrement_product_count()
+                    
+                    # Create log entry before deletion
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Deleted draft product: {product.name}"
+                    )
+                    
+                    # Delete the product
+                    product.delete()
+                    
+                    return Response({
+                        "message": "Draft product deleted successfully",
+                        "deleted_at": timezone.now().isoformat()
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'unpublish':
+                    # Validate product can be unpublished
+                    if product.upload_status != 'published':
+                        return Response(
+                            {"error": f"Only published products can be unpublished. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.upload_status = 'draft'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Unpublished product: {product.name}"
+                    )
+                    
+                    return Response({
+                        "message": "Product unpublished successfully",
+                        "upload_status": product.upload_status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'archive':
+                    # Validate product can be archived
+                    if product.upload_status != 'published' and product.upload_status != 'draft':
+                        return Response(
+                            {"error": f"Only published or draft products can be archived. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.upload_status = 'archived'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Archived product: {product.name}"
+                    )
+                    
+                    return Response({
+                        "message": "Product archived successfully",
+                        "upload_status": product.upload_status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'restore':
+                    # Validate product can be restored (from archived)
+                    if product.upload_status != 'archived':
+                        return Response(
+                            {"error": f"Only archived products can be restored. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Default to published, but could be based on previous state if tracked
+                    product.upload_status = 'published'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Restored product from archive: {product.name}"
+                    )
+                    
+                    return Response({
+                        "message": "Product restored successfully",
+                        "upload_status": product.upload_status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'remove':
+                    # Validate product can be removed
+                    if product.is_removed:
+                        return Response(
+                            {"error": "Product is already removed"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.is_removed = True
+                    product.removal_reason = reason
+                    product.removed_at = timezone.now()
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Removed product: {product.name}. Reason: {reason}"
+                    )
+                    
+                    # Get user to send notification (customer)
+                    if product.customer and product.customer.customer:
+                        Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Removal",
+                            type="product_removal",
+                            message=f"Your product '{product.name}' has been removed by admin. Reason: {reason}",
+                            is_read=False
+                        )
+                    
+                    return Response({
+                        "message": "Product removed successfully",
+                        "is_removed": product.is_removed,
+                        "removal_reason": product.removal_reason,
+                        "removed_at": product.removed_at,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'restoreRemoved':
+                    # Validate product can be restored (from removed)
+                    if not product.is_removed:
+                        return Response(
+                            {"error": "Product is not removed"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.is_removed = False
+                    product.removal_reason = None
+                    product.removed_at = None
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Restored removed product: {product.name}"
+                    )
+                    
+                    # Get user to send notification (customer)
+                    if product.customer and product.customer.customer:
+                        Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Restored",
+                            type="product_restoration",
+                            message=f"Your product '{product.name}' has been restored by admin.",
+                            is_read=False
+                        )
+                    
+                    return Response({
+                        "message": "Product restored successfully",
+                        "is_removed": product.is_removed,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'suspend':
+                    # Validate product can be suspended
+                    if product.status == 'Suspended':
+                        return Response(
+                            {"error": "Product is already suspended"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    if product.is_removed:
+                        return Response(
+                            {"error": "Cannot suspend a removed product"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    if product.upload_status != 'published':
+                        return Response(
+                            {"error": f"Only published products can be suspended. Current upload status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    previous_status = product.status
+                    product.status = 'Suspended'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Suspended product: {product.name}. Previous status: {previous_status}. Reason: {reason}"
+                    )
+                    
+                    # Create suspension record (optional - if you have a Suspension model)
+                    # Suspension.objects.create(
+                    #     product=product,
+                    #     suspended_by=admin_user,
+                    #     reason=reason,
+                    #     suspension_days=suspension_days,
+                    #     suspended_until=timezone.now() + timedelta(days=suspension_days)
+                    # )
+                    
+                    # Get user to send notification (customer)
+                    if product.customer and product.customer.customer:
+                        Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Suspension",
+                            type="product_suspension",
+                            message=f"Your product '{product.name}' has been suspended for {suspension_days} days. Reason: {reason}",
+                            is_read=False
+                        )
+                    
+                    return Response({
+                        "message": "Product suspended successfully",
+                        "status": product.status,
+                        "suspension_days": suspension_days,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'unsuspend':
+                    # Validate product can be unsuspended
+                    if product.status != 'Suspended':
+                        return Response(
+                            {"error": f"Product is not suspended. Current status: {product.status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.status = 'Active'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Unsuspended product: {product.name}"
+                    )
+                    
+                    # Update suspension record if exists (optional)
+                    # suspension = Suspension.objects.filter(
+                    #     product=product,
+                    #     is_active=True
+                    # ).first()
+                    # if suspension:
+                    #     suspension.is_active = False
+                    #     suspension.unsuspended_at = timezone.now()
+                    #     suspension.save()
+                    
+                    # Get user to send notification (customer)
+                    if product.customer and product.customer.customer:
+                        Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Unsuspended",
+                            type="product_unsuspension",
+                            message=f"Your product '{product.name}' has been unsuspended by admin.",
+                            is_read=False
+                        )
+                    
+                    return Response({
+                        "message": "Product unsuspended successfully",
+                        "status": product.status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                
+                else:
+                    return Response(
+                        {"error": "Invalid action type"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+        except Product.DoesNotExist:
+            return Response(
+                {"error": "Product not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValidationError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error updating product status: {str(e)}", exc_info=True)
+            return Response(
+                {"error": "An error occurred while updating product status"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 class AdminShops(viewsets.ViewSet):
     """
     ViewSet for admin shop management and analytics
