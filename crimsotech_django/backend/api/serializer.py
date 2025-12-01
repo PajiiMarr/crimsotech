@@ -180,14 +180,19 @@ class ShopDetailSerializer(serializers.ModelSerializer):
         model = Shop
         fields = '__all__'
 
-class ProductDetailSerializer(serializers.ModelSerializer):
-    shop_id = ShopSerializer(read_only=True)
-    customer_id = CustomerSerializer(read_only=True)
-    category_id = CategorySerializer(read_only=True)
-    
+class ProductSerializer(serializers.ModelSerializer):
+    shop = ShopSerializer()
+    category = CategorySerializer()
+    category_admin = CategorySerializer()
+    variants = VariantsSerializer(source='variants_set', many=True)
+
     class Meta:
         model = Product
-        fields = '__all__'
+        fields = [
+            'id', 'name', 'description', 'quantity', 'used_for', 'price',
+            'status', 'upload_status', 'condition', 'created_at', 'updated_at',
+            'shop', 'customer', 'category_admin', 'category', 'variants'
+        ]
 
 class ReviewDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)

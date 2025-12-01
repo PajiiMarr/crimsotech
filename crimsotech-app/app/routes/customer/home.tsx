@@ -1,101 +1,172 @@
+// app/routes/home.tsx
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import SearchForm from '~/components/customer/search-bar'
 import { ProductCard } from '~/components/customer/product-card'
 import { ProductCategory } from '~/components/customer/product-category'
-import { TopProductCard } from '~/components/customer/top-product'
-import { UserProvider } from '~/components/providers/user-role-provider';
-// import { requireRole } from '~/middleware/role-require.server';
-// import { userContext } from '~/contexts/user-role';
+import { UserProvider } from '~/components/providers/user-role-provider'
+import { useState, useEffect } from "react"
+import AxiosInstance from "~/components/axios/Axios"
 
+// ----------------------------
+// Meta
+// ----------------------------
 export function meta(): Route.MetaDescriptors {
-  return [
-    {
-      title: "Home",
-    },
-  ];
+  return [{ title: "Home" }]
 }
 
+// ----------------------------
+// Product type
+// ----------------------------
+interface Product {
+  id: string
+  name: string
+  description: string
+  price: number
+  media_files?: { file_url: string }[]
+  shop?: { shop_picture?: string }
+  discount?: number
+}
 
+// ----------------------------
+// Category type
+// ----------------------------
+interface Category {
+  id: string
+  name: string
+  shop: any
+  user: {
+    id: string
+    username: string
+  } | null
+}
+
+// ----------------------------
+// Loader
+// ----------------------------
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const { registrationMiddleware } = await import("~/middleware/registration.server");
-  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
-
-  const { requireAuth } = await import("~/middleware/auth.server");
+  const { fetchUserRole } = await import("~/middleware/role.server")
   const { requireRole } = await import("~/middleware/role-require.server");
-  const { fetchUserRole } = await import("~/middleware/role.server");
-  const { userContext } = await import("~/contexts/user-role");
+  const { userContext } = await import("~/contexts/user-role")
 
-  let user = context.get(userContext);
+  // Get user from context or fetch
+  let user = context.get(userContext)
   if (!user) {
-    user = await fetchUserRole({ request, context });
+    user = await fetchUserRole({ request, context })
   }
 
-  await requireRole(request, context, ["isCustomer"]);
+  // Only allow customers
+  await requireRole(request, context, ["isCustomer"])
 
-  return user;
+  return user
 }
 
+// ----------------------------
+// Home Component
+// ----------------------------
+export default function Home({ loaderData }: any) {
+  const user = loaderData
+  const [products, setProducts] = useState<Product[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState("")
 
+  // ----------------------------
+  // Fetch Categories
+  // ----------------------------
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const response = await AxiosInstance.get("/customer-products/global-categories/")
+        setCategories(response.data.categories)
+      } catch (err) {
+        console.error("Error loading categories:", err)
+      }
+    }
 
+    fetchCategories()
+  }, [])
 
-export default function Home ({loaderData}: Route.ComponentProps) {
-  const user = loaderData;
+  // ----------------------------
+  // Fetch Products
+  // ----------------------------
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const response = await AxiosInstance.get("/public-products/")
+
+        const mappedProducts = response.data.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          price: parseFloat(p.price),
+          image: p.shop?.shop_picture || "/default.jpg",
+          discount: p.discount,
+        }))
+
+        setProducts(mappedProducts)
+      } catch (err) {
+        console.error("Error fetching products:", err)
+        setProducts([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchProducts()
+  }, [])
+
+  // ----------------------------
+  // Filter products
+  // ----------------------------
+  const filteredProducts = products.filter(product =>
+    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    product.description.toLowerCase().includes(searchTerm.toLowerCase())
+  )
+
+  // ----------------------------
+  // Render
+  // ----------------------------
   return (
     <UserProvider user={user}>
       <SidebarLayout>
-        <section className="w-full p-1">
-          {/* Search bar */}
-          <div className="mb-6">
-            <SearchForm />
-          </div>
+        {loading ? (
+          <div className="p-6 text-center text-gray-500">Loading products...</div>
+        ) : (
+          <section className="w-full p-4">
+            {/* Search bar */}
+            <div className="mb-6">
+              <SearchForm />
+            </div>
 
-          <h2 className="mb-4 text-lg font-semibold text-gray-700">
-          Categories
-        </h2>
+            {/* Categories */}
+            <h2 className="mb-4 text-lg font-semibold text-gray-700">Categories</h2>
+            <div className="flex gap-4 overflow-x-auto py-2 px-1">
+              {categories.map(cat => (
+                <ProductCategory 
+                  key={cat.id} 
+                  title={cat.name} 
+                  image="/public/default-category.jpg"
+                />
+              ))}
+            </div>
 
-        <div className="flex gap-4 mb- overflow-x-auto py-2">
-          <ProductCategory title="Wires" image="/public/wire.jpg" />
-          <ProductCategory title="Appliances" image="/public/appliances.jpg" />
-          <ProductCategory title="Smartphones" image="/public/phon.jpg" />
-          <ProductCategory title="Accessories" image="/public/controller.jpg" />
-          <ProductCategory title="Watches" image="/public/controller.jpg" />
-        </div>
+            {/* Suggested Products */}
+            <h2 className="mt-5 mb-4 text-lg font-semibold text-gray-700">Suggested For You</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5 px-2">
 
-
-        {/* Top Products */}
-          <h2 className="mb-4 text-lg font-semibold text-gray-700">
-            Top Products
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            <TopProductCard />
-            <TopProductCard />
-            <TopProductCard />
-            <TopProductCard />
-          </div>
-
-
-          {/* Suggested For You label */}
-          <h2 className="mt-5 mb-4 text-lg font-semibold text-gray-700">
-            Suggested For You
-          </h2>
-
-          {/* Grid for multiple product cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-            <ProductCard />
-          </div>
-        </section>
+              {filteredProducts.length > 0 ? (
+                filteredProducts.map(product => (
+                  <ProductCard key={product.id} product={product} />
+                ))
+              ) : (
+                <div className="text-gray-500 col-span-full text-center py-8">
+                  No products found.
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </SidebarLayout>
     </UserProvider>
   )

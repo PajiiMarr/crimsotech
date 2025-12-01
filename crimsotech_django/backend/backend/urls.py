@@ -36,10 +36,13 @@ router.register(r'admin-refunds', AdminRefunds, basename='admin-refunds')
 router.register(r'admin-users', AdminUsers, basename='admin-users')
 router.register(r'admin-team', AdminTeam, basename='admin-team')
 router.register(r'admin-reports', AdminReports, basename='admin-reports')
-router.register(r'customer-products', CustomerProducts, basename='customer-products')
 router.register(r'rider-status', RiderStatus, basename='rider-status')
 router.register(r'seller-products', SellerProducts, basename='seller-products')
 router.register(r'shop-add-product', CustomerShopsAddSeller, basename='shop-add-product')
+router.register(r'customer-products', CustomerProducts, basename='customer-products')
+router.register(r'public-products', PublicProducts, basename='public-products')
+
+
 
 
 urlpatterns = [

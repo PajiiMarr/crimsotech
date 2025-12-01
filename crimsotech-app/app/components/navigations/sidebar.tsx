@@ -90,12 +90,13 @@ const menuItems = [
       { title: "Purchases", url: "/customer/purchases", icon: TicketCheck, roles: ["customer"] },
       { title: "Favorites", url: "/customer/favorites", icon: Star, roles: ["customer"] },
       { title: "ComGift", url: "/customer/comgift", icon: Gift, roles: ["customer"] },
+      
     ]
   },
   {
     group: "Product Listing",
     children: [
-      { title: "My products", url: "/customer/products", icon: Package  , roles: ["customer"] },
+      { title: "My products", url: "/personal-listing", icon: Package  , roles: ["customer"] },
       { title: "Order Lists", url: "/customer/order_lists", icon: ClipboardList, roles: ["customer"] },
       { title: "Subscription Plans", url: "/customer/subscription_plans", icon: DollarSign, roles: ["customer"] },
     ]
