@@ -32,6 +32,7 @@ export default [
         route('products', 'routes/admin/products.tsx'),
         route('products/:product_id', 'routes/admin/view_products/view_products.tsx'),
         route('shops', 'routes/admin/shops.tsx'),
+        route('shops/:shop_id', 'routes/admin/view_shops/view_shops.tsx'),
         route('boosting', 'routes/admin/boosting.tsx'),
         route('orders', 'routes/admin/orders.tsx'),
         route('riders', 'routes/admin/riders.tsx'),
@@ -40,7 +41,6 @@ export default [
         route('users', 'routes/admin/users.tsx'),
         route('team', 'routes/admin/team.tsx'),
         route('reports', 'routes/admin/reports.tsx'),
-        
     ]),
     ...prefix("moderator", [
         index("routes/moderator/home.tsx"),

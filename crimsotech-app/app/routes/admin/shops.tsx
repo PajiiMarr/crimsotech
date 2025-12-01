@@ -37,6 +37,7 @@ import { useState, useEffect } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
+import { Link } from 'react-router';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -362,7 +363,7 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
               <CardDescription>Manage and view all shop details</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border">
+              <div className="rounded-md">
                 <DataTable 
                   columns={columns} 
                   data={loaderData.shops}
@@ -486,6 +487,23 @@ const columns: ColumnDef<Shop>[] = [
         {row.getValue("status")}
       </Badge>
     ),
+  },
+  {
+    id: "actions",
+    cell: ({ row }) => {
+      const shop = row.original
+      return (
+        <div className="flex items-center gap-2">
+          <Link 
+            to={`/admin/shops/${shop.id}`}
+            className="text-primary hover:underline"
+          >
+            View
+          </Link>
+          {/* Other actions */}
+        </div>
+      )
+    },
   },
 ];
 
