@@ -88,8 +88,8 @@ const menuItems = [
     group: "My Account",
     children: [
       { title: "Purchases", url: "/customer/purchases", icon: TicketCheck, roles: ["customer"] },
-      { title: "Favorites", url: "/customer/favorites", icon: Star, roles: ["customer"] },
-      { title: "ComGift", url: "/customer/comgift", icon: Gift, roles: ["customer"] },
+      { title: "Favorites", url: "/favorites", icon: Star, roles: ["customer"] },
+      { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
       
     ]
   },
