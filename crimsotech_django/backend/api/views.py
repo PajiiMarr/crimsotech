@@ -6502,10 +6502,25 @@ class CustomerProducts(viewsets.ModelViewSet):
         
 
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
-    serializer_class = ProductSerializer
-    queryset = Product.objects.all().order_by('-created_at')
-
-
+    # Use the serializer that includes media_files
+    serializer_class = ProductSerializer  # Make sure this includes media_files
+    
+    def get_queryset(self):
+        # Optimize the queryset with prefetch_related
+        queryset = Product.objects.all().order_by('-created_at')
+        
+        # Prefetch media files to avoid N+1 queries
+        queryset = queryset.prefetch_related(
+            'productmedia_set',  # This is key for getting media files
+            'variants_set',
+        ).select_related(
+            'shop',
+            'category',
+            'category_admin'
+        )
+        
+        return queryset
+    
 class AddToCartView(APIView):
 
     def post(self, request):
