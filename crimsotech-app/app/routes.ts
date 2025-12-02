@@ -21,8 +21,11 @@ export default [
     route('create-shop', 'routes/customer/create-shop.tsx'),
     route('personal-listing', 'routes/customer/personal-listing.tsx'),
     route("product/:id", "components/customer/view-product.tsx"),
-    route("favorite", "routes/customer/favorites.tsx"),
+    route("favorites", "routes/customer/favorites.tsx"),
     route('comgift', 'routes/customer/comgift.tsx'),
+    route('purchases', 'routes/customer/purchases.tsx'),
+    route('subscription-plan', 'routes/customer/subscription-plan.tsx'),
+    route("track-order/:id", "components/customer/track-order.tsx"),
     
     
     ...prefix("seller", [
