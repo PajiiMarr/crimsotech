@@ -423,3 +423,6 @@ class CartDisplayItemSerializer(serializers.ModelSerializer):
 
     def get_selected(self, obj):
         return True  # default to selected
+    
+
+    

@@ -1,4 +1,5 @@
-import { Button } from "~/components/ui/button"; // Assuming you want a button here, perhaps for checkout/proceed
+import { Button } from "~/components/ui/button"; 
+import { useNavigate } from 'react-router-dom'; 
 
 interface OrderSummaryProps {
   subtotal: number;

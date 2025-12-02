@@ -42,6 +42,7 @@ router.register(r'shop-add-product', CustomerShopsAddSeller, basename='shop-add-
 router.register(r'customer-products', CustomerProducts, basename='customer-products')
 router.register(r'public-products', PublicProducts, basename='public-products')
 # router.register(r'customer-add-item', AddToCartView, basename='customer-add-item')
+router.register(r'checkout', CheckoutView, basename='checkout')
 
 
 

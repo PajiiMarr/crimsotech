@@ -6570,3 +6570,106 @@ class CartListView(APIView):
         cart_items = CartItem.objects.filter(user=user).select_related("product", "product__shop")
         serializer = CartItemSerializer(cart_items, many=True)
         return Response({"success": True, "cart_items": serializer.data})
+
+
+class CheckoutView(viewsets.ViewSet):
+    """
+    Simplified Checkout ViewSet
+    """
+    @action(methods=["get"], detail=False)
+    def getOrder(self, request):
+        pass
+        
+    
+    @action(methods=["post"], detail=False)
+    def checkout(self, request):
+        """
+        Simple checkout endpoint
+        Request body:
+        {
+            "customer_id": "uuid",
+            "product_id": "uuid",
+            "quantity": 1
+        }
+        """
+        try:
+            data = request.data
+            customer_id = data.get('customer_id')
+            product_id = data.get('product_id')
+            quantity = data.get('quantity', 1)
+            
+            # Validate required fields
+            if not customer_id:
+                return Response(
+                    {'error': 'customer_id is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not product_id:
+                return Response(
+                    {'error': 'product_id is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get customer
+            try:
+                customer = Customer.objects.get(id=customer_id)
+            except Customer.DoesNotExist:
+                return Response(
+                    {'error': 'Customer not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Start transaction
+            with transaction.atomic():
+                # Get product with lock
+                product = Product.objects.select_for_update().get(
+                    id=product_id,
+                    upload_status='published',
+                    is_removed=False
+                )
+                
+                # Check stock
+                if product.quantity < quantity:
+                    return Response(
+                        {'error': f'Insufficient stock. Available: {product.quantity}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Calculate total
+                total_amount = product.price * quantity
+                
+                # Update stock
+                product.quantity -= quantity
+                product.save(update_fields=['quantity'])
+                
+                # Generate order reference
+                order_ref = f"ORD-{customer_id[:8]}-{product_id[:8]}"
+                
+                return Response({
+                    'success': True,
+                    'message': 'Purchase successful',
+                    'order_reference': order_ref,
+                    'product': {
+                        'id': str(product.id),
+                        'name': product.name,
+                        'price': str(product.price)
+                    },
+                    'quantity': quantity,
+                    'total_amount': str(total_amount),
+                    'customer': {
+                        'id': str(customer.id),
+                        'name': str(customer.user) if customer.user else 'Unknown'
+                    }
+                }, status=status.HTTP_201_CREATED)
+                
+        except Product.DoesNotExist:
+            return Response(
+                {'error': 'Product not found or unavailable'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': 'Checkout failed', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

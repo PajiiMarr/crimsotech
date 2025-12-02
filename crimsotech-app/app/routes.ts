@@ -26,6 +26,7 @@ export default [
     route('purchases', 'routes/customer/purchases.tsx'),
     route('subscription-plan', 'routes/customer/subscription-plan.tsx'),
     route("track-order/:id", "components/customer/track-order.tsx"),
+    route('orders', 'components/customer/orders.tsx'),
     
     
     ...prefix("seller", [
