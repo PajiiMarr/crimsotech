@@ -1,4 +1,4 @@
-// cart.tsx - UPDATED TYPES AND DATA HANDLING
+// cart.tsx - COMPLETE CODE WITH DYNAMIC DATA HANDLING
 "use client";
 
 import { useState, useEffect } from "react";
@@ -11,20 +11,48 @@ import { UserProvider } from "~/components/providers/user-role-provider";
 import { CartItem } from "~/components/customer/cart-item";
 import { CouponSection } from "~/components/customer/coupon-section";
 import { OrderSummary } from "~/components/customer/order-summary";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import AxiosInstance from "~/components/axios/Axios";
 
 // ------------------ TYPES ------------------
 export type CartItemType = {
   id: string;
+  product_id: string;
   name: string;
-  color: string;
   price: number;
   quantity: number;
-  image: string;
+  image: string | null;
   shop_name: string;
   selected: boolean;
-  product_id?: string;
+  added_at?: string;
+  subtotal?: number;
+};
+
+type ApiCartItem = {
+  id: string;
+  product: string; // product ID
+  product_details: {
+    id: string;
+    name: string;
+    price: string;
+    shop_name: string;
+    media_files: null | Array<{
+      file_url: string;
+      file_type: string;
+    }>;
+  };
+  item_name: string;
+  item_price: string;
+  item_image: null | string;
+  quantity: number;
+  added_at: string;
+  subtotal: number;
+};
+
+type CartApiResponse = {
+  success: boolean;
+  cart_items: ApiCartItem[];
+  error?: string;
 };
 
 // ------------------ META ------------------
@@ -43,13 +71,12 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     user: { 
       id: userId,
-      // Add all the properties that UserProvider expects
       isAdmin: false,
       isRider: false,
       isModerator: false,
       isCustomer: true,
-      // Add any other required properties
       username: userId ? `user_${userId}` : 'guest',
+      email: userId ? `user_${userId}@example.com` : 'guest@example.com',
     },
     headers: { "Set-Cookie": await commitSession(session) },
   };
@@ -94,10 +121,53 @@ const ProfessionalCouponSection = ({ onApplyCoupon }: { onApplyCoupon: (code: st
   );
 };
 
+// ------------------ TRANSFORM API DATA ------------------
+const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
+  return apiItems.map((item) => {
+    // Use product_details if available, otherwise use direct fields
+    const productName = item.product_details?.name || item.item_name || "Unknown Product";
+    const productPrice = item.product_details?.price || item.item_price || "0";
+    const shopName = item.product_details?.shop_name || "Unknown Shop";
+    
+    // Convert price to number
+    const price = parseFloat(productPrice) || 0;
+    
+    // Get image - try in this order:
+    // 1. item_image from API
+    // 2. media_files from product_details
+    // 3. default image
+    let image: string | null = null;
+    
+    if (item.item_image) {
+      image = item.item_image;
+    } else if (item.product_details?.media_files && 
+               item.product_details.media_files.length > 0 &&
+               item.product_details.media_files[0]?.file_url) {
+      image = item.product_details.media_files[0].file_url;
+    }
+    
+    // Calculate subtotal if not provided
+    const subtotal = item.subtotal || (price * item.quantity);
+    
+    return {
+      id: item.id,
+      product_id: item.product || item.product_details?.id || item.id,
+      name: productName,
+      price: price,
+      quantity: item.quantity || 1,
+      image: image,
+      shop_name: shopName,
+      selected: true, // Default all items to selected
+      added_at: item.added_at,
+      subtotal: subtotal,
+    };
+  });
+};
+
 // ------------------ MAIN COMPONENT ------------------
 export default function Cart({ loaderData }: Route.ComponentProps) {
-  const user = loaderData?.user; // Get the full user object
-  const userId = user?.id; // Extract userId
+  const user = loaderData?.user;
+  const userId = user?.id;
   
   const [cartItems, setCartItems] = useState<CartItemType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,71 +187,42 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
         setLoading(true);
         setError(null);
         
-        // Call your Django API endpoint
-        const response = await AxiosInstance.get("/view-cart/", {
+        console.log("Fetching cart for user ID:", userId);
+        
+        const response = await AxiosInstance.get<CartApiResponse>("/view-cart/", {
           params: { user_id: userId }
         });
         
-        console.log("Cart API Response:", response.data); // Debug log
+        console.log("Cart API Response:", response.data);
         
-        // Check if response has success and cart_items
-        if (response.data.success && Array.isArray(response.data.cart_items)) {
-          // Transform the API response to match CartItemType
-          const transformedItems: CartItemType[] = response.data.cart_items.map((item: any) => {
-            // Extract product details
-            const product = item.product || {};
-            const productName = product.name || "Unknown Product";
-            const productPrice = product.price || 0;
-            const shop = product.shop || {};
-            const shopName = shop.name || "Unknown Shop";
-            
-            // Convert price to number if it's a string
-            const price = typeof productPrice === 'string' 
-              ? parseFloat(productPrice) 
-              : Number(productPrice);
-            
-            // Get image from media_files or use default
-            let image = "/public/default.jpg";
-            if (product.media_files && Array.isArray(product.media_files) && product.media_files.length > 0) {
-              image = product.media_files[0].file_url || image;
-            }
-            
-            return {
-              id: item.id || "",
-              name: productName,
-              color: item.color || "", // Your cart items might not have color
-              price: price,
-              quantity: item.quantity || 1,
-              image: image,
-              shop_name: shopName,
-              selected: true, // Default all items to selected
-              product_id: product.id || item.product_id || "",
-            };
-          });
-          
-          setCartItems(transformedItems);
-        } else {
-          // Handle case where cart_items might be empty or in different format
-          const errorMsg = response.data.error || "No cart items found or invalid response format";
-          setError(errorMsg);
-          
-          // If cart is empty, just set empty array (not an error)
-          if (response.data.success && (!response.data.cart_items || response.data.cart_items.length === 0)) {
+        if (response.data.success) {
+          if (Array.isArray(response.data.cart_items) && response.data.cart_items.length > 0) {
+            // Transform API data to CartItemType
+            const transformedItems = transformApiData(response.data.cart_items);
+            console.log("Transformed cart items:", transformedItems);
+            setCartItems(transformedItems);
+          } else {
+            // Empty cart
             setCartItems([]);
             setError(null);
           }
+        } else {
+          setError(response.data.error || "Failed to load cart");
         }
       } catch (err: any) {
         console.error("Failed to fetch cart items:", err);
+        
         // Handle different error scenarios
         if (err.response?.status === 400) {
-          setError("User ID is required");
+          setError("User ID is required or invalid");
         } else if (err.response?.status === 404) {
-          setError("User not found or cart is empty");
+          setError("User not found");
         } else if (err.code === 'ERR_NETWORK') {
           setError("Network error. Please check your connection.");
+        } else if (err.response?.status === 401) {
+          setError("Please login to view your cart");
         } else {
-          setError(err.response?.data?.error || "Failed to load cart items");
+          setError(err.response?.data?.error || "Failed to load cart items. Please try again.");
         }
       } finally {
         setLoading(false);
@@ -193,6 +234,11 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
 
   // ------------------ ITEM HANDLERS ------------------
   const updateQuantity = async (id: string, quantity: number) => {
+    if (quantity < 1) {
+      removeItem(id);
+      return;
+    }
+
     try {
       const response = await AxiosInstance.put(`/view-cart/items/${id}/update/`, { 
         user_id: userId,
@@ -201,7 +247,17 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
       
       if (response.data.success) {
         setCartItems((items) => 
-          items.map((item) => (item.id === id ? { ...item, quantity } : item))
+          items.map((item) => {
+            if (item.id === id) {
+              const updatedItem = { 
+                ...item, 
+                quantity,
+                subtotal: item.price * quantity
+              };
+              return updatedItem;
+            }
+            return item;
+          })
         );
       }
     } catch (err: any) {
@@ -226,32 +282,49 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   };
 
   const handleSelectItem = (id: string, checked: boolean) => {
-    setCartItems((items) => items.map((item) => (item.id === id ? { ...item, selected: checked } : item)));
+    setCartItems((items) => 
+      items.map((item) => 
+        item.id === id ? { ...item, selected: checked } : item
+      )
+    );
   };
 
   const handleSelectShop = (shopName: string, checked: boolean) => {
-    setCartItems((items) => items.map((item) => (item.shop_name === shopName ? { ...item, selected: checked } : item)));
+    setCartItems((items) => 
+      items.map((item) => 
+        item.shop_name === shopName ? { ...item, selected: checked } : item
+      )
+    );
   };
 
   // ------------------ GROUP ITEMS BY SHOP ------------------
   const groupedItems = cartItems.reduce<Record<string, CartItemType[]>>((acc, item) => {
-    if (!acc[item.shop_name]) acc[item.shop_name] = [];
+    if (!acc[item.shop_name]) {
+      acc[item.shop_name] = [];
+    }
     acc[item.shop_name].push(item);
     return acc;
   }, {});
 
   const allItemsSelected = cartItems.length > 0 && cartItems.every((item) => item.selected);
+  
   const handleSelectAll = (checked: boolean) => {
-    setCartItems((items) => items.map((item) => ({ ...item, selected: checked })));
+    setCartItems((items) => 
+      items.map((item) => ({ ...item, selected: checked }))
+    );
   };
 
   // ------------------ ORDER SUMMARY CALCULATIONS ------------------
   const selectedItems = cartItems.filter((item) => item.selected);
-  const subtotal = selectedItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const discount = 0;
+  const subtotal = selectedItems.reduce((sum, item) => {
+    return sum + (item.price * item.quantity);
+  }, 0);
+  
+  const discount = 0; // Will be updated when coupons are implemented
   const delivery = selectedItems.length > 0 ? 50.00 : 0;
   const taxRate = 0.05;
   const tax = subtotal * taxRate;
+  const total = subtotal - discount + delivery + tax;
 
   // ------------------ NAVIGATE TO CHECKOUT ------------------
   const handleCheckout = () => {
@@ -259,6 +332,23 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
       alert("Please select at least one item to proceed.");
       return;
     }
+    
+    // Create checkout data
+    const checkoutData = {
+      user_id: userId,
+      items: selectedItems.map(item => ({
+        cart_item_id: item.id,
+        product_id: item.product_id,
+        quantity: item.quantity,
+        price: item.price,
+        subtotal: item.price * item.quantity
+      })),
+      total_amount: total
+    };
+    
+    console.log("Proceeding to checkout with:", checkoutData);
+    
+    // Navigate to checkout with selected items
     const selectedIds = selectedItems.map((item) => item.id).join(",");
     navigate(`/checkout/?items=${selectedIds}`);
   };
@@ -266,6 +356,8 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   // ------------------ COUPON HANDLER ------------------
   const handleApplyCoupon = (code: string) => {
     console.log("Applying coupon:", code);
+    // TODO: Implement coupon validation and application
+    // This would call your Django API to validate and apply the coupon
   };
 
   // ------------------ LOADING & ERROR STATES ------------------
@@ -306,21 +398,40 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
         <SidebarLayout>
           <div className="min-h-screen p-8 flex items-center justify-center">
             <div className="text-center">
-              <p className="text-red-600 mb-4">{error}</p>
-              {error === "Please login to view your cart" ? (
-                <Button 
-                  onClick={() => navigate("/login")} 
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  Go to Login
-                </Button>
+              <ShoppingCart className="mx-auto h-16 w-16 text-gray-300 mb-4" />
+              <p className="text-red-600 mb-4 font-medium">{error}</p>
+              {error.includes("login") || error.includes("Login") ? (
+                <div className="space-y-3">
+                  <Button 
+                    onClick={() => navigate("/login")} 
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Go to Login
+                  </Button>
+                  <Button 
+                    onClick={() => navigate("/")} 
+                    variant="outline"
+                    className="ml-3"
+                  >
+                    Continue Shopping
+                  </Button>
+                </div>
               ) : (
-                <Button 
-                  onClick={() => window.location.reload()} 
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  Retry
-                </Button>
+                <div className="space-y-3">
+                  <Button 
+                    onClick={() => window.location.reload()} 
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Retry
+                  </Button>
+                  <Button 
+                    onClick={() => navigate("/")} 
+                    variant="outline"
+                    className="ml-3"
+                  >
+                    Continue Shopping
+                  </Button>
+                </div>
               )}
             </div>
           </div>
@@ -348,7 +459,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
             <div className="mb-6 flex items-center justify-between">
               <h1 className="flex items-center text-2xl font-bold text-gray-900">
                 <ShoppingCart className="mr-2 h-6 w-6" />
-                Shopping Cart ({cartItems.length} items)
+                Shopping Cart ({cartItems.length} {cartItems.length === 1 ? 'item' : 'items'})
               </h1>
               {cartItems.length > 0 && (
                 <Button
@@ -390,7 +501,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                         <span className="text-gray-900">Item Details</span>
                       </div>
                       <div className="flex items-center gap-4">
-                        <span className="w-20 text-center">Qty</span>
+                        <span className="w-20 text-center">Quantity</span>
                         <span className="w-20 text-right">Subtotal</span>
                         <span className="w-10 text-right">Remove</span>
                       </div>
@@ -398,13 +509,14 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   </div>
 
                   {Object.entries(groupedItems).map(([shopName, items]) => {
-                    const allSelected = items.every((item) => item.selected);
+                    const allShopItemsSelected = items.every((item) => item.selected);
+                    
                     return (
                       <div key={shopName} className="bg-white rounded-lg border shadow-sm">
                         <div className="p-4 flex items-center justify-between bg-gray-50 border-b">
                           <div className="flex items-center gap-3">
                             <Checkbox
-                              checked={allSelected}
+                              checked={allShopItemsSelected}
                               onCheckedChange={(checked) => handleSelectShop(shopName, Boolean(checked))}
                               className="h-4 w-4"
                             />
@@ -413,18 +525,21 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                               {shopName}
                             </span>
                           </div>
+                          <span className="text-sm text-gray-500">
+                            {items.length} {items.length === 1 ? 'item' : 'items'}
+                          </span>
                         </div>
 
                         <div className="p-4">
-                          {items.map((item) => (
-                            <div key={item.id} className="py-4 border-b last:border-b-0">
+                          {items.map((item, index) => (
+                            <div key={item.id} className={`py-4 ${index !== items.length - 1 ? 'border-b' : ''}`}>
                               <CartItem
                                 id={item.id}
                                 name={item.name}
-                                color={item.color}
+                                color="" // Your API doesn't provide color
                                 price={item.price}
                                 quantity={item.quantity}
-                                image={item.image}
+                                image={item.image || "/public/default.jpg"}
                                 shop_name={item.shop_name}
                                 selected={item.selected}
                                 onUpdateQuantity={updateQuantity}

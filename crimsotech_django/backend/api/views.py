@@ -5766,6 +5766,185 @@ class CustomerShops(APIView):
                 "message": "No customer found with this ID",
                 "data_source": "database"
             }, status=status.HTTP_200_OK) 
+        
+def post(self, request):
+        """
+        Create a new shop for a customer
+        """
+        try:
+            # Get user ID from request data (passed from frontend)
+            user_id = request.data.get('customer')
+            
+            if not user_id:
+                return Response(
+                    {'error': 'User ID is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate that the user exists and is a customer
+            try:
+                user = User.objects.get(id=user_id)
+                
+                # Check if user is a customer
+                if not user.is_customer:
+                    return Response(
+                        {'error': 'User is not registered as a customer'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Get or create Customer instance
+                customer, created = Customer.objects.get_or_create(customer=user)
+                
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'User not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Validate required fields
+            required_fields = ['name', 'description', 'province', 'city', 'barangay', 'street', 'contact_number']
+            missing_fields = []
+            
+            for field in required_fields:
+                if field not in request.data or not request.data.get(field):
+                    missing_fields.append(field)
+            
+            if missing_fields:
+                return Response(
+                    {'error': f'Missing required fields: {", ".join(missing_fields)}'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate field lengths based on model
+            validation_errors = {}
+            
+            # Validate name (max 50 characters in model)
+            name = request.data.get('name', '').strip()
+            if len(name) > 50:
+                validation_errors['name'] = 'Shop name must be 50 characters or less'
+            
+            # Validate description (max 200 characters in model)
+            description = request.data.get('description', '').strip()
+            if len(description) > 200:
+                validation_errors['description'] = 'Description must be 200 characters or less'
+            
+            # Validate location fields (max 50 characters each in model)
+            location_fields = ['province', 'city', 'barangay', 'street']
+            for field in location_fields:
+                value = request.data.get(field, '').strip()
+                if len(value) > 50:
+                    validation_errors[field] = f'{field.capitalize()} must be 50 characters or less'
+            
+            # Validate contact number (max 20 characters in model)
+            contact_number = request.data.get('contact_number', '').strip()
+            if len(contact_number) > 20:
+                validation_errors['contact_number'] = 'Contact number must be 20 characters or less'
+            
+            if validation_errors:
+                return Response(
+                    {'errors': validation_errors}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if customer already has a shop (optional, based on business logic)
+            # Remove this if customers can have multiple shops
+            existing_shop = Shop.objects.filter(customer=customer).first()
+            if existing_shop:
+                return Response(
+                    {'error': 'Customer already has a shop'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Use atomic transaction for data integrity
+            with transaction.atomic():
+                # Create the shop
+                shop = Shop.objects.create(
+                    id=uuid.uuid4(),
+                    name=name,
+                    description=description,
+                    province=request.data.get('province', '').strip(),
+                    city=request.data.get('city', '').strip(),
+                    barangay=request.data.get('barangay', '').strip(),
+                    street=request.data.get('street', '').strip(),
+                    contact_number=contact_number,
+                    customer=customer,
+                    # Set default values
+                    verified=False,
+                    status="Active",
+                    total_sales=0,
+                    is_suspended=False,
+                    created_at=timezone.now(),
+                    updated_at=timezone.now()
+                )
+                
+                # Handle shop picture if provided
+                shop_picture = request.FILES.get('shop_picture')
+                if shop_picture:
+                    # Validate file type
+                    valid_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+                    valid_mime_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+                    
+                    # Get file extension
+                    file_extension = shop_picture.name.split('.')[-1].lower()
+                    
+                    # Validate both extension and content type
+                    if (file_extension not in valid_extensions or 
+                        shop_picture.content_type not in valid_mime_types):
+                        raise ValueError(
+                            'Invalid file type. Supported formats: JPEG, PNG, GIF, WebP'
+                        )
+                    
+                    # Validate file size (5MB limit as in frontend)
+                    if shop_picture.size > 5 * 1024 * 1024:
+                        raise ValueError('File size must be less than 5MB')
+                    
+                    shop.shop_picture = shop_picture
+                    shop.save()
+                
+                # Prepare response data
+                shop_data = {
+                    'id': str(shop.id),
+                    'name': shop.name,
+                    'description': shop.description,
+                    'province': shop.province,
+                    'city': shop.city,
+                    'barangay': shop.barangay,
+                    'street': shop.street,
+                    'contact_number': shop.contact_number,
+                    'customer': str(shop.customer.customer_id) if shop.customer else None,
+                    'verified': shop.verified,
+                    'status': shop.status,
+                    'total_sales': str(shop.total_sales),
+                    'created_at': shop.created_at.isoformat(),
+                    'updated_at': shop.updated_at.isoformat(),
+                }
+                
+                if shop.shop_picture:
+                    shop_data['shop_picture'] = request.build_absolute_uri(shop.shop_picture.url)
+                
+                logger.info(f"Shop created successfully: {shop.name} by user {user_id}")
+                
+                return Response({
+                    'success': True,
+                    'message': 'Shop created successfully',
+                    'shop': shop_data,
+                    'id': str(shop.id)
+                }, status=status.HTTP_201_CREATED)
+                
+        except ValueError as e:
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Shop creation failed: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'error': 'An error occurred while creating the shop',
+                    'details': str(e)
+                }, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class CustomerShopsAddSeller(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
