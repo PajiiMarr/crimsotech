@@ -268,10 +268,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
         <div className="space-y-6">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-3xl font-bold">Analytics Dashboard</h1>
-              <p className="text-muted-foreground mt-1">
-                Real-time platform performance and insights
-              </p>
+              <h1 className="text-3xl font-bold">Analytics</h1>
             </div>
           </div>
 

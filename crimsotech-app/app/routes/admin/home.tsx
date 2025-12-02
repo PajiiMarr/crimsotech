@@ -236,14 +236,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-              <p className="text-muted-foreground">Real-time platform analytics</p>
             </div>
-            {!isLoading && (
-              <div className="flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                Live Data
-              </div>
-            )}
           </div>
 
           {/* Core Business Metrics */}

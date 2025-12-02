@@ -22,10 +22,13 @@ import {
   Send,
   Undo,
   CheckCircle,
-  XCircle
+  XCircle,
+  ChevronLeft,
+  Menu,
+  MoreVertical
 } from 'lucide-react';
 import AxiosInstance from "~/components/axios/Axios";
-import { useState, useEffect } from 'react'; // Added useEffect
+import { useState, useEffect } from 'react';
 import { 
   AlertDialog,
   AlertDialogAction,
@@ -49,6 +52,12 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { useIsMobile } from "~/hooks/use-mobile";
 import { useToast } from "~/hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -276,6 +285,10 @@ const actionConfigs = {
 
 export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) {
   const { user, product: initialProduct, error: initialError } = loaderData;
+
+  const baseUrl = import.meta.env.VITE_MEDIA_URL;
+
+  console.log("Base URL:", baseUrl);
   
   // State for dynamic product data
   const [product, setProduct] = useState<ProductData | null>(initialProduct);
@@ -612,22 +625,24 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
     return (
       <AlertDialog open={showDialog} onOpenChange={!processing ? setShowDialog : undefined}>
-        <AlertDialogContent className="sm:max-w-[500px]">
+        <AlertDialogContent className="sm:max-w-[500px] max-w-[95vw]">
           {renderDialogContent()}
-          <AlertDialogFooter className="mt-6">
+          <AlertDialogFooter className="mt-6 sm:flex-row flex-col gap-2">
             <AlertDialogCancel 
               onClick={handleCancel}
               disabled={processing}
-              className="mt-0"
+              className="mt-0 sm:w-auto w-full order-2 sm:order-1"
             >
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction 
               onClick={handleConfirm}
               className={
-                currentAction.variant === "destructive" 
-                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" 
-                  : ""
+                `sm:w-auto w-full order-1 sm:order-2 ${
+                  currentAction.variant === "destructive" 
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" 
+                    : ""
+                }`
               }
               disabled={processing || (activeAction === 'remove' && !reason.trim())}
             >
@@ -659,13 +674,15 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
           <div className="px-4 pb-4">
             {renderDialogContent()}
           </div>
-          <DrawerFooter className="pt-2">
+          <DrawerFooter className="pt-2 flex-col sm:flex-row gap-2">
             <Button 
               onClick={handleConfirm}
               className={
-                currentAction.variant === "destructive" 
-                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" 
-                  : ""
+                `sm:w-auto w-full ${
+                  currentAction.variant === "destructive" 
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" 
+                    : ""
+                }`
               }
               disabled={processing || (activeAction === 'remove' && !reason.trim())}
             >
@@ -678,7 +695,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                 currentAction.confirmText
               )}
             </Button>
-            <DrawerClose asChild>
+            <DrawerClose asChild className="sm:w-auto w-full">
               <Button variant="outline" onClick={handleCancel} disabled={processing}>
                 Cancel
               </Button>
@@ -692,12 +709,12 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
   if (error) {
     return (
       <UserProvider user={user}>
-        <div className="container mx-auto p-6">
+        <div className="container mx-auto p-4 sm:p-6">
           <Card>
-            <CardContent className="p-6 text-center">
-              <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold mb-2">Error Loading Product</h2>
-              <p className="text-muted-foreground">{error}</p>
+            <CardContent className="p-4 sm:p-6 text-center">
+              <AlertCircle className="w-8 h-8 sm:w-12 sm:h-12 text-red-500 mx-auto mb-3 sm:mb-4" />
+              <h2 className="text-lg sm:text-xl font-semibold mb-2">Error Loading Product</h2>
+              <p className="text-muted-foreground text-sm sm:text-base">{error}</p>
             </CardContent>
           </Card>
         </div>
@@ -708,12 +725,12 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
   if (!product) {
     return (
       <UserProvider user={user}>
-        <div className="container mx-auto p-6">
+        <div className="container mx-auto p-4 sm:p-6">
           <Card>
-            <CardContent className="p-6 text-center">
-              <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold mb-2">Product Not Found</h2>
-              <p className="text-muted-foreground">The requested product could not be found.</p>
+            <CardContent className="p-4 sm:p-6 text-center">
+              <Package className="w-8 h-8 sm:w-12 sm:h-12 text-gray-400 mx-auto mb-3 sm:mb-4" />
+              <h2 className="text-lg sm:text-xl font-semibold mb-2">Product Not Found</h2>
+              <p className="text-muted-foreground text-sm sm:text-base">The requested product could not be found.</p>
             </CardContent>
           </Card>
         </div>
@@ -723,35 +740,68 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
   return (
     <UserProvider user={user}>
-      <div className="container mx-auto p-6 space-y-6">
+      <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
         {/* Loading indicator */}
         {loading && (
           <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="flex flex-col items-center gap-2">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-              <p className="text-sm text-muted-foreground">Updating product data...</p>
+              <div className="h-6 w-6 sm:h-8 sm:w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+              <p className="text-xs sm:text-sm text-muted-foreground">Updating product data...</p>
             </div>
           </div>
         )}
 
-        {/* Breadcrumb */}
-        <nav className="text-sm text-muted-foreground flex items-center flex-wrap gap-1">
-          <span>Admin</span>
-          <span>&gt;</span>
-          <a href="/admin/products" className="hover:text-primary hover:underline">
-            Products
-          </a>
-          <span>&gt;</span>
-          <span className="text-foreground font-medium truncate max-w-[200px]">
-            {product.name}
-          </span>
-        </nav>
+        {/* Responsive Header with Mobile Navigation */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Breadcrumb */}
+          <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
+            <a href="/admin" className="hover:text-primary hover:underline flex items-center gap-1">
+              <ChevronLeft className="w-3 h-3 sm:w-4 sm:h-4" />
+              <span className="hidden xs:inline">Admin</span>
+            </a>
+            <span>&gt;</span>
+            <a href="/admin/products" className="hover:text-primary hover:underline">
+              Products
+            </a>
+            <span>&gt;</span>
+            <span className="text-foreground font-medium truncate max-w-[120px] xs:max-w-[180px] sm:max-w-[250px]">
+              {product.name}
+            </span>
+          </nav>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Mobile Actions Dropdown */}
+          {isMobile && availableActions.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="ml-auto">
+                  <Menu className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                {availableActions.map((action, index) => (
+                  <DropdownMenuItem
+                    key={index}
+                    onClick={() => handleActionClick(action.id)}
+                    className={`flex items-center gap-2 ${
+                      action.variant === "destructive" 
+                        ? "text-destructive focus:text-destructive" 
+                        : ""
+                    }`}
+                  >
+                    <action.icon className="w-4 h-4" />
+                    {action.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
           {/* Left Column - Images */}
-          <div className="space-y-4">
+          <div className="space-y-3 sm:space-y-4">
             <Card>
-              <CardContent className="p-4">
+              <CardContent className="p-3 sm:p-4">
                 {product.media.length > 0 ? (
                   <Carousel className="w-full">
                     <CarouselContent>
@@ -759,20 +809,30 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                         <CarouselItem key={media.id}>
                           <div className="aspect-square rounded-lg overflow-hidden">
                             <img
-                              src={media.file_data || "/api/placeholder/600/400"}
+                              src={baseUrl + media.file_data || "/api/placeholder/600/400"}
                               alt={product.name}
                               className="w-full h-full object-cover"
+                              loading="lazy"
                             />
                           </div>
                         </CarouselItem>
                       ))}
                     </CarouselContent>
-                    <CarouselPrevious />
-                    <CarouselNext />
+                    <CarouselPrevious className="hidden sm:flex -left-3" />
+                    <CarouselNext className="hidden sm:flex -right-3" />
+                    {/* Mobile carousel indicators */}
+                    <div className="flex justify-center gap-2 mt-3 sm:hidden">
+                      {product.media.map((_, index) => (
+                        <div
+                          key={index}
+                          className="w-2 h-2 rounded-full bg-muted"
+                        />
+                      ))}
+                    </div>
                   </Carousel>
                 ) : (
                   <div className="aspect-square rounded-lg bg-muted flex items-center justify-center">
-                    <Package className="w-16 h-16 text-muted-foreground" />
+                    <Package className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
                   </div>
                 )}
               </CardContent>
@@ -780,11 +840,13 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
           </div>
 
           {/* Right Column - Product Details */}
-          <div className="space-y-6">
+          <div className="space-y-4 sm:space-y-6">
             <div>
-              <div className="flex items-start justify-between">
-                <div>
-                  <h1 className="text-3xl font-bold tracking-tight">{product.name}</h1>
+              <div className="flex flex-col xs:flex-row xs:items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight break-words">
+                    {product.name}
+                  </h1>
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     {getUploadStatusBadge(product.upload_status)}
                     <Badge variant={product.condition === "Excellent" ? "default" : "secondary"}>
@@ -795,13 +857,13 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                     </Badge>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-primary">
+                <div className="text-left xs:text-right">
+                  <div className="text-xl sm:text-2xl font-bold text-primary">
                     ₱{parseFloat(product.price).toLocaleString()}
                   </div>
-                  <div className="flex items-center gap-1 justify-end mt-1">
-                    <Heart className="w-4 h-4 text-red-500" />
-                    <span className="text-sm text-muted-foreground">
+                  <div className="flex items-center gap-1 mt-1 xs:justify-end">
+                    <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
+                    <span className="text-xs sm:text-sm text-muted-foreground">
                       {product.favorites_count} favorites
                     </span>
                   </div>
@@ -809,13 +871,13 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
               </div>
 
               {/* Rating and Engagement */}
-              <div className="flex items-center gap-4 mt-3 flex-wrap">
+              <div className="flex items-center gap-3 sm:gap-4 mt-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1">
                     {[1, 2, 3, 4, 5].map((star) => (
                       <Star
                         key={star}
-                        className={`w-4 h-4 ${
+                        className={`w-3 h-3 sm:w-4 sm:h-4 ${
                           star <= Math.round(averageRating)
                             ? "fill-yellow-400 text-yellow-400"
                             : "text-gray-300"
@@ -823,13 +885,13 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                       />
                     ))}
                   </div>
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-xs sm:text-sm text-muted-foreground">
                     {averageRating.toFixed(1)} • ({product.reviews.length} reviews)
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Heart className="w-4 h-4 text-red-500" />
-                  <span className="text-sm text-muted-foreground">
+                  <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
+                  <span className="text-xs sm:text-sm text-muted-foreground">
                     {product.favorites_count} favorites
                   </span>
                 </div>
@@ -838,60 +900,60 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
             {/* Key Details */}
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Package className="w-5 h-5" />
+              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
+                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                  <Package className="w-4 h-4 sm:w-5 sm:h-5" />
                   Product Details
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
+                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                   <div>
-                    <p className="text-sm text-muted-foreground">Stock Quantity</p>
-                    <p className="font-medium">{product.quantity} units</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Stock Quantity</p>
+                    <p className="font-medium text-sm sm:text-base">{product.quantity} units</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Category</p>
-                    <p className="font-medium">{product.category?.name || "No Category"}</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Category</p>
+                    <p className="font-medium text-sm sm:text-base">{product.category?.name || "No Category"}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Used For</p>
-                    <p className="font-medium text-sm">{product.used_for}</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Used For</p>
+                    <p className="font-medium text-xs sm:text-sm break-words">{product.used_for}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Condition</p>
-                    <p className="font-medium">{product.condition}</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Condition</p>
+                    <p className="font-medium text-sm sm:text-base">{product.condition}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Created</p>
-                    <p className="font-medium text-sm">
+                    <p className="text-xs sm:text-sm text-muted-foreground">Created</p>
+                    <p className="font-medium text-xs sm:text-sm">
                       {new Date(product.created_at).toLocaleDateString()}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Last Updated</p>
-                    <p className="font-medium text-sm">
+                    <p className="text-xs sm:text-sm text-muted-foreground">Last Updated</p>
+                    <p className="font-medium text-xs sm:text-sm">
                       {new Date(product.updated_at).toLocaleDateString()}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Favorites Count</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Favorites Count</p>
                     <div className="flex items-center gap-1">
-                      <Heart className="w-4 h-4 text-red-500" />
-                      <p className="font-medium">{product.favorites_count}</p>
+                      <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
+                      <p className="font-medium text-sm sm:text-base">{product.favorites_count}</p>
                     </div>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Upload Status</p>
-                    <p className="font-medium capitalize">{product.upload_status}</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Upload Status</p>
+                    <p className="font-medium text-sm sm:text-base capitalize">{product.upload_status}</p>
                   </div>
                 </div>
                 
                 <Separator />
                 
                 <div>
-                  <p className="text-sm text-muted-foreground mb-2">Description</p>
-                  <p className="text-sm">{product.description}</p>
+                  <p className="text-xs sm:text-sm text-muted-foreground mb-2">Description</p>
+                  <p className="text-xs sm:text-sm break-words">{product.description}</p>
                 </div>
               </CardContent>
             </Card>
@@ -899,16 +961,16 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
             {/* Variants */}
             {product.variants.length > 0 && (
               <Card>
-                <CardHeader>
-                  <CardTitle>Product Variants</CardTitle>
+                <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
+                  <CardTitle className="text-base sm:text-lg">Product Variants</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
                   {product.variants.map((variant) => (
                     <div key={variant.id}>
-                      <p className="font-medium mb-2">{variant.title}</p>
+                      <p className="font-medium text-sm sm:text-base mb-2">{variant.title}</p>
                       <div className="flex gap-2 flex-wrap">
                         {variant.options.map((option) => (
-                          <Badge key={option.id} variant="outline">
+                          <Badge key={option.id} variant="outline" className="text-xs">
                             {option.title} (₱{parseFloat(option.price).toLocaleString()})
                           </Badge>
                         ))}
@@ -921,42 +983,42 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
           </div>
 
           {/* Product Status Overview - Full Width */}
-          <Card className="col-span-2">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Shield className="w-5 h-5" />
+          <Card className="col-span-1 lg:col-span-2">
+            <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
                 Product Status Overview
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-                <div className="flex flex-col items-center justify-center p-4 border rounded-lg bg-muted/50">
-                  <span className="text-sm text-muted-foreground mb-2">Upload Status</span>
+            <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
+              <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
+                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Upload Status</span>
                   {getUploadStatusBadge(product.upload_status)}
                 </div>
-                <div className="flex flex-col items-center justify-center p-4 border rounded-lg bg-muted/50">
-                  <span className="text-sm text-muted-foreground mb-2">Product Status</span>
+                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
+                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Product Status</span>
                   <Badge variant={product.status === "Active" ? "default" : "secondary"}>
                     {product.status}
                   </Badge>
                 </div>
-                <div className="flex flex-col items-center justify-center p-4 border rounded-lg bg-muted/50">
-                  <span className="text-sm text-muted-foreground mb-2">Boost Status</span>
+                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
+                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Boost Status</span>
                   <Badge variant={product.boost?.status === "active" ? "default" : "outline"} className="bg-purple-500">
                     {product.boost?.status === "active" ? "Boosted" : "Not Boosted"}
                   </Badge>
                 </div>
-                <div className="flex flex-col items-center justify-center p-4 border rounded-lg bg-muted/50">
-                  <span className="text-sm text-muted-foreground mb-2">Removal Status</span>
+                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
+                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Removal Status</span>
                   <Badge variant={product.is_removed ? "destructive" : "outline"}>
                     {product.is_removed ? "Removed" : "Active"}
                   </Badge>
                 </div>
-                <div className="flex flex-col items-center justify-center p-4 border rounded-lg bg-muted/50">
-                  <span className="text-sm text-muted-foreground mb-2">Favorites</span>
+                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
+                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Favorites</span>
                   <div className="flex items-center gap-1">
-                    <Heart className="w-4 h-4 text-red-500" />
-                    <span className="font-medium text-lg">{product.favorites_count}</span>
+                    <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
+                    <span className="font-medium text-base sm:text-lg">{product.favorites_count}</span>
                   </div>
                 </div>
               </div>
@@ -966,25 +1028,33 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
         {/* Bottom Section - Tabs */}
         <Tabs defaultValue="reviews" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
-            <TabsTrigger value="reviews">Reviews & Ratings</TabsTrigger>
-            <TabsTrigger value="shop">Shop Information</TabsTrigger>
-            <TabsTrigger value="seller">Seller Details</TabsTrigger>
-            <TabsTrigger value="reports">Reports & Moderation</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto min-h-[2.5rem]">
+            <TabsTrigger value="reviews" className="text-xs sm:text-sm py-2 px-2">
+              Reviews & Ratings
+            </TabsTrigger>
+            <TabsTrigger value="shop" className="text-xs sm:text-sm py-2 px-2">
+              Shop Information
+            </TabsTrigger>
+            <TabsTrigger value="seller" className="text-xs sm:text-sm py-2 px-2">
+              Seller Details
+            </TabsTrigger>
+            <TabsTrigger value="reports" className="text-xs sm:text-sm py-2 px-2">
+              Reports & Moderation
+            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="reviews" className="space-y-4">
+          <TabsContent value="reviews" className="space-y-3 sm:space-y-4">
             <Card>
-              <CardHeader>
-                <CardTitle>Customer Reviews</CardTitle>
-                <CardDescription>
+              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
+                <CardTitle className="text-base sm:text-lg">Customer Reviews</CardTitle>
+                <CardDescription className="text-xs sm:text-sm">
                   {product.reviews.length} total reviews • {averageRating.toFixed(1)} average rating • {product.favorites_count} favorites
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
                 {product.reviews.map((review) => (
-                  <div key={review.id} className="border-b pb-4 last:border-0">
-                    <div className="flex items-center gap-2 mb-2">
+                  <div key={review.id} className="border-b pb-3 sm:pb-4 last:border-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mb-2">
                       <div className="flex items-center gap-1">
                         {[1, 2, 3, 4, 5].map((star) => (
                           <Star
@@ -997,16 +1067,16 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                           />
                         ))}
                       </div>
-                      <span className="text-sm font-medium">{review.customer || "Anonymous"}</span>
+                      <span className="text-xs sm:text-sm font-medium">{review.customer || "Anonymous"}</span>
                       <span className="text-xs text-muted-foreground">
                         {new Date(review.created_at).toLocaleDateString()}
                       </span>
                     </div>
-                    <p className="text-sm">{review.comment || "No comment provided"}</p>
+                    <p className="text-xs sm:text-sm">{review.comment || "No comment provided"}</p>
                   </div>
                 ))}
                 {product.reviews.length === 0 && (
-                  <p className="text-center text-muted-foreground py-8">
+                  <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
                     No reviews yet for this product.
                   </p>
                 )}
@@ -1016,51 +1086,51 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
           <TabsContent value="shop">
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Store className="w-5 h-5" />
+              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
+                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                  <Store className="w-4 h-4 sm:w-5 sm:h-5" />
                   Shop Information
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
                 {product.shop ? (
                   <>
                     <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center">
-                        <Store className="w-6 h-6" />
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Store className="w-5 h-5 sm:w-6 sm:h-6" />
                       </div>
-                      <div>
-                        <h3 className="font-semibold">{product.shop.name}</h3>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Badge variant={product.shop.verified ? "default" : "secondary"}>
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-sm sm:text-base break-words">{product.shop.name}</h3>
+                        <div className="flex flex-col xs:flex-row xs:items-center gap-1 xs:gap-2 mt-1 flex-wrap">
+                          <Badge variant={product.shop.verified ? "default" : "secondary"} className="w-fit">
                             {product.shop.verified ? "Verified" : "Unverified"}
                           </Badge>
-                          <Badge variant={product.shop.is_suspended ? "destructive" : "outline"}>
+                          <Badge variant={product.shop.is_suspended ? "destructive" : "outline"} className="w-fit">
                             {product.shop.is_suspended ? "Suspended" : "Active"}
                           </Badge>
-                          <span className="text-sm text-muted-foreground">
-                            <MapPin className="w-3 h-3 inline mr-1" />
-                            {product.shop.city}, {product.shop.barangay}
+                          <span className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1">
+                            <MapPin className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">{product.shop.city}, {product.shop.barangay}</span>
                           </span>
                         </div>
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                       <div>
-                        <p className="text-sm text-muted-foreground">Total Sales</p>
-                        <p className="font-medium">₱{parseFloat(product.shop.total_sales).toLocaleString()}</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground">Total Sales</p>
+                        <p className="font-medium text-sm sm:text-base">₱{parseFloat(product.shop.total_sales).toLocaleString()}</p>
                       </div>
                       <div>
-                        <p className="text-sm text-muted-foreground">Member Since</p>
-                        <p className="font-medium">
+                        <p className="text-xs sm:text-sm text-muted-foreground">Member Since</p>
+                        <p className="font-medium text-xs sm:text-sm">
                           {new Date(product.shop.created_at).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
                   </>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8">
+                  <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
                     No shop information available.
                   </p>
                 )}
@@ -1070,46 +1140,46 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
           <TabsContent value="seller">
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <User className="w-5 h-5" />
+              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
+                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                  <User className="w-4 h-4 sm:w-5 sm:h-5" />
                   Seller Details
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
                 {product.customer ? (
                   <>
                     <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center">
-                        <User className="w-6 h-6" />
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-full flex items-center justify-center flex-shrink-0">
+                        <User className="w-5 h-5 sm:w-6 sm:h-6" />
                       </div>
-                      <div>
-                        <h3 className="font-semibold">{product.customer.username || "Unknown User"}</h3>
-                        <p className="text-sm text-muted-foreground">{product.customer.contact_number || "No contact number"}</p>
-                        <p className="text-sm text-muted-foreground">{product.customer.email || "No email"}</p>
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-sm sm:text-base break-words">{product.customer.username || "Unknown User"}</h3>
+                        <p className="text-xs sm:text-sm text-muted-foreground truncate">{product.customer.contact_number || "No contact number"}</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground truncate">{product.customer.email || "No email"}</p>
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                       <div>
-                        <p className="text-sm text-muted-foreground">Product Limit</p>
-                        <p className="font-medium">{product.customer.product_limit} products</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground">Product Limit</p>
+                        <p className="font-medium text-sm sm:text-base">{product.customer.product_limit} products</p>
                       </div>
                       <div>
-                        <p className="text-sm text-muted-foreground">Current Products</p>
-                        <p className="font-medium">{product.customer.current_product_count} products</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground">Current Products</p>
+                        <p className="font-medium text-sm sm:text-base">{product.customer.current_product_count} products</p>
                       </div>
                       <div>
-                        <p className="text-sm text-muted-foreground">Total Favorites</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground">Total Favorites</p>
                         <div className="flex items-center gap-1">
-                          <Heart className="w-4 h-4 text-red-500" />
-                          <p className="font-medium">{product.favorites_count}</p>
+                          <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
+                          <p className="font-medium text-sm sm:text-base">{product.favorites_count}</p>
                         </div>
                       </div>
                     </div>
                   </>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8">
+                  <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
                     No seller information available.
                   </p>
                 )}
@@ -1119,48 +1189,48 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
           <TabsContent value="reports">
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5" />
+              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
+                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                  <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" />
                   Reports & Moderation
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
+                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
                   <div>
-                    <p className="text-sm text-muted-foreground">Active Reports</p>
-                    <p className={`font-medium ${product.reports.active > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Active Reports</p>
+                    <p className={`font-medium text-sm sm:text-base ${product.reports.active > 0 ? 'text-red-600' : 'text-green-600'}`}>
                       {product.reports.active} active
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Total Reports</p>
-                    <p className="font-medium">{product.reports.total} total</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Total Reports</p>
+                    <p className="font-medium text-sm sm:text-base">{product.reports.total} total</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Favorites Count</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Favorites Count</p>
                     <div className="flex items-center gap-1">
-                      <Heart className="w-4 h-4 text-red-500" />
-                      <p className="font-medium">{product.favorites_count}</p>
+                      <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
+                      <p className="font-medium text-sm sm:text-base">{product.favorites_count}</p>
                     </div>
                   </div>
                 </div>
                 
                 {product.reports.total > 0 && (
                   <div className="space-y-2">
-                    <p className="text-sm font-medium">Report Summary:</p>
-                    <div className="text-sm text-muted-foreground space-y-1">
+                    <p className="text-xs sm:text-sm font-medium">Report Summary:</p>
+                    <div className="text-xs sm:text-sm text-muted-foreground space-y-1">
                       <p>• {product.reports.active} active reports requiring attention</p>
                       <p>• {product.reports.total - product.reports.active} resolved reports</p>
                     </div>
                   </div>
                 )}
                 
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm">
+                <div className="flex gap-2 flex-wrap">
+                  <Button variant="outline" size="sm" className="text-xs sm:text-sm">
                     View All Reports
                   </Button>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="text-xs sm:text-sm">
                     Moderate Product
                   </Button>
                 </div>
@@ -1169,34 +1239,37 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
           </TabsContent>
         </Tabs>
 
-        {/* Admin Actions */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="w-5 h-5" />
-              Admin Actions
-            </CardTitle>
-            <CardDescription>
-              Available actions based on product status: {product.upload_status} • {product.status} • {product.is_removed ? 'Removed' : 'Active'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex gap-2 flex-wrap">
-              {availableActions.map((action, index) => (
-                <Button
-                  key={index}
-                  variant={action.variant}
-                  className="flex items-center gap-2"
-                  onClick={() => handleActionClick(action.id)}
-                  disabled={processing}
-                >
-                  <action.icon className="w-4 h-4" />
-                  {action.label}
-                </Button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Admin Actions - Desktop only, mobile has dropdown */}
+        {!isMobile && availableActions.length > 0 && (
+          <Card>
+            <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
+                Admin Actions
+              </CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
+                Available actions based on product status: {product.upload_status} • {product.status} • {product.is_removed ? 'Removed' : 'Active'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
+              <div className="flex gap-2 flex-wrap">
+                {availableActions.map((action, index) => (
+                  <Button
+                    key={index}
+                    variant={action.variant}
+                    className="flex items-center gap-2 text-xs sm:text-sm"
+                    onClick={() => handleActionClick(action.id)}
+                    disabled={processing}
+                    size="sm"
+                  >
+                    <action.icon className="w-3 h-3 sm:w-4 sm:h-4" />
+                    {action.label}
+                  </Button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Responsive Dialog */}
         {isMobile ? renderMobileDialog() : renderDesktopDialog()}
