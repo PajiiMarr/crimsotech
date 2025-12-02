@@ -112,10 +112,10 @@ class CategorySerializer(serializers.ModelSerializer):
         model = Category
         fields = '__all__'
 
-class ProductSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Product
-        fields = '__all__'
+# class ProductSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = Product
+#         fields = '__all__'
 
 class FavoritesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -224,15 +224,30 @@ class ProductSerializer(serializers.ModelSerializer):
     category = CategorySerializer()
     category_admin = CategorySerializer()
     variants = VariantsSerializer(source='variants_set', many=True)
+    # ADD THESE TWO LINES ↓
+    media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
+    primary_image = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
         fields = [
             'id', 'name', 'description', 'quantity', 'used_for', 'price',
             'status', 'upload_status', 'condition', 'created_at', 'updated_at',
-            'shop', 'customer', 'category_admin', 'category', 'variants'
+            'shop', 'customer', 'category_admin', 'category', 'variants',
+            'media_files', 'primary_image'  # ADD THESE TO THE FIELDS LIST
         ]
 
+    def get_primary_image(self, obj):
+        """Get the first media file as primary image"""
+        if hasattr(obj, 'productmedia_set') and obj.productmedia_set.exists():
+            media = obj.productmedia_set.first()
+            return {
+                'id': str(media.id),
+                'url': media.file_data.url if media.file_data else None,
+                'file_type': media.file_type
+            }
+        return None
+    
 class ReviewDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)
     shop_id = ShopSerializer(read_only=True)
