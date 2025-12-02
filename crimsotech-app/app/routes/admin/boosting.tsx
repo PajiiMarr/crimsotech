@@ -756,7 +756,6 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                       {/* Price and Duration */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1">
-                          <DollarSign className="h-4 w-4 text-green-600" />
                           <span className="text-2xl font-bold">₱{plan.price.toFixed(2)}</span>
                         </div>
                         <div className="flex items-center gap-1 text-sm text-muted-foreground">
