@@ -1,4 +1,4 @@
-import type { Route } from './+types/home'
+import type { Route } from './+types/favorites'
 import SidebarLayout from '~/components/layouts/sidebar'
 import SearchForm from '~/components/customer/search-bar'
 import { FavoriteProductCard } from '~/components/customer/favorite-products'

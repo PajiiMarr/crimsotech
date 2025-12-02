@@ -82,14 +82,16 @@ const menuItems = [
     children: [
       { title: "Home", url: "/home", icon: Home, roles: ["customer"] },
       { title: "cart", url: "/cart", icon: ShoppingCart, roles: ["customer"] },
+      
     ]
   },
   {
     group: "My Account",
     children: [
-      { title: "Purchases", url: "/customer/purchases", icon: TicketCheck, roles: ["customer"] },
-      { title: "Favorites", url: "/customer/favorites", icon: Star, roles: ["customer"] },
-      { title: "ComGift", url: "/customer/comgift", icon: Gift, roles: ["customer"] },
+      { title: "Purchases", url: "/purchases", icon: TicketCheck, roles: ["customer"] },
+      { title: "Favorites", url: "/favorites", icon: Star, roles: ["customer"] },
+      { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
+      
       
     ]
   },
@@ -98,7 +100,7 @@ const menuItems = [
     children: [
       { title: "My products", url: "/personal-listing", icon: Package  , roles: ["customer"] },
       { title: "Order Lists", url: "/customer/order_lists", icon: ClipboardList, roles: ["customer"] },
-      { title: "Subscription Plans", url: "/customer/subscription_plans", icon: DollarSign, roles: ["customer"] },
+      { title: "Subscription Plans", url: "/subscription-plan", icon: DollarSign, roles: ["customer"] },
     ]
   },
 
