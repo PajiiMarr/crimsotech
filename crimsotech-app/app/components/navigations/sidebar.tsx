@@ -81,7 +81,7 @@ const menuItems = [
     group: "Shop",
     children: [
       { title: "Home", url: "/home", icon: Home, roles: ["customer"] },
-      { title: "Cart", url: "/cart", icon: ShoppingCart, roles: ["customer"] },
+      { title: "cart", url: "/cart", icon: ShoppingCart, roles: ["customer"] },
     ]
   },
   {

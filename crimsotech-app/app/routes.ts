@@ -16,11 +16,12 @@ export default [
     route('logout', 'routes/logout.tsx'),
     
     route('home', 'routes/customer/home.tsx'),
-    
+    route("cart", "routes/customer/cart.tsx"),
     route('shop-list', 'routes/customer/shop-list.tsx'),
     route('create-shop', 'routes/customer/create-shop.tsx'),
     route('personal-listing', 'routes/customer/personal-listing.tsx'),
     route("product/:id", "components/customer/view-product.tsx"),
+    
     
     ...prefix("seller", [
         route("dashboard", "routes/seller/dashboard.tsx"), 

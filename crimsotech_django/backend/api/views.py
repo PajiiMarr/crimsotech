@@ -6327,3 +6327,67 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     queryset = Product.objects.all().order_by('-created_at')
 
 
+class AddToCartView(APIView):
+
+    def post(self, request):
+        user_id = request.data.get("user_id") 
+        product_id = request.data.get("product_id")
+        quantity = int(request.data.get("quantity", 1))
+       
+
+        if not product_id:
+            return Response({"success": False, "error": "Product ID is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if not user_id:
+            return Response({"success": False, "error": "Customer ID is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Find user
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"success": False, "error": "User not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            product = Product.objects.get(id=product_id)
+        except Product.DoesNotExist:
+            return Response({"success": False, "error": "Product not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        cart_item, created = CartItem.objects.get_or_create(
+            user=user,
+            product=product,
+            defaults={"quantity": quantity}
+        )
+
+        if not created:
+            cart_item.quantity += quantity
+            cart_item.save()
+
+        serializer = CartItemSerializer(cart_item)
+        return Response({"success": True, "cart_item": serializer.data})
+
+
+
+#CHECKOUT
+class CartListView(APIView):
+    """
+    Returns all cart items for a given session user.
+    Frontend passes user_id from loader session.
+    """
+
+    def get(self, request):
+        user_id = request.GET.get("user_id")  # <-- session-based user ID from frontend
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+
+        cart_items = CartItem.objects.filter(user=user).select_related("product", "product__shop")
+        serializer = CartItemSerializer(cart_items, many=True)
+        return Response({"success": True, "cart_items": serializer.data})

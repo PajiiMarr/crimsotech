@@ -41,6 +41,7 @@ router.register(r'seller-products', SellerProducts, basename='seller-products')
 router.register(r'shop-add-product', CustomerShopsAddSeller, basename='shop-add-product')
 router.register(r'customer-products', CustomerProducts, basename='customer-products')
 router.register(r'public-products', PublicProducts, basename='public-products')
+# router.register(r'customer-add-item', AddToCartView, basename='customer-add-item')
 
 
 
@@ -50,6 +51,8 @@ urlpatterns = [
     path('api/', include(router.urls)),
     path('', UserView.as_view(), name='user-list'),
     path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),
+    path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
+    path('api/view-cart/', CartListView.as_view(), name='view-cart'),
     path('api/register/', Register.as_view(), name='register'),
     path('api/login/', Login.as_view(), name='login'),
     path('api/profiling/', Profiling.as_view(), name='profiling'),
