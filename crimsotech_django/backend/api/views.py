@@ -1,8 +1,8 @@
 from asyncio.log import logger
+from email import parser
 import json
 from django.shortcuts import render
 from django.db.models import Prefetch
-
 from django.db.models.functions import TruncMonth
 from django.db import transaction
 from decimal import Decimal
@@ -21,6 +21,7 @@ from django.contrib.auth.hashers import check_password
 import hashlib
 import os
 from django.db.models import Count, Avg, Sum, Q, F, Case, When, Value
+import datetime  # Add this import
 
 
 class UserView(APIView):
@@ -501,539 +502,1176 @@ class RiderRegistration(viewsets.ViewSet):
             return None
         return hashlib.sha256(image_file.read()).hexdigest()
     
+
+
 class AdminDashboard(viewsets.ViewSet):
+
     """
+
     Comprehensive dashboard API endpoint serving all analytics data
+
     """
+
     
+
     @action(detail=False, methods=['get'])
+
     def get_comprehensive_dashboard(self, request):
+
         """
-        Get all dashboard data in a single endpoint
-        """
-        try:
-            # Get data from all methods
-            overview_data = self._get_overview_data()
-            operational_data = self._get_operational_data()
-            sales_data = self._get_sales_analytics_data()
-            user_data = self._get_user_analytics_data()
-            product_data = self._get_product_analytics_data()
-            shop_data = self._get_shop_analytics_data()
-            boost_data = self._get_boost_analytics_data()
-            rider_data = self._get_rider_analytics_data()
-            voucher_data = self._get_voucher_analytics_data()
-            refund_data = self._get_refund_analytics_data()
-            report_data = self._get_report_analytics_data()
-            
-            comprehensive_data = {
-                'success': True,
-                'overview': overview_data,
-                'operational': operational_data,
-                'sales_analytics': sales_data,
-                'user_analytics': user_data,
-                'product_analytics': product_data,
-                'shop_analytics': shop_data,
-                'boost_analytics': boost_data,
-                'rider_analytics': rider_data,
-                'voucher_analytics': voucher_data,
-                'refund_analytics': refund_data,
-                'report_analytics': report_data,
-            }
-            
-            return Response(comprehensive_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            print(f"Error in get_comprehensive_dashboard: {str(e)}")
-            return Response(
-                {'success': False, 'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    def _get_overview_data(self):
-        """Extract overview metrics data"""
-        try:
-            # Calculate date ranges
-            today = timezone.now().date()
-            week_ago = today - timedelta(days=7)
-            month_ago = today - timedelta(days=30)
-            
-            # Total Revenue (from completed orders)
-            total_revenue = Order.objects.filter(
-                status='completed'
-            ).aggregate(
-                total_revenue=Sum('total_amount')
-            )['total_revenue'] or Decimal('0')
-            
-            # Total Orders
-            total_orders = Order.objects.count()
-            
-            # Active Customers (users with is_customer=True)
-            active_customers = User.objects.filter(
-                is_customer=True,
-                registration_stage=4
-            ).count()
-            
-            # Active Shops
-            active_shops = Shop.objects.filter(
-                status='Active'
-            ).count()
-            
-            # Today's metrics
-            today_orders = Order.objects.filter(
-                created_at__date=today
-            ).count()
-            
-            today_revenue = Order.objects.filter(
-                created_at__date=today,
-                status='completed'
-            ).aggregate(
-                revenue=Sum('total_amount')
-            )['revenue'] or Decimal('0')
-            
-            # Weekly growth calculations
-            last_week_orders = Order.objects.filter(
-                created_at__date__gte=week_ago - timedelta(days=7),
-                created_at__date__lt=week_ago
-            ).count()
-            
-            order_growth = 0
-            if last_week_orders > 0:
-                order_growth = ((today_orders - last_week_orders) / last_week_orders) * 100
-            
-            revenue_growth = 12.5  # Placeholder calculation
-            
-            return {
-                'total_revenue': float(total_revenue),
-                'total_orders': total_orders,
-                'active_customers': active_customers,
-                'active_shops': active_shops,
-                'today_orders': today_orders,
-                'today_revenue': float(today_revenue),
-                'order_growth': round(order_growth, 1),
-                'revenue_growth': revenue_growth,
-            }
-        except Exception as e:
-            print(f"Error in _get_overview_data: {str(e)}")
-            return {
-                'total_revenue': 6990,
-                'total_orders': 40,
-                'active_customers': 0,
-                'active_shops': 0,
-                'today_orders': 5,
-                'today_revenue': 500,
-                'order_growth': 0,
-                'revenue_growth': 12.5,
-            }
-    
-    def _get_operational_data(self):
-        """Extract operational metrics data"""
-        try:
-            # Active Boosts
-            active_boosts = Boost.objects.filter(
-                status='active'
-            ).count()
-            
-            # Pending Refunds
-            pending_refunds = Refund.objects.filter(
-                status='pending'
-            ).count()
-            
-            # Low Stock Products (quantity < 5)
-            low_stock_products = Product.objects.filter(
-                quantity__lt=5
-            ).count()
-            
-            # Average Rating from Reviews
-            avg_rating = Review.objects.aggregate(
-                avg_rating=Avg('rating')
-            )['avg_rating'] or 4.6
-            
-            # Pending Reports
-            pending_reports = Report.objects.filter(
-                status='pending'
-            ).count()
-            
-            # Active Riders
-            active_riders = Rider.objects.filter(
-                verified=True
-            ).count()
-            
-            # Active Vouchers
-            active_vouchers = Voucher.objects.filter(
-                is_active=True,
-                valid_until__gte=timezone.now()
-            ).count()
-            
-            return {
-                'active_boosts': active_boosts,
-                'pending_refunds': pending_refunds,
-                'low_stock_products': low_stock_products,
-                'avg_rating': round(float(avg_rating), 1),
-                'pending_reports': pending_reports,
-                'active_riders': active_riders,
-                'active_vouchers': active_vouchers,
-            }
-        except Exception as e:
-            print(f"Error in _get_operational_data: {str(e)}")
-            return {
-                'active_boosts': 32,
-                'pending_refunds': 77,
-                'low_stock_products': 0,
-                'avg_rating': 4.5,
-                'pending_reports': 40,
-                'active_riders': 3,
-                'active_vouchers': 2,
-            }
-    
-    def _get_sales_analytics_data(self):
-        """Extract sales analytics data"""
-        try:
-            # Last 7 days sales data
-            end_date = timezone.now().date()
-            start_date = end_date - timedelta(days=6)
-            
-            daily_sales = []
-            current_date = start_date
-            
-            while current_date <= end_date:
-                day_data = Order.objects.filter(
-                    created_at__date=current_date
-                ).aggregate(
-                    revenue=Sum('total_amount'),
-                    orders=Count('order')
-                )
-                
-                daily_sales.append({
-                    'date': current_date.strftime('%Y-%m-%d'),
-                    'name': current_date.strftime('%a'),
-                    'revenue': float(day_data['revenue'] or 0),
-                    'orders': day_data['orders'] or 0,
-                })
-                
-                current_date += timedelta(days=1)
-            
-            # Order status distribution
-            order_status_data = Order.objects.values('status').annotate(
-                count=Count('order')
-            ).order_by('status')
-            
-            status_distribution = []
-            for status_data in order_status_data:
-                status_distribution.append({
-                    'status': status_data['status'],
-                    'count': status_data['count'],
-                    'color': self._get_status_color(status_data['status'])
-                })
-            
-            return {
-                'sales_data': daily_sales,
-                'status_distribution': status_distribution,
-            }
-        except Exception as e:
-            print(f"Error in _get_sales_analytics_data: {str(e)}")
-            # Return sample data matching your dashboard
-            return {
-                'sales_data': [
-                    {'name': 'Sun', 'revenue': 15000, 'orders': 12},
-                    {'name': 'Mon', 'revenue': 25000, 'orders': 18},
-                    {'name': 'Tue', 'revenue': 35000, 'orders': 22},
-                    {'name': 'Wed', 'revenue': 45000, 'orders': 28},
-                    {'name': 'Thu', 'revenue': 38000, 'orders': 25},
-                    {'name': 'Fri', 'revenue': 52000, 'orders': 32},
-                    {'name': 'Sat', 'revenue': 48000, 'orders': 30},
-                ],
-                'status_distribution': [
-                    {'status': 'pending', 'count': 15, 'color': '#f59e0b'},
-                    {'status': 'completed', 'count': 9, 'color': '#10b981'},
-                    {'status': 'cancelled', 'count': 16, 'color': '#ef4444'},
-                ],
-            }
-    
-    def _get_user_analytics_data(self):
-        """Extract user analytics data for customer growth chart"""
-        try:
-            # User growth over last 6 months
-            six_months_ago = timezone.now() - timedelta(days=180)
-            
-            monthly_users = User.objects.filter(
-                created_at__gte=six_months_ago
-            ).annotate(
-                month=TruncMonth('created_at')
-            ).values('month').annotate(
-                new_users=Count('id')
-            ).order_by('month')
-            
-            user_growth_data = []
-            for month_data in monthly_users:
-                # For now, use placeholder data for returning users
-                user_growth_data.append({
-                    'month': month_data['month'].strftime('%b'),
-                    'new': month_data['new_users'],
-                    'returning': month_data['new_users'] * 2,  # Placeholder
-                })
-            
-            return {
-                'user_growth': user_growth_data,
-            }
-        except Exception as e:
-            print(f"Error in _get_user_analytics_data: {str(e)}")
-            # Return sample data for customer growth chart
-            return {
-                'user_growth': [
-                    {'month': 'Jan', 'new': 145, 'returning': 320},
-                    {'month': 'Feb', 'new': 168, 'returning': 385},
-                    {'month': 'Mar', 'new': 192, 'returning': 420},
-                    {'month': 'Apr', 'new': 215, 'returning': 485},
-                    {'month': 'May', 'new': 238, 'returning': 540},
-                    {'month': 'Jun', 'new': 265, 'returning': 615},
-                ],
-            }
-    
-    def _get_product_analytics_data(self):
-        """Extract product analytics data for top products chart"""
-        try:
-            # Top selling products (by order count through checkouts)
-            top_products = Product.objects.annotate(
-                order_count=Count('cart_item__checkout', filter=Q(cart_item__checkout__isnull=False))
-            ).filter(
-                order_count__gt=0
-            ).order_by('-order_count')[:5]
-            
-            product_performance = []
-            for product in top_products:
-                product_performance.append({
-                    'name': product.name,
-                    'orders': product.order_count,
-                    'revenue': float(product.price * product.order_count),
-                })
-            
-            return {
-                'product_performance': product_performance,
-            }
-        except Exception as e:
-            print(f"Error in _get_product_analytics_data: {str(e)}")
-            # Return sample data for top products chart
-            return {
-                'product_performance': [
-                    {'name': 'Gaming Laptop', 'orders': 45, 'revenue': 675000},
-                    {'name': 'Wireless Mouse', 'orders': 128, 'revenue': 64000},
-                    {'name': 'Keyboard RGB', 'orders': 87, 'revenue': 261000},
-                    {'name': 'Monitor 27"', 'orders': 34, 'revenue': 238000},
-                    {'name': 'USB-C Hub', 'orders': 156, 'revenue': 234000},
-                ],
-            }
-    
-    def _get_shop_analytics_data(self):
-        """Extract shop analytics data for top performing shops"""
-        try:
-            # Top performing shops
-            top_shops = Shop.objects.annotate(
-                total_sales=Sum('product__cart_item__checkout__total_amount', filter=Q(product__cart_item__checkout__isnull=False)),
-                order_count=Count('product__cart_item__checkout', distinct=True, filter=Q(product__cart_item__checkout__isnull=False)),
-                follower_count=Count('followers'),
-                product_count=Count('product'),
-                avg_rating=Avg('reviews__rating')
-            ).filter(
-                total_sales__isnull=False
-            ).order_by('-total_sales')[:5]
-            
-            shop_performance = []
-            for shop in top_shops:
-                shop_performance.append({
-                    'name': shop.name,
-                    'sales': float(shop.total_sales or 0),
-                    'orders': shop.order_count or 0,
-                    'rating': float(shop.avg_rating or 4.5),
-                    'followers': shop.follower_count or 0,
-                    'products': shop.product_count or 0
-                })
-            
-            return {
-                'shop_performance': shop_performance,
-            }
-        except Exception as e:
-            print(f"Error in _get_shop_analytics_data: {str(e)}")
-            # Return sample data for top performing shops
-            return {
-                'shop_performance': [
-                    {'name': 'Tech Haven', 'sales': 450000, 'orders': 234, 'rating': 4.8, 'followers': 1250},
-                    {'name': 'Fashion Forward', 'sales': 320000, 'orders': 189, 'rating': 4.6, 'followers': 890},
-                    {'name': 'Home Essentials', 'sales': 280000, 'orders': 156, 'rating': 4.7, 'followers': 670},
-                    {'name': 'Sports Gear Pro', 'sales': 190000, 'orders': 98, 'rating': 4.5, 'followers': 450},
-                    {'name': 'Book World', 'sales': 120000, 'orders': 267, 'rating': 4.9, 'followers': 1200},
-                ],
-            }
-    
-    def _get_boost_analytics_data(self):
-        """Extract boost analytics data"""
-        try:
-            # Boost plan performance
-            boost_performance = BoostPlan.objects.annotate(
-                usage_count=Count('boost'),
-                total_revenue=Sum('price')
-            ).filter(
-                usage_count__gt=0
-            ).order_by('-total_revenue')
-            
-            boost_data = []
-            for plan in boost_performance:
-                boost_data.append({
-                    'plan': plan.name,
-                    'revenue': float(plan.total_revenue or 0),
-                    'usage': plan.usage_count,
-                })
-            
-            return {
-                'boost_performance': boost_data,
-            }
-        except Exception as e:
-            print(f"Error in _get_boost_analytics_data: {str(e)}")
-            return {}
+
+        Get all dashboard data in a single endpoint with date range filtering
+
         
-   
-    def _get_voucher_analytics_data(self):
-        """Extract voucher analytics data"""
+
+        Query Parameters:
+
+        - start_date: Start date in YYYY-MM-DD format (required)
+
+        - end_date: End date in YYYY-MM-DD format (required)
+
+        - range_type: Type of date range grouping ('daily', 'weekly', 'monthly', 'yearly')
+
+        """
+
         try:
-            # Voucher performance
-            voucher_performance = Voucher.objects.annotate(
-                usage_count=Count('checkout'),
-                total_discount=Sum('value')
-            ).filter(
-                usage_count__gt=0
-            ).order_by('-usage_count')[:4]
+
+            # Get date range parameters
+
+            start_date_str = request.query_params.get('start_date')
+
+            end_date_str = request.query_params.get('end_date')
+
+            date_range_type = request.query_params.get('range_type', 'weekly')
+
             
-            voucher_data = []
-            for voucher in voucher_performance:
-                voucher_data.append({
-                    'code': voucher.code,
-                    'usage': voucher.usage_count,
-                    'discount': float(voucher.total_discount or 0),
-                })
+
+            # Validate range_type
+
+            valid_range_types = ['daily', 'weekly', 'monthly', 'yearly', 'custom']
+
+            if date_range_type not in valid_range_types:
+
+                date_range_type = 'weekly'
+
             
-            return {
-                'voucher_performance': voucher_data,
+
+            # Parse dates
+
+            start_date = None
+
+            end_date = None
+
+            
+
+            if start_date_str and end_date_str:
+
+                try:
+
+                    start_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d').date()
+
+                    end_date = datetime.datetime.strptime(end_date_str, '%Y-%m-%d').date()
+
+                except ValueError as e:
+
+                    return Response({
+
+                        'success': False,
+
+                        'error': f'Invalid date format. Use YYYY-MM-DD. Error: {str(e)}'
+
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            else:
+
+                # Default to last 7 days if no dates provided
+
+                end_date = timezone.now().date()
+
+                start_date = end_date - timedelta(days=6)
+
+            
+
+            # Ensure start_date is not after end_date
+
+            if start_date > end_date:
+
+                start_date, end_date = end_date, start_date
+
+            
+
+            # Validate date range (optional: limit to prevent excessive queries)
+
+            max_days = 365 * 2  # 2 years max
+
+            date_range_days = (end_date - start_date).days
+
+            if date_range_days > max_days:
+
+                return Response({
+
+                    'success': False,
+
+                    'error': f'Date range exceeds maximum allowed ({max_days} days)'
+
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            
+
+            # Get data from all methods with date filtering
+
+            overview_data = self._get_overview_data(start_date, end_date)
+
+            operational_data = self._get_operational_data(start_date, end_date)
+
+            sales_data = self._get_sales_analytics_data(start_date, end_date, date_range_type)
+
+            user_data = self._get_user_analytics_data(start_date, end_date, date_range_type)
+
+            product_data = self._get_product_analytics_data(start_date, end_date)
+
+            shop_data = self._get_shop_analytics_data(start_date, end_date)
+
+            
+
+            comprehensive_data = {
+
+                'success': True,
+
+                'date_range': {
+
+                    'start_date': start_date.isoformat(),
+
+                    'end_date': end_date.isoformat(),
+
+                    'range_type': date_range_type,
+
+                    'total_days': date_range_days,
+
+                },
+
+                'overview': overview_data,
+
+                'operational': operational_data,
+
+                'sales_analytics': sales_data,
+
+                'user_analytics': user_data,
+
+                'product_analytics': product_data,
+
+                'shop_analytics': shop_data,
+
             }
+
+            
+
+            return Response(comprehensive_data, status=status.HTTP_200_OK)
+
+            
+
         except Exception as e:
-            print(f"Error in _get_voucher_analytics_data: {str(e)}")
-            return {}
+
+            print(f"Error in get_comprehensive_dashboard: {str(e)}")
+
+            import traceback
+
+            traceback.print_exc()
+
+            
+
+            return Response({
+
+                'success': False,
+
+                'error': str(e),
+
+                'message': 'An error occurred while fetching dashboard data'
+
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     
-    def _get_refund_analytics_data(self):
-        """Extract refund analytics data"""
+
+    def _get_overview_data(self, start_date, end_date):
+
+        """Extract overview metrics data with date filtering"""
+
         try:
-            # Refund status distribution
-            refund_status = Refund.objects.values('status').annotate(
-                count=Count('refund'),
-                total_amount=Sum('order__total_amount')
-            ).order_by('status')
+
+            # Calculate previous period for growth comparison
+
+            date_range_days = (end_date - start_date).days + 1
+
+            previous_start_date = start_date - timedelta(days=date_range_days)
+
+            previous_end_date = start_date - timedelta(days=1)
+
             
-            status_data = []
-            for status in refund_status:
-                status_data.append({
-                    'status': status['status'],
-                    'count': status['count'],
-                    'amount': float(status['total_amount'] or 0)
-                })
+
+            # Current period metrics
+
+            current_orders = Order.objects.filter(
+
+                created_at__date__gte=start_date,
+
+                created_at__date__lte=end_date
+
+            ).count()
+
             
+
+            current_revenue = Order.objects.filter(
+
+                created_at__date__gte=start_date,
+
+                created_at__date__lte=end_date,
+
+                status='completed'
+
+            ).aggregate(
+
+                total_revenue=Sum('total_amount')
+
+            )['total_revenue'] or Decimal('0')
+
+            
+
+            # Previous period metrics
+
+            previous_orders = Order.objects.filter(
+
+                created_at__date__gte=previous_start_date,
+
+                created_at__date__lte=previous_end_date
+
+            ).count()
+
+            
+
+            previous_revenue = Order.objects.filter(
+
+                created_at__date__gte=previous_start_date,
+
+                created_at__date__lte=previous_end_date,
+
+                status='completed'
+
+            ).aggregate(
+
+                total_revenue=Sum('total_amount')
+
+            )['total_revenue'] or Decimal('0')
+
+            
+
+            # Growth calculations
+
+            order_growth = 0
+
+            revenue_growth = 0
+
+            
+
+            if previous_orders > 0:
+
+                order_growth = ((current_orders - previous_orders) / previous_orders) * 100
+
+            
+
+            if float(previous_revenue) > 0:
+
+                revenue_growth = ((float(current_revenue) - float(previous_revenue)) / float(previous_revenue)) * 100
+
+            
+
+            # Active customers and shops (as of end date)
+
+            # Customer must be linked via Customer model
+
+            active_customers = Customer.objects.filter(
+
+                customer__registration_stage=4,
+
+                customer__created_at__date__lte=end_date
+
+            ).count()
+
+            
+
+            active_shops = Shop.objects.filter(
+
+                status='Active',
+
+                created_at__date__lte=end_date
+
+            ).count()
+
+            
+
+            # Lifetime totals (up to end date)
+
+            total_revenue = Order.objects.filter(
+
+                status='completed',
+
+                created_at__date__lte=end_date
+
+            ).aggregate(
+
+                total_revenue=Sum('total_amount')
+
+            )['total_revenue'] or Decimal('0')
+
+            
+
+            total_orders = Order.objects.filter(
+
+                created_at__date__lte=end_date
+
+            ).count()
+
+            
+
             return {
-                'refund_status': status_data,
+
+                'total_revenue': float(total_revenue),
+
+                'total_orders': total_orders,
+
+                'active_customers': active_customers,
+
+                'active_shops': active_shops,
+
+                'current_period_orders': current_orders,
+
+                'current_period_revenue': float(current_revenue),
+
+                'previous_period_orders': previous_orders,
+
+                'previous_period_revenue': float(previous_revenue),
+
+                'order_growth': round(order_growth, 1),
+
+                'revenue_growth': round(revenue_growth, 1),
+
+                'date_range_days': date_range_days,
+
             }
+
         except Exception as e:
-            print(f"Error in _get_refund_analytics_data: {str(e)}")
-            return {}
+
+            print(f"Error in _get_overview_data: {str(e)}")
+
+            import traceback
+
+            traceback.print_exc()
+
+            raise
+
     
-    def _get_report_analytics_data(self):
-        """Extract report analytics data"""
+
+    def _get_sales_analytics_data(self, start_date, end_date, range_type='weekly'):
+
+        """Extract sales analytics data with dynamic grouping"""
+
         try:
-            # Report status distribution
-            report_status = Report.objects.values('status').annotate(
-                count=Count('id')
-            ).order_by('status')
+
+            sales_data = []
+
+            date_range_days = (end_date - start_date).days + 1
+
             
-            status_data = []
-            for status in report_status:
-                status_data.append({
-                    'status': status['status'],
-                    'count': status['count'],
-                    'color': self._get_report_status_color(status['status'])
+
+            # Determine grouping based on range type and number of days
+
+            if range_type == 'daily' or date_range_days <= 7:
+
+                # Daily grouping for short ranges
+
+                current_date = start_date
+
+                while current_date <= end_date:
+
+                    day_data = Order.objects.filter(
+
+                        created_at__date=current_date
+
+                    ).aggregate(
+
+                        revenue=Sum('total_amount'),
+
+                        orders=Count('order')
+
+                    )
+
+                    
+
+                    sales_data.append({
+
+                        'date': current_date.isoformat(),
+
+                        'name': current_date.strftime('%a, %b %d'),
+
+                        'revenue': float(day_data['revenue'] or 0),
+
+                        'orders': day_data['orders'] or 0,
+
+                    })
+
+                    
+
+                    current_date += timedelta(days=1)
+
+                
+
+                grouping = 'daily'
+
+                    
+
+            elif range_type == 'monthly' or date_range_days > 60:
+
+                # Monthly grouping for long ranges
+
+                monthly_sales = Order.objects.filter(
+
+                    created_at__date__gte=start_date,
+
+                    created_at__date__lte=end_date
+
+                ).annotate(
+
+                    month=TruncMonth('created_at')
+
+                ).values('month').annotate(
+
+                    revenue=Sum('total_amount'),
+
+                    orders=Count('order')
+
+                ).order_by('month')
+
+                
+
+                for month_data in monthly_sales:
+
+                    sales_data.append({
+
+                        'date': month_data['month'].strftime('%Y-%m-%d'),
+
+                        'name': month_data['month'].strftime('%b %Y'),
+
+                        'revenue': float(month_data['revenue'] or 0),
+
+                        'orders': month_data['orders'] or 0,
+
+                    })
+
+                
+
+                grouping = 'monthly'
+
+                    
+
+            else:
+
+                # Weekly grouping (default)
+
+                current_date = start_date
+
+                week_num = 1
+
+                while current_date <= end_date:
+
+                    week_end = min(current_date + timedelta(days=6), end_date)
+
+                    
+
+                    week_data = Order.objects.filter(
+
+                        created_at__date__gte=current_date,
+
+                        created_at__date__lte=week_end
+
+                    ).aggregate(
+
+                        revenue=Sum('total_amount'),
+
+                        orders=Count('order')
+
+                    )
+
+                    
+
+                    sales_data.append({
+
+                        'date': current_date.isoformat(),
+
+                        'name': f'Week {week_num} ({current_date.strftime("%b %d")})',
+
+                        'revenue': float(week_data['revenue'] or 0),
+
+                        'orders': week_data['orders'] or 0,
+
+                    })
+
+                    
+
+                    current_date = week_end + timedelta(days=1)
+
+                    week_num += 1
+
+                
+
+                grouping = 'weekly'
+
+            
+
+            # Order status distribution for the period
+
+            order_status_data = Order.objects.filter(
+
+                created_at__date__gte=start_date,
+
+                created_at__date__lte=end_date
+
+            ).values('status').annotate(
+
+                count=Count('order')
+
+            ).order_by('-count')
+
+            
+
+            status_distribution = []
+
+            for status_data in order_status_data:
+
+                status_distribution.append({
+
+                    'status': status_data['status'],
+
+                    'count': status_data['count'],
+
+                    'color': self._get_status_color(status_data['status'])
+
                 })
+
             
+
             return {
-                'report_status': status_data,
+
+                'sales_data': sales_data,
+
+                'status_distribution': status_distribution,
+
+                'grouping': grouping,
+
             }
+
         except Exception as e:
-            print(f"Error in _get_report_analytics_data: {str(e)}")
-            return {}
+
+            print(f"Error in _get_sales_analytics_data: {str(e)}")
+
+            import traceback
+
+            traceback.print_exc()
+
+            raise
+
     
-    def _get_rider_analytics_data(self):
-        """Extract rider analytics data"""
+
+    def _get_user_analytics_data(self, start_date, end_date, range_type='weekly'):
+
+        """Extract user analytics data with date filtering"""
+
         try:
-            # Rider performance
-            rider_performance = Rider.objects.annotate(
-                delivery_count=Count('delivery'),
-                completed_deliveries=Count('delivery', filter=Q(delivery__status='delivered')),
-            ).filter(
-                delivery_count__gt=0
-            ).order_by('-delivery_count')[:4]
+
+            user_growth_data = []
+
+            date_range_days = (end_date - start_date).days + 1
+
             
-            rider_data = []
-            for rider in rider_performance:
-                rider_data.append({
-                    'name': f"{rider.rider.first_name} {rider.rider.last_name}",
-                    'deliveries': rider.delivery_count,
-                })
+
+            if range_type == 'monthly' or date_range_days > 60:
+
+                # Monthly grouping
+
+                monthly_users = User.objects.filter(
+
+                    is_customer=True,
+
+                    created_at__date__gte=start_date,
+
+                    created_at__date__lte=end_date
+
+                ).annotate(
+
+                    month=TruncMonth('created_at')
+
+                ).values('month').annotate(
+
+                    new_users=Count('id')
+
+                ).order_by('month')
+
+                
+
+                for month_data in monthly_users:
+
+                    # Calculate returning users (users with orders in this month)
+
+                    month_start = month_data['month']
+
+                    month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+                    
+
+                    returning_users = User.objects.filter(
+
+                        created_at__date__lt=month_start,
+
+                        order__created_at__date__gte=month_start,
+
+                        order__created_at__date__lte=month_end
+
+                    ).distinct().count()
+
+                    
+
+                    user_growth_data.append({
+
+                        'month': month_data['month'].strftime('%b %Y'),
+
+                        'new': month_data['new_users'],
+
+                        'returning': returning_users,
+
+                    })
+
+            else:
+
+                # Weekly grouping
+
+                current_date = start_date
+
+                week_num = 1
+
+                while current_date <= end_date:
+
+                    week_end = min(current_date + timedelta(days=6), end_date)
+
+                    
+
+                    weekly_new = User.objects.filter(
+
+                        is_customer=True,
+
+                        created_at__date__gte=current_date,
+
+                        created_at__date__lte=week_end
+
+                    ).count()
+
+                    
+
+                    weekly_returning = User.objects.filter(
+
+                        created_at__date__lt=current_date,
+
+                        order__created_at__date__gte=current_date,
+
+                        order__created_at__date__lte=week_end
+
+                    ).distinct().count()
+
+                    
+
+                    user_growth_data.append({
+
+                        'month': f'Week {week_num}',
+
+                        'new': weekly_new,
+
+                        'returning': weekly_returning,
+
+                    })
+
+                    
+
+                    current_date = week_end + timedelta(days=1)
+
+                    week_num += 1
+
             
+
             return {
-                'rider_performance': rider_data,
+
+                'user_growth': user_growth_data,
+
             }
+
         except Exception as e:
-            print(f"Error in _get_rider_analytics_data: {str(e)}")
-            return {}
+
+            print(f"Error in _get_user_analytics_data: {str(e)}")
+
+            import traceback
+
+            traceback.print_exc()
+
+            raise
+
+    
+
+    def _get_product_analytics_data(self, start_date, end_date):
+
+        """Extract product analytics data with date filtering"""
+
+        try:
+
+            # Get products with order counts in date range
+
+            # Using Checkout model which links cart_item to orders
+
+            product_stats = Checkout.objects.filter(
+
+                created_at__gte=start_date,
+
+                created_at__lte=end_date,
+
+                cart_item__product__isnull=False
+
+            ).values(
+
+                'cart_item__product__id',
+
+                'cart_item__product__name'
+
+            ).annotate(
+
+                order_count=Count('id'),
+
+                total_revenue=Sum('total_amount')
+
+            ).order_by('-order_count')[:10]
+
+            
+
+            product_performance = []
+
+            for stat in product_stats:
+
+                product_name = stat['cart_item__product__name']
+
+                product_performance.append({
+
+                    'name': product_name[:30] + ('...' if len(product_name) > 30 else ''),
+
+                    'full_name': product_name,
+
+                    'orders': stat['order_count'],
+
+                    'revenue': float(stat['total_revenue'] or 0),
+
+                })
+
+            
+
+            return {
+
+                'product_performance': product_performance,
+
+            }
+
+        except Exception as e:
+
+            print(f"Error in _get_product_analytics_data: {str(e)}")
+
+            import traceback
+
+            traceback.print_exc()
+
+            raise
+
+    
+
+    def _get_shop_analytics_data(self, start_date, end_date):
+
+        """Extract shop analytics data with date filtering"""
+
+        try:
+
+            # Get shop performance using Checkout model
+
+            shop_stats = Checkout.objects.filter(
+
+                created_at__gte=start_date,
+
+                created_at__lte=end_date,
+
+                cart_item__product__shop__isnull=False
+
+            ).values(
+
+                'cart_item__product__shop__id',
+
+                'cart_item__product__shop__name'
+
+            ).annotate(
+
+                total_sales=Sum('total_amount'),
+
+                order_count=Count('order', distinct=True)
+
+            ).order_by('-total_sales')[:10]
+
+            
+
+            shop_performance = []
+
+            for stat in shop_stats:
+
+                shop_id = stat['cart_item__product__shop__id']
+
+                shop_name = stat['cart_item__product__shop__name']
+
+                
+
+                # Get the shop object
+
+                try:
+
+                    shop = Shop.objects.get(id=shop_id)
+
+                    
+
+                    # Get average rating for this shop
+
+                    avg_rating = Review.objects.filter(
+
+                        shop=shop,
+
+                        created_at__date__gte=start_date,
+
+                        created_at__date__lte=end_date
+
+                    ).aggregate(avg=Avg('rating'))['avg'] or 0
+
+                    
+
+                    # Get follower count
+
+                    follower_count = ShopFollow.objects.filter(shop=shop).count()
+
+                    
+
+                    # Get active product count
+
+                    product_count = Product.objects.filter(
+
+                        shop=shop,
+
+                        is_removed=False,
+
+                        upload_status='published'
+
+                    ).count()
+
+                    
+
+                    shop_performance.append({
+
+                        'name': shop_name,
+
+                        'sales': float(stat['total_sales'] or 0),
+
+                        'orders': stat['order_count'] or 0,
+
+                        'rating': round(float(avg_rating), 1),
+
+                        'followers': follower_count,
+
+                        'products': product_count,
+
+                    })
+
+                except Shop.DoesNotExist:
+
+                    continue
+
+            
+
+            return {
+
+                'shop_performance': shop_performance,
+
+            }
+
+        except Exception as e:
+
+            print(f"Error in _get_shop_analytics_data: {str(e)}")
+
+            import traceback
+
+            traceback.print_exc()
+
+            raise
+
+    
+
+    def _get_operational_data(self, start_date, end_date):
+
+        """Extract operational metrics data with date filtering"""
+
+        try:
+
+            # Active Boosts within date range (using start_date and end_date fields)
+
+            active_boosts = Boost.objects.filter(
+
+                start_date__date__lte=end_date,
+
+                end_date__date__gte=start_date,
+
+                status='active'
+
+            ).count()
+
+            
+
+            # Pending Refunds within date range
+
+            pending_refunds = Refund.objects.filter(
+
+                requested_at__date__gte=start_date,
+
+                requested_at__date__lte=end_date,
+
+                status='pending'
+
+            ).count()
+
+            
+
+            # Low Stock Products (current snapshot)
+
+            low_stock_products = Product.objects.filter(
+
+                quantity__lt=5,
+
+                is_removed=False,
+
+                upload_status='published'
+
+            ).count()
+
+            
+
+            # Average Rating from Reviews within date range
+
+            avg_rating = Review.objects.filter(
+
+                created_at__date__gte=start_date,
+
+                created_at__date__lte=end_date
+
+            ).aggregate(
+
+                avg_rating=Avg('rating')
+
+            )['avg_rating'] or 0
+
+            
+
+            # Pending Reports within date range
+
+            pending_reports = Report.objects.filter(
+
+                created_at__date__gte=start_date,
+
+                created_at__date__lte=end_date,
+
+                status='pending'
+
+            ).count()
+
+            
+
+            # Active Riders (current snapshot)
+
+            active_riders = Rider.objects.filter(
+
+                verified=True
+
+            ).count()
+
+            
+
+            # Active Vouchers within date range
+
+            # Note: Voucher uses added_at (DateField) and valid_until (DateField)
+
+            active_vouchers = Voucher.objects.filter(
+
+                is_active=True,
+
+                added_at__lte=end_date,
+
+                valid_until__gte=start_date
+
+            ).count()
+
+            
+
+            return {
+
+                'active_boosts': active_boosts,
+
+                'pending_refunds': pending_refunds,
+
+                'low_stock_products': low_stock_products,
+
+                'avg_rating': round(float(avg_rating), 1),
+
+                'pending_reports': pending_reports,
+
+                'active_riders': active_riders,
+
+                'active_vouchers': active_vouchers,
+
+            }
+
+        except Exception as e:
+
+            print(f"Error in _get_operational_data: {str(e)}")
+
+            import traceback
+
+            traceback.print_exc()
+
+            raise
+
+    
+
     # Helper methods
+
     def _get_status_color(self, status):
+
+        """Get color code for order status"""
+
         color_map = {
+
             'pending': '#f59e0b',
+
             'processing': '#3b82f6',
+
             'shipped': '#8b5cf6',
+
             'delivered': '#10b981',
+
+            'completed': '#10b981',
+
             'cancelled': '#ef4444',
+
             'returned': '#6b7280',
+
         }
+
         return color_map.get(status.lower(), '#6b7280')
-    
-    def _get_report_status_color(self, status):
-        color_map = {
-            'pending': '#f59e0b',
-            'under_review': '#3b82f6',
-            'resolved': '#10b981',
-            'dismissed': '#6b7280',
-            'action_taken': '#8b5cf6',
-        }
-        return color_map.get(status.lower(), '#6b7280')
+
+import datetime
+from datetime import timedelta
+from decimal import Decimal
+from django.utils import timezone
+from django.db.models import Sum, Count, Avg, Q
+from django.db.models.functions import TruncMonth, TruncWeek, TruncDay
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+# Import your models
+from .models import (
+    Order, User, Shop, Product, Boost, Refund, Review, 
+    Report, Rider, Voucher, ShopFollow, Customer, Checkout, 
+    CartItem, Category, CustomerActivity, Favorites, Delivery
+)
+
 
 class AdminAnalytics(viewsets.ViewSet):
     """
-    ViewSet for admin analytics data
+    ViewSet for admin analytics data with date range filtering
     """
     
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
         """
-        Get all analytics data in a single endpoint
+        Get all analytics data in a single endpoint with date range filtering
+        
+        Query Parameters:
+        - start_date: Start date in YYYY-MM-DD format (optional)
+        - end_date: End date in YYYY-MM-DD format (optional)
+        - range_type: Type of date range grouping ('daily', 'weekly', 'monthly', 'yearly')
         """
         try:
-            # Get data from all analytics sections
-            order_sales_data = self._get_order_sales_analytics()
-            user_customer_data = self._get_user_customer_analytics()
-            product_inventory_data = self._get_product_inventory_analytics()
-            shop_merchant_data = self._get_shop_merchant_analytics()
-            boost_promotion_data = self._get_boost_promotion_analytics()
-            rider_delivery_data = self._get_rider_delivery_analytics()
-            voucher_discount_data = self._get_voucher_discount_analytics()
-            refund_return_data = self._get_refund_return_analytics()
-            report_moderation_data = self._get_report_moderation_analytics()
+            # Get date range parameters
+            start_date_str = request.query_params.get('start_date')
+            end_date_str = request.query_params.get('end_date')
+            date_range_type = request.query_params.get('range_type', 'weekly')
+            
+            # Validate range_type
+            valid_range_types = ['daily', 'weekly', 'monthly', 'yearly', 'custom']
+            if date_range_type not in valid_range_types:
+                date_range_type = 'weekly'
+            
+            # Parse dates
+            start_date = None
+            end_date = None
+            
+            if start_date_str and end_date_str:
+                try:
+                    start_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                    end_date = datetime.datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                except ValueError as e:
+                    return Response({
+                        'success': False,
+                        'error': f'Invalid date format. Use YYYY-MM-DD. Error: {str(e)}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                # Default to last 7 days if no dates provided
+                end_date = timezone.now().date()
+                start_date = end_date - timedelta(days=6)
+            
+            # Ensure start_date is not after end_date
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
+            
+            # Validate date range (optional: limit to prevent excessive queries)
+            max_days = 365 * 2  # 2 years max
+            date_range_days = (end_date - start_date).days
+            if date_range_days > max_days:
+                return Response({
+                    'success': False,
+                    'error': f'Date range exceeds maximum allowed ({max_days} days)'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get data from all analytics sections with date filtering
+            order_sales_data = self._get_order_sales_analytics(start_date, end_date, date_range_type)
+            user_customer_data = self._get_user_customer_analytics(start_date, end_date, date_range_type)
+            product_inventory_data = self._get_product_inventory_analytics(start_date, end_date)
+            shop_merchant_data = self._get_shop_merchant_analytics(start_date, end_date, date_range_type)
+            boost_promotion_data = self._get_boost_promotion_analytics(start_date, end_date)
+            rider_delivery_data = self._get_rider_delivery_analytics(start_date, end_date)
+            voucher_discount_data = self._get_voucher_discount_analytics(start_date, end_date)
+            refund_return_data = self._get_refund_return_analytics(start_date, end_date, date_range_type)
+            report_moderation_data = self._get_report_moderation_analytics(start_date, end_date)
             
             comprehensive_data = {
                 'success': True,
+                'date_range': {
+                    'start_date': start_date.isoformat(),
+                    'end_date': end_date.isoformat(),
+                    'range_type': date_range_type,
+                    'total_days': date_range_days,
+                },
                 'order_sales_analytics': order_sales_data,
                 'user_customer_analytics': user_customer_data,
                 'product_inventory_analytics': product_inventory_data,
@@ -1049,40 +1687,104 @@ class AdminAnalytics(viewsets.ViewSet):
             
         except Exception as e:
             print(f"Error in get_comprehensive_analytics: {str(e)}")
-            return Response(
-                {'success': False, 'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            import traceback
+            traceback.print_exc()
+            
+            return Response({
+                'success': False,
+                'error': str(e),
+                'message': 'An error occurred while fetching analytics data'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _get_order_sales_analytics(self):
-        """Get order and sales analytics data"""
+    def _get_order_sales_analytics(self, start_date, end_date, range_type='weekly'):
+        """Get order and sales analytics data with date filtering"""
         try:
-            # Last 6 months order metrics
-            six_months_ago = timezone.now() - timedelta(days=180)
+            date_range_days = (end_date - start_date).days + 1
             
-            monthly_orders = Order.objects.filter(
-                created_at__gte=six_months_ago
-            ).annotate(
-                month=TruncMonth('created_at')
-            ).values('month').annotate(
-                revenue=Sum('total_amount'),
-                orders=Count('order'),
-                avg_order_value=Avg('total_amount'),
-                refunds=Count('order', filter=Q(status='cancelled'))
-            ).order_by('month')
+            # Determine grouping based on range type
+            if range_type == 'daily' or date_range_days <= 7:
+                # Daily grouping
+                current_date = start_date
+                order_metrics_data = []
+                
+                while current_date <= end_date:
+                    day_data = Order.objects.filter(
+                        created_at__date=current_date
+                    ).aggregate(
+                        revenue=Sum('total_amount'),
+                        orders=Count('order'),
+                        avg_order_value=Avg('total_amount'),
+                        refunds=Count('order', filter=Q(status='cancelled'))
+                    )
+                    
+                    order_metrics_data.append({
+                        'month': current_date.strftime('%a, %b %d'),
+                        'revenue': float(day_data['revenue'] or 0),
+                        'orders': day_data['orders'] or 0,
+                        'avgOrderValue': float(day_data['avg_order_value'] or 0),
+                        'refunds': day_data['refunds'] or 0,
+                    })
+                    
+                    current_date += timedelta(days=1)
+                    
+            elif range_type == 'monthly' or date_range_days > 60:
+                # Monthly grouping
+                monthly_orders = Order.objects.filter(
+                    created_at__date__gte=start_date,
+                    created_at__date__lte=end_date
+                ).annotate(
+                    month=TruncMonth('created_at')
+                ).values('month').annotate(
+                    revenue=Sum('total_amount'),
+                    orders=Count('order'),
+                    avg_order_value=Avg('total_amount'),
+                    refunds=Count('order', filter=Q(status='cancelled'))
+                ).order_by('month')
+                
+                order_metrics_data = []
+                for month_data in monthly_orders:
+                    order_metrics_data.append({
+                        'month': month_data['month'].strftime('%b %Y'),
+                        'revenue': float(month_data['revenue'] or 0),
+                        'orders': month_data['orders'],
+                        'avgOrderValue': float(month_data['avg_order_value'] or 0),
+                        'refunds': month_data['refunds'],
+                    })
+            else:
+                # Weekly grouping
+                current_date = start_date
+                week_num = 1
+                order_metrics_data = []
+                
+                while current_date <= end_date:
+                    week_end = min(current_date + timedelta(days=6), end_date)
+                    
+                    week_data = Order.objects.filter(
+                        created_at__date__gte=current_date,
+                        created_at__date__lte=week_end
+                    ).aggregate(
+                        revenue=Sum('total_amount'),
+                        orders=Count('order'),
+                        avg_order_value=Avg('total_amount'),
+                        refunds=Count('order', filter=Q(status='cancelled'))
+                    )
+                    
+                    order_metrics_data.append({
+                        'month': f'Week {week_num}',
+                        'revenue': float(week_data['revenue'] or 0),
+                        'orders': week_data['orders'] or 0,
+                        'avgOrderValue': float(week_data['avg_order_value'] or 0),
+                        'refunds': week_data['refunds'] or 0,
+                    })
+                    
+                    current_date = week_end + timedelta(days=1)
+                    week_num += 1
             
-            order_metrics_data = []
-            for month_data in monthly_orders:
-                order_metrics_data.append({
-                    'month': month_data['month'].strftime('%b'),
-                    'revenue': float(month_data['revenue']),
-                    'orders': month_data['orders'],
-                    'avgOrderValue': float(month_data['avg_order_value']),
-                    'refunds': month_data['refunds'],
-                })
-            
-            # Order status distribution
-            order_status_data = Order.objects.values('status').annotate(
+            # Order status distribution (within date range)
+            order_status_data = Order.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).values('status').annotate(
                 count=Count('order')
             ).order_by('status')
             
@@ -1094,13 +1796,20 @@ class AdminAnalytics(viewsets.ViewSet):
                     'color': self._get_status_color(status_data['status'])
                 })
             
-            # Payment method distribution
-            payment_methods = Order.objects.values('payment_method').annotate(
+            # Payment method distribution (within date range)
+            payment_methods = Order.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).values('payment_method').annotate(
                 count=Count('order')
             ).order_by('-count')
             
             payment_distribution = []
-            total_orders = Order.objects.count()
+            total_orders = Order.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).count()
+            
             for payment_data in payment_methods:
                 percentage = round((payment_data['count'] / total_orders * 100), 1) if total_orders > 0 else 0
                 payment_distribution.append({
@@ -1116,38 +1825,82 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_order_sales_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'order_metrics_data': [],
+                'order_status_distribution': [],
+                'payment_method_data': [],
+            }
     
-    def _get_user_customer_analytics(self):
-        """Get user and customer analytics data"""
+    def _get_user_customer_analytics(self, start_date, end_date, range_type='weekly'):
+        """Get user and customer analytics data with date filtering"""
         try:
-            # User growth over last 6 months
-            six_months_ago = timezone.now() - timedelta(days=180)
+            date_range_days = (end_date - start_date).days + 1
             
-            monthly_users = User.objects.filter(
-                created_at__gte=six_months_ago
-            ).annotate(
-                month=TruncMonth('created_at')
-            ).values('month').annotate(
-                new_users=Count('id')
-            ).order_by('month')
-            
-            user_growth_data = []
-            for month_data in monthly_users:
-                # Calculate returning users (users with orders in the month)
-                returning_users = User.objects.filter(
-                    order__created_at__month=month_data['month'].month,
-                    order__created_at__year=month_data['month'].year
-                ).distinct().count()
+            # Determine grouping based on range type
+            if range_type == 'monthly' or date_range_days > 60:
+                # Monthly grouping
+                monthly_users = User.objects.filter(
+                    is_customer=True,
+                    created_at__date__gte=start_date,
+                    created_at__date__lte=end_date
+                ).annotate(
+                    month=TruncMonth('created_at')
+                ).values('month').annotate(
+                    new_users=Count('id')
+                ).order_by('month')
                 
-                user_growth_data.append({
-                    'month': month_data['month'].strftime('%b'),
-                    'new': month_data['new_users'],
-                    'returning': returning_users,
-                    'total': month_data['new_users'] + returning_users,
-                })
+                user_growth_data = []
+                for month_data in monthly_users:
+                    # Calculate returning users
+                    month_start = month_data['month']
+                    month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                    
+                    returning_users = User.objects.filter(
+                        created_at__date__lt=month_start,
+                        order__created_at__date__gte=month_start,
+                        order__created_at__date__lte=month_end
+                    ).distinct().count()
+                    
+                    user_growth_data.append({
+                        'month': month_data['month'].strftime('%b %Y'),
+                        'new': month_data['new_users'],
+                        'returning': returning_users,
+                        'total': month_data['new_users'] + returning_users,
+                    })
+            else:
+                # Weekly grouping
+                current_date = start_date
+                week_num = 1
+                user_growth_data = []
+                
+                while current_date <= end_date:
+                    week_end = min(current_date + timedelta(days=6), end_date)
+                    
+                    weekly_new = User.objects.filter(
+                        is_customer=True,
+                        created_at__date__gte=current_date,
+                        created_at__date__lte=week_end
+                    ).count()
+                    
+                    weekly_returning = User.objects.filter(
+                        created_at__date__lt=current_date,
+                        order__created_at__date__gte=current_date,
+                        order__created_at__date__lte=week_end
+                    ).distinct().count()
+                    
+                    user_growth_data.append({
+                        'month': f'Week {week_num}',
+                        'new': weekly_new,
+                        'returning': weekly_returning,
+                        'total': weekly_new + weekly_returning,
+                    })
+                    
+                    current_date = week_end + timedelta(days=1)
+                    week_num += 1
             
-            # User role distribution
+            # User role distribution (current snapshot)
             total_users = User.objects.count()
             role_distribution = []
             
@@ -1175,7 +1928,7 @@ class AdminAnalytics(viewsets.ViewSet):
                     },
                 ]
             
-            # Registration stage distribution
+            # Registration stage distribution (current snapshot)
             stage_distribution = User.objects.values('registration_stage').annotate(
                 count=Count('id')
             ).order_by('registration_stage')
@@ -1195,92 +1948,152 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_user_customer_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'user_growth_data': [],
+                'user_role_distribution': [],
+                'registration_stage_data': [],
+            }
     
-    def _get_product_inventory_analytics(self):
-        """Get product and inventory analytics data"""
+    def _get_product_inventory_analytics(self, start_date, end_date):
+        """Get product and inventory analytics data with date filtering"""
         try:
-            # Top performing products
-            top_products = Product.objects.annotate(
-                order_count=Count('cartitem__checkout', filter=Q(cartitem__checkout__isnull=False)),
-                total_revenue=Sum('cartitem__checkout__total_amount')
-            ).filter(
-                order_count__gt=0
-            ).order_by('-order_count')[:5]
+            # Top performing products (within date range)
+            product_stats = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                cart_item__product__isnull=False
+            ).values(
+                'cart_item__product__id',
+                'cart_item__product__name'
+            ).annotate(
+                order_count=Count('id'),
+                total_revenue=Sum('total_amount')
+            ).order_by('-order_count')[:10]
             
             product_performance = []
-            for product in top_products:
-                # Get views and favorites count
-                views = CustomerActivity.objects.filter(
-                    product=product, 
-                    activity_type='view'
-                ).count()
+            for stat in product_stats:
+                product_id = stat['cart_item__product__id']
+                product_name = stat['cart_item__product__name']
                 
-                favorites = Favorites.objects.filter(product=product).count()
-                
-                product_performance.append({
-                    'name': product.name,
-                    'orders': product.order_count,
-                    'revenue': float(product.total_revenue),
-                    'views': views,
-                    'favorites': favorites,
-                    'stock': product.quantity
-                })
+                try:
+                    product = Product.objects.get(id=product_id)
+                    
+                    # Get views and favorites count (within date range)
+                    views = CustomerActivity.objects.filter(
+                        product=product,
+                        activity_type='view',
+                        created_at__date__gte=start_date,
+                        created_at__date__lte=end_date
+                    ).count()
+                    
+                    favorites = Favorites.objects.filter(product=product).count()
+                    
+                    product_performance.append({
+                        'name': product_name[:30] + ('...' if len(product_name) > 30 else ''),
+                        'orders': stat['order_count'],
+                        'revenue': float(stat['total_revenue'] or 0),
+                        'views': views,
+                        'favorites': favorites,
+                        'stock': product.quantity
+                    })
+                except Product.DoesNotExist:
+                    continue
             
-            # Category performance
-            category_performance = Category.objects.annotate(
-                product_count=Count('products'),
-                total_revenue=Sum('products__cartitem__checkout__total_amount'),
-                avg_rating=Avg('products__reviews__rating')
-            ).filter(
-                product_count__gt=0
-            ).order_by('-total_revenue')[:5]
+            # Category performance (within date range)
+            category_stats = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                cart_item__product__category__isnull=False
+            ).values(
+                'cart_item__product__category__id',
+                'cart_item__product__category__name'
+            ).annotate(
+                total_revenue=Sum('total_amount'),
+                product_count=Count('cart_item__product', distinct=True)
+            ).order_by('-total_revenue')[:10]
             
             category_data = []
-            for category in category_performance:
-                category_data.append({
-                    'category': category.name,
-                    'revenue': float(category.total_revenue),
-                    'products': category.product_count,
-                    'avgRating': float(category.avg_rating)
-                })
+            for stat in category_stats:
+                category_id = stat['cart_item__product__category__id']
+                
+                try:
+                    category = Category.objects.get(id=category_id)
+                    avg_rating = Review.objects.filter(
+                        product__category=category,
+                        created_at__date__gte=start_date,
+                        created_at__date__lte=end_date
+                    ).aggregate(avg=Avg('rating'))['avg'] or 0
+                    
+                    category_data.append({
+                        'category': stat['cart_item__product__category__name'],
+                        'revenue': float(stat['total_revenue'] or 0),
+                        'products': stat['product_count'],
+                        'avgRating': float(avg_rating)
+                    })
+                except Category.DoesNotExist:
+                    continue
             
-            # Inventory status
+            # Inventory status (current snapshot)
             inventory_status = [
                 {
                     'status': 'In Stock',
-                    'count': Product.objects.filter(quantity__gte=10).count(),
+                    'count': Product.objects.filter(
+                        quantity__gte=10,
+                        is_removed=False,
+                        upload_status='published'
+                    ).count(),
                     'color': '#10b981'
                 },
                 {
                     'status': 'Low Stock',
-                    'count': Product.objects.filter(quantity__lt=10, quantity__gte=1).count(),
+                    'count': Product.objects.filter(
+                        quantity__lt=10,
+                        quantity__gte=1,
+                        is_removed=False,
+                        upload_status='published'
+                    ).count(),
                     'color': '#f59e0b'
                 },
                 {
                     'status': 'Out of Stock',
-                    'count': Product.objects.filter(quantity=0).count(),
+                    'count': Product.objects.filter(
+                        quantity=0,
+                        is_removed=False,
+                        upload_status='published'
+                    ).count(),
                     'color': '#ef4444'
                 },
             ]
             
-            # Product engagement data
+            # Product engagement data (within date range)
             engagement_data = [
                 {
-                    'activity': 'Product Views', 
-                    'count': CustomerActivity.objects.filter(activity_type='view').count()
+                    'activity': 'Product Views',
+                    'count': CustomerActivity.objects.filter(
+                        activity_type='view',
+                        created_at__date__gte=start_date,
+                        created_at__date__lte=end_date
+                    ).count()
                 },
                 {
-                    'activity': 'Add to Cart', 
-                    'count': CustomerActivity.objects.filter(activity_type='add_to_cart').count()
+                    'activity': 'Add to Cart',
+                    'count': CartItem.objects.filter(
+                        added_at__date__gte=start_date,
+                        added_at__date__lte=end_date
+                    ).count()
                 },
                 {
-                    'activity': 'Wishlist Adds', 
-                    'count': Favorites.objects.count()
+                    'activity': 'Wishlist Adds',
+                    'count': Favorites.objects.count()  # Favorites don't have timestamps in your model
                 },
                 {
-                    'activity': 'Reviews Posted', 
-                    'count': Review.objects.count()
+                    'activity': 'Reviews Posted',
+                    'count': Review.objects.filter(
+                        created_at__date__gte=start_date,
+                        created_at__date__lte=end_date
+                    ).count()
                 },
             ]
             
@@ -1292,72 +2105,141 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_product_inventory_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'product_performance_data': [],
+                'category_performance_data': [],
+                'inventory_status_data': [],
+                'product_engagement_data': [],
+            }
     
-    def _get_shop_merchant_analytics(self):
-        """Get shop and merchant analytics data"""
+    def _get_shop_merchant_analytics(self, start_date, end_date, range_type='weekly'):
+        """Get shop and merchant analytics data with date filtering"""
         try:
-            # Top performing shops
-            top_shops = Shop.objects.annotate(
-                calculated_sales=Sum('products__cartitem__checkout__total_amount'),
-                order_count=Count('products__cartitem__checkout', distinct=True),
-                follower_count=Count('followers'),
-                product_count=Count('products'),
-                avg_rating=Avg('reviews__rating')
-            ).filter(
-                calculated_sales__isnull=False
-            ).order_by('-calculated_sales')[:5]
+            # Top performing shops (within date range)
+            shop_stats = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                cart_item__product__shop__isnull=False
+            ).values(
+                'cart_item__product__shop__id',
+                'cart_item__product__shop__name'
+            ).annotate(
+                total_sales=Sum('total_amount'),
+                order_count=Count('order', distinct=True)
+            ).order_by('-total_sales')[:10]
             
             shop_performance = []
-            for shop in top_shops:
-                shop_performance.append({
-                    'name': shop.name,
-                    'sales': float(shop.calculated_sales),
-                    'orders': shop.order_count,
-                    'rating': float(shop.avg_rating),
-                    'followers': shop.follower_count,
-                    'products': shop.product_count
-                })
-            
-            # Shop growth over time
-            six_months_ago = timezone.now() - timedelta(days=180)
-            
-            monthly_shops = Shop.objects.filter(
-                created_at__gte=six_months_ago
-            ).annotate(
-                month=TruncMonth('created_at')
-            ).values('month').annotate(
-                new_shops=Count('id')
-            ).order_by('month')
-            
-            shop_growth_data = []
-            for month_data in monthly_shops:
-                total_shops = Shop.objects.filter(created_at__lte=month_data['month']).count()
-                total_followers = ShopFollow.objects.filter(
-                    shop__created_at__lte=month_data['month']
-                ).count()
+            for stat in shop_stats:
+                shop_id = stat['cart_item__product__shop__id']
                 
-                shop_growth_data.append({
-                    'month': month_data['month'].strftime('%b'),
-                    'newShops': month_data['new_shops'],
-                    'totalShops': total_shops,
-                    'followers': total_followers
-                })
+                try:
+                    shop = Shop.objects.get(id=shop_id)
+                    
+                    avg_rating = Review.objects.filter(
+                        shop=shop,
+                        created_at__date__gte=start_date,
+                        created_at__date__lte=end_date
+                    ).aggregate(avg=Avg('rating'))['avg'] or 0
+                    
+                    follower_count = ShopFollow.objects.filter(shop=shop).count()
+                    product_count = Product.objects.filter(
+                        shop=shop,
+                        is_removed=False,
+                        upload_status='published'
+                    ).count()
+                    
+                    shop_performance.append({
+                        'name': stat['cart_item__product__shop__name'],
+                        'sales': float(stat['total_sales'] or 0),
+                        'orders': stat['order_count'] or 0,
+                        'rating': float(avg_rating),
+                        'followers': follower_count,
+                        'products': product_count
+                    })
+                except Shop.DoesNotExist:
+                    continue
             
-            # Shop locations
+            # Shop growth over time (within date range)
+            date_range_days = (end_date - start_date).days + 1
+            
+            if range_type == 'monthly' or date_range_days > 60:
+                monthly_shops = Shop.objects.filter(
+                    created_at__date__gte=start_date,
+                    created_at__date__lte=end_date
+                ).annotate(
+                    month=TruncMonth('created_at')
+                ).values('month').annotate(
+                    new_shops=Count('id')
+                ).order_by('month')
+                
+                shop_growth_data = []
+                for month_data in monthly_shops:
+                    total_shops = Shop.objects.filter(
+                        created_at__date__lte=month_data['month']
+                    ).count()
+                    
+                    total_followers = ShopFollow.objects.filter(
+                        shop__created_at__date__lte=month_data['month']
+                    ).count()
+                    
+                    shop_growth_data.append({
+                        'month': month_data['month'].strftime('%b %Y'),
+                        'newShops': month_data['new_shops'],
+                        'totalShops': total_shops,
+                        'followers': total_followers
+                    })
+            else:
+                # Weekly grouping
+                current_date = start_date
+                week_num = 1
+                shop_growth_data = []
+                
+                while current_date <= end_date:
+                    week_end = min(current_date + timedelta(days=6), end_date)
+                    
+                    new_shops = Shop.objects.filter(
+                        created_at__date__gte=current_date,
+                        created_at__date__lte=week_end
+                    ).count()
+                    
+                    total_shops = Shop.objects.filter(
+                        created_at__date__lte=week_end
+                    ).count()
+                    
+                    total_followers = ShopFollow.objects.count()
+                    
+                    shop_growth_data.append({
+                        'month': f'Week {week_num}',
+                        'newShops': new_shops,
+                        'totalShops': total_shops,
+                        'followers': total_followers
+                    })
+                    
+                    current_date = week_end + timedelta(days=1)
+                    week_num += 1
+            
+            # Shop locations (current snapshot)
             shop_locations = Shop.objects.exclude(
                 Q(city__isnull=True) | Q(city='')
             ).values('city').annotate(
-                shop_count=Count('id'),
-                location_revenue=Sum('products__cartitem__checkout__total_amount')
-            ).order_by('-shop_count')[:5]
+                shop_count=Count('id')
+            ).order_by('-shop_count')[:10]
             
             location_data = []
             for location in shop_locations:
+                # Calculate revenue for shops in this location (within date range)
+                location_revenue = Checkout.objects.filter(
+                    created_at__gte=start_date,
+                    created_at__lte=end_date,
+                    cart_item__product__shop__city=location['city']
+                ).aggregate(total=Sum('total_amount'))['total'] or 0
+                
                 location_data.append({
                     'location': location['city'],
                     'shops': location['shop_count'],
-                    'revenue': float(location['location_revenue'])
+                    'revenue': float(location_revenue)
                 })
             
             return {
@@ -1367,13 +2249,22 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_shop_merchant_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'shop_performance_data': [],
+                'shop_growth_data': [],
+                'shop_location_data': [],
+            }
     
-    def _get_boost_promotion_analytics(self):
-        """Get boost and promotion analytics data"""
+    def _get_boost_promotion_analytics(self, start_date, end_date):
+        """Get boost and promotion analytics data with date filtering"""
         try:
-            # Boost performance data
-            boost_performance = Boost.objects.values(
+            # Boost performance data (within date range)
+            boost_performance = Boost.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).values(
                 'boost_plan__name'
             ).annotate(
                 usage_count=Count('id'),
@@ -1385,12 +2276,12 @@ class AdminAnalytics(viewsets.ViewSet):
             for boost in boost_performance:
                 boost_performance_data.append({
                     'plan': boost['boost_plan__name'],
-                    'revenue': float(boost['total_revenue']),
+                    'revenue': float(boost['total_revenue'] or 0),
                     'usage': boost['usage_count'],
                     'active_boosts': boost['active_boosts']
                 })
             
-            # Active boost status
+            # Active boost status (current snapshot)
             active_boost_status = [
                 {
                     'status': 'Active',
@@ -1398,7 +2289,7 @@ class AdminAnalytics(viewsets.ViewSet):
                     'color': '#10b981'
                 },
                 {
-                    'status': 'Pending', 
+                    'status': 'Pending',
                     'count': Boost.objects.filter(status='pending').count(),
                     'color': '#f59e0b'
                 },
@@ -1415,18 +2306,36 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_boost_promotion_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'boost_performance_data': [],
+                'active_boost_status': [],
+            }
     
-    def _get_rider_delivery_analytics(self):
-        """Get rider and delivery analytics data"""
+    def _get_rider_delivery_analytics(self, start_date, end_date):
+        """Get rider and delivery analytics data with date filtering"""
         try:
-            # Rider performance
+            # Rider performance (within date range)
             rider_performance = Rider.objects.annotate(
-                delivery_count=Count('delivery'),
-                successful_deliveries=Count('delivery', filter=Q(delivery__status='delivered'))
+                delivery_count=Count(
+                    'delivery',
+                    filter=Q(
+                        delivery__created_at__date__gte=start_date,
+                        delivery__created_at__date__lte=end_date
+                    )
+                ),
+                successful_deliveries=Count(
+                    'delivery',
+                    filter=Q(
+                        delivery__status='delivered',
+                        delivery__created_at__date__gte=start_date,
+                        delivery__created_at__date__lte=end_date
+                    )
+                )
             ).filter(
                 delivery_count__gt=0
-            ).order_by('-delivery_count')[:5]
+            ).order_by('-delivery_count')[:10]
             
             rider_performance_data = []
             for rider in rider_performance:
@@ -1437,15 +2346,18 @@ class AdminAnalytics(viewsets.ViewSet):
                     'successRate': round(success_rate, 1)
                 })
             
-            # Delivery status distribution
-            delivery_status_data = Delivery.objects.values('status').annotate(
+            # Delivery status distribution (within date range)
+            delivery_status_data = Delivery.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).values('status').annotate(
                 count=Count('id')
             ).order_by('status')
             
             status_distribution = []
             color_map = {
                 'pending': '#f59e0b',
-                'picked_up': '#3b82f6', 
+                'picked_up': '#3b82f6',
                 'delivered': '#10b981'
             }
             for status_data in delivery_status_data:
@@ -1455,7 +2367,7 @@ class AdminAnalytics(viewsets.ViewSet):
                     'color': color_map.get(status_data['status'], '#6b7280')
                 })
             
-            # Rider verification status
+            # Rider verification status (current snapshot)
             rider_verification_data = [
                 {
                     'status': 'Verified',
@@ -1476,26 +2388,37 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_rider_delivery_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'rider_performance_data': [],
+                'delivery_status_data': [],
+                'rider_verification_data': [],
+            }
     
-    def _get_voucher_discount_analytics(self):
-        """Get voucher and discount analytics data"""
+    def _get_voucher_discount_analytics(self, start_date, end_date):
+        """Get voucher and discount analytics data with date filtering"""
         try:
-            # Voucher performance
-            voucher_performance = Voucher.objects.annotate(
-                usage_count=Count('checkout'),
-                total_discount=Sum('checkout__total_amount')
-            ).filter(
-                usage_count__gt=0
-            ).order_by('-usage_count')[:5]
+            # Voucher performance (within date range)
+            voucher_stats = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                voucher__isnull=False
+            ).values(
+                'voucher__code',
+                'voucher__discount_type'
+            ).annotate(
+                usage_count=Count('id'),
+                total_discount=Sum('total_amount')
+            ).order_by('-usage_count')[:10]
             
             voucher_performance_data = []
-            for voucher in voucher_performance:
+            for stat in voucher_stats:
                 voucher_performance_data.append({
-                    'code': voucher.code,
-                    'usage': voucher.usage_count,
-                    'discount': float(voucher.total_discount),
-                    'type': voucher.discount_type
+                    'code': stat['voucher__code'],
+                    'usage': stat['usage_count'],
+                    'discount': float(stat['total_discount'] or 0),
+                    'type': stat['voucher__discount_type']
                 })
             
             return {
@@ -1503,43 +2426,79 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_voucher_discount_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'voucher_performance_data': [],
+            }
     
-    def _get_refund_return_analytics(self):
-        """Get refund and return analytics data"""
+    def _get_refund_return_analytics(self, start_date, end_date, range_type='weekly'):
+        """Get refund and return analytics data with date filtering"""
         try:
-            # Refund analytics over time
-            six_months_ago = timezone.now() - timedelta(days=180)
+            date_range_days = (end_date - start_date).days + 1
             
-            monthly_refunds = Refund.objects.filter(
-                requested_at__gte=six_months_ago
-            ).annotate(
-                month=TruncMonth('requested_at')
-            ).values('month').annotate(
-                requested=Count('refund'),
-                approved=Count('refund', filter=Q(status='approved')),
-                rejected=Count('refund', filter=Q(status='rejected'))
-            ).order_by('month')
+            # Determine grouping
+            if range_type == 'monthly' or date_range_days > 60:
+                monthly_refunds = Refund.objects.filter(
+                    requested_at__date__gte=start_date,
+                    requested_at__date__lte=end_date
+                ).annotate(
+                    month=TruncMonth('requested_at')
+                ).values('month').annotate(
+                    requested=Count('refund'),
+                    approved=Count('refund', filter=Q(status='approved')),
+                    rejected=Count('refund', filter=Q(status='rejected'))
+                ).order_by('month')
+                
+                refund_analytics_data = []
+                for month_data in monthly_refunds:
+                    refund_analytics_data.append({
+                        'month': month_data['month'].strftime('%b %Y'),
+                        'requested': month_data['requested'],
+                        'approved': month_data['approved'],
+                        'rejected': month_data['rejected']
+                    })
+            else:
+                # Weekly grouping
+                current_date = start_date
+                week_num = 1
+                refund_analytics_data = []
+                
+                while current_date <= end_date:
+                    week_end = min(current_date + timedelta(days=6), end_date)
+                    
+                    week_data = Refund.objects.filter(
+                        requested_at__date__gte=current_date,
+                        requested_at__date__lte=week_end
+                    ).aggregate(
+                        requested=Count('refund'),
+                        approved=Count('refund', filter=Q(status='approved')),
+                        rejected=Count('refund', filter=Q(status='rejected'))
+                    )
+                    
+                    refund_analytics_data.append({
+                        'month': f'Week {week_num}',
+                        'requested': week_data['requested'] or 0,
+                        'approved': week_data['approved'] or 0,
+                        'rejected': week_data['rejected'] or 0
+                    })
+                    
+                    current_date = week_end + timedelta(days=1)
+                    week_num += 1
             
-            refund_analytics_data = []
-            for month_data in monthly_refunds:
-                refund_analytics_data.append({
-                    'month': month_data['month'].strftime('%b'),
-                    'requested': month_data['requested'],
-                    'approved': month_data['approved'],
-                    'rejected': month_data['rejected']
-                })
-            
-            # Refund reason distribution
-            refund_reason_data = Refund.objects.values('reason').annotate(
+            # Refund reason distribution (within date range)
+            refund_reason_data = Refund.objects.filter(
+                requested_at__date__gte=start_date,
+                requested_at__date__lte=end_date
+            ).values('reason').annotate(
                 count=Count('refund')
             ).order_by('-count')[:5]
             
             reason_data = []
-            for reason_data_item in refund_reason_data:
+            for reason_item in refund_reason_data:
                 reason_data.append({
-                    'reason': reason_data_item['reason'],
-                    'count': reason_data_item['count']
+                    'reason': reason_item['reason'][:50],  # Truncate long reasons
+                    'count': reason_item['count']
                 })
             
             return {
@@ -1548,13 +2507,21 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_refund_return_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'refund_analytics_data': [],
+                'refund_reason_data': [],
+            }
     
-    def _get_report_moderation_analytics(self):
-        """Get report and moderation analytics data"""
+    def _get_report_moderation_analytics(self, start_date, end_date):
+        """Get report and moderation analytics data with date filtering"""
         try:
-            # Report analytics by type
-            report_analytics = Report.objects.values('report_type').annotate(
+            # Report analytics by type (within date range)
+            report_analytics = Report.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).values('report_type').annotate(
                 total_count=Count('id'),
                 resolved_count=Count('id', filter=Q(status='resolved')),
                 pending_count=Count('id', filter=Q(status__in=['pending', 'under_review']))
@@ -1569,8 +2536,11 @@ class AdminAnalytics(viewsets.ViewSet):
                     'pending': report_type['pending_count']
                 })
             
-            # Report status distribution
-            report_status_data = Report.objects.values('status').annotate(
+            # Report status distribution (within date range)
+            report_status_data = Report.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).values('status').annotate(
                 count=Count('id')
             ).order_by('status')
             
@@ -1579,7 +2549,8 @@ class AdminAnalytics(viewsets.ViewSet):
                 'pending': '#f59e0b',
                 'under_review': '#3b82f6',
                 'resolved': '#10b981',
-                'dismissed': '#6b7280'
+                'dismissed': '#6b7280',
+                'action_taken': '#8b5cf6'
             }
             for status_item in report_status_data:
                 status_data.append({
@@ -1594,21 +2565,28 @@ class AdminAnalytics(viewsets.ViewSet):
             }
         except Exception as e:
             print(f"Error in _get_report_moderation_analytics: {str(e)}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {
+                'report_analytics_data': [],
+                'report_status_data': [],
+            }
     
     # Helper methods
     def _get_status_color(self, status):
+        """Get color code for order status"""
         color_map = {
             'pending': '#f59e0b',
             'processing': '#3b82f6',
             'shipped': '#8b5cf6',
-            'delivered': '#10b981',
+            'completed': '#10b981',
             'cancelled': '#ef4444',
             'returned': '#6b7280',
         }
         return color_map.get(status.lower(), '#6b7280')
     
     def _get_stage_label(self, stage):
+        """Get label for registration stage"""
         stages = {
             1: 'Stage 1: Started',
             2: 'Stage 2: Basic Info',

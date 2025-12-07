@@ -1,8 +1,10 @@
 // app/routes/home.tsx
+import { useState } from 'react';
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '~/components/ui/card';
+import DateRangeFilter from '~/components/ui/date-range-filter';
 import {
   LineChart,
   Line,
@@ -41,6 +43,7 @@ import {
   UserCheck,
   Settings,
   RefreshCw,
+  PhilippinePeso,
 } from 'lucide-react';
 import AxiosInstance from '~/components/axios/Axios';
 
@@ -71,11 +74,23 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
+  // REMOVED: Get date range from URL params
+  // Use default date range
+  const defaultStartDate = new Date();
+  defaultStartDate.setDate(defaultStartDate.getDate() - 7); // 7 days ago
+  const defaultEndDate = new Date();
+
   let dashboardData = null;
 
   try {
+    // Build query parameters with default values
+    const params = new URLSearchParams();
+    params.append('start_date', defaultStartDate.toISOString().split('T')[0]);
+    params.append('end_date', defaultEndDate.toISOString().split('T')[0]);
+    params.append('range_type', 'weekly');
+
     // Fetch comprehensive dashboard data from the backend
-    const dashboardResponse = await AxiosInstance.get('/admin-dashboard/get_comprehensive_dashboard/', {
+    const dashboardResponse = await AxiosInstance.get(`/admin-dashboard/get_comprehensive_dashboard/?${params.toString()}`, {
       headers: {
         "X-User-Id": session.get("userId")
       }
@@ -92,15 +107,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // Use fallback data structure
     dashboardData = {
       success: false,
+      date_range: {
+        start_date: defaultStartDate.toISOString().split('T')[0],
+        end_date: defaultEndDate.toISOString().split('T')[0],
+        range_type: 'weekly',
+      },
       overview: {
         total_revenue: 0,
         total_orders: 0,
         active_customers: 0,
         active_shops: 0,
-        today_orders: 0,
-        today_revenue: 0,
+        current_period_orders: 0,
+        current_period_revenue: 0,
         order_growth: 0,
-        revenue_growth: 0
+        revenue_growth: 0,
+        date_range_days: 0
       },
       operational: {
         active_boosts: 0,
@@ -114,30 +135,23 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       sales_analytics: {
         sales_data: [],
         status_distribution: [],
-        payment_distribution: []
+        grouping: 'daily'
       },
       user_analytics: {
         user_growth: [],
-        role_distribution: [],
-        registration_data: []
       },
       product_analytics: {
         product_performance: [],
-        category_performance: [],
-        inventory_status: [],
-        engagement_data: []
       },
       shop_analytics: {
         shop_performance: [],
-        shop_growth: [],
-        shop_locations: []
       }
     };
   }
 
   return { 
     user, 
-    dashboardData: dashboardData.success ? dashboardData : null 
+    dashboardData: dashboardData.success ? dashboardData : null,
   };
 }
 
@@ -197,8 +211,16 @@ const LoadingSkeleton = ({ className = "" }: { className?: string }) => (
 );
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { user, dashboardData } = loaderData;
-  const isLoading = !dashboardData;
+  const { user, dashboardData: initialDashboardData } = loaderData;
+  
+  // State for managing data
+  const [dashboardData, setDashboardData] = useState(initialDashboardData);
+  const [isLoading, setIsLoading] = useState(false);
+  const [dateRange, setDateRange] = useState({
+    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
+    end: new Date(),
+    rangeType: 'weekly' as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+  });
 
   // Extract data from API response
   const overview = dashboardData?.overview || {};
@@ -207,8 +229,39 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const userAnalytics = dashboardData?.user_analytics || {};
   const productAnalytics = dashboardData?.product_analytics || {};
   const shopAnalytics = dashboardData?.shop_analytics || {};
+  const dateRangeInfo = dashboardData?.date_range || {};
 
-  // Format currency values
+  const fetchDashboardData = async (start: Date, end: Date, rangeType: string) => {
+    setIsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('start_date', start.toISOString().split('T')[0]);
+      params.append('end_date', end.toISOString().split('T')[0]);
+      params.append('range_type', rangeType);
+
+      const response = await AxiosInstance.get(`/admin-dashboard/get_comprehensive_dashboard/?${params.toString()}`);
+      
+      if (response.data.success) {
+        setDashboardData(response.data);
+      } else {
+        console.error('Failed to fetch dashboard data');
+      }
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
+    setDateRange({
+      start: range.start,
+      end: range.end,
+      rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+    });
+    fetchDashboardData(range.start, range.end, range.rangeType);
+  };
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-PH', {
       style: 'currency',
@@ -236,27 +289,42 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+              <p className="text-muted-foreground">
+                {dateRangeInfo.start_date && dateRangeInfo.end_date ? (
+                  <>
+                    Data from {new Date(dateRangeInfo.start_date).toLocaleDateString()} to {new Date(dateRangeInfo.end_date).toLocaleDateString()}
+                  </>
+                ) : (
+                  'Overall statistics'
+                )}
+              </p>
             </div>
           </div>
 
-          {/* Core Business Metrics */}
+          {/* Date Range Filter Component */}
+          <DateRangeFilter 
+            onDateRangeChange={handleDateRangeChange}
+            isLoading={isLoading}
+          />
+
+          {/* Core Business Metrics - Updated to show period-specific data */}
           <MetricGrid title="Core Business Metrics">
             <StatCard 
-              title="Total Revenue" 
-              value={isLoading ? "..." : formatCurrency(overview.total_revenue || 0)} 
-              change={isLoading ? "" : `+${overview.revenue_growth || 0}%`} 
-              trend="up" 
-              icon={DollarSign}
-              description="Lifetime sales"
+              title="Period Revenue" 
+              value={isLoading ? "..." : formatCurrency(overview.current_period_revenue || 0)} 
+              change={isLoading ? "" : `${(overview.revenue_growth || 0) >= 0 ? '+' : ''}${overview.revenue_growth || 0}%`} 
+              trend={(overview.revenue_growth || 0) >= 0 ? "up" : "down"} 
+              icon={PhilippinePeso}
+              description={`Last ${overview.date_range_days || 7} days`}
               loading={isLoading}
             />
             <StatCard 
-              title="Total Orders" 
-              value={isLoading ? "..." : formatCompactNumber(overview.total_orders || 0)} 
-              change={isLoading ? "" : `+${overview.order_growth || 0}%`} 
-              trend="up" 
+              title="Period Orders" 
+              value={isLoading ? "..." : formatCompactNumber(overview.current_period_orders || 0)} 
+              change={isLoading ? "" : `${(overview.order_growth || 0) >= 0 ? '+' : ''}${overview.order_growth || 0}%`} 
+              trend={(overview.order_growth || 0) >= 0 ? "up" : "down"} 
               icon={ShoppingCart}
-              description="All-time orders"
+              description={`Last ${overview.date_range_days || 7} days`}
               loading={isLoading}
             />
             <StatCard 
@@ -265,7 +333,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               change="+15.2%" 
               trend="up" 
               icon={Users}
-              description="Registered users"
+              description="Total registered"
               loading={isLoading}
             />
             <StatCard 
@@ -274,7 +342,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               change="+3.5%" 
               trend="up" 
               icon={Store}
-              description="Verified merchants"
+              description="Total verified"
               loading={isLoading}
             />
           </MetricGrid>
@@ -367,8 +435,19 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 <CardTitle className="flex items-center gap-2">
                   <BarChart3 className="w-5 h-5" />
                   Sales & Revenue Trend
+                  <span className="text-sm font-normal text-muted-foreground ml-2">
+                    ({salesAnalytics.grouping === 'daily' ? 'Daily' : 'Monthly'} view)
+                  </span>
                 </CardTitle>
-                <CardDescription>Last 7 days performance across all shops</CardDescription>
+                <CardDescription>
+                  {dateRangeInfo.start_date && dateRangeInfo.end_date ? (
+                    <>
+                      {new Date(dateRangeInfo.start_date).toLocaleDateString()} - {new Date(dateRangeInfo.end_date).toLocaleDateString()}
+                    </>
+                  ) : (
+                    'Last 7 days performance across all shops'
+                  )}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
@@ -384,6 +463,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                           name === 'Revenue (₱)' ? formatCurrency(value) : value,
                           name
                         ]}
+                        labelFormatter={(label, items) => {
+                          const item = items?.[0]?.payload;
+                          return item?.date ? new Date(item.date).toLocaleDateString() : label;
+                        }}
                       />
                       <Legend />
                       <Bar yAxisId="left" dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
@@ -401,7 +484,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   <ShoppingBag className="w-5 h-5" />
                   Order Status
                 </CardTitle>
-                <CardDescription>Current order distribution</CardDescription>
+                <CardDescription>
+                  {dateRangeInfo.start_date && dateRangeInfo.end_date ? (
+                    <>
+                      Distribution from {new Date(dateRangeInfo.start_date).toLocaleDateString()}
+                    </>
+                  ) : (
+                    'Current order distribution'
+                  )}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
@@ -424,7 +515,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                           <Cell key={`cell-${index}`} fill={entry.color || COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip />
+                      <Tooltip 
+                        formatter={(value: any) => [value, 'Orders']}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                 )}
@@ -441,7 +534,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   <UserCheck className="w-5 h-5" />
                   Customer Growth
                 </CardTitle>
-                <CardDescription>New vs returning customers</CardDescription>
+                <CardDescription>
+                  {dateRangeInfo.start_date && dateRangeInfo.end_date ? (
+                    <>
+                      User growth from {new Date(dateRangeInfo.start_date).toLocaleDateString()}
+                    </>
+                  ) : (
+                    'New vs returning customers'
+                  )}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
@@ -451,7 +552,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                     <AreaChart data={userAnalytics.user_growth || []}>
                       <XAxis dataKey="month" />
                       <YAxis />
-                      <Tooltip />
+                      <Tooltip 
+                        formatter={(value: any) => [value, 'Users']}
+                      />
                       <Legend />
                       <Area type="monotone" dataKey="new" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="New Customers" />
                       <Area type="monotone" dataKey="returning" stackId="1" stroke="#10b981" fill="#10b981" name="Returning" />
@@ -468,7 +571,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   <Package className="w-5 h-5" />
                   Top Products
                 </CardTitle>
-                <CardDescription>Best performing products by orders</CardDescription>
+                <CardDescription>
+                  {dateRangeInfo.start_date && dateRangeInfo.end_date ? (
+                    <>
+                      Top sellers from {new Date(dateRangeInfo.start_date).toLocaleDateString()}
+                    </>
+                  ) : (
+                    'Best performing products by orders'
+                  )}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
@@ -508,7 +619,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <Card>
               <CardHeader>
                 <CardTitle>Top Performing Shops</CardTitle>
-                <CardDescription>By sales volume and ratings</CardDescription>
+                <CardDescription>
+                  {dateRangeInfo.start_date && dateRangeInfo.end_date ? (
+                    <>
+                      Top shops from {new Date(dateRangeInfo.start_date).toLocaleDateString()}
+                    </>
+                  ) : (
+                    'By sales volume and ratings'
+                  )}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
@@ -527,12 +646,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                           </div>
                           <div>
                             <p className="font-medium">{shop.name}</p>
-                            <p className="text-sm text-muted-foreground">{shop.followers} followers</p>
+                            <p className="text-sm text-muted-foreground">{shop.followers || 0} followers</p>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="font-bold">{formatCurrency(shop.sales)}</p>
-                          <p className="text-sm text-muted-foreground">{shop.rating}★</p>
+                          <p className="font-bold">{formatCurrency(shop.sales || 0)}</p>
+                          <p className="text-sm text-muted-foreground">{shop.rating || 0}★</p>
                         </div>
                       </div>
                     ))}
@@ -561,9 +680,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     <div className="text-center p-4 border rounded-lg">
                       <p className="text-2xl font-bold text-blue-600">
-                        {formatCompactNumber(overview.total_orders || 0)}
+                        {formatCompactNumber(overview.current_period_orders || 0)}
                       </p>
-                      <p className="text-sm text-muted-foreground">Total Orders</p>
+                      <p className="text-sm text-muted-foreground">Period Orders</p>
                     </div>
                     <div className="text-center p-4 border rounded-lg">
                       <p className="text-2xl font-bold text-green-600">
@@ -647,6 +766,36 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   <p className="font-medium">Analytics</p>
                   <p className="text-sm text-muted-foreground">View insights</p>
                 </button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Data Range Summary */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Data Summary</CardTitle>
+              <CardDescription>Current filter settings and data coverage</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 border rounded-lg">
+                  <p className="text-sm text-muted-foreground">Date Range</p>
+                  <p className="font-medium">
+                    {dateRangeInfo.start_date ? new Date(dateRangeInfo.start_date).toLocaleDateString() : 'N/A'} 
+                    {' → '} 
+                    {dateRangeInfo.end_date ? new Date(dateRangeInfo.end_date).toLocaleDateString() : 'N/A'}
+                  </p>
+                </div>
+                <div className="p-4 border rounded-lg">
+                  <p className="text-sm text-muted-foreground">View Type</p>
+                  <p className="font-medium capitalize">{dateRangeInfo.range_type || 'weekly'} view</p>
+                </div>
+                <div className="p-4 border rounded-lg">
+                  <p className="text-sm text-muted-foreground">Data Points</p>
+                  <p className="font-medium">
+                    {salesAnalytics.sales_data?.length || 0} periods analyzed
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
