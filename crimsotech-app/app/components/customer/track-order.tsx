@@ -1,7 +1,7 @@
 "use client";
 
 // --- REACT ROUTER IMPORT ---
-import { useNavigate } from 'react-router-dom'; // Changed from 'next/navigation'
+import { useNavigate } from 'react-router'; // Changed from 'next/navigation'
 import type { Route } from './+types/track-order';
 import {
   Card,

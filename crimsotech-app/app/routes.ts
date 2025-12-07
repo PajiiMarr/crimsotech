@@ -26,7 +26,7 @@ export default [
     route('purchases', 'routes/customer/purchases.tsx'),
     route('subscription-plan', 'routes/customer/subscription-plan.tsx'),
     route("track-order/:id", "components/customer/track-order.tsx"),
-    
+    route("orders", "components/customer/orders.tsx"),
     
     ...prefix("seller", [
         route("dashboard", "routes/seller/dashboard.tsx"), 
@@ -42,6 +42,7 @@ export default [
         route('products', 'routes/admin/products.tsx'),
         route('products/:product_id', 'routes/admin/view_products/view_products.tsx'),
         route('shops', 'routes/admin/shops.tsx'),
+        route('shops/:shop_id', 'routes/admin/view_shops/view_shops.tsx'),
         route('boosting', 'routes/admin/boosting.tsx'),
         route('orders', 'routes/admin/orders.tsx'),
         route('riders', 'routes/admin/riders.tsx'),

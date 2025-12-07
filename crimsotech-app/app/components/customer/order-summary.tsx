@@ -1,4 +1,5 @@
 import { Button } from "~/components/ui/button"; // Assuming you want a button here, perhaps for checkout/proceed
+import { Link } from 'react-router';
 
 interface OrderSummaryProps {
   subtotal: number;
@@ -54,12 +55,12 @@ export const OrderSummary = ({
 
       {/* Optional Checkout Button */}
       {onProceedToCheckout && (
-        <Button
-          onClick={onProceedToCheckout}
-          className="mt-6 w-full py-2 text-base font-semibold" // Adjusted padding and font size
+        <Link
+          to='/orders'
+          className="mt-10 w-full py-2 text-base font-semibold bg-orange-500 text-white p-3 rounded-lg" // Adjusted padding and font size
         >
           Proceed to Checkout
-        </Button>
+        </Link>
       )}
     </div>
   );

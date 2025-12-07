@@ -25,7 +25,6 @@ export async function loader({ request, context}: Route.LoaderArgs) {
 
     await requireRole(request, context, ["isCustomer"]);
 
-    // Get session for authentication
     const { getSession } = await import('~/sessions.server');
     const session = await getSession(request.headers.get("Cookie"));
 

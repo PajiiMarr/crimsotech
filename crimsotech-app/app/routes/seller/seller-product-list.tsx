@@ -375,6 +375,7 @@ export default function SellerProductList() {
                     <TableHead className="text-right">Price</TableHead>
                     <TableHead className="text-right">Stock</TableHead>
                     <TableHead>Condition</TableHead>
+                    <TableHead>Upload Status</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Date Added</TableHead>
                     <TableHead>Upload Status</TableHead>
@@ -437,6 +438,9 @@ export default function SellerProductList() {
                           <Badge variant="outline" className="capitalize">
                             {product.condition}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {getStatusBadge(product.upload_status)}
                         </TableCell>
                         <TableCell>
                           {getStatusBadge(product.status)}
