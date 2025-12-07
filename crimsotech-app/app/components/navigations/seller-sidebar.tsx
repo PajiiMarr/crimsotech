@@ -6,7 +6,11 @@ import {
   ClipboardList,
   DollarSign,
   MessageSquare,
-  Settings
+  Settings,
+  RotateCcw,
+  Gift,
+  Bell,
+  AlertTriangle
 } from "lucide-react";
 
 import { Link, useLocation } from 'react-router'
@@ -40,32 +44,27 @@ export default function SellerSidebar() {
       children: [
         { title: "Dashboard", url: "/seller/dashboard", icon: Home },
         { title: "Products", url: "/seller/seller-product-list", icon: Package },
-        { title: "Orders", url: "/seller/orders", icon: ClipboardList },
-        { title: "Earnings", url: "/seller/earnings", icon: DollarSign },
+        { title: "Orders", url: "/seller/seller-order-list", icon: ClipboardList },
       ],
     },
     {
       group: "Refund & Return",
       children: [
-        { title: "Return & Refund", url: "/seller/return-refund", icon: MessageSquare },
-        { title: "Messages", url: "/seller/messages", icon: MessageSquare },
-        { title: "Customers", url: "/seller/customers", icon: MessageSquare },
+        { title: "Return/Refund/Cancel", url: "/seller/seller-return-refund-cancel", icon: RotateCcw },
       ],
     },
     {
       group: "Subscriptions",
       children: [
-        { title: "Subscriptions", url: "/seller/subscription", icon: MessageSquare },
-        { title: "Vouchers", url: "/seller/voucher", icon: MessageSquare },
+        { title: "Vouchers", url: "/seller/seller-vouchers", icon: Gift },
       ],
     },
     {
       group: "Settings",
       children: [
-        { title: "Notifications", url: "/seller/notifications", icon: Settings },
+        { title: "Notifications", url: "/seller/seller-notifications", icon: Bell },
         { title: "Account Settings", url: "/seller/settings", icon: Settings },
-        { title: "Violations", url: "/seller/violation", icon: Settings },
-
+        { title: "Violations", url: "/seller/violation", icon: AlertTriangle },
       ],
     },
   ];

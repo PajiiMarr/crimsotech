@@ -130,14 +130,22 @@ const PurchaseItemCard = ({ item }: { item: Purchase }) => {
 
         {item.status === "Completed" && (
           <div className="flex gap-2">
+            <Link to={`/view-completed-order/${item.id}`}>
             <Button size="sm" variant="outline" className={simpleOutlineClass}>View Details</Button>
+            </Link>
+            <Link to={`/order-review/${item.id}`}>
             <Button size="sm" variant="outline" className={simpleOutlineClass}>Rate</Button>
+            </Link>
           </div>
         )}
 
         {(item.status === "In Progress" || item.status === "Pending") && (
-          /* Using shadcn destructive variant for cancel, which implies a distinct action */
+          <div className="flex gap-2">
+          <Link to={`/track-order/${item.id}`}>
+            <Button size="sm" variant="outline" className={simpleOutlineClass}>View Order</Button>
+            </Link>
           <Button size="sm" variant="outline">Cancel Order</Button>
+          </div>
         )}
 
         {item.status === "To Ship" && (
@@ -147,12 +155,21 @@ const PurchaseItemCard = ({ item }: { item: Purchase }) => {
         )}
         
         {item.status === "Return & Refund" && (
-          <Button size="sm" variant="outline" className={simpleOutlineClass}>View Refund</Button>
-        )}
+        <Link to={`/request-refund/${item.id}`}>
+          <Button size="sm" variant="outline" className={simpleOutlineClass}>
+            View Refund
+          </Button>
+        </Link>
+      )}
+
         
         {item.status === "Cancelled" && (
-          /* Using secondary variant for disabled, simple appearance */
+          <div className="flex gap-2">
+          <Link to={`/view-cancelled-order/${item.id}`}>
+          <Button size="sm" variant="outline" className={simpleOutlineClass}>View Details</Button>
+          </Link>
           <Button size="sm" variant="secondary" disabled>Cancelled</Button>
+          </div>
         )}
 
         {/* Default View Purchase Button for other statuses (or if none matched above) */}

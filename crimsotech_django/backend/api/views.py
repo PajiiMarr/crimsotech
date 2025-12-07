@@ -5531,187 +5531,187 @@ class AdminReports(viewsets.ViewSet):
         return 'unknown'
 
 
-# class CustomerProducts(viewsets.ViewSet):
-#     @action(detail=False, methods=['get'])
-#     def get_products(self, request):
-#         shop_id = request.query_params.get('shop_id')
+class CustomerProducts(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_products(self, request):
+        shop_id = request.query_params.get('shop_id')
 
-#         products = (
-#             Product.objects
-#             .filter(shop=shop_id)            # WHERE shop_id = ?
-#             .order_by('name')
-#             .select_related('shop', 'category')
-#         )
+        products = (
+            Product.objects
+            .filter(shop=shop_id)            # WHERE shop_id = ?
+            .order_by('name')
+            .select_related('shop', 'category')
+        )
 
-#         serializer = ProductSerializer(products, many=True)
+        serializer = ProductSerializer(products, many=True)
 
-#         return Response({
-#             'success': True,
-#             'products': serializer.data
-#         })
+        return Response({
+            'success': True,
+            'products': serializer.data
+        })
     
-#     @action(detail=False, methods=['post'])
-#     def create_product(self, request):
-#         """
-#         Create a new product without authentication
-#         POST /api/your-endpoint/create_product/
-#         """
-#         try:
-#             # Validate required fields
-#             required_fields = ['shop', 'category', 'category_admin', 'name', 'price', 'quantity', 'customer']
-#             missing_fields = [field for field in required_fields if field not in request.data]
+    @action(detail=False, methods=['post'])
+    def create_product(self, request):
+        """
+        Create a new product without authentication
+        POST /api/your-endpoint/create_product/
+        """
+        try:
+            # Validate required fields
+            required_fields = ['shop', 'category', 'category_admin', 'name', 'price', 'quantity', 'customer']
+            missing_fields = [field for field in required_fields if field not in request.data]
             
-#             if missing_fields:
-#                 return Response(
-#                     {
-#                         "error": "Missing required fields",
-#                         "missing_fields": missing_fields
-#                     },
-#                     status=status.HTTP_400_BAD_REQUEST
-#                 )
+            if missing_fields:
+                return Response(
+                    {
+                        "error": "Missing required fields",
+                        "missing_fields": missing_fields
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-#             # Get customer
-#             customer_id = request.data.get('customer')
-#             try:
-#                 customer = Customer.objects.get(customer_id=customer_id)
-#             except Customer.DoesNotExist:
-#                 return Response(
-#                     {"error": "Customer not found"},
-#                     status=status.HTTP_404_NOT_FOUND
-#                 )
+            # Get customer
+            customer_id = request.data.get('customer')
+            try:
+                customer = Customer.objects.get(customer_id=customer_id)
+            except Customer.DoesNotExist:
+                return Response(
+                    {"error": "Customer not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
-#             # Check product limit
-#             if not customer.can_add_product():
-#                 return Response(
-#                     {
-#                         "error": "Product limit reached",
-#                         "detail": f"Customer has reached the limit of {customer.product_limit} products",
-#                         "current_count": customer.current_product_count,
-#                         "limit": customer.product_limit
-#                     },
-#                     status=status.HTTP_400_BAD_REQUEST
-#                 )
+            # Check product limit
+            if not customer.can_add_product():
+                return Response(
+                    {
+                        "error": "Product limit reached",
+                        "detail": f"Customer has reached the limit of {customer.product_limit} products",
+                        "current_count": customer.current_product_count,
+                        "limit": customer.product_limit
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-#             # Validate shop ownership
-#             shop_id = request.data.get('shop')
-#             try:
-#                 shop = Shop.objects.get(id=shop_id)
-#                 if shop.customer != customer:
-#                     return Response(
-#                         {
-#                             "error": "Shop ownership validation failed",
-#                             "detail": "Customer can only add products to their own shops"
-#                         },
-#                         status=status.HTTP_403_FORBIDDEN
-#                     )
-#             except Shop.DoesNotExist:
-#                 return Response(
-#                     {"error": "Shop not found"},
-#                     status=status.HTTP_404_NOT_FOUND
-#                 )
+            # Validate shop ownership
+            shop_id = request.data.get('shop')
+            try:
+                shop = Shop.objects.get(id=shop_id)
+                if shop.customer != customer:
+                    return Response(
+                        {
+                            "error": "Shop ownership validation failed",
+                            "detail": "Customer can only add products to their own shops"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except Shop.DoesNotExist:
+                return Response(
+                    {"error": "Shop not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
-#             # Validate category exists
-#             category_id = request.data.get('category')
-#             category_admin_id = request.data.get('category_admin')
+            # Validate category exists
+            category_id = request.data.get('category')
+            category_admin_id = request.data.get('category_admin')
             
-#             try:
-#                 category = Category.objects.get(id=category_id)
-#                 category_admin = Category.objects.get(id=category_admin_id)
-#             except Category.DoesNotExist:
-#                 return Response(
-#                     {"error": "Category not found"},
-#                     status=status.HTTP_404_NOT_FOUND
-#                 )
+            try:
+                category = Category.objects.get(id=category_id)
+                category_admin = Category.objects.get(id=category_admin_id)
+            except Category.DoesNotExist:
+                return Response(
+                    {"error": "Category not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
-#             # Validate category user types
-#             # For category (customer category) - should be created by the same customer
-#             if category.user:
-#                 if category.user.is_customer and category.user.customer != customer:
-#                     return Response(
-#                         {
-#                             "error": "Category ownership validation failed",
-#                             "detail": "You can only use your own customer categories"
-#                         },
-#                         status=status.HTTP_403_FORBIDDEN
-#                     )
+            # Validate category user types
+            # For category (customer category) - should be created by the same customer
+            if category.user:
+                if category.user.is_customer and category.user.customer != customer:
+                    return Response(
+                        {
+                            "error": "Category ownership validation failed",
+                            "detail": "You can only use your own customer categories"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             
-#             # For category_admin - should be created by an admin
-#             if category_admin.user:
-#                 if not category_admin.user.is_admin:
-#                     return Response(
-#                         {
-#                             "error": "Admin category validation failed",
-#                             "detail": "category_admin must be created by an admin"
-#                         },
-#                         status=status.HTTP_403_FORBIDDEN
-#                     )
-#             else:
-#                 # category_admin has no user - might be system category
-#                 # You can decide whether to allow this or not
-#                 pass
+            # For category_admin - should be created by an admin
+            if category_admin.user:
+                if not category_admin.user.is_admin:
+                    return Response(
+                        {
+                            "error": "Admin category validation failed",
+                            "detail": "category_admin must be created by an admin"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                # category_admin has no user - might be system category
+                # You can decide whether to allow this or not
+                pass
             
-#             # Use serializer for creation
-#             serializer = ProductCreateSerializer(data=request.data)
+            # Use serializer for creation
+            serializer = ProductCreateSerializer(data=request.data)
             
-#             if serializer.is_valid():
-#                 try:
-#                     with transaction.atomic():
-#                         product = serializer.save()
+            if serializer.is_valid():
+                try:
+                    with transaction.atomic():
+                        product = serializer.save()
                         
-#                         # Success response
-#                         return Response(
-#                             {
-#                                 "success": True,
-#                                 "message": "Product created successfully",
-#                                 "product": {
-#                                     "id": str(product.id),
-#                                     "name": product.name,
-#                                     "shop": shop.name,
-#                                     "category": category.name,
-#                                     "category_type": "Customer" if category.user and category.user.is_customer else "System",
-#                                     "category_admin": category_admin.name,
-#                                     "category_admin_type": "Admin" if category_admin.user and category_admin.user.is_admin else "System",
-#                                     "price": str(product.price),
-#                                     "quantity": product.quantity,
-#                                     "status": product.status,
-#                                     "condition": product.condition,
-#                                     "created_at": product.created_at
-#                                 },
-#                                 "customer_stats": {
-#                                     "customer_id": str(customer.customer_id),
-#                                     "current_product_count": customer.current_product_count,
-#                                     "product_limit": customer.product_limit,
-#                                     "remaining_slots": customer.product_limit - customer.current_product_count
-#                                 }
-#                             },
-#                             status=status.HTTP_201_CREATED
-#                         )
+                        # Success response
+                        return Response(
+                            {
+                                "success": True,
+                                "message": "Product created successfully",
+                                "product": {
+                                    "id": str(product.id),
+                                    "name": product.name,
+                                    "shop": shop.name,
+                                    "category": category.name,
+                                    "category_type": "Customer" if category.user and category.user.is_customer else "System",
+                                    "category_admin": category_admin.name,
+                                    "category_admin_type": "Admin" if category_admin.user and category_admin.user.is_admin else "System",
+                                    "price": str(product.price),
+                                    "quantity": product.quantity,
+                                    "status": product.status,
+                                    "condition": product.condition,
+                                    "created_at": product.created_at
+                                },
+                                "customer_stats": {
+                                    "customer_id": str(customer.customer_id),
+                                    "current_product_count": customer.current_product_count,
+                                    "product_limit": customer.product_limit,
+                                    "remaining_slots": customer.product_limit - customer.current_product_count
+                                }
+                            },
+                            status=status.HTTP_201_CREATED
+                        )
                         
-#                 except Exception as e:
-#                     return Response(
-#                         {
-#                             "error": "Failed to create product",
-#                             "detail": str(e)
-#                         },
-#                         status=status.HTTP_400_BAD_REQUEST
-#                     )
+                except Exception as e:
+                    return Response(
+                        {
+                            "error": "Failed to create product",
+                            "detail": str(e)
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
-#             return Response(
-#                 {
-#                     "error": "Validation failed",
-#                     "details": serializer.errors
-#                 },
-#                 status=status.HTTP_400_BAD_REQUEST
-#             )
+            return Response(
+                {
+                    "error": "Validation failed",
+                    "details": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
-#         except Exception as e:
-#             return Response(
-#                 {
-#                     "error": "Internal server error",
-#                     "detail": str(e)
-#                 },
-#                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-#             )
+        except Exception as e:
+            return Response(
+                {
+                    "error": "Internal server error",
+                    "detail": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
         
 class RiderStatus(viewsets.ViewSet):
@@ -5766,7 +5766,7 @@ class CustomerShops(APIView):
                 "message": "No customer found with this ID",
                 "data_source": "database"
             }, status=status.HTTP_200_OK) 
-        
+            
     def post(self, request):
             """
             Create a new shop for a customer
@@ -6585,3 +6585,106 @@ class CartListView(APIView):
         cart_items = CartItem.objects.filter(user=user).select_related("product", "product__shop")
         serializer = CartItemSerializer(cart_items, many=True)
         return Response({"success": True, "cart_items": serializer.data})
+
+
+class CheckoutView(viewsets.ViewSet):
+    """
+    Simplified Checkout ViewSet
+    """
+    @action(methods=["get"], detail=False)
+    def getOrder(self, request):
+        pass
+        
+    
+    @action(methods=["post"], detail=False)
+    def checkout(self, request):
+        """
+        Simple checkout endpoint
+        Request body:
+        {
+            "customer_id": "uuid",
+            "product_id": "uuid",
+            "quantity": 1
+        }
+        """
+        try:
+            data = request.data
+            customer_id = data.get('customer_id')
+            product_id = data.get('product_id')
+            quantity = data.get('quantity', 1)
+            
+            # Validate required fields
+            if not customer_id:
+                return Response(
+                    {'error': 'customer_id is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not product_id:
+                return Response(
+                    {'error': 'product_id is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get customer
+            try:
+                customer = Customer.objects.get(id=customer_id)
+            except Customer.DoesNotExist:
+                return Response(
+                    {'error': 'Customer not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Start transaction
+            with transaction.atomic():
+                # Get product with lock
+                product = Product.objects.select_for_update().get(
+                    id=product_id,
+                    upload_status='published',
+                    is_removed=False
+                )
+                
+                # Check stock
+                if product.quantity < quantity:
+                    return Response(
+                        {'error': f'Insufficient stock. Available: {product.quantity}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Calculate total
+                total_amount = product.price * quantity
+                
+                # Update stock
+                product.quantity -= quantity
+                product.save(update_fields=['quantity'])
+                
+                # Generate order reference
+                order_ref = f"ORD-{customer_id[:8]}-{product_id[:8]}"
+                
+                return Response({
+                    'success': True,
+                    'message': 'Purchase successful',
+                    'order_reference': order_ref,
+                    'product': {
+                        'id': str(product.id),
+                        'name': product.name,
+                        'price': str(product.price)
+                    },
+                    'quantity': quantity,
+                    'total_amount': str(total_amount),
+                    'customer': {
+                        'id': str(customer.id),
+                        'name': str(customer.user) if customer.user else 'Unknown'
+                    }
+                }, status=status.HTTP_201_CREATED)
+                
+        except Product.DoesNotExist:
+            return Response(
+                {'error': 'Product not found or unavailable'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': 'Checkout failed', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

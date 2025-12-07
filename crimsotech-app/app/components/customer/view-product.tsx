@@ -6,7 +6,9 @@ import {
   Flag,
   ChevronLeft,
   ChevronRight,
-  ShoppingBagIcon
+  ShoppingBagIcon,
+  MapPin,
+  Store
 } from "lucide-react";
 
 import { useEffect, useState } from "react";
@@ -52,7 +54,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
-  const userId = session.get("userId"); // session user ID
+  const userId = session.get("userId");
   const productId = new URL(request.url).searchParams.get("id");
   let product = null;
 
@@ -81,6 +83,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const [loading, setLoading] = useState(!loaderData?.product);
   const [quantity, setQuantity] = useState(1);
   const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
+  const [activeImage, setActiveImage] = useState(0);
 
   const [addingToCart, setAddingToCart] = useState(false);
   const [cartError, setCartError] = useState<string | null>(null);
@@ -123,7 +126,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
     try {
       const payload = {
-        user_id: user.id, // <-- session user ID
+        user_id: user.id,
         product_id: product.id,
         quantity,
         variant_id: selectedVariant || null,
@@ -144,105 +147,161 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
     }
   };
 
-  if (loading) return <div className="p-6 text-center text-gray-500">Loading product...</div>;
-  if (!product) return <div className="p-6 text-center text-red-500">Product not found</div>;
+  if (loading) return (
+    <div className="p-4 text-center text-sm text-gray-500">Loading...</div>
+  );
+  if (!product) return (
+    <div className="p-4 text-center text-sm text-red-500">Product not found</div>
+  );
+
+  const images = product.media_files || [];
+  const hasDiscount = product.discount && product.discount > 0;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-8 px-4 py-8">
-      <Breadcrumbs />
-      <Separator />
-
-      <div className="text-sm text-gray-500">
-        Category: {product.category?.name || "Uncategorized"}
+    <div className="max-w-7xl mx-auto p-3 md:p-4">
+      {/* Compact Breadcrumbs */}
+      <div className="mb-3 text-xs text-gray-500">
+        <Breadcrumbs />
       </div>
 
-      <div className="grid items-start gap-8 md:grid-cols-2 lg:gap-12">
-        {/* Image Gallery */}
-        <div className="grid gap-4 md:grid-cols-[100px_1fr] lg:grid-cols-[120px_1fr]">
-          <div className="hidden flex-col gap-4 md:flex">
-            {(product.media_files || []).map((file, idx) => (
-              <button key={idx} className="overflow-hidden rounded-lg border transition-colors hover:border-gray-900">
-                <img
-                  src={file.file_url || "/public/default.jpg"}
-                  alt={`Thumbnail ${idx + 1}`}
-                  className="aspect-4/3 object-cover"
-                />
-              </button>
-            ))}
-          </div>
-
-          <div className="relative">
+      <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
+        {/* Left: Images - Compact Version */}
+        <div className="space-y-3">
+          {/* Main Image */}
+          <div className="relative aspect-square overflow-hidden rounded-lg border bg-gray-50">
             <img
-              src={product.media_files?.[0]?.file_url || product.shop?.shop_picture || "/public/default.jpg"}
+              src={images[activeImage]?.file_url || product.shop?.shop_picture || "/public/default.jpg"}
               alt={product.name}
-              className="aspect-4/3 h-[410px] w-full rounded-lg border object-cover"
+              className="h-full w-full object-contain"
             />
+            
+            {images.length > 1 && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-white/90 hover:bg-white"
+                  onClick={() => setActiveImage(prev => prev === 0 ? images.length - 1 : prev - 1)}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-white/90 hover:bg-white"
+                  onClick={() => setActiveImage(prev => prev === images.length - 1 ? 0 : prev + 1)}
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
+            
             {product.discount && (
-              <div className="absolute top-4 left-4 rounded-full bg-blue-600 px-3 py-1 text-xs font-medium text-white">
+              <div className="absolute top-2 left-2 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded">
                 {product.discount}% OFF
               </div>
             )}
-            <Button variant="ghost" size="icon" className="absolute top-1/2 left-4 -translate-y-1/2 rounded-full bg-white/80 hover:bg-white">
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
-            <Button variant="ghost" size="icon" className="absolute top-1/2 right-4 -translate-y-1/2 rounded-full bg-white/80 hover:bg-white">
-              <ChevronRight className="h-5 w-5" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Product Details */}
-        <div className="grid gap-6">
-          <div className="flex justify-between items-start">
-            <h1 className="text-3xl font-extrabold text-gray-900">{product.name}</h1>
-            <div className="flex gap-1.5">
-              <button className="p-1.5 rounded-full hover:bg-gray-100 transition">
-                <Share2 className="h-4 w-4 text-gray-700" />
-              </button>
-              <button className="p-1.5 rounded-full hover:bg-red-100 transition">
-                <Flag className="h-4 w-4 text-red-500" />
-              </button>
-            </div>
           </div>
 
-          <div className="flex items-center gap-3 text-sm text-gray-600">
-            <div className="flex items-center gap-1">
-              {Array.from({ length: 5 }).map((_, idx) => (
-                <Star key={idx} className={`h-4 w-4 ${idx < (product.rating || 0) ? "fill-yellow-500 text-yellow-500" : "text-gray-300"}`} />
+          {/* Thumbnail Strip - Horizontal */}
+          {images.length > 1 && (
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {images.map((img, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setActiveImage(idx)}
+                  className={`flex-shrink-0 h-16 w-16 overflow-hidden rounded border ${
+                    activeImage === idx ? "border-orange-500 border-2" : "border-gray-300"
+                  }`}
+                >
+                  <img
+                    src={img.file_url}
+                    alt={`Thumb ${idx + 1}`}
+                    className="h-full w-full object-cover"
+                  />
+                </button>
               ))}
             </div>
-            <span className="font-semibold text-gray-900">{product.rating?.toFixed(1) || 0}</span>
-            <span className="text-gray-400">•</span>
-            <Link to="#" className="hover:underline cursor-pointer text-gray-600">{product.reviews_count || 0} reviews</Link>
-            <span className="text-gray-400">•</span>
-            <span>{product.sold || 0} sold</span>
+          )}
+        </div>
+
+        {/* Right: Product Details - Compact */}
+        <div className="space-y-4">
+          {/* Product Header - Compact */}
+          <div className="space-y-2">
+            <div className="flex items-start justify-between">
+              <h1 className="text-xl font-bold text-gray-900 md:text-2xl">
+                {product.name}
+              </h1>
+              <div className="flex gap-1">
+                <button className="p-1.5 rounded hover:bg-gray-100">
+                  <Share2 className="h-4 w-4 text-gray-600" />
+                </button>
+                <button className="p-1.5 rounded hover:bg-red-50">
+                  <Flag className="h-4 w-4 text-red-500" />
+                </button>
+              </div>
+            </div>
+
+            {/* Rating & Stats - Compact */}
+            <div className="flex items-center gap-2 flex-wrap text-sm">
+              <div className="flex items-center">
+                {Array.from({ length: 5 }).map((_, idx) => (
+                  <Star
+                    key={idx}
+                    className={`h-3.5 w-3.5 ${
+                      idx < (product.rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-300"
+                    }`}
+                  />
+                ))}
+                <span className="ml-1 font-medium">{product.rating?.toFixed(1) || 0}</span>
+              </div>
+              <span className="text-gray-300">•</span>
+              <Link to="#" className="text-blue-600 hover:underline text-sm">
+                {product.reviews_count || 0} reviews
+              </Link>
+              <span className="text-gray-300">•</span>
+              <span className="text-gray-600">{product.sold || 0} sold</span>
+            </div>
           </div>
 
-          <Separator />
+          <Separator className="my-2" />
 
-          <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-extrabold text-orange-600">₱{product.price}</span>
-            {product.original_price && <span className="text-xl text-gray-500 line-through">₱{product.original_price}</span>}
-            {product.discount && <span className="text-sm text-red-600 font-medium ml-2">({product.discount}% OFF)</span>}
+          {/* Price - Compact */}
+          <div className="space-y-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold text-orange-600">₱{product.price}</span>
+              {hasDiscount && product.original_price && (
+                <>
+                  <span className="text-lg text-gray-500 line-through">
+                    ₱{product.original_price}
+                  </span>
+                  <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">
+                    Save {product.discount}%
+                  </span>
+                </>
+              )}
+            </div>
+            {product.category?.name && (
+              <div className="text-xs text-gray-500">
+                Category: {product.category.name}
+              </div>
+            )}
           </div>
 
-          <div className="text-sm text-gray-500">{product.sold || 0} products sold out</div>
-
-          <Separator />
-
-          {/* Variants (if any) */}
+          {/* Variants - Compact */}
           {product.variants && product.variants.length > 0 && (
-            <div className="grid gap-2">
-              <Label className="text-base font-semibold">Variants</Label>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-semibold">Variants</Label>
               <RadioGroup 
                 value={selectedVariant || ""} 
                 onValueChange={setSelectedVariant}
-                className="flex flex-wrap gap-2"
+                className="flex flex-wrap gap-1.5"
               >
                 {product.variants.map((variant) => (
-                  <div key={variant.id} className="flex items-center space-x-2">
-                    <RadioGroupItem value={variant.id} id={variant.id} />
-                    <Label htmlFor={variant.id} className="text-sm font-normal cursor-pointer">
+                  <div key={variant.id} className="flex items-center space-x-1">
+                    <RadioGroupItem value={variant.id} id={variant.id} className="h-3.5 w-3.5" />
+                    <Label htmlFor={variant.id} className="text-xs cursor-pointer">
                       {variant.name}
                     </Label>
                   </div>
@@ -251,77 +310,142 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
-          {/* Quantity */}
-          <div className="grid gap-2">
-            <Label htmlFor="quantity" className="text-base font-semibold">Quantity</Label>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" onClick={decreaseQuantity} className="h-8 w-8 bg-transparent border-gray-300 hover:bg-gray-50">
-                <Minus className="h-4 w-4" />
+          {/* Quantity - Compact */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-semibold">Quantity</Label>
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={decreaseQuantity}
+                className="h-7 w-7 border-gray-300 hover:bg-gray-50"
+                disabled={quantity <= 1}
+              >
+                <Minus className="h-3 w-3" />
               </Button>
-              <div className="flex h-9 w-12 items-center justify-center rounded-md border border-gray-300 bg-gray-50 text-base font-medium">{quantity}</div>
-              <Button variant="outline" size="icon" onClick={increaseQuantity} className="h-8 w-8 bg-transparent border-gray-300 hover:bg-gray-50">
-                <Plus className="h-4 w-4" />
+              <div className="flex h-7 w-10 items-center justify-center rounded border bg-gray-50 text-sm font-medium">
+                {quantity}
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={increaseQuantity}
+                className="h-7 w-7 border-gray-300 hover:bg-gray-50"
+              >
+                <Plus className="h-3 w-3" />
               </Button>
             </div>
           </div>
 
-          <Separator />
-
-          {/* Add to Cart / Buy Now */}
-          <div className="flex flex-col gap-3 min-[400px]:flex-row">
+          {/* Action Buttons - Compact */}
+          <div className="space-y-2 pt-2">
+            <Button
+              size="sm"
+              className="w-full bg-orange-600 hover:bg-orange-700 h-9 text-sm font-semibold"
+              onClick={() => {
+                // Buy Now functionality
+                handleAddToCart();
+              }}
+            >
+              Buy Now
+            </Button>
+            
             <Button
               variant="outline"
-              size="default"
-              className="w-full text-sm font-semibold text-orange-600 border-orange-600 hover:bg-orange-50 flex items-center justify-center gap-2"
+              size="sm"
+              className="w-full border-orange-600 text-orange-600 hover:bg-orange-50 h-9 text-sm"
               onClick={handleAddToCart}
               disabled={addingToCart}
             >
-              <ShoppingBagIcon className="h-4 w-4" />
+              <ShoppingBagIcon className="h-4 w-4 mr-1.5" />
               {addingToCart ? "Adding..." : "Add to Cart"}
             </Button>
             
-            <Button size="default" className="flex-1 text-sm font-semibold bg-orange-600 text-white hover:bg-orange-700 flex items-center justify-center gap-2">
-              Buy Now
-            </Button>
+            {cartError && (
+              <div className="text-xs text-red-500 bg-red-50 p-1.5 rounded">
+                {cartError}
+              </div>
+            )}
           </div>
-          
-          {cartError && <p className="text-sm text-red-500 mt-1">{cartError}</p>}
+
+          {/* Shop Info - Compact */}
+          {product.shop && (
+            <div className="border rounded p-3 bg-gray-50">
+              <div className="flex items-center gap-2 mb-2">
+                <Store className="h-4 w-4 text-gray-500" />
+                <span className="text-sm font-semibold">Shop Information</span>
+              </div>
+              <div className="flex items-start gap-3">
+                <img
+                  src={product.shop.shop_picture || "https://placehold.co/40x40?text=Shop"}
+                  alt="Shop"
+                  className="h-10 w-10 rounded-full object-cover border"
+                />
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium text-sm text-gray-900 truncate">
+                    {product.shop.name || "Unknown Shop"}
+                  </h3>
+                  {product.shop.address && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <MapPin className="h-3 w-3 text-gray-400" />
+                      <p className="text-xs text-gray-500 truncate">{product.shop.address}</p>
+                    </div>
+                  )}
+                  {product.shop.avg_rating !== undefined && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <div className="flex">
+                        {Array.from({ length: 5 }).map((_, idx) => (
+                          <Star
+                            key={idx}
+                            className={`h-3 w-3 ${
+                              idx < Math.floor(product.shop?.avg_rating || 0)
+                                ? "fill-yellow-400 text-yellow-400"
+                                : "text-gray-300"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-xs text-gray-600 ml-1">
+                        {product.shop.avg_rating?.toFixed(1) || "N/A"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <Link to={`/shop/${product.shop.name}`}>
+                  <Button size="sm" className="h-7 text-xs px-3 bg-gray-800 hover:bg-gray-900">
+                    Visit
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      <Separator />
-
-      {/* Shop Info */}
-      <div className="flex items-start justify-between p-4 border rounded-xl bg-gray-50 shadow-sm">
-        <div className="flex gap-4">
-          <img
-            src={product.shop?.shop_picture || "https://placehold.co/80x80?text=Shop"}
-            alt="Shop"
-            className="w-16 h-16 rounded-full object-cover border"
-          />
-          <div className="grid gap-1">
-            <h1 className="text-xl font-bold text-gray-900">{product.shop?.name || "Unknown Shop"}</h1>
-            {product.shop?.address && (
-              <p className="text-sm text-gray-500">{product.shop.address}</p>
-            )}
-            {product.shop?.avg_rating !== undefined && (
-              <p className="text-sm text-gray-500">
-                Ratings: {product.shop.avg_rating?.toFixed(1) || "N/A"}
-              </p>
-            )}
-          </div>
+      {/* Description - Compact */}
+      <div className="mt-6 border-t pt-4">
+        <h2 className="text-lg font-semibold mb-3">Product Description</h2>
+        <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
+          {product.description}
         </div>
-        <Button className="rounded-md px-5 py-2 text-sm font-medium bg-orange-600 hover:bg-orange-700 text-white">
-          Visit Shop
-        </Button>
       </div>
 
-      <Separator />
-
-      {/* Description */}
-      <div className="grid gap-2">
-        <h2 className="text-xl font-bold text-gray-900">Product Description</h2>
-        <p className="text-gray-700 text-sm leading-relaxed">{product.description}</p>
+      {/* Stats Row - Bottom */}
+      <div className="mt-6 grid grid-cols-3 gap-2 text-center text-xs">
+        <div className="border rounded p-2">
+          <div className="font-semibold">{product.sold || 0}</div>
+          <div className="text-gray-500">Sold</div>
+        </div>
+        <div className="border rounded p-2">
+          <div className="font-semibold">{product.reviews_count || 0}</div>
+          <div className="text-gray-500">Reviews</div>
+        </div>
+        <div className="border rounded p-2">
+          <div className="font-semibold">
+            {product.discount ? `${product.discount}% OFF` : "No Discount"}
+          </div>
+          <div className="text-gray-500">Discount</div>
+        </div>
       </div>
     </div>
   );

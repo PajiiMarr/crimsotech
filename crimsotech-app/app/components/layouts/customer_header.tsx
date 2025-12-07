@@ -54,10 +54,8 @@ export default function CustomerHeader() {
             <DropdownMenuItem onClick={() => navigate("/shop-list")}>
               Shop
             </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Link to='/logout'>
-                Sign Out
-              </Link>
+            <DropdownMenuItem onClick={() => navigate("/logout")}>
+              Sign Out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
