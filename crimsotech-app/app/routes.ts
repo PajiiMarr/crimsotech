@@ -17,6 +17,7 @@ export default [
     
     route('home', 'routes/customer/home.tsx'),
     route("cart", "routes/customer/cart.tsx"),
+    route("orders", "components/customer/orders.tsx"),
     route('shop-list', 'routes/customer/shop-list.tsx'),
     route('create-shop', 'routes/customer/create-shop.tsx'),
     route('personal-listing', 'routes/customer/personal-listing.tsx'),
@@ -26,13 +27,32 @@ export default [
     route('purchases', 'routes/customer/purchases.tsx'),
     route('subscription-plan', 'routes/customer/subscription-plan.tsx'),
     route("track-order/:id", "components/customer/track-order.tsx"),
-    route('orders', 'components/customer/orders.tsx'),
+    route("request-refund/:id", "components/customer/request-refund.tsx"),
+    route("decision/:id", "components/customer/decision.tsx"),
+    route("process-return-item/:id", "components/customer/process-return-item.tsx"),
+    route('order-list', 'routes/customer/order-list.tsx'),
+    route('view-completed-order/:id', 'components/customer/view-completed-order.tsx'),
+    route('view-cancelled-order/:id', 'components/customer/view-cancelled-order.tsx'),
+    route('order-review/:id', 'components/customer/order-review.tsx'),  
+    route('notifications', 'routes/customer/notifications.tsx'),  
+    route('return-refund-cancel', 'routes/customer/return-refund-cancel.tsx'),  
+    route('view-order', 'components/customer/view-order.tsx'),
+    route('arrange-shipment', 'components/customer/arrange-shipment.tsx'), 
+    
+   
     
     
     ...prefix("seller", [
         route("dashboard", "routes/seller/dashboard.tsx"), 
         route("seller-product-list", "routes/seller/seller-product-list.tsx"), 
         route("seller-create-product", "routes/seller/seller-create-product.tsx"), 
+        route("seller-order-list", "routes/seller/seller-order-list.tsx"), 
+        route("seller-return-refund-cancel", "routes/seller/seller-return-refund-cancel.tsx"), 
+        route("seller-earnings", "routes/seller/seller-earnings.tsx"), 
+        route("seller-vouchers", "routes/seller/seller-vouchers.tsx"), 
+        route("seller-notifications", "routes/seller/seller-notifications.tsx"), 
+        
+    
         
          ]),
 

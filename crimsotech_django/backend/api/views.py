@@ -5531,187 +5531,187 @@ class AdminReports(viewsets.ViewSet):
         return 'unknown'
 
 
-# class CustomerProducts(viewsets.ViewSet):
-#     @action(detail=False, methods=['get'])
-#     def get_products(self, request):
-#         shop_id = request.query_params.get('shop_id')
+class CustomerProducts(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_products(self, request):
+        shop_id = request.query_params.get('shop_id')
 
-#         products = (
-#             Product.objects
-#             .filter(shop=shop_id)            # WHERE shop_id = ?
-#             .order_by('name')
-#             .select_related('shop', 'category')
-#         )
+        products = (
+            Product.objects
+            .filter(shop=shop_id)            # WHERE shop_id = ?
+            .order_by('name')
+            .select_related('shop', 'category')
+        )
 
-#         serializer = ProductSerializer(products, many=True)
+        serializer = ProductSerializer(products, many=True)
 
-#         return Response({
-#             'success': True,
-#             'products': serializer.data
-#         })
+        return Response({
+            'success': True,
+            'products': serializer.data
+        })
     
-#     @action(detail=False, methods=['post'])
-#     def create_product(self, request):
-#         """
-#         Create a new product without authentication
-#         POST /api/your-endpoint/create_product/
-#         """
-#         try:
-#             # Validate required fields
-#             required_fields = ['shop', 'category', 'category_admin', 'name', 'price', 'quantity', 'customer']
-#             missing_fields = [field for field in required_fields if field not in request.data]
+    @action(detail=False, methods=['post'])
+    def create_product(self, request):
+        """
+        Create a new product without authentication
+        POST /api/your-endpoint/create_product/
+        """
+        try:
+            # Validate required fields
+            required_fields = ['shop', 'category', 'category_admin', 'name', 'price', 'quantity', 'customer']
+            missing_fields = [field for field in required_fields if field not in request.data]
             
-#             if missing_fields:
-#                 return Response(
-#                     {
-#                         "error": "Missing required fields",
-#                         "missing_fields": missing_fields
-#                     },
-#                     status=status.HTTP_400_BAD_REQUEST
-#                 )
+            if missing_fields:
+                return Response(
+                    {
+                        "error": "Missing required fields",
+                        "missing_fields": missing_fields
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-#             # Get customer
-#             customer_id = request.data.get('customer')
-#             try:
-#                 customer = Customer.objects.get(customer_id=customer_id)
-#             except Customer.DoesNotExist:
-#                 return Response(
-#                     {"error": "Customer not found"},
-#                     status=status.HTTP_404_NOT_FOUND
-#                 )
+            # Get customer
+            customer_id = request.data.get('customer')
+            try:
+                customer = Customer.objects.get(customer_id=customer_id)
+            except Customer.DoesNotExist:
+                return Response(
+                    {"error": "Customer not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
-#             # Check product limit
-#             if not customer.can_add_product():
-#                 return Response(
-#                     {
-#                         "error": "Product limit reached",
-#                         "detail": f"Customer has reached the limit of {customer.product_limit} products",
-#                         "current_count": customer.current_product_count,
-#                         "limit": customer.product_limit
-#                     },
-#                     status=status.HTTP_400_BAD_REQUEST
-#                 )
+            # Check product limit
+            if not customer.can_add_product():
+                return Response(
+                    {
+                        "error": "Product limit reached",
+                        "detail": f"Customer has reached the limit of {customer.product_limit} products",
+                        "current_count": customer.current_product_count,
+                        "limit": customer.product_limit
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-#             # Validate shop ownership
-#             shop_id = request.data.get('shop')
-#             try:
-#                 shop = Shop.objects.get(id=shop_id)
-#                 if shop.customer != customer:
-#                     return Response(
-#                         {
-#                             "error": "Shop ownership validation failed",
-#                             "detail": "Customer can only add products to their own shops"
-#                         },
-#                         status=status.HTTP_403_FORBIDDEN
-#                     )
-#             except Shop.DoesNotExist:
-#                 return Response(
-#                     {"error": "Shop not found"},
-#                     status=status.HTTP_404_NOT_FOUND
-#                 )
+            # Validate shop ownership
+            shop_id = request.data.get('shop')
+            try:
+                shop = Shop.objects.get(id=shop_id)
+                if shop.customer != customer:
+                    return Response(
+                        {
+                            "error": "Shop ownership validation failed",
+                            "detail": "Customer can only add products to their own shops"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except Shop.DoesNotExist:
+                return Response(
+                    {"error": "Shop not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
-#             # Validate category exists
-#             category_id = request.data.get('category')
-#             category_admin_id = request.data.get('category_admin')
+            # Validate category exists
+            category_id = request.data.get('category')
+            category_admin_id = request.data.get('category_admin')
             
-#             try:
-#                 category = Category.objects.get(id=category_id)
-#                 category_admin = Category.objects.get(id=category_admin_id)
-#             except Category.DoesNotExist:
-#                 return Response(
-#                     {"error": "Category not found"},
-#                     status=status.HTTP_404_NOT_FOUND
-#                 )
+            try:
+                category = Category.objects.get(id=category_id)
+                category_admin = Category.objects.get(id=category_admin_id)
+            except Category.DoesNotExist:
+                return Response(
+                    {"error": "Category not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
-#             # Validate category user types
-#             # For category (customer category) - should be created by the same customer
-#             if category.user:
-#                 if category.user.is_customer and category.user.customer != customer:
-#                     return Response(
-#                         {
-#                             "error": "Category ownership validation failed",
-#                             "detail": "You can only use your own customer categories"
-#                         },
-#                         status=status.HTTP_403_FORBIDDEN
-#                     )
+            # Validate category user types
+            # For category (customer category) - should be created by the same customer
+            if category.user:
+                if category.user.is_customer and category.user.customer != customer:
+                    return Response(
+                        {
+                            "error": "Category ownership validation failed",
+                            "detail": "You can only use your own customer categories"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             
-#             # For category_admin - should be created by an admin
-#             if category_admin.user:
-#                 if not category_admin.user.is_admin:
-#                     return Response(
-#                         {
-#                             "error": "Admin category validation failed",
-#                             "detail": "category_admin must be created by an admin"
-#                         },
-#                         status=status.HTTP_403_FORBIDDEN
-#                     )
-#             else:
-#                 # category_admin has no user - might be system category
-#                 # You can decide whether to allow this or not
-#                 pass
+            # For category_admin - should be created by an admin
+            if category_admin.user:
+                if not category_admin.user.is_admin:
+                    return Response(
+                        {
+                            "error": "Admin category validation failed",
+                            "detail": "category_admin must be created by an admin"
+                        },
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                # category_admin has no user - might be system category
+                # You can decide whether to allow this or not
+                pass
             
-#             # Use serializer for creation
-#             serializer = ProductCreateSerializer(data=request.data)
+            # Use serializer for creation
+            serializer = ProductCreateSerializer(data=request.data)
             
-#             if serializer.is_valid():
-#                 try:
-#                     with transaction.atomic():
-#                         product = serializer.save()
+            if serializer.is_valid():
+                try:
+                    with transaction.atomic():
+                        product = serializer.save()
                         
-#                         # Success response
-#                         return Response(
-#                             {
-#                                 "success": True,
-#                                 "message": "Product created successfully",
-#                                 "product": {
-#                                     "id": str(product.id),
-#                                     "name": product.name,
-#                                     "shop": shop.name,
-#                                     "category": category.name,
-#                                     "category_type": "Customer" if category.user and category.user.is_customer else "System",
-#                                     "category_admin": category_admin.name,
-#                                     "category_admin_type": "Admin" if category_admin.user and category_admin.user.is_admin else "System",
-#                                     "price": str(product.price),
-#                                     "quantity": product.quantity,
-#                                     "status": product.status,
-#                                     "condition": product.condition,
-#                                     "created_at": product.created_at
-#                                 },
-#                                 "customer_stats": {
-#                                     "customer_id": str(customer.customer_id),
-#                                     "current_product_count": customer.current_product_count,
-#                                     "product_limit": customer.product_limit,
-#                                     "remaining_slots": customer.product_limit - customer.current_product_count
-#                                 }
-#                             },
-#                             status=status.HTTP_201_CREATED
-#                         )
+                        # Success response
+                        return Response(
+                            {
+                                "success": True,
+                                "message": "Product created successfully",
+                                "product": {
+                                    "id": str(product.id),
+                                    "name": product.name,
+                                    "shop": shop.name,
+                                    "category": category.name,
+                                    "category_type": "Customer" if category.user and category.user.is_customer else "System",
+                                    "category_admin": category_admin.name,
+                                    "category_admin_type": "Admin" if category_admin.user and category_admin.user.is_admin else "System",
+                                    "price": str(product.price),
+                                    "quantity": product.quantity,
+                                    "status": product.status,
+                                    "condition": product.condition,
+                                    "created_at": product.created_at
+                                },
+                                "customer_stats": {
+                                    "customer_id": str(customer.customer_id),
+                                    "current_product_count": customer.current_product_count,
+                                    "product_limit": customer.product_limit,
+                                    "remaining_slots": customer.product_limit - customer.current_product_count
+                                }
+                            },
+                            status=status.HTTP_201_CREATED
+                        )
                         
-#                 except Exception as e:
-#                     return Response(
-#                         {
-#                             "error": "Failed to create product",
-#                             "detail": str(e)
-#                         },
-#                         status=status.HTTP_400_BAD_REQUEST
-#                     )
+                except Exception as e:
+                    return Response(
+                        {
+                            "error": "Failed to create product",
+                            "detail": str(e)
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
-#             return Response(
-#                 {
-#                     "error": "Validation failed",
-#                     "details": serializer.errors
-#                 },
-#                 status=status.HTTP_400_BAD_REQUEST
-#             )
+            return Response(
+                {
+                    "error": "Validation failed",
+                    "details": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
-#         except Exception as e:
-#             return Response(
-#                 {
-#                     "error": "Internal server error",
-#                     "detail": str(e)
-#                 },
-#                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-#             )
+        except Exception as e:
+            return Response(
+                {
+                    "error": "Internal server error",
+                    "detail": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
         
 class RiderStatus(viewsets.ViewSet):
@@ -5766,185 +5766,185 @@ class CustomerShops(APIView):
                 "message": "No customer found with this ID",
                 "data_source": "database"
             }, status=status.HTTP_200_OK) 
-        
-def post(self, request):
-        """
-        Create a new shop for a customer
-        """
-        try:
-            # Get user ID from request data (passed from frontend)
-            user_id = request.data.get('customer')
             
-            if not user_id:
-                return Response(
-                    {'error': 'User ID is required'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Validate that the user exists and is a customer
+    def post(self, request):
+            """
+            Create a new shop for a customer
+            """
             try:
-                user = User.objects.get(id=user_id)
+                # Get user ID from request data (passed from frontend)
+                user_id = request.data.get('customer')
                 
-                # Check if user is a customer
-                if not user.is_customer:
+                if not user_id:
                     return Response(
-                        {'error': 'User is not registered as a customer'}, 
+                        {'error': 'User ID is required'}, 
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 
-                # Get or create Customer instance
-                customer, created = Customer.objects.get_or_create(customer=user)
-                
-            except User.DoesNotExist:
-                return Response(
-                    {'error': 'User not found'}, 
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Validate required fields
-            required_fields = ['name', 'description', 'province', 'city', 'barangay', 'street', 'contact_number']
-            missing_fields = []
-            
-            for field in required_fields:
-                if field not in request.data or not request.data.get(field):
-                    missing_fields.append(field)
-            
-            if missing_fields:
-                return Response(
-                    {'error': f'Missing required fields: {", ".join(missing_fields)}'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Validate field lengths based on model
-            validation_errors = {}
-            
-            # Validate name (max 50 characters in model)
-            name = request.data.get('name', '').strip()
-            if len(name) > 50:
-                validation_errors['name'] = 'Shop name must be 50 characters or less'
-            
-            # Validate description (max 200 characters in model)
-            description = request.data.get('description', '').strip()
-            if len(description) > 200:
-                validation_errors['description'] = 'Description must be 200 characters or less'
-            
-            # Validate location fields (max 50 characters each in model)
-            location_fields = ['province', 'city', 'barangay', 'street']
-            for field in location_fields:
-                value = request.data.get(field, '').strip()
-                if len(value) > 50:
-                    validation_errors[field] = f'{field.capitalize()} must be 50 characters or less'
-            
-            # Validate contact number (max 20 characters in model)
-            contact_number = request.data.get('contact_number', '').strip()
-            if len(contact_number) > 20:
-                validation_errors['contact_number'] = 'Contact number must be 20 characters or less'
-            
-            if validation_errors:
-                return Response(
-                    {'errors': validation_errors}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Check if customer already has a shop (optional, based on business logic)
-            # Remove this if customers can have multiple shops
-            existing_shop = Shop.objects.filter(customer=customer).first()
-            if existing_shop:
-                return Response(
-                    {'error': 'Customer already has a shop'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Use atomic transaction for data integrity
-            with transaction.atomic():
-                # Create the shop
-                shop = Shop.objects.create(
-                    id=uuid.uuid4(),
-                    name=name,
-                    description=description,
-                    province=request.data.get('province', '').strip(),
-                    city=request.data.get('city', '').strip(),
-                    barangay=request.data.get('barangay', '').strip(),
-                    street=request.data.get('street', '').strip(),
-                    contact_number=contact_number,
-                    customer=customer,
-                    # Set default values
-                    verified=False,
-                    status="Active",
-                    total_sales=0,
-                    is_suspended=False,
-                    created_at=timezone.now(),
-                    updated_at=timezone.now()
-                )
-                
-                # Handle shop picture if provided
-                shop_picture = request.FILES.get('shop_picture')
-                if shop_picture:
-                    # Validate file type
-                    valid_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
-                    valid_mime_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+                # Validate that the user exists and is a customer
+                try:
+                    user = User.objects.get(id=user_id)
                     
-                    # Get file extension
-                    file_extension = shop_picture.name.split('.')[-1].lower()
-                    
-                    # Validate both extension and content type
-                    if (file_extension not in valid_extensions or 
-                        shop_picture.content_type not in valid_mime_types):
-                        raise ValueError(
-                            'Invalid file type. Supported formats: JPEG, PNG, GIF, WebP'
+                    # Check if user is a customer
+                    if not user.is_customer:
+                        return Response(
+                            {'error': 'User is not registered as a customer'}, 
+                            status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Validate file size (5MB limit as in frontend)
-                    if shop_picture.size > 5 * 1024 * 1024:
-                        raise ValueError('File size must be less than 5MB')
+                    # Get or create Customer instance
+                    customer, created = Customer.objects.get_or_create(customer=user)
                     
-                    shop.shop_picture = shop_picture
-                    shop.save()
+                except User.DoesNotExist:
+                    return Response(
+                        {'error': 'User not found'}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
                 
-                # Prepare response data
-                shop_data = {
-                    'id': str(shop.id),
-                    'name': shop.name,
-                    'description': shop.description,
-                    'province': shop.province,
-                    'city': shop.city,
-                    'barangay': shop.barangay,
-                    'street': shop.street,
-                    'contact_number': shop.contact_number,
-                    'customer': str(shop.customer.customer_id) if shop.customer else None,
-                    'verified': shop.verified,
-                    'status': shop.status,
-                    'total_sales': str(shop.total_sales),
-                    'created_at': shop.created_at.isoformat(),
-                    'updated_at': shop.updated_at.isoformat(),
-                }
+                # Validate required fields
+                required_fields = ['name', 'description', 'province', 'city', 'barangay', 'street', 'contact_number']
+                missing_fields = []
                 
-                if shop.shop_picture:
-                    shop_data['shop_picture'] = request.build_absolute_uri(shop.shop_picture.url)
+                for field in required_fields:
+                    if field not in request.data or not request.data.get(field):
+                        missing_fields.append(field)
                 
-                logger.info(f"Shop created successfully: {shop.name} by user {user_id}")
+                if missing_fields:
+                    return Response(
+                        {'error': f'Missing required fields: {", ".join(missing_fields)}'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
                 
-                return Response({
-                    'success': True,
-                    'message': 'Shop created successfully',
-                    'shop': shop_data,
-                    'id': str(shop.id)
-                }, status=status.HTTP_201_CREATED)
+                # Validate field lengths based on model
+                validation_errors = {}
                 
-        except ValueError as e:
-            return Response(
-                {'error': str(e)}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.error(f"Shop creation failed: {str(e)}", exc_info=True)
-            return Response(
-                {
-                    'error': 'An error occurred while creating the shop',
-                    'details': str(e)
-                }, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                # Validate name (max 50 characters in model)
+                name = request.data.get('name', '').strip()
+                if len(name) > 50:
+                    validation_errors['name'] = 'Shop name must be 50 characters or less'
+                
+                # Validate description (max 200 characters in model)
+                description = request.data.get('description', '').strip()
+                if len(description) > 200:
+                    validation_errors['description'] = 'Description must be 200 characters or less'
+                
+                # Validate location fields (max 50 characters each in model)
+                location_fields = ['province', 'city', 'barangay', 'street']
+                for field in location_fields:
+                    value = request.data.get(field, '').strip()
+                    if len(value) > 50:
+                        validation_errors[field] = f'{field.capitalize()} must be 50 characters or less'
+                
+                # Validate contact number (max 20 characters in model)
+                contact_number = request.data.get('contact_number', '').strip()
+                if len(contact_number) > 20:
+                    validation_errors['contact_number'] = 'Contact number must be 20 characters or less'
+                
+                if validation_errors:
+                    return Response(
+                        {'errors': validation_errors}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Check if customer already has a shop (optional, based on business logic)
+                # Remove this if customers can have multiple shops
+                existing_shop = Shop.objects.filter(customer=customer).first()
+                if existing_shop:
+                    return Response(
+                        {'error': 'Customer already has a shop'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Use atomic transaction for data integrity
+                with transaction.atomic():
+                    # Create the shop
+                    shop = Shop.objects.create(
+                        id=uuid.uuid4(),
+                        name=name,
+                        description=description,
+                        province=request.data.get('province', '').strip(),
+                        city=request.data.get('city', '').strip(),
+                        barangay=request.data.get('barangay', '').strip(),
+                        street=request.data.get('street', '').strip(),
+                        contact_number=contact_number,
+                        customer=customer,
+                        # Set default values
+                        verified=False,
+                        status="Active",
+                        total_sales=0,
+                        is_suspended=False,
+                        created_at=timezone.now(),
+                        updated_at=timezone.now()
+                    )
+                    
+                    # Handle shop picture if provided
+                    shop_picture = request.FILES.get('shop_picture')
+                    if shop_picture:
+                        # Validate file type
+                        valid_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+                        valid_mime_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+                        
+                        # Get file extension
+                        file_extension = shop_picture.name.split('.')[-1].lower()
+                        
+                        # Validate both extension and content type
+                        if (file_extension not in valid_extensions or 
+                            shop_picture.content_type not in valid_mime_types):
+                            raise ValueError(
+                                'Invalid file type. Supported formats: JPEG, PNG, GIF, WebP'
+                            )
+                        
+                        # Validate file size (5MB limit as in frontend)
+                        if shop_picture.size > 5 * 1024 * 1024:
+                            raise ValueError('File size must be less than 5MB')
+                        
+                        shop.shop_picture = shop_picture
+                        shop.save()
+                    
+                    # Prepare response data
+                    shop_data = {
+                        'id': str(shop.id),
+                        'name': shop.name,
+                        'description': shop.description,
+                        'province': shop.province,
+                        'city': shop.city,
+                        'barangay': shop.barangay,
+                        'street': shop.street,
+                        'contact_number': shop.contact_number,
+                        'customer': str(shop.customer.customer_id) if shop.customer else None,
+                        'verified': shop.verified,
+                        'status': shop.status,
+                        'total_sales': str(shop.total_sales),
+                        'created_at': shop.created_at.isoformat(),
+                        'updated_at': shop.updated_at.isoformat(),
+                    }
+                    
+                    if shop.shop_picture:
+                        shop_data['shop_picture'] = request.build_absolute_uri(shop.shop_picture.url)
+                    
+                    logger.info(f"Shop created successfully: {shop.name} by user {user_id}")
+                    
+                    return Response({
+                        'success': True,
+                        'message': 'Shop created successfully',
+                        'shop': shop_data,
+                        'id': str(shop.id)
+                    }, status=status.HTTP_201_CREATED)
+                    
+            except ValueError as e:
+                return Response(
+                    {'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e:
+                logger.error(f"Shop creation failed: {str(e)}", exc_info=True)
+                return Response(
+                    {
+                        'error': 'An error occurred while creating the shop',
+                        'details': str(e)
+                    }, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
 class CustomerShopsAddSeller(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

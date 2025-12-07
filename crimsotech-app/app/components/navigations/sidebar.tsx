@@ -99,7 +99,8 @@ const menuItems = [
     group: "Product Listing",
     children: [
       { title: "My products", url: "/personal-listing", icon: Package  , roles: ["customer"] },
-      { title: "Order Lists", url: "/customer/order_lists", icon: ClipboardList, roles: ["customer"] },
+      { title: "Order Lists", url: "/order-list", icon: ClipboardList, roles: ["customer"] },
+      { title: "Return/Refund/Cancel", url: "/return-refund-cancel", icon: ClipboardList, roles: ["customer"] },
       { title: "Subscription Plans", url: "/subscription-plan", icon: DollarSign, roles: ["customer"] },
     ]
   },
@@ -107,7 +108,7 @@ const menuItems = [
    {
     group: "Settings",
     children: [
-      { title: "Notification", url: "/customer/notification", icon: Bell , roles: ["customer"] },
+      { title: "Notification", url: "/notifications", icon: Bell , roles: ["customer"] },
     ]
   },
 

@@ -68,7 +68,7 @@ export default function TrackOrder() {
   const summary = {
     productTotal: 888000,
     shippingDiscount: 7500,
-    platformFee: 4000,
+    platformFee: 0.015,
     totalPaid: 876500,
     paymentMethod: "Cash On Delivery (COD)",
   };
