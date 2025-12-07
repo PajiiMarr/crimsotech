@@ -2,7 +2,7 @@
 "use client";
 
 import React from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import {
   CheckCircle,
   XCircle,
