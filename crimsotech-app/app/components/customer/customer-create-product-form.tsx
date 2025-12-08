@@ -9,7 +9,7 @@ import { Badge } from "~/components/ui/badge";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Switch } from "~/components/ui/switch";
 import { Separator } from "~/components/ui/separator";
-import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck } from "lucide-react";
+import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Check } from "lucide-react";
 import { useState } from 'react';
 import Breadcrumbs from "~/components/ui/breadcrumbs";
 
@@ -58,6 +58,7 @@ interface ShippingZone {
   fee: number | '';
   freeShipping: boolean;
 }
+
 interface VariantOption {
   id: string;
   title: string;
@@ -84,12 +85,20 @@ interface VariantGroup {
 interface CreateProductFormProps {
   selectedShop: Shop | null;
   globalCategories: Category[];
-  errors: FormErrors;
+  errors?: FormErrors;
+  userShops?: Shop[];
+  isPersonalListing?: boolean;
 }
 
 // --- REACT COMPONENT ---
 
-export default function CreateProductForm({ selectedShop, globalCategories, errors }: CreateProductFormProps) {
+export default function CreateProductForm({ 
+  selectedShop, 
+  globalCategories, 
+  errors = {},
+  userShops = [],
+  isPersonalListing = true
+}: CreateProductFormProps) {
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
   const [showVariants, setShowVariants] = useState(false);
   const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
@@ -101,27 +110,30 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const [productWidth, setProductWidth] = useState<number | ''>('');
   const [productHeight, setProductHeight] = useState<number | ''>('');
   const [shippingZones, setShippingZones] = useState<ShippingZone[]>([
-  { id: crypto.randomUUID(), name: 'Local', fee: '', freeShipping: false },
-  { id: crypto.randomUUID(), name: 'Nearby City', fee: '', freeShipping: false },
-  { id: crypto.randomUUID(), name: 'Far Province', fee: '', freeShipping: false },
-]);
-const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
-  setShippingZones(prev => prev.map(zone => 
-    zone.id === zoneId ? { ...zone, fee } : zone
-  ));
-};
+    { id: crypto.randomUUID(), name: 'Local', fee: '', freeShipping: false },
+    { id: crypto.randomUUID(), name: 'Nearby City', fee: '', freeShipping: false },
+    { id: crypto.randomUUID(), name: 'Far Province', fee: '', freeShipping: false },
+  ]);
+  
+  // Shop selection state
+  const [addToShop, setAddToShop] = useState(false);
+  const [selectedShopId, setSelectedShopId] = useState<string>('');
+
+  // Use example shops if userShops is empty
+  const shopsToDisplay = userShops.length > 0 ? userShops : [
+    { id: 'shop-1', name: 'My Fashion Store', description: 'Clothing and accessories' },
+    { id: 'shop-2', name: 'Tech Gadgets Hub', description: 'Electronics and gadgets' }
+  ];
 
   // --- MAIN MEDIA HANDLERS ---
   const handleMainMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     const maxMedia = 9;
     
-    // Filter files to only accept images and videos
     const validFiles = files.filter(file => 
       file.type.startsWith('image/') || file.type.startsWith('video/')
     );
     
-    // Calculate available slots
     const availableSlots = maxMedia - mainMedia.length;
     const filesToAdd = validFiles.slice(0, availableSlots);
     
@@ -144,21 +156,25 @@ const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
     setMainMedia(prev => prev.filter((_, i) => i !== index));
   };
 
- 
+  const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
+    setShippingZones(prev => prev.map(zone => 
+      zone.id === zoneId ? { ...zone, fee } : zone
+    ));
+  };
 
-const toggleZoneFreeShipping = (zoneId: string) => {
-  setShippingZones(prev => prev.map(zone => {
-    if (zone.id === zoneId) {
-      const newFreeShipping = !zone.freeShipping;
-      return {
-        ...zone,
-        freeShipping: newFreeShipping,
-        fee: newFreeShipping ? 0 : ''
-      };
-    }
-    return zone;
-  }));
-};
+  const toggleZoneFreeShipping = (zoneId: string) => {
+    setShippingZones(prev => prev.map(zone => {
+      if (zone.id === zoneId) {
+        const newFreeShipping = !zone.freeShipping;
+        return {
+          ...zone,
+          freeShipping: newFreeShipping,
+          fee: newFreeShipping ? 0 : ''
+        };
+      }
+      return zone;
+    }));
+  };
 
   // --- VARIANT HANDLERS ---
   const addVariantGroup = () => {
@@ -173,7 +189,7 @@ const toggleZoneFreeShipping = (zoneId: string) => {
             title: "Red",
             quantity: 0,
             price: 0,
-            weight_unit: 'g' as const, // Explicitly type as const to match the union type
+            weight_unit: 'g' as const,
           },
         ],
       },
@@ -196,7 +212,7 @@ const toggleZoneFreeShipping = (zoneId: string) => {
       title: title.trim(),
       quantity: 0,
       price: 0,
-      weight_unit: 'g' as const, // Explicitly type as const to match the union type
+      weight_unit: 'g' as const,
     };
     
     setVariantGroups(prev => prev.map(group => 
@@ -261,9 +277,132 @@ const toggleZoneFreeShipping = (zoneId: string) => {
     e.target.value = '';
   };
 
+  // Get selected shop name
+  const getSelectedShopName = () => {
+    if (selectedShopId && shopsToDisplay.length > 0) {
+      const shop = shopsToDisplay.find(s => s.id === selectedShopId);
+      return shop?.name || '';
+    }
+    return '';
+  };
+
   // --- RENDER ---
   return (
     <div className="space-y-8">
+      {/* Simple Shop Selection Card with Checkbox */}
+      {isPersonalListing && (
+        <Card id="shop-selection">
+          <CardHeader>
+            <CardTitle>Shop Assignment</CardTitle>
+            <CardDescription>
+              Do you want to add this product to your shop?
+            </CardDescription>
+          </CardHeader>
+          
+          <CardContent>
+            <div className="space-y-4">
+              {/* Simple Checkbox for Add to Shop */}
+              <div className="flex items-start space-x-3">
+                <input
+                  type="checkbox"
+                  id="add-to-shop"
+                  checked={addToShop}
+                  onChange={(e) => {
+                    setAddToShop(e.target.checked);
+                    if (!e.target.checked) {
+                      setSelectedShopId('');
+                    }
+                  }}
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="add-to-shop" className="font-medium">
+                    Add this product to my shop
+                  </Label>
+                  <p className="text-sm text-gray-500">
+                    Products listed in shops get better visibility and sales
+                  </p>
+                </div>
+              </div>
+
+              {/* Shop selection when checkbox is checked */}
+              {addToShop && (
+                <div className="mt-4 space-y-3">
+                  <Label className="text-sm font-medium">Select your shop:</Label>
+                  <p className="text-sm text-gray-500 mb-3">
+                    Choose which shop to add this product to
+                  </p>
+                  
+                  <div className="space-y-2">
+                    {shopsToDisplay.map((shop) => (
+                      <div
+                        key={shop.id}
+                        className={`p-3 border rounded-md cursor-pointer transition-colors ${
+                          selectedShopId === shop.id 
+                            ? 'border-blue-500 bg-blue-50' 
+                            : 'border-gray-200 hover:bg-gray-50'
+                        }`}
+                        onClick={() => setSelectedShopId(shop.id)}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                            selectedShopId === shop.id 
+                              ? 'border-blue-500 bg-blue-500' 
+                              : 'border-gray-300'
+                          }`}>
+                            {selectedShopId === shop.id && (
+                              <div className="w-2 h-2 rounded-full bg-white" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <div className="font-medium">{shop.name}</div>
+                            <div className="text-sm text-gray-500">{shop.description}</div>
+                          </div>
+                          {selectedShopId === shop.id && (
+                            <Check className="h-4 w-4 text-blue-500" />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {selectedShopId && (
+                    <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
+                      <div className="flex items-center gap-2 text-green-700">
+                        <Store className="h-4 w-4" />
+                        <span className="text-sm">
+                          This product will be listed under: <strong>{getSelectedShopName()}</strong>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {!selectedShopId && (
+                    <p className="text-sm text-gray-500 mt-2">
+                      Please select a shop to list this product under.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {!addToShop && (
+                <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                    <div>
+                      <h4 className="font-medium text-yellow-700">Personal Listing</h4>
+                      <p className="text-sm text-yellow-600 mt-1">
+                        This product will be listed as a personal item. It won't appear under any shop and will be shown as an individual seller's item.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* 1. Media Card */}
       <Card id="media">
         <CardHeader>
@@ -390,8 +529,6 @@ const toggleZoneFreeShipping = (zoneId: string) => {
                 </Select>
                 {errors.category_admin_id && <p className="text-sm text-red-600">{errors.category_admin_id}</p>}
               </div>
-
-              
             </div>
 
             <div className="space-y-2">
@@ -981,94 +1118,105 @@ const toggleZoneFreeShipping = (zoneId: string) => {
 
       {/* 6. Shipping Card */}
       <Card id="shipping">
-  <CardHeader>
-    <CardTitle>Shipping Fees</CardTitle>
-    <CardDescription>
-      Set shipping fees for different delivery zones. Toggle free shipping per zone.
-    </CardDescription>
-  </CardHeader>
-  
-  <CardContent>
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-medium">Shipping Zones</h3>
-        <Truck className="h-5 w-5 text-gray-400" />
-      </div>
-      
-      <div className="space-y-3">
-        {shippingZones.map((zone) => (
-          <div key={zone.id} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-            <div>
-              <span className="font-medium">{zone.name}</span>
+        <CardHeader>
+          <CardTitle>Shipping Fees</CardTitle>
+          <CardDescription>
+            Set shipping fees for different delivery zones. Toggle free shipping per zone.
+          </CardDescription>
+        </CardHeader>
+        
+        <CardContent>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium">Shipping Zones</h3>
+              <Truck className="h-5 w-5 text-gray-400" />
             </div>
-            <div className="md:col-span-2">
-              <div className="flex items-center gap-3">
-                {zone.freeShipping ? (
-                  <div className="flex items-center gap-2 flex-1">
-                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                      Free Shipping
-                    </Badge>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => toggleZoneFreeShipping(zone.id)}
-                      className="h-7 px-2 text-sm text-gray-500 hover:text-gray-700"
-                    >
-                      Disable
-                    </Button>
+            
+            <div className="space-y-3">
+              {shippingZones.map((zone) => (
+                <div key={zone.id} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                  <div>
+                    <span className="font-medium">{zone.name}</span>
                   </div>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2 flex-1">
-                      <span className="text-gray-500 text-sm">₱</span>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={zone.fee}
-                        onChange={(e) => updateShippingZoneFee(zone.id, parseFloat(e.target.value) || '')}
-                        className="w-40"
-                      />
+                  <div className="md:col-span-2">
+                    <div className="flex items-center gap-3">
+                      {zone.freeShipping ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                            Free Shipping
+                          </Badge>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleZoneFreeShipping(zone.id)}
+                            className="h-7 px-2 text-sm text-gray-500 hover:text-gray-700"
+                          >
+                            Disable
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 flex-1">
+                            <span className="text-gray-500 text-sm">₱</span>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="0.00"
+                              value={zone.fee}
+                              onChange={(e) => updateShippingZoneFee(zone.id, parseFloat(e.target.value) || '')}
+                              className="w-40"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Label htmlFor={`free-shipping-${zone.id}`} className="text-sm text-gray-600 whitespace-nowrap">
+                              Free shipping
+                            </Label>
+                            <Switch
+                              id={`free-shipping-${zone.id}`}
+                              checked={zone.freeShipping}
+                              onCheckedChange={() => toggleZoneFreeShipping(zone.id)}
+                              className="h-4 w-8"
+                            />
+                          </div>
+                        </>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Label htmlFor={`free-shipping-${zone.id}`} className="text-sm text-gray-600 whitespace-nowrap">
-                        Free shipping
-                      </Label>
-                      <Switch
-                        id={`free-shipping-${zone.id}`}
-                        checked={zone.freeShipping}
-                        onCheckedChange={() => toggleZoneFreeShipping(zone.id)}
-                        className="h-4 w-8"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="pt-4 text-sm text-gray-500">
+              <p>All shipping fees are in Philippine Peso (₱).</p>
             </div>
           </div>
-        ))}
-      </div>
-      
-      <div className="pt-4 text-sm text-gray-500">
-        <p>All shipping fees are in Philippine Peso (₱).</p>
-      </div>
-    </div>
-  </CardContent>
-</Card>
+        </CardContent>
+      </Card>
 
       {/* Submit Button */}
       <div className="pt-6">
         <Button
           type="submit"
-          disabled={!selectedShop}
           variant="default"
           size="lg"
           className="w-full"
         >
-          {selectedShop ? "Create Product" : "Create Shop First"}
+          {isPersonalListing ? "Create Personal Listing" : "Create Product"}
         </Button>
+        
+        {isPersonalListing && !addToShop && (
+          <p className="text-sm text-gray-500 mt-2 text-center">
+            This will be listed as a personal item. You can manage it from your profile.
+          </p>
+        )}
+        
+        {isPersonalListing && addToShop && selectedShopId && (
+          <p className="text-sm text-green-600 mt-2 text-center">
+            ✓ This product will be added to your shop: <strong>{getSelectedShopName()}</strong>
+          </p>
+        )}
       </div>
     </div>
   );

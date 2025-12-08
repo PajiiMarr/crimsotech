@@ -376,7 +376,7 @@ function PersonalListingsContent() {
             size="default"
             disabled={listingLimitInfo?.remaining === 0}
           >
-            <Link to="/personal-listings/create">
+            <Link to="/customer-create-product">
               <Plus className="w-4 h-4" />
               Add New Listing
             </Link>

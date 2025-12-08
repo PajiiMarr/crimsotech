@@ -38,6 +38,7 @@ export default [
     route('return-refund-cancel', 'routes/customer/return-refund-cancel.tsx'),  
     route('view-order', 'components/customer/view-order.tsx'),
     route('arrange-shipment', 'components/customer/arrange-shipment.tsx'), 
+    route("customer-create-product", "routes/customer/customer-create-product.tsx"), 
     
    
     

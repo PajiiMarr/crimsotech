@@ -1,10 +1,10 @@
-import type { Route } from './+types/seller-create-product';
+import type { Route } from './+types/customer-create-product';
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { Link } from "react-router";
 import { redirect, data } from "react-router";
 import { cleanInput } from '~/clean/clean';
 import AxiosInstance from '~/components/axios/Axios';
-import CreateProductForm from '~/components/customer/seller-create-product-form';
+import CreateProductForm from '~/components/customer/customer-create-product-form';
 import { useState } from 'react';
 import { Button } from '~/components/ui/button';
 
@@ -59,7 +59,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // Fetch global categories
     let globalCategories = [];
     try {
-      const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
+      const categoriesResponse = await AxiosInstance.get('/customer-products/global-categories/');
       if (categoriesResponse.data.success) {
         globalCategories = categoriesResponse.data.categories || [];
         console.log('Global categories loaded:', globalCategories.length);
@@ -332,7 +332,7 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
         
         {/* BACK BUTTON */}
         <div className="mb-6">
-            <Link to="/seller/seller-product-list">
+            <Link to="/personal-listing">
                 <Button variant="outline" className="text-gray-600 hover:text-gray-900 border-gray-300">
                     <span className="mr-2">←</span> Back to Product List
                 </Button>
