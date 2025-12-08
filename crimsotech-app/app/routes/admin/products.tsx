@@ -12,52 +12,9 @@ import {
 import { DataTable } from '~/components/ui/data-table'
 import { type ColumnDef } from "@tanstack/react-table"
 import { Link } from 'react-router'
-
-
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '~/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '~/components/ui/alert-dialog';
 import { Button } from '~/components/ui/button';
-import { Input } from '~/components/ui/input';
 import { Badge } from '~/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select';
 import { Skeleton } from '~/components/ui/skeleton';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  Legend,
-} from 'recharts';
 import { 
   Plus, 
   Edit, 
@@ -67,16 +24,19 @@ import {
   Filter,
   Package,
   TrendingUp,
+  TrendingDown,
   AlertTriangle,
   Star,
   Zap,
   Image,
   Download,
   MoreHorizontal,
-  ArrowUpDown
+  ArrowUpDown,
+  RefreshCw
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
+import DateRangeFilter from '~/components/ui/date-range-filter';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -100,7 +60,6 @@ interface Product {
   purchases: number;
   favorites: number;
   rating: number;
-  // boostPlan: string;
   variants: number;
   issues: number;
   lowStock: boolean;
@@ -108,98 +67,46 @@ interface Product {
   updated_at?: string;
 }
 
-function ProductsSkeleton() {
-  return (
-    <div className="space-y-6">
-      {/* Header Skeleton */}
-      <div className="flex justify-between items-center">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-4 w-96" />
-        </div>
-        <Skeleton className="h-10 w-32" />
-      </div>
-
-      {/* Metrics Skeleton */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Card key={i}>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-2">
-                  <Skeleton className="h-4 w-20" />
-                  <Skeleton className="h-7 w-16" />
-                  <Skeleton className="h-3 w-24" />
-                </div>
-                <Skeleton className="w-12 h-12 rounded-full" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Charts Skeleton */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <Card key={i}>
-            <CardHeader>
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-4 w-64" />
-            </CardHeader>
-            <CardContent>
-              <Skeleton className="h-64 w-full" />
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Table Skeleton */}
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-6 w-32" />
-          <Skeleton className="h-4 w-64" />
-          <div className="flex gap-4 mt-4">
-            <Skeleton className="h-10 flex-1" />
-            <Skeleton className="h-10 w-40" />
-            <Skeleton className="h-10 w-28" />
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
+interface FilterOptions {
+  categories: string[];
+  statuses: string[];
+  shops: string[];
+  boostPlans: string[];
+  conditions: string[];
 }
 
-// Update your interfaces
 interface ProductMetrics {
   total_products: number;
   low_stock_alert: number;
   active_boosts: number;
   avg_rating: number;
-  top_products: Array<{
-    name: string;
-    views: number;
-    purchases: number;
-    favorites: number;
-    total_engagement: number;
-  }>;
-  rating_distribution: Array<{
-    name: string;
-    value: number;
-  }>;
   has_data: boolean;
+  top_products?: any[];
+  rating_distribution?: any[];
+  growth_metrics?: {
+    product_growth?: number;
+    low_stock_growth?: number;
+    previous_period_total?: number;
+    previous_period_low_stock?: number;
+    period_days?: number;
+  };
+  date_range?: {
+    start_date: string;
+    end_date: string;
+    range_type: string;
+  };
 }
 
 interface LoaderData {
   user: any;
   productMetrics: ProductMetrics;
   products: Product[];
+  filterOptions?: FilterOptions;
+  dateRange?: {
+    start: string;
+    end: string;
+    rangeType: string;
+  };
 }
 
 // app/routes/admin/products.tsx
@@ -222,12 +129,48 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
+  // Parse URL for date range parameters
+  const url = new URL(request.url);
+  const startDate = url.searchParams.get('start_date');
+  const endDate = url.searchParams.get('end_date');
+  const rangeType = url.searchParams.get('range_type') || 'weekly';
+
+  // Default date range (last 7 days)
+  const defaultStartDate = new Date();
+  defaultStartDate.setDate(defaultStartDate.getDate() - 7);
+  const defaultEndDate = new Date();
+
   let productMetrics = null;
   let productsList = [];
+  let filterOptions: FilterOptions = {
+    categories: [],
+    statuses: [],
+    shops: [],
+    boostPlans: [],
+    conditions: []
+  };
 
   try {
-    // Fetch product metrics from the backend
-    const metricsResponse = await AxiosInstance.get('/admin-products/get_metrics/', {
+    // Build query parameters with date range
+    const params = new URLSearchParams();
+    
+    // Add date range parameters if provided, otherwise use defaults
+    if (startDate) {
+      params.append('start_date', startDate);
+    } else {
+      params.append('start_date', defaultStartDate.toISOString().split('T')[0]);
+    }
+    
+    if (endDate) {
+      params.append('end_date', endDate);
+    } else {
+      params.append('end_date', defaultEndDate.toISOString().split('T')[0]);
+    }
+    
+    if (rangeType) params.append('range_type', rangeType);
+
+    // Fetch product metrics from the backend with date range
+    const metricsResponse = await AxiosInstance.get(`/admin-products/get_metrics/?${params.toString()}`, {
       headers: {
         "X-User-Id": session.get("userId")
       }
@@ -235,55 +178,83 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
     if (metricsResponse.data.success) {
       productMetrics = metricsResponse.data.metrics;
-      console.log(productMetrics)
     }
 
-    // Fetch products list
-    const productsResponse = await AxiosInstance.get('/admin-products/get_products_list/', {
+    // Fetch products list with date range
+    const productsParams = new URLSearchParams();
+    if (startDate) productsParams.append('start_date', startDate);
+    else productsParams.append('start_date', defaultStartDate.toISOString().split('T')[0]);
+    
+    if (endDate) productsParams.append('end_date', endDate);
+    else productsParams.append('end_date', defaultEndDate.toISOString().split('T')[0]);
+    
+    if (rangeType) productsParams.append('range_type', rangeType);
+    
+    // Add pagination parameters
+    productsParams.append('page', '1');
+    productsParams.append('page_size', '50');
+
+    const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`, {
       headers: {
         "X-User-Id": session.get("userId")
-      },
-      params: {
-        page: 1,
-        page_size: 50 // Get all products for now, implement pagination later
       }
     });
 
     if (productsResponse.data.success) {
       productsList = productsResponse.data.products;
+      
+      // Extract unique filter values from products data
+      if (productsList.length > 0) {
+        // Extract unique categories
+        const uniqueCategories: string[] = [...new Set(productsList.map((product: Product) => product.category))].filter(Boolean) as string[];
+        
+        // Extract unique statuses
+        const uniqueStatuses: string[] = [...new Set(productsList.map((product: Product) => product.status))].filter(Boolean) as string[];
+        
+        // Extract unique shops
+        const uniqueShops: string[] = [...new Set(productsList.map((product: Product) => product.shop))].filter(Boolean) as string[];
+        
+        // Extract unique conditions (if available)
+        const uniqueConditions: string[] = [...new Set(productsList.map((product: Product) => product.condition))].filter(Boolean) as string[];
+        
+        filterOptions = {
+          categories: uniqueCategories,
+          statuses: uniqueStatuses,
+          shops: uniqueShops,
+          boostPlans: ['Basic', 'Premium', 'Ultimate', 'None'],
+          conditions: uniqueConditions
+        };
+      }
     }
 
   } catch (error) {
     console.error('Error fetching product data:', error);
-    // Use fallback data from API or provide empty structure
+    // Use fallback data
     productMetrics = {
       total_products: 0,
       low_stock_alert: 0,
       active_boosts: 0,
       avg_rating: 0,
-      top_products: [],
-      rating_distribution: [
-        { name: '5 Stars', value: 0 },
-        { name: '4 Stars', value: 0 },
-        { name: '3 Stars', value: 0 },
-        { name: '2 Stars', value: 0 },
-        { name: '1 Star', value: 0 }
-      ],
-      has_data: false
+      has_data: false,
+      growth_metrics: {}
     };
   }
 
   return { 
     user, 
     productMetrics,
-    products: productsList 
+    products: productsList,
+    filterOptions,
+    dateRange: {
+      start: startDate || defaultStartDate.toISOString().split('T')[0],
+      end: endDate || defaultEndDate.toISOString().split('T')[0],
+      rangeType
+    }
   };
 }
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
-
 export default function Products({ loaderData }: { loaderData: LoaderData }) {
-if (!loaderData) {
+  if (!loaderData) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div>Loading products...</div>
@@ -291,57 +262,139 @@ if (!loaderData) {
     );
   }
 
-  const { user, productMetrics, products: initialProducts } = loaderData;
+  const { 
+    user, 
+    productMetrics: initialMetrics, 
+    products: initialProducts, 
+    filterOptions: initialFilterOptions,
+    dateRange: initialDateRange 
+  } = loaderData;
+  
+  // State for managing data
+  const [productMetrics, setProductMetrics] = useState(initialMetrics);
   const [products, setProducts] = useState<Product[]>(initialProducts);
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>(
+    initialFilterOptions || {
+      categories: [],
+      statuses: [],
+      shops: [],
+      boostPlans: [],
+      conditions: []
+    }
+  );
+  const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  
+  // Date range state
+  const [dateRange, setDateRange] = useState({
+    start: initialDateRange?.start ? new Date(initialDateRange.start) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+    end: initialDateRange?.end ? new Date(initialDateRange.end) : new Date(),
+    rangeType: (initialDateRange?.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom') || 'weekly'
+  });
 
-  // Use real data from backend or fallback to mock data
+  // Fetch data function with date range
+  const fetchProductData = async (start: Date, end: Date, rangeType: string) => {
+    setIsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('start_date', start.toISOString().split('T')[0]);
+      params.append('end_date', end.toISOString().split('T')[0]);
+      params.append('range_type', rangeType);
+
+      // Fetch metrics with date range
+      const metricsResponse = await AxiosInstance.get(`/admin-products/get_metrics/?${params.toString()}`);
+      
+      if (metricsResponse.data.success) {
+        setProductMetrics(metricsResponse.data.metrics);
+      }
+
+      // Fetch products list with date range
+      const productsParams = new URLSearchParams(params);
+      productsParams.append('page', '1');
+      productsParams.append('page_size', '50');
+
+      const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`);
+
+      if (productsResponse.data.success) {
+        setProducts(productsResponse.data.products);
+        
+        // Update filter options from new data
+        if (productsResponse.data.products.length > 0) {
+          const uniqueCategories: string[] = [...new Set(productsResponse.data.products.map((product: Product) => product.category))].filter(Boolean) as string[];
+          const uniqueStatuses: string[] = [...new Set(productsResponse.data.products.map((product: Product) => product.status))].filter(Boolean) as string[];
+          const uniqueShops: string[] = [...new Set(productsResponse.data.products.map((product: Product) => product.shop))].filter(Boolean) as string[];
+          const uniqueConditions: string[] = [...new Set(productsResponse.data.products.map((product: Product) => product.condition))].filter(Boolean) as string[];
+
+          setFilterOptions({
+            categories: uniqueCategories,
+            statuses: uniqueStatuses,
+            shops: uniqueShops,
+            boostPlans: ['Basic', 'Premium', 'Ultimate', 'None'],
+            conditions: uniqueConditions
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching product data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
+    setDateRange({
+      start: range.start,
+      end: range.end,
+      rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+    });
+    fetchProductData(range.start, range.end, range.rangeType);
+  };
+
+  // Use real data from backend or fallback
   const metrics = productMetrics || {
     total_products: 0,
     low_stock_alert: 0,
     active_boosts: 0,
     avg_rating: 0,
-    top_products: [],
-    rating_distribution: [],
-    has_data: false
+    has_data: false,
+    growth_metrics: {}
   };
 
-  const topProductsData = metrics.top_products.length > 0 
-    ? metrics.top_products 
-    : [
-        { name: 'No Data', views: 0, purchases: 0, favorites: 0, total_engagement: 0 },
-        { name: 'No Data', views: 0, purchases: 0, favorites: 0, total_engagement: 0 },
-        { name: 'No Data', views: 0, purchases: 0, favorites: 0, total_engagement: 0 }
-      ];
-
-  const ratingDistributionData = metrics.rating_distribution.length > 0 
-    ? metrics.rating_distribution 
-    : [
-        { name: '5 Stars', value: 0 },
-        { name: '4 Stars', value: 0 },
-        { name: '3 Stars', value: 0 },
-        { name: '2 Stars', value: 0 },
-        { name: '1 Star', value: 0 }
-      ];
-
-  const handleUpdateProduct = (productData: Partial<Product>) => {
-    if (!editingProduct) return;
-    
-    setProducts(products.map(product => 
-      product.id === editingProduct.id 
-        ? { 
-            ...product, 
-            ...productData, 
-            lowStock: (productData.quantity ?? product.quantity) < 5 
-          }
-        : product
-    ));
-    setEditingProduct(null);
+  // Format percentage for display
+  const formatPercentage = (value: number) => {
+    if (value === undefined || value === null) return 'N/A';
+    return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
   };
 
-  
+  // Get growth metrics
+  const growthMetrics = metrics.growth_metrics || {};
+
+  // Create dynamic filter config from API data
+  const productFilterConfig = {
+    category: {
+      options: filterOptions.categories,
+      placeholder: 'Category'
+    },
+    status: {
+      options: filterOptions.statuses,
+      placeholder: 'Status'
+    },
+    shop: {
+      options: filterOptions.shops,
+      placeholder: 'Shop'
+    },
+    boostPlan: {
+      options: filterOptions.boostPlans,
+      placeholder: 'Boost Plan'
+    },
+    condition: {
+      options: filterOptions.conditions,
+      placeholder: 'Condition'
+    }
+  };
+
   return (
     <UserProvider user={user}>
       <SidebarLayout>
@@ -351,17 +404,39 @@ if (!loaderData) {
             <div>
               <h1 className="text-3xl font-bold">Products</h1>
             </div>
-            
           </div>
 
-          {/* Key Metrics */}
+          {/* Date Range Filter */}
+          <DateRangeFilter 
+            onDateRangeChange={handleDateRangeChange}
+            isLoading={isLoading}
+          />
+
+          {/* Key Metrics with Growth Indicators */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card>
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Total Products</p>
-                    <p className="text-2xl font-bold mt-1">{metrics.total_products}</p>
+                    <p className="text-2xl font-bold mt-1">
+                      {isLoading ? '...' : metrics.total_products}
+                    </p>
+                    {!isLoading && growthMetrics.product_growth !== undefined && (
+                      <div className={`flex items-center gap-1 mt-2 text-sm ${
+                        growthMetrics.product_growth >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {growthMetrics.product_growth >= 0 ? (
+                          <TrendingUp className="w-4 h-4" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4" />
+                        )}
+                        <span>{formatPercentage(growthMetrics.product_growth)}</span>
+                        <span className="text-xs text-muted-foreground">
+                          vs previous {growthMetrics.period_days || 7} days
+                        </span>
+                      </div>
+                    )}
                     <p className="text-xs text-muted-foreground mt-2">Across all categories</p>
                   </div>
                   <div className="p-3 bg-blue-100 rounded-full">
@@ -376,7 +451,21 @@ if (!loaderData) {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Low Stock Alert</p>
-                    <p className="text-2xl font-bold mt-1 text-red-600">{metrics.low_stock_alert}</p>
+                    <p className="text-2xl font-bold mt-1 text-red-600">
+                      {isLoading ? '...' : metrics.low_stock_alert}
+                    </p>
+                    {!isLoading && growthMetrics.low_stock_growth !== undefined && (
+                      <div className={`flex items-center gap-1 mt-2 text-sm ${
+                        growthMetrics.low_stock_growth >= 0 ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {growthMetrics.low_stock_growth >= 0 ? (
+                          <TrendingUp className="w-4 h-4" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4" />
+                        )}
+                        <span>{formatPercentage(growthMetrics.low_stock_growth)}</span>
+                      </div>
+                    )}
                     <p className="text-xs text-muted-foreground mt-2">Need restocking</p>
                   </div>
                   <div className="p-3 bg-red-100 rounded-full">
@@ -391,7 +480,9 @@ if (!loaderData) {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Active Boosts</p>
-                    <p className="text-2xl font-bold mt-1">{metrics.active_boosts}</p>
+                    <p className="text-2xl font-bold mt-1">
+                      {isLoading ? '...' : metrics.active_boosts}
+                    </p>
                     <p className="text-xs text-muted-foreground mt-2">Running now</p>
                   </div>
                   <div className="p-3 bg-yellow-100 rounded-full">
@@ -407,7 +498,9 @@ if (!loaderData) {
                   <div>
                     <p className="text-sm text-muted-foreground">Avg Rating</p>
                     <p className="text-2xl font-bold mt-1">
-                      {metrics.avg_rating > 0 ? `${metrics.avg_rating.toFixed(1)}★` : 'No ratings'}
+                      {isLoading ? '...' : 
+                        metrics.avg_rating > 0 ? `${metrics.avg_rating.toFixed(1)}★` : 'No ratings'
+                      }
                     </p>
                     <p className="text-xs text-muted-foreground mt-2">Overall quality</p>
                   </div>
@@ -419,93 +512,50 @@ if (!loaderData) {
             </Card>
           </div>
 
-          {/* Analytics Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Top Products by Engagement */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Products by Engagement</CardTitle>
-                <CardDescription>
-                  {metrics.has_data ? 'Most viewed, purchased, and favorited' : 'No engagement data available'}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {metrics.has_data ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={topProductsData}>
-                      <XAxis dataKey="name" />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Bar dataKey="views" fill="#3b82f6" name="Views" />
-                      <Bar dataKey="purchases" fill="#10b981" name="Purchases" />
-                      <Bar dataKey="favorites" fill="#f59e0b" name="Favorites" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground">
-                    No engagement data available
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Rating Distribution */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Rating Distribution</CardTitle>
-                <CardDescription>
-                  {metrics.has_data ? 'Customer feedback overview' : 'No rating data available'}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {metrics.has_data ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
-                      <Pie
-                        data={ratingDistributionData}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={({ name, percent = 0 }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-                        outerRadius={80}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {ratingDistributionData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground">
-                    No rating data available
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Boost Performance */}
-          
-
           {/* Products Table */}
           <Card>
             <CardHeader>
-              <CardTitle>All Products</CardTitle>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>All Products</CardTitle>
+                  <CardDescription>
+                    {dateRange.start && dateRange.end ? (
+                      `Products from ${dateRange.start.toLocaleDateString()} to ${dateRange.end.toLocaleDateString()}`
+                    ) : (
+                      'Showing all products'
+                    )}
+                  </CardDescription>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {isLoading ? (
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Loading...
+                    </div>
+                  ) : (
+                    `${products.length} products found`
+                  )}
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              <DataTable 
-                columns={columns} 
-                data={products} 
-                filterConfig={productFilterConfig}
-                searchConfig={{
-                  column: "name",
-                  placeholder: "Search products..."
-                }}
-              />
+              {isLoading ? (
+                <div className="space-y-3">
+                  {[...Array(5)].map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : (
+                <DataTable 
+                  columns={columns} 
+                  data={products} 
+                  filterConfig={productFilterConfig}
+                  searchConfig={{
+                    column: "name",
+                    placeholder: "Search products..."
+                  }}
+                />
+              )}
             </CardContent>
           </Card>
         </div>
@@ -513,7 +563,6 @@ if (!loaderData) {
     </UserProvider>
   );
 }
-
 
 const columns: ColumnDef<Product>[] = [
   {
@@ -642,28 +691,14 @@ const columns: ColumnDef<Product>[] = [
           >
             View
           </Link>
-          {/* Other actions */}
+          <Button variant="ghost" size="sm">
+            <Edit className="w-4 h-4" />
+          </Button>
+          <Button variant="ghost" size="sm">
+            <Trash2 className="w-4 h-4" />
+          </Button>
         </div>
       )
     },
   },
 ];
-
-const productFilterConfig = {
-  category: {
-    options: ['Electronics', 'Accessories', 'Fashion', 'Home & Living', 'Sports'],
-    placeholder: 'Category'
-  },
-  status: {
-    options: ['Active', 'Inactive'],
-    placeholder: 'Status'
-  },
-  shop: {
-    options: [], // Will be populated from data
-    placeholder: 'Shop'
-  },
-  boostPlan: {
-    options: ['Basic', 'Premium', 'Ultimate', 'None'],
-    placeholder: 'Boost Plan'
-  }
-}

@@ -51,7 +51,7 @@ class Command(BaseCommand):
                 self.create_customer_activities(products, customers)
                 
                 # Create comprehensive boost analytics data
-                self.create_boost_analytics_data(products, shops, customers, admin_user)
+                # self.create_boost_analytics_data(products, shops, customers, admin_user)
 
                 # Create order data
                 self.create_order_data(products, customers, shops, admin_user)
@@ -234,11 +234,16 @@ class Command(BaseCommand):
     def create_categories(self, shops, admin_user):
         """Create product categories"""
         categories_data = [
-            'Electronics',
-            'Accessories', 
-            'Fashion',
-            'Home & Living',
-            'Sports'
+            'Smartphones & Tablets',
+            'Laptops & Computers',
+            'Audio & Headphones',
+            'Cameras & Photography',
+            'Gaming Consoles & Accessories',
+            'Smartwatches & Wearables',
+            'TVs & Monitors',
+            'Computer Accessories',
+            'Home Electronics',
+            'Mobile Accessories',
         ]
         
         categories = []
@@ -270,115 +275,193 @@ class Command(BaseCommand):
             return []
         
         # Define products data first to extract unique categories
+        # Define products data first to extract unique categories
         products_data = [
             # Tech Haven products
             {
                 'name': 'iPhone 15 Pro Max 1TB',
-                'category': 'Electronics',
+                'category': 'Smartphones & Tablets',
                 'shop': 'Tech Haven',
                 'price': Decimal('1599.99'),
                 'quantity': 8,
-                'condition': 'New',
+                'condition': 'Like New',
                 'status': 'Active',
-                'description': 'Latest iPhone with 1TB storage',
+                'description': 'Latest iPhone with 1TB storage, perfect condition with original box',
                 'used_for': 'Personal and professional use',
             },
             {
                 'name': 'MacBook Pro 16" M3 Max',
-                'category': 'Electronics',
+                'category': 'Laptops & Computers',
                 'shop': 'Tech Haven',
                 'price': Decimal('3499.99'),
                 'quantity': 5,
-                'condition': 'New',
+                'condition': 'Refurbished',
                 'status': 'Active',
-                'description': 'Professional laptop for creatives',
+                'description': 'Professional laptop for creatives, professionally refurbished',
                 'used_for': 'Professional work and creative projects',
             },
             # Gadget World products
             {
                 'name': 'Samsung Galaxy S24 Ultra',
-                'category': 'Electronics',
+                'category': 'Smartphones & Tablets',
                 'shop': 'Gadget World',
                 'price': Decimal('1299.99'),
                 'quantity': 15,
-                'condition': 'New',
+                'condition': 'Like New',
                 'status': 'Active',
-                'description': 'Flagship Samsung smartphone',
+                'description': 'Flagship Samsung smartphone, minimal signs of use',
                 'used_for': 'Mobile communication and productivity',
             },
             {
                 'name': 'iPhone 15 Leather Case',
-                'category': 'Accessories',
+                'category': 'Mobile Accessories',
                 'shop': 'Gadget World',
                 'price': Decimal('59.99'),
                 'quantity': 45,
                 'condition': 'New',
                 'status': 'Active',
-                'description': 'Premium leather case for iPhone 15',
+                'description': 'Premium leather case for iPhone 15, genuine leather',
                 'used_for': 'Phone protection and style',
             },
             # KeyClack products
             {
                 'name': 'Mechanical Keyboard Pro',
-                'category': 'Electronics',
+                'category': 'Computer Accessories',
                 'shop': 'KeyClack',
                 'price': Decimal('199.99'),
                 'quantity': 12,
-                'condition': 'New',
+                'condition': 'Like New',
                 'status': 'Active',
-                'description': 'Professional mechanical keyboard',
+                'description': 'Professional mechanical keyboard with customizable RGB lighting',
                 'used_for': 'Gaming and typing',
             },
             # Display Masters products
             {
                 'name': '4K Gaming Monitor',
-                'category': 'Electronics',
+                'category': 'TVs & Monitors',
                 'shop': 'Display Masters',
                 'price': Decimal('499.99'),
                 'quantity': 8,
-                'condition': 'New',
+                'condition': 'Refurbished',
                 'status': 'Active',
-                'description': '27-inch 4K gaming monitor',
+                'description': '27-inch 4K gaming monitor, 144Hz refresh rate',
                 'used_for': 'Gaming and professional work',
             },
             # Connect Tech products
             {
-                'name': 'Wireless Earbuds',
-                'category': 'Accessories',
+                'name': 'Wireless Earbuds Pro',
+                'category': 'Audio & Headphones',
                 'shop': 'Connect Tech',
                 'price': Decimal('129.99'),
                 'quantity': 25,
-                'condition': 'New',
+                'condition': 'Like New',
                 'status': 'Active',
-                'description': 'Noise cancelling wireless earbuds',
+                'description': 'Noise cancelling wireless earbuds with charging case',
                 'used_for': 'Music and calls',
             },
-            # Fashion Hub products
+            # New electronics-focused products to match all categories
             {
-                'name': 'Designer Handbag',
-                'category': 'Fashion',
-                'shop': 'Fashion Hub',
-                'price': Decimal('299.99'),
-                'quantity': 15,
-                'condition': 'New',
+                'name': 'Sony A7 III Mirrorless Camera',
+                'category': 'Cameras & Photography',
+                'shop': 'Tech Haven',
+                'price': Decimal('1799.99'),
+                'quantity': 6,
+                'condition': 'Used - Excellent',
                 'status': 'Active',
-                'description': 'Luxury designer handbag',
-                'used_for': 'Fashion and style',
+                'description': 'Full-frame mirrorless camera with 24.2MP sensor',
+                'used_for': 'Photography and videography',
             },
             {
-                'name': 'Running Shoes',
-                'category': 'Sports',
-                'shop': 'Fashion Hub',
+                'name': 'PlayStation 5 Digital Edition',
+                'category': 'Gaming Consoles & Accessories',
+                'shop': 'Gadget World',
+                'price': Decimal('449.99'),
+                'quantity': 10,
+                'condition': 'Refurbished',
+                'status': 'Active',
+                'description': 'PS5 Digital Edition with controller, professionally tested',
+                'used_for': 'Gaming and entertainment',
+            },
+            {
+                'name': 'Apple Watch Series 9',
+                'category': 'Smartwatches & Wearables',
+                'shop': 'Connect Tech',
+                'price': Decimal('399.99'),
+                'quantity': 18,
+                'condition': 'Like New',
+                'status': 'Active',
+                'description': 'Latest Apple Watch with cellular option',
+                'used_for': 'Fitness tracking and notifications',
+            },
+            {
+                'name': 'Google Nest Hub (2nd Gen)',
+                'category': 'Home Electronics',
+                'shop': 'Display Masters',
                 'price': Decimal('89.99'),
+                'quantity': 22,
+                'condition': 'Used - Good',
+                'status': 'Active',
+                'description': 'Smart display with Google Assistant',
+                'used_for': 'Smart home control and entertainment',
+            },
+            {
+                'name': 'AirPods Max Silver',
+                'category': 'Audio & Headphones',
+                'shop': 'KeyClack',
+                'price': Decimal('449.99'),
+                'quantity': 7,
+                'condition': 'Like New',
+                'status': 'Active',
+                'description': 'Premium over-ear headphones with active noise cancellation',
+                'used_for': 'Music and travel',
+            },
+            {
+                'name': 'Dell XPS 15 Laptop',
+                'category': 'Laptops & Computers',
+                'shop': 'Display Masters',
+                'price': Decimal('1299.99'),
+                'quantity': 9,
+                'condition': 'Refurbished',
+                'status': 'Active',
+                'description': '15-inch laptop with 4K display, i7 processor',
+                'used_for': 'Business and creative work',
+            },
+            {
+                'name': 'Samsung 55" 4K Smart TV',
+                'category': 'TVs & Monitors',
+                'shop': 'Connect Tech',
+                'price': Decimal('699.99'),
+                'quantity': 4,
+                'condition': 'Used - Good',
+                'status': 'Active',
+                'description': '55-inch 4K UHD Smart TV with built-in streaming apps',
+                'used_for': 'Home entertainment',
+            },
+            {
+                'name': 'Logitech MX Master 3S Mouse',
+                'category': 'Computer Accessories',
+                'shop': 'KeyClack',
+                'price': Decimal('79.99'),
                 'quantity': 30,
                 'condition': 'New',
                 'status': 'Active',
-                'description': 'Comfortable running shoes',
-                'used_for': 'Sports and casual wear',
+                'description': 'Wireless mouse with precision scrolling',
+                'used_for': 'Productivity and design work',
+            },
+            {
+                'name': 'Anker Power Bank 20,000mAh',
+                'category': 'Mobile Accessories',
+                'shop': 'Gadget World',
+                'price': Decimal('49.99'),
+                'quantity': 35,
+                'condition': 'New',
+                'status': 'Active',
+                'description': 'High-capacity power bank with fast charging',
+                'used_for': 'Charging devices on the go',
             },
         ]
-        
-        # Extract unique categories from products data dynamically
+                # Extract unique categories from products data dynamically
+                
         unique_categories = set(product['category'] for product in products_data)
         
         # Create admin categories dynamically based on the unique categories found
@@ -458,24 +541,72 @@ class Command(BaseCommand):
         return products
 
     def create_boosts_and_plans(self, products, shops, customers, admin_user):
-        """Create boost plans and active boosts with real references"""
+        """Create boost plans, features, and active boosts with real references"""
         # First, let's clean up duplicate BoostPlans if they exist
         self.cleanup_duplicate_boost_plans()
         
-        # Create boost plans - use first() to handle any remaining duplicates
+        # Define boost plans
         boost_plans_data = [
-            {'name': 'Basic', 'price': Decimal('9.99'), 'duration': 7, 'time_unit': 'days', 'status': 'active'},
-            {'name': 'Premium', 'price': Decimal('19.99'), 'duration': 14, 'time_unit': 'days', 'status': 'active'},
-            {'name': 'Ultimate', 'price': Decimal('29.99'), 'duration': 30, 'time_unit': 'days', 'status': 'active'},
+            {
+                'name': 'Basic', 
+                'price': Decimal('29.00'), 
+                'duration': 1, 
+                'time_unit': 'months', 
+                'status': 'active',
+                'features': [
+                    ('Product Highlights', '1 product'),
+                    ('Validity Period', '30 days'),
+                    ('Search Visibility', 'Improved'),
+                ]
+            },
+            {
+                'name': 'Pro', 
+                'price': Decimal('99.00'), 
+                'duration': 1, 
+                'time_unit': 'months', 
+                'status': 'active',
+                'features': [
+                    ('Product Highlights', '5 products'),
+                    ('Validity Period', '30 days'),
+                    ('Search Visibility', 'Improved'),
+                    ('Analytics Dashboard', 'Basic'),
+                ]
+            },
+            {
+                'name': 'Premium', 
+                'price': Decimal('249.00'), 
+                'duration': 1, 
+                'time_unit': 'months', 
+                'status': 'active',
+                'features': [
+                    ('Product Highlights', '15 products'),
+                    ('Validity Period', '30 days'),
+                    ('Search Visibility', 'Enhanced'),
+                    ('Search Ranking', 'Higher ranking'),
+                    ('Analytics Dashboard', 'Advanced'),
+                    ('Priority Support', 'Yes'),
+                ]
+            },
         ]
         
+        # Define feature descriptions (optional but helpful)
+        feature_descriptions = {
+            'Product Highlights': 'Number of products that can be highlighted',
+            'Validity Period': 'How long the boost lasts',
+            'Search Visibility': 'Level of visibility in search results',
+            'Search Ranking': 'Position in search results',
+            'Analytics Dashboard': 'Access to performance analytics',
+            'Priority Support': 'Get faster support response',
+        }
+        
+        # Create or get boost plans
         boost_plans = []
         for plan_data in boost_plans_data:
             # Use filter().first() instead of get() to handle duplicates
             existing_plan = BoostPlan.objects.filter(name=plan_data['name']).first()
             
             if existing_plan:
-                boost_plans.append(existing_plan)
+                plan = existing_plan
                 self.stdout.write(self.style.WARNING(f"⚠️ Boost plan already exists: {plan_data['name']}"))
             else:
                 plan = BoostPlan.objects.create(
@@ -486,8 +617,38 @@ class Command(BaseCommand):
                     status=plan_data['status'],
                     user=admin_user
                 )
-                boost_plans.append(plan)
                 self.stdout.write(self.style.SUCCESS(f"✅ Created boost plan: {plan_data['name']}"))
+            
+            boost_plans.append(plan)
+            
+            # Create or get features for this plan
+            for feature_name, feature_value in plan_data['features']:
+                # Get or create the feature
+                feature, created = BoostFeature.objects.get_or_create(
+                    name=feature_name,
+                    defaults={
+                        'description': feature_descriptions.get(feature_name, ''),
+                    }
+                )
+                
+                if created:
+                    self.stdout.write(self.style.SUCCESS(f"✅ Created feature: {feature_name}"))
+                
+                # Create or update the plan-feature relationship
+                plan_feature, created = BoostPlanFeature.objects.get_or_create(
+                    boost_plan=plan,
+                    feature=feature,
+                    defaults={'value': feature_value}
+                )
+                
+                if not created:
+                    # Update value if it exists but is different
+                    if plan_feature.value != feature_value:
+                        plan_feature.value = feature_value
+                        plan_feature.save()
+                        self.stdout.write(self.style.WARNING(f"⚠️ Updated feature value for {plan.name}: {feature_name} = {feature_value}"))
+        
+        self.stdout.write(self.style.SUCCESS(f"✅ Created {len(boost_plans)} boost plans with features"))
         
         # Create active boosts with real references
         boost_assignments = [
@@ -497,6 +658,8 @@ class Command(BaseCommand):
             ('Connect Tech', 2, 'Premium'),
             ('Fashion Hub', 4, 'Premium'),
         ]
+        
+        total_boosts_created = 0
         
         for shop_name, boost_count, plan_name in boost_assignments:
             shop = Shop.objects.filter(name=shop_name).first()
@@ -515,18 +678,40 @@ class Command(BaseCommand):
                         ).first()
                         
                         if not existing_boost:
+                            # Create boost with appropriate dates
+                            from datetime import datetime
+                            start_date = datetime(2025, 1, 15)  # Example start date
+                            
                             Boost.objects.create(
                                 product=shop_products[i],
                                 boost_plan=plan,
                                 shop=shop,
-                                customer=shop.customer,  # Real customer from shop
+                                customer=shop.customer,
+                                start_date=start_date,
+                                # end_date will be auto-calculated in save() method
                             )
                             created_count += 1
                     
+                    total_boosts_created += created_count
                     if created_count > 0:
                         self.stdout.write(self.style.SUCCESS(f"✅ Created {created_count} boosts for {shop_name}"))
                     else:
                         self.stdout.write(self.style.WARNING(f"⚠️ All boosts already exist for {shop_name}"))
+        
+        self.stdout.write(self.style.SUCCESS(f"✅ Total boosts created: {total_boosts_created}"))
+        
+        # Optional: Display summary of created plans and features
+        self.stdout.write("\n" + "="*50)
+        self.stdout.write("BOOST PLANS SUMMARY")
+        self.stdout.write("="*50)
+        
+        for plan in BoostPlan.objects.all():
+            self.stdout.write(f"\n📋 {plan.name} (${plan.price}):")
+            features = plan.features.select_related('feature').all()
+            for pf in features:
+                self.stdout.write(f"   • {pf.feature.name}: {pf.value}")
+        
+        return boost_plans
 
     def cleanup_duplicate_boost_plans(self):
         """Clean up duplicate BoostPlan records"""
@@ -762,48 +947,48 @@ class Command(BaseCommand):
         if activity_count > 0:
             self.stdout.write(self.style.SUCCESS(f"✅ Created {activity_count} customer activities"))
 
-    def create_boost_analytics_data(self, products, shops, customers, admin_user):
-        """Create comprehensive boost analytics data for AdminBoosting ViewSet"""
-        self.stdout.write("📊 Creating comprehensive boost analytics data...")
+    # def create_boost_analytics_data(self, products, shops, customers, admin_user):
+    #     """Create comprehensive boost analytics data for AdminBoosting ViewSet"""
+    #     self.stdout.write("📊 Creating comprehensive boost analytics data...")
         
-        # First, clean up any existing boost plans to avoid duplicates
-        self.cleanup_duplicate_boost_plans()
+    #     # First, clean up any existing boost plans to avoid duplicates
+    #     self.cleanup_duplicate_boost_plans()
         
-        # Create comprehensive boost plans with different statuses
-        boost_plans_data = [
-            {'name': 'Basic Boost', 'price': Decimal('9.99'), 'duration': 7, 'time_unit': 'days', 'status': 'active'},
-            {'name': 'Premium Boost', 'price': Decimal('19.99'), 'duration': 14, 'time_unit': 'days', 'status': 'active'},
-            {'name': 'Ultimate Boost', 'price': Decimal('29.99'), 'duration': 30, 'time_unit': 'days', 'status': 'active'},
-            {'name': 'Starter Boost', 'price': Decimal('4.99'), 'duration': 3, 'time_unit': 'days', 'status': 'archived'},
-            {'name': 'Pro Boost', 'price': Decimal('49.99'), 'duration': 60, 'time_unit': 'days', 'status': 'active'},
-        ]
+    #     # Create comprehensive boost plans with different statuses
+    #     boost_plans_data = [
+    #         {'name': 'Basic Boost', 'price': Decimal('9.99'), 'duration': 7, 'time_unit': 'days', 'status': 'active'},
+    #         {'name': 'Premium Boost', 'price': Decimal('19.99'), 'duration': 14, 'time_unit': 'days', 'status': 'active'},
+    #         {'name': 'Ultimate Boost', 'price': Decimal('29.99'), 'duration': 30, 'time_unit': 'days', 'status': 'active'},
+    #         {'name': 'Starter Boost', 'price': Decimal('4.99'), 'duration': 3, 'time_unit': 'days', 'status': 'archived'},
+    #         {'name': 'Pro Boost', 'price': Decimal('49.99'), 'duration': 60, 'time_unit': 'days', 'status': 'active'},
+    #     ]
         
-        boost_plans = []
-        for plan_data in boost_plans_data:
-            existing_plan = BoostPlan.objects.filter(name=plan_data['name']).first()
+    #     boost_plans = []
+    #     for plan_data in boost_plans_data:
+    #         existing_plan = BoostPlan.objects.filter(name=plan_data['name']).first()
             
-            if not existing_plan:
-                plan = BoostPlan.objects.create(
-                    name=plan_data['name'],
-                    price=plan_data['price'],
-                    duration=plan_data['duration'],
-                    time_unit=plan_data['time_unit'],
-                    status=plan_data['status'],
-                    user=admin_user
-                )
-                boost_plans.append(plan)
-                self.stdout.write(self.style.SUCCESS(f"✅ Created boost plan: {plan_data['name']}"))
-            else:
-                boost_plans.append(existing_plan)
-                self.stdout.write(self.style.WARNING(f"⚠️ Boost plan already exists: {plan_data['name']}"))
+    #         if not existing_plan:
+    #             plan = BoostPlan.objects.create(
+    #                 name=plan_data['name'],
+    #                 price=plan_data['price'],
+    #                 duration=plan_data['duration'],
+    #                 time_unit=plan_data['time_unit'],
+    #                 status=plan_data['status'],
+    #                 user=admin_user
+    #             )
+    #             boost_plans.append(plan)
+    #             self.stdout.write(self.style.SUCCESS(f"✅ Created boost plan: {plan_data['name']}"))
+    #         else:
+    #             boost_plans.append(existing_plan)
+    #             self.stdout.write(self.style.WARNING(f"⚠️ Boost plan already exists: {plan_data['name']}"))
         
-        # Create comprehensive boost records with different statuses and dates
-        self.create_comprehensive_boosts(products, shops, customers, boost_plans)
+    #     # Create comprehensive boost records with different statuses and dates
+    #     self.create_comprehensive_boosts(products, shops, customers, boost_plans)
         
-        # Create boost usage patterns for analytics
-        self.create_boost_usage_patterns(boost_plans, products, shops, customers)
+    #     # Create boost usage patterns for analytics
+    #     self.create_boost_usage_patterns(boost_plans, products, shops, customers)
         
-        self.stdout.write(self.style.SUCCESS("✅ Comprehensive boost analytics data created!"))
+    #     self.stdout.write(self.style.SUCCESS("✅ Comprehensive boost analytics data created!"))
 
     def create_comprehensive_boosts(self, products, shops, customers, boost_plans):
         """Create comprehensive boost records with various statuses and dates"""

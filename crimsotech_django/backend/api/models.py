@@ -258,6 +258,7 @@ class Product(models.Model):
     upload_status = models.CharField(max_length=20, choices=[('draft','Draft'),('published','Published'),('archived','Archived')], default='draft')
     status = models.TextField()
     condition = models.CharField(max_length=50)
+    critical_stock = models.IntegerField(null=True,blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_removed = models.BooleanField(default=False)
@@ -401,6 +402,26 @@ class BoostPlan(models.Model):
 
     def __str__(self):
         return f"{self.name}"
+
+class BoostFeature(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    name = models.CharField(max_length=100)
+    description = models.TextField()
+    
+    def __str__(self):
+        return self.name
+
+class BoostPlanFeature(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    boost_plan = models.ForeignKey(BoostPlan, on_delete=models.CASCADE, related_name='features')
+    feature = models.ForeignKey(BoostFeature, on_delete=models.CASCADE)
+    value = models.CharField(max_length=100, blank=True, null=True)  # e.g., "5 products", "Higher ranking"
+    
+    class Meta:
+        unique_together = ['boost_plan', 'feature']
+    
+    def __str__(self):
+        return f"{self.boost_plan.name} - {self.feature.name}"
 
 class Boost(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
@@ -563,6 +584,7 @@ class Order(models.Model):
     status = models.CharField(max_length=20, choices=[('pending','Pending'),('completed','Completed'),('cancelled','Cancelled')])
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_method = models.CharField(max_length=50)
+    delivery_method = models.CharField(max_length=50, null=True, blank=True)
     delivery_address = models.CharField(max_length=500)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
