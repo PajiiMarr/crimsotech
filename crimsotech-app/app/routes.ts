@@ -27,7 +27,6 @@ export default [
     route('purchases', 'routes/customer/purchases.tsx'),
     route('subscription-plan', 'routes/customer/subscription-plan.tsx'),
     route("track-order/:id", "components/customer/track-order.tsx"),
-    route("request-refund/:id", "components/customer/request-refund.tsx"),
     route("decision/:id", "components/customer/decision.tsx"),
     route("process-return-item/:id", "components/customer/process-return-item.tsx"),
     route('order-list', 'routes/customer/order-list.tsx'),
@@ -36,9 +35,18 @@ export default [
     route('order-review/:id', 'components/customer/order-review.tsx'),  
     route('notifications', 'routes/customer/notifications.tsx'),  
     route('return-refund-cancel', 'routes/customer/return-refund-cancel.tsx'),  
-    route('view-order', 'components/customer/view-order.tsx'),
+    
     route('arrange-shipment', 'components/customer/arrange-shipment.tsx'), 
     route("customer-create-product", "routes/customer/customer-create-product.tsx"), 
+    // route("request-refund/:refundId", "routes/customer/request-refund-return.tsx"),
+    route("request-refund-return/:id", "routes/customer/request-refund-return.tsx"),
+    route('view-refund-request/:refundId', 'routes/customer/view-refund-request.tsx'),
+    route('customer-view-refund-request/:refundId', 'routes/customer/customer-view-refund-request.tsx'),
+    route('view-order/:orderId', 'routes/customer/view-order.tsx'),
+    route('customer-return-cancel', 'routes/customer/customer-return-cancel.tsx'),
+    route('view-customer-return-cancel/:returnId', 'routes/customer/view-customer-return-cancel.tsx'),
+    
+    
     
    
     
@@ -52,6 +60,8 @@ export default [
         route("seller-earnings", "routes/seller/seller-earnings.tsx"), 
         route("seller-vouchers", "routes/seller/seller-vouchers.tsx"), 
         route("seller-notifications", "routes/seller/seller-notifications.tsx"), 
+
+
         
     
         

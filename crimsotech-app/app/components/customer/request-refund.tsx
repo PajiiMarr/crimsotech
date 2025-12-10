@@ -228,9 +228,7 @@ const ItemCard: React.FC<{ item: ItemDetails }> = ({ item }) => {
               </div>
             </div>
             
-            <div className="text-xs text-gray-500">
-              Request Date: {item.date}
-            </div>
+  
           </div>
         </div>
       </CardContent>
@@ -791,7 +789,7 @@ export default function RequestRefundPage() {
       navigate('/decision/:id', { 
         state: { 
           ...refundData,
-          status: 'approved', // For demo purposes
+          status: 'pending', // For demo purposes
           orderDetails: mockItem
         } 
       });

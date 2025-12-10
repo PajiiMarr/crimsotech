@@ -13,12 +13,16 @@ import { Button } from '~/components/ui/button';
 import { Separator } from '~/components/ui/separator';
 import { Badge } from '~/components/ui/badge';
 import Breadcrumbs from '~/components/ui/breadcrumbs';
-import { ArrowLeft, CheckCircle, Download, MessageCircle, Star, Package, Calendar, Clock } from "lucide-react";
+import { Link } from 'react-router';
+
+import { ArrowLeft, CheckCircle, Download, MessageCircle, Star, Package, Calendar, Clock, PhilippinePeso } from "lucide-react";
 
 // --- Helper Functions ---
 const formatCurrency = (amount: number): string => {
   return `₱ ${amount.toLocaleString('en-PH', { minimumFractionDigits: 0 })}`;
 };
+
+
 
 const formatDate = (dateString: string): string => {
   const date = new Date(dateString);
@@ -148,58 +152,70 @@ export default function ViewCompletedOrder() {
   };
 
   // Reusable components
-  const StatusBadge = () => (
-    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 px-4 py-1.5">
-      <CheckCircle className="w-4 h-4 mr-2" />
-      Order Completed
-    </Badge>
-  );
 
-  const TimelineItem = ({ event }: { event: typeof orderData.timeline[0] }) => (
-    <div className="flex items-start space-x-4 py-3">
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-        event.highlight ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'
-      }`}>
-        {event.icon === 'check-circle' && <CheckCircle className="w-4 h-4" />}
-        {event.icon === 'package' && <Package className="w-4 h-4" />}
-      </div>
-      <div className="flex-1">
-        <div className="flex justify-between items-start">
-          <div>
-            <p className="font-medium text-sm">{event.status}</p>
-            <p className="text-sm text-gray-600">{event.description}</p>
-          </div>
-          <p className="text-xs text-gray-500">{formatDateTime(event.date)}</p>
+// StatusBadge (Reduced size)
+const StatusBadge = () => (
+  // Reduced padding (px-2 py-0.5) and text/icon size (w-3 h-3)
+  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 px-2 py-0.5 text-xs h-auto">
+    <CheckCircle className="w-3 h-3 mr-1" />
+    Completed
+  </Badge>
+);
+
+// TimelineItem (Reduced size and height)
+const TimelineItem = ({ event }: { event: typeof orderData.timeline[0] }) => (
+  // Reduced vertical padding (py-2) and space (space-x-3)
+  <div className="flex items-start space-x-3 py-2">
+    {/* Reduced dot size (w-5 h-5) and icon size (w-3 h-3) */}
+    <div className={`flex-shrink-0 w-5 h-5 mt-0.5 rounded-full flex items-center justify-center ${
+      event.highlight ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'
+    }`}>
+      {event.icon === 'check-circle' && <CheckCircle className="w-3 h-3" />}
+      {event.icon === 'package' && <Package className="w-3 h-3" />}
+    </div>
+    <div className="flex-1">
+      <div className="flex justify-between items-start">
+        <div>
+          {/* Reduced font size to xs/sm */}
+          <p className="font-medium text-sm leading-tight">{event.status}</p>
+          <p className="text-xs text-gray-500">{event.description}</p>
         </div>
+        {/* Reduced date font size to 2xs (or use text-xs) */}
+        <p className="text-[10px] text-gray-500 ml-2">{formatDateTime(event.date)}</p>
       </div>
     </div>
-  );
+  </div>
+);
 
-  const ReviewCard = ({ item }: { item: typeof orderData.items[0] }) => (
-    <Card className="mt-4">
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            {[...Array(5)].map((_, i) => (
-              <Star 
-                key={i} 
-                className={`w-4 h-4 ${i < item.rating ? 'fill-yellow-400 text-yellow-400' : 'fill-gray-200 text-gray-200'}`}
-              />
-            ))}
-            <span className="text-sm font-medium ml-2">{item.rating}.0</span>
-          </div>
-          <span className="text-xs text-gray-500">{formatDate(item.reviewDate)}</span>
-        </div>
-        <p className="text-sm text-gray-700">{item.review}</p>
-        <div className="flex justify-end mt-4">
-          <Button variant="ghost" size="sm" className="text-blue-600 hover:text-blue-800">
-            <MessageCircle className="w-4 h-4 mr-2" />
-            Reply to Review
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  // Review Card (Made SMALLEST)
+const ReviewCard = ({ item }: { item: typeof orderData.items[0] }) => (
+  // Reduced padding and removed Card component
+  <div className="mt-2 p-2 border border-gray-200 rounded-md bg-gray-50 text-xs space-y-1">
+    
+    {/* Top Row: Rating, Date, and Action combined */}
+    <div className="flex items-center justify-between">
+      {/* Condensed Rating Display */}
+      <div className="flex items-center space-x-2">
+        <Badge variant="secondary" className="px-2 py-0.5 text-xs h-auto">
+          <Star className="w-3 h-3 mr-1 fill-yellow-400 text-yellow-400" />
+          {item.rating}.0
+        </Badge>
+        <span className="text-gray-500">{formatDate(item.reviewDate)}</span>
+      </div>
+      
+      {/* View Review button (Link style) */}
+      <Button variant="link" size="sm" className="text-blue-600 hover:text-blue-800 h-6 p-0 text-xs">
+        <MessageCircle className="w-3 h-3 mr-1" />
+        View Review
+      </Button>
+    </div>
+    
+    {/* Review Text */}
+    <p className="italic text-gray-700 line-clamp-1 overflow-hidden">
+      "{item.review}"
+    </p>
+  </div>
+);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 space-y-8">
@@ -219,35 +235,41 @@ export default function ViewCompletedOrder() {
       <Separator />
 
       {/* Order Header Card */}
-      <Card className="shadow-lg">
-        <CardHeader>
-          <div className="flex justify-between items-start">
-            <div>
-              <CardTitle className="text-2xl font-bold">Order #{orderData.orderId}</CardTitle>
-              <CardDescription className="mt-2">
-                Completed on {formatDate(orderData.completedDate)}
-              </CardDescription>
-            </div>
-            <StatusBadge />
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-gray-600">Tracking Number</p>
-              <p className="font-mono text-lg font-semibold">{orderData.trackingNumber}</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-gray-600">Order Date</p>
-              <p className="text-lg">{formatDate(orderData.orderDate)}</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-gray-600">Delivery Date</p>
-              <p className="text-lg">{formatDate(orderData.completedDate)}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <Card className="shadow-sm">
+  {/* Reduced padding in CardHeader */}
+  <CardHeader className="py-3 px-4">
+    <div className="flex justify-between items-center">
+      <div>
+        {/* Reduced title size */}
+        <CardTitle className="text-xl font-bold">Order #{orderData.orderId}</CardTitle>
+        {/* Reduced margin and description font size */}
+        <CardDescription className="mt-1 text-xs text-gray-500">
+          Completed on {formatDate(orderData.completedDate)}
+        </CardDescription>
+      </div>
+      {/* Assuming StatusBadge is already compacted */}
+      <StatusBadge />
+    </div>
+  </CardHeader>
+  {/* Reduced padding and grid gap */}
+  <CardContent className="py-3 px-4">
+    {/* Reduced grid gap (gap-4) and content font sizes (text-sm/text-base) */}
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 gap-x-4 text-sm">
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-gray-600">Tracking Number</p>
+        <p className="font-mono text-base font-semibold">{orderData.trackingNumber}</p>
+      </div>
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-gray-600">Order Date</p>
+        <p className="text-base">{formatDate(orderData.orderDate)}</p>
+      </div>
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-gray-600">Delivery Date</p>
+        <p className="text-base">{formatDate(orderData.completedDate)}</p>
+      </div>
+    </div>
+  </CardContent>
+</Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column - Products & Reviews */}
@@ -386,10 +408,12 @@ export default function ViewCompletedOrder() {
           {/* Action Buttons */}
           <Card>
             <CardContent className="pt-6 space-y-3">
-              <Button className="w-full" variant="outline">
-                <Download className="w-4 h-4 mr-2" />
-                Download Invoice
-              </Button>
+              <Link to={`/request-refund/${orderData.orderId}`}>
+                <Button className="w-full" variant="outline">
+                  <PhilippinePeso className="w-4 h-4 mr-2" />
+                  Ask for Refund
+                </Button>
+               </Link>
               <Button className="w-full" variant="outline">
                 <MessageCircle className="w-4 h-4 mr-2" />
                 Contact Seller
