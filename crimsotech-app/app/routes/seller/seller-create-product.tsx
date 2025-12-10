@@ -45,7 +45,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   try {
     const shopsResponse = await AxiosInstance.get('/shop-add-product/get_shop/',
       { 
-        headers: {
+        headers: {  
           'X-Shop-Id': shopId || '',
         }
       }
@@ -319,8 +319,6 @@ interface Category {
     username: string;
   };
 }
-
-// --- COMPONENT (MODIFIED - All forms shown, no next button) ---
 
 export default function CreateProduct({ loaderData, actionData }: Route.ComponentProps) {
   const { user, selectedShop, globalCategories } = loaderData;

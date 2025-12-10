@@ -50,7 +50,7 @@ class User(models.Model):
 
 class Customer(models.Model):
     customer = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
-    product_limit = models.IntegerField(default=10)  # Maximum products a customer can sell
+    product_limit = models.IntegerField(default=500)  # Maximum products a customer can sell
     current_product_count = models.IntegerField(default=0)  # Track current product count
 
     def can_add_product(self):
@@ -253,7 +253,6 @@ class Product(models.Model):
     name = models.CharField(max_length=100)
     description = models.CharField(max_length=1000)
     quantity = models.IntegerField(default=0)
-    used_for = models.CharField(max_length=1000)
     price = models.DecimalField(decimal_places=2, max_digits=9)
     upload_status = models.CharField(max_length=20, choices=[('draft','Draft'),('published','Published'),('archived','Archived')], default='draft')
     status = models.TextField()

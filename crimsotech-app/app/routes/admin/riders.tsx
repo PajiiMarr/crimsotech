@@ -110,26 +110,6 @@ interface LoaderData {
     total_earnings: number;
   };
   riders: Rider[];
-  analytics: {
-    rider_registrations: Array<{
-      date: string;
-      count: number;
-    }>;
-    status_distribution: Array<{
-      name: string;
-      value: number;
-    }>;
-    vehicle_type_distribution: Array<{
-      name: string;
-      value: number;
-    }>;
-    performance_trends: Array<{
-      month: string;
-      deliveries: number;
-      earnings: number;
-      rating: number;
-    }>;
-  };
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
@@ -165,12 +145,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   };
 
   let ridersList: Rider[] = [];
-  let analyticsData: LoaderData['analytics'] = {
-    rider_registrations: [],
-    status_distribution: [],
-    vehicle_type_distribution: [],
-    performance_trends: []
-  };
 
   try {
     // Fetch real data from API - NO FALLBACK
@@ -183,7 +157,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     if (response.data.success) {
       riderMetrics = response.data.metrics || riderMetrics;
       ridersList = response.data.riders || [];
-      analyticsData = response.data.analytics || analyticsData;
     }
   } catch (error) {
     console.log('API fetch failed - no data available');
@@ -194,7 +167,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user, 
     riderMetrics,
     riders: ridersList,
-    analytics: analyticsData
   };
 }
 
@@ -231,7 +203,7 @@ const getRiderStatus = (rider: Rider): 'pending' | 'approved' | 'rejected' | 'su
 };
 
 export default function Riders({ loaderData }: { loaderData: LoaderData }) {
-  const { user, riderMetrics, riders, analytics } = loaderData;
+  const { user, riderMetrics, riders } = loaderData;
 
   if (!loaderData) {
     return (
@@ -243,12 +215,6 @@ export default function Riders({ loaderData }: { loaderData: LoaderData }) {
 
   // Use only the fetched data - no fallbacks
   const safeRiders = riders || [];
-  const safeAnalytics = analytics || {
-    rider_registrations: [],
-    status_distribution: [],
-    vehicle_type_distribution: [],
-    performance_trends: []
-  };
   const safeMetrics = riderMetrics || {
     total_riders: 0,
     pending_riders: 0,
@@ -262,9 +228,7 @@ export default function Riders({ loaderData }: { loaderData: LoaderData }) {
   };
 
   const hasRiders = safeRiders.length > 0;
-  const hasAnalyticsData = safeAnalytics.rider_registrations.length > 0 || 
-                          safeAnalytics.status_distribution.length > 0 || 
-                          safeAnalytics.vehicle_type_distribution.length > 0;
+
 
   // Add computed status to riders for filtering
   const ridersWithComputedStatus = safeRiders.map(rider => ({
@@ -290,7 +254,7 @@ export default function Riders({ loaderData }: { loaderData: LoaderData }) {
   return (
     <UserProvider user={user}>
       <SidebarLayout>
-        <div className="space-y-6 p-4 sm:p-6">
+        <div className="space-y-6">
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
@@ -408,130 +372,6 @@ export default function Riders({ loaderData }: { loaderData: LoaderData }) {
               </CardContent>
             </Card>
           </div>
-
-          {/* Analytics Charts - Will show empty states if no data */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            {/* Rider Registrations Trend */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg sm:text-xl">Rider Registrations</CardTitle>
-                <CardDescription>New rider registrations over the past month</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {safeAnalytics.rider_registrations.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={safeAnalytics.rider_registrations}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" fontSize={12} />
-                      <YAxis fontSize={12} />
-                      <Tooltip />
-                      <Bar dataKey="count" fill="#3b82f6" name="Registrations" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyChart message="No registration data available" />
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Status Distribution */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg sm:text-xl">Rider Status Distribution</CardTitle>
-                <CardDescription>Breakdown of rider approval statuses</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {safeAnalytics.status_distribution.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={250}>
-                    <PieChart>
-                      <Pie
-                        data={safeAnalytics.status_distribution}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={({ name, value }) => `${name} (${value})`}
-                        outerRadius={80}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {safeAnalytics.status_distribution.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyChart message="No status distribution data available" />
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Performance Trends */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg sm:text-xl">Performance Trends</CardTitle>
-              <CardDescription>Delivery performance and earnings over time</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {safeAnalytics.performance_trends.length > 0 ? (
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={safeAnalytics.performance_trends}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="month" fontSize={12} />
-                      <YAxis fontSize={12} />
-                      <Tooltip />
-                      <Legend />
-                      <Line type="monotone" dataKey="deliveries" stroke="#3b82f6" strokeWidth={2} />
-                      <Line type="monotone" dataKey="earnings" stroke="#10b981" strokeWidth={2} />
-                      <Line type="monotone" dataKey="rating" stroke="#f59e0b" strokeWidth={2} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <EmptyChart message="No performance data available" />
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Vehicle Types Distribution */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg sm:text-xl">Vehicle Types</CardTitle>
-              <CardDescription>Distribution of rider vehicle types</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {safeAnalytics.vehicle_type_distribution.length > 0 ? (
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={safeAnalytics.vehicle_type_distribution}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={({ name, value }) => `${name} (${value})`}
-                        outerRadius={80}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {safeAnalytics.vehicle_type_distribution.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={VEHICLE_COLORS[index % VEHICLE_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <EmptyChart message="No vehicle type data available" />
-              )}
-            </CardContent>
-          </Card>
 
           {/* Riders Table - Will show empty state if no data */}
           <Card>
