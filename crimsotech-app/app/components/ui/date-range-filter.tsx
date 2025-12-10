@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, CalendarRange, ChevronDown, Filter } from 'lucide-react';
+import { Calendar, ChevronDown } from 'lucide-react';
 import { Button } from '~/components/ui/button';
 import { Card, CardContent } from '~/components/ui/card';
 import {
@@ -15,8 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '~/components/ui/select';
-import { Label } from '~/components/ui/label';
-import { format, subDays, subMonths, subYears, startOfYear, endOfYear, startOfMonth, endOfMonth } from 'date-fns';
+import { format, subDays, subMonths, subYears, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
 
 interface DateRangeFilterProps {
   onDateRangeChange: (range: { start: Date; end: Date; rangeType: string }) => void;
@@ -24,20 +23,24 @@ interface DateRangeFilterProps {
 }
 
 export default function DateRangeFilter({ onDateRangeChange, isLoading = false }: DateRangeFilterProps) {
+  // Changed default from 'weekly' to 'monthly' and start date to 1 month ago
   const [dateRange, setDateRange] = useState<{
     start: Date;
     end: Date;
-    rangeType: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+    rangeType: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'specific_month' | 'specific_year' | 'custom';
   }>({
-    start: subDays(new Date(), 7),
+    start: subMonths(new Date(), 1), // Changed from subDays(new Date(), 7)
     end: new Date(),
-    rangeType: 'weekly',
+    rangeType: 'monthly', // Changed from 'weekly'
   });
+
+  const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), 'yyyy-MM'));
+  const [selectedYear, setSelectedYear] = useState<string>(format(new Date(), 'yyyy'));
 
   // Handle initial date range change
   useEffect(() => {
     onDateRangeChange(dateRange);
-  }, []); // Only run once on mount
+  }, []);
 
   const handleQuickSelect = (rangeType: 'daily' | 'weekly' | 'monthly' | 'yearly') => {
     const now = new Date();
@@ -57,13 +60,43 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
         start = subYears(now, 1);
         break;
       default:
-        start = subDays(now, 7);
+        start = subMonths(now, 1); // Changed default to 1 month
     }
     
     const newRange = {
       start,
       end: now,
       rangeType,
+    };
+    
+    setDateRange(newRange);
+    onDateRangeChange(newRange);
+  };
+
+  const handleMonthSelect = (monthValue: string) => {
+    setSelectedMonth(monthValue);
+    const [year, month] = monthValue.split('-').map(Number);
+    const date = new Date(year, month - 1);
+    
+    const newRange = {
+      start: startOfMonth(date),
+      end: endOfMonth(date),
+      rangeType: 'specific_month' as const,
+    };
+    
+    setDateRange(newRange);
+    onDateRangeChange(newRange);
+  };
+
+  const handleYearSelect = (yearValue: string) => {
+    setSelectedYear(yearValue);
+    const year = parseInt(yearValue);
+    const date = new Date(year, 0);
+    
+    const newRange = {
+      start: startOfYear(date),
+      end: endOfYear(date),
+      rangeType: 'specific_year' as const,
     };
     
     setDateRange(newRange);
@@ -81,180 +114,156 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
     onDateRangeChange(newRange);
   };
 
-  const handleYearChange = (year: string) => {
-    const yearNum = parseInt(year);
-    const start = startOfYear(new Date(yearNum, 0, 1));
-    const end = endOfYear(new Date(yearNum, 0, 1));
-    
-    handleCustomRangeSelect(start, end);
+  // Generate month options for the last 24 months
+  const generateMonthOptions = () => {
+    const options = [];
+    const now = new Date();
+    for (let i = 0; i < 24; i++) {
+      const date = subMonths(now, i);
+      const value = format(date, 'yyyy-MM');
+      const label = format(date, 'MMMM yyyy');
+      options.push({ value, label });
+    }
+    return options;
   };
 
-  const handleMonthChange = (month: string) => {
-    const [year, monthNum] = month.split('-').map(Number);
-    const start = startOfMonth(new Date(year, monthNum - 1, 1));
-    const end = endOfMonth(new Date(year, monthNum - 1, 1));
-    
-    handleCustomRangeSelect(start, end);
+  // Generate year options for the last 5 years
+  const generateYearOptions = () => {
+    const options = [];
+    const currentYear = new Date().getFullYear();
+    for (let i = 0; i < 5; i++) {
+      const year = currentYear - i;
+      options.push({ value: year.toString(), label: year.toString() });
+    }
+    return options;
   };
-
-  // Generate year options (current year and previous 5 years)
-  const yearOptions = Array.from({ length: 6 }, (_, i) => {
-    const year = new Date().getFullYear() - i;
-    return { value: year.toString(), label: year.toString() };
-  });
-
-  // Generate month options for current and previous year
-  const monthOptions = Array.from({ length: 24 }, (_, i) => {
-    const date = subMonths(new Date(), i);
-    const value = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-    const label = format(date, 'MMM yyyy');
-    return { value, label };
-  });
 
   return (
-    <Card className="w-full">
-      <CardContent className="p-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <CalendarRange className="w-5 h-5 text-muted-foreground" />
-            <h3 className="font-semibold">Date Range</h3>
+    <div className="w-full">
+      <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+        {/* Date Display */}
+        <div className="text-sm">
+          <span className="text-muted-foreground">Showing: </span>
+          <span className="font-medium">
+            {format(dateRange.start, 'MMM dd')} - {format(dateRange.end, 'MMM dd, yyyy')}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Quick Select Buttons */}
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={dateRange.rangeType === 'daily' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleQuickSelect('daily')}
+              disabled={isLoading}
+              className="text-xs"
+            >
+              Today
+            </Button>
+            <Button
+              type="button"
+              variant={dateRange.rangeType === 'weekly' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleQuickSelect('weekly')}
+              disabled={isLoading}
+              className="text-xs"
+            >
+              7D
+            </Button>
+            <Button
+              type="button"
+              variant={dateRange.rangeType === 'monthly' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleQuickSelect('monthly')}
+              disabled={isLoading}
+              className="text-xs"
+            >
+              1M
+            </Button>
+            <Button
+              type="button"
+              variant={dateRange.rangeType === 'yearly' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleQuickSelect('yearly')}
+              disabled={isLoading}
+              className="text-xs"
+            >
+              1Y
+            </Button>
           </div>
-          
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Quick Select Buttons */}
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant={dateRange.rangeType === 'daily' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => handleQuickSelect('daily')}
-                disabled={isLoading}
-              >
-                Today
-              </Button>
-              <Button
-                type="button"
-                variant={dateRange.rangeType === 'weekly' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => handleQuickSelect('weekly')}
-                disabled={isLoading}
-              >
-                7 Days
-              </Button>
-              <Button
-                type="button"
-                variant={dateRange.rangeType === 'monthly' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => handleQuickSelect('monthly')}
-                disabled={isLoading}
-              >
-                1 Month
-              </Button>
-              <Button
-                type="button"
-                variant={dateRange.rangeType === 'yearly' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => handleQuickSelect('yearly')}
-                disabled={isLoading}
-              >
-                1 Year
-              </Button>
-            </div>
 
-            {/* Month Selector */}
-            <Select
-              value={dateRange.rangeType === 'custom' ? undefined : ''}
-              onValueChange={handleMonthChange}
-              disabled={isLoading}
-            >
-              <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="Select Month" />
-              </SelectTrigger>
-              <SelectContent>
-                {monthOptions.map((month) => (
-                  <SelectItem key={month.value} value={month.value}>
-                    {month.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Month Selector */}
+          <Select 
+            value={selectedMonth} 
+            onValueChange={handleMonthSelect}
+            disabled={isLoading}
+          >
+            <SelectTrigger className="w-[140px] h-8 text-xs">
+              <SelectValue placeholder="Select month" />
+            </SelectTrigger>
+            <SelectContent>
+              {generateMonthOptions().map(option => (
+                <SelectItem key={option.value} value={option.value} className="text-xs">
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-            {/* Year Selector */}
-            <Select
-              value={dateRange.rangeType === 'custom' ? undefined : ''}
-              onValueChange={handleYearChange}
-              disabled={isLoading}
-            >
-              <SelectTrigger className="w-[100px]">
-                <SelectValue placeholder="Select Year" />
-              </SelectTrigger>
-              <SelectContent>
-                {yearOptions.map((year) => (
-                  <SelectItem key={year.value} value={year.value}>
-                    {year.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Year Selector */}
+          <Select 
+            value={selectedYear} 
+            onValueChange={handleYearSelect}
+            disabled={isLoading}
+          >
+            <SelectTrigger className="w-[100px] h-8 text-xs">
+              <SelectValue placeholder="Select year" />
+            </SelectTrigger>
+            <SelectContent>
+              {generateYearOptions().map(option => (
+                <SelectItem key={option.value} value={option.value} className="text-xs">
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-            {/* Custom Range Calendar */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button 
-                  type="button"
-                  variant="outline" 
-                  size="sm" 
+          {/* Custom Range */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button 
+                type="button"
+                variant="outline" 
+                size="sm" 
+                disabled={isLoading}
+                className="text-xs"
+              >
+                <Calendar className="w-3 h-3 mr-1" />
+                Custom
+                <ChevronDown className="w-3 h-3 ml-1" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <div className="p-4">
+                <h4 className="font-medium mb-3">Select Date Range</h4>
+                <CalendarComponent
+                  mode="range"
+                  selected={{ from: dateRange.start, to: dateRange.end }}
+                  onSelect={(range) => {
+                    if (range?.from && range?.to) {
+                      handleCustomRangeSelect(range.from, range.to);
+                    }
+                  }}
                   disabled={isLoading}
-                >
-                  <Calendar className="w-4 h-4 mr-2" />
-                  Custom
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="end">
-                <div className="p-3">
-                  <Label>Custom Date Range</Label>
-                  <div className="flex items-center gap-2 mt-2">
-                    <CalendarComponent
-                      mode="range"
-                      selected={{ from: dateRange.start, to: dateRange.end }}
-                      onSelect={(range) => {
-                        if (range?.from && range?.to) {
-                          handleCustomRangeSelect(range.from, range.to);
-                        }
-                      }}
-                      disabled={isLoading}
-                      className="rounded-md border"
-                    />
-                  </div>
-                  <div className="mt-3 text-sm text-muted-foreground">
-                    <p>Selected: {format(dateRange.start, 'MMM dd, yyyy')} - {format(dateRange.end, 'MMM dd, yyyy')}</p>
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {/* Active Filter Indicator */}
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Filter className="w-4 h-4" />
-              <span className="capitalize">{dateRange.rangeType} view</span>
-            </div>
-          </div>
+                  className="border-0"
+                />
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
-
-        {/* Date Range Display */}
-        <div className="mt-4 text-center md:text-left">
-          <p className="text-sm">
-            Showing data from{' '}
-            <span className="font-semibold">
-              {format(dateRange.start, 'MMM dd, yyyy')}
-            </span>{' '}
-            to{' '}
-            <span className="font-semibold">
-              {format(dateRange.end, 'MMM dd, yyyy')}
-            </span>
-          </p>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

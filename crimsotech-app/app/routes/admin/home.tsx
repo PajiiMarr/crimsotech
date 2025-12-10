@@ -289,15 +289,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-              <p className="text-muted-foreground">
-                {dateRangeInfo.start_date && dateRangeInfo.end_date ? (
-                  <>
-                    Data from {new Date(dateRangeInfo.start_date).toLocaleDateString()} to {new Date(dateRangeInfo.end_date).toLocaleDateString()}
-                  </>
-                ) : (
-                  'Overall statistics'
-                )}
-              </p>
             </div>
           </div>
 

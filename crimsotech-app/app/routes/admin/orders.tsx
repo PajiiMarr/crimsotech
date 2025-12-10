@@ -84,7 +84,6 @@ interface OrderItem {
   quantity: number;
   total_amount: number;
   status: string;
-  remarks?: string;
   created_at: string;
 }
 
@@ -120,21 +119,6 @@ interface LoaderData {
     success_rate: number;
   };
   orders: Order[];
-  analytics: {
-    daily_orders: Array<{
-      date: string;
-      count: number;
-      revenue: number;
-    }>;
-    status_distribution: Array<{
-      name: string;
-      value: number;
-    }>;
-    payment_method_distribution: Array<{
-      name: string;
-      value: number;
-    }>;
-  };
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
@@ -170,11 +154,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   };
 
   let ordersList: Order[] = [];
-  let analyticsData: LoaderData['analytics'] = {
-    daily_orders: [],
-    status_distribution: [],
-    payment_method_distribution: []
-  };
 
   try {
     // Fetch real data from API - Updated endpoint to match your Django URL
@@ -187,7 +166,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     if (response.data.success) {
       orderMetrics = response.data.metrics || orderMetrics;
       ordersList = response.data.orders || [];
-      analyticsData = response.data.analytics || analyticsData;
     }
   } catch (error) {
     console.log('API fetch failed, using empty data fallback');
@@ -198,7 +176,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user, 
     orderMetrics,
     orders: ordersList,
-    analytics: analyticsData
   };
 }
 
@@ -223,7 +200,7 @@ const EmptyTable = () => (
 );
 
 export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
-  const { user, orderMetrics, orders, analytics } = loaderData;
+  const { user, orderMetrics, orders } = loaderData;
 
   if (!loaderData) {
     return (
@@ -234,11 +211,6 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
   }
 
   const safeOrders = orders || [];
-  const safeAnalytics = analytics || {
-    daily_orders: [],
-    status_distribution: [],
-    payment_method_distribution: []
-  };
   const safeMetrics = orderMetrics || {
     total_orders: 0,
     pending_orders: 0,
@@ -266,9 +238,6 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
 
   const hasOrders = safeOrders.length > 0;
   const hasOrderItems = orderItems.length > 0;
-  const hasAnalyticsData = safeAnalytics.daily_orders.length > 0 || 
-                          safeAnalytics.status_distribution.length > 0 || 
-                          safeAnalytics.payment_method_distribution.length > 0;
 
   // Transform data to include shopName for filtering
   const transformedOrderItems = orderItems.map(item => ({
@@ -414,106 +383,6 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
             </Card>
           </div>
 
-          {/* Analytics Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            {/* Daily Orders Trend */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg sm:text-xl">Daily Orders Trend</CardTitle>
-                <CardDescription>Order activity over the past week</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {safeAnalytics.daily_orders.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={safeAnalytics.daily_orders}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" fontSize={12} />
-                      <YAxis fontSize={12} />
-                      <Tooltip 
-                        formatter={(value, name) => {
-                          if (name === 'revenue') return [`₱${Number(value).toLocaleString()}`, 'Revenue'];
-                          return [value, 'Orders'];
-                        }}
-                      />
-                      <Bar dataKey="count" fill="#3b82f6" name="Orders" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyChart message="No order trend data available" />
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Status Distribution */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg sm:text-xl">Status Distribution</CardTitle>
-                <CardDescription>Breakdown of order statuses</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {safeAnalytics.status_distribution.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={250}>
-                    <PieChart>
-                      <Pie
-                        data={safeAnalytics.status_distribution}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={({ name, value }) => `${name} (${value})`}
-                        outerRadius={80}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {safeAnalytics.status_distribution.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyChart message="No status distribution data available" />
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Payment Methods Distribution */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg sm:text-xl">Payment Methods</CardTitle>
-              <CardDescription>Distribution of payment methods used</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {safeAnalytics.payment_method_distribution.length > 0 ? (
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={safeAnalytics.payment_method_distribution}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={({ name, value }) => `${name} (${value})`}
-                        outerRadius={80}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {safeAnalytics.payment_method_distribution.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={PAYMENT_COLORS[index % PAYMENT_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <EmptyChart message="No payment method data available" />
-              )}
-            </CardContent>
-          </Card>
 
           {/* Orders Table */}
           <Card>
@@ -562,13 +431,6 @@ const columns: ColumnDef<any>[] = [
     },
     cell: ({ row }: { row: any}) => (
       <div className="font-medium text-xs sm:text-sm">{row.getValue("order_id")?.slice(0, 8)}...</div>
-    ),
-  },
-  {
-    accessorKey: "id",
-    header: "Item ID",
-    cell: ({ row }: { row: any}) => (
-      <div className="font-medium text-xs sm:text-sm">{row.getValue("id")?.slice(0, 8)}...</div>
     ),
   },
   {
@@ -768,14 +630,5 @@ const columns: ColumnDef<any>[] = [
         </div>
       );
     },
-  },
-  {
-    accessorKey: "remarks",
-    header: "Remarks",
-    cell: ({ row }: { row: any}) => (
-      <div className="text-xs sm:text-sm max-w-[120px] truncate">
-        {row.original.remarks || '-'}
-      </div>
-    ),
   },
 ];

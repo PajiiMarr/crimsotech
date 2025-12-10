@@ -312,15 +312,6 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold">Analytics</h1>
-              <p className="text-muted-foreground">
-                {analytics.date_range?.start_date && analytics.date_range?.end_date ? (
-                  <>
-                    Data from {new Date(analytics.date_range.start_date).toLocaleDateString()} to {new Date(analytics.date_range.end_date).toLocaleDateString()}
-                  </>
-                ) : (
-                  'Overall analytics'
-                )}
-              </p>
             </div>
           </div>
 
