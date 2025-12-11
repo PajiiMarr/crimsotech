@@ -7323,6 +7323,176 @@ class SellerProducts(viewsets.ModelViewSet):
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['post'], url_path='global-categories/predict')    
+    def predict_category(self, request):
+        """
+        Predict category for a product based on its attributes.
+        Returns decoded category names (actual category labels).
+        """
+        try:
+            # Import required modules
+            import pandas as pd
+            import numpy as np
+            import tensorflow as tf
+            import joblib
+            import os
+            
+            # IMPORTANT: Use the correct model directory
+            # The models are saved in: /Users/mar/SE GROUP 5/crimsotech_web/crimsotech_django/backend/model/
+            # But your views.py is in: /Users/mar/SE GROUP 5/crimsotech_web/crimsotech_django/backend/api/views.py
+            # So we need to go up one level from api/ to backend/, then to model/
+            
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))  # This gives api/ directory
+            
+            # Option 1: If models are in backend/model (as shown in training output)
+            MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+            
+            # Option 2: Or use absolute path for certainty
+            # MODEL_DIR = '/Users/mar/SE GROUP 5/crimsotech_web/crimsotech_django/backend/model'
+            
+            print(f"Current directory: {CURRENT_DIR}")
+            print(f"Looking for models in: {MODEL_DIR}")
+            
+            # Check if directory exists
+            if not os.path.exists(MODEL_DIR):
+                return Response(
+                    {'success': False, 'error': f'Model directory not found: {MODEL_DIR}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # List files in directory for debugging
+            print(f"Files in model directory: {os.listdir(MODEL_DIR)}")
+            
+            # Load the trained models - USE CORRECT FILES
+            # 1. Category label encoder (for decoding predictions)
+            category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+            
+            # 2. Condition label encoder (for encoding condition input)
+            condition_le = joblib.load(os.path.join(MODEL_DIR, 'condition_label_encoder.pkl'))
+            
+            # 3. Name and description mappings
+            name_mapping = joblib.load(os.path.join(MODEL_DIR, 'name_mapping.pkl'))
+            desc_mapping = joblib.load(os.path.join(MODEL_DIR, 'desc_mapping.pkl'))
+            
+            # 4. Feature scaler
+            scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+            
+            # 5. TensorFlow model (NOTE: it's .h5, not .keras)
+            model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.h5'))
+            
+            print("✅ All models loaded successfully!")
+            
+            # Extract data from request
+            data = request.data
+            
+            # Validate required fields
+            required_fields = ['quantity', 'price', 'condition', 'name', 'description']
+            for field in required_fields:
+                if field not in data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Prepare item data as dictionary
+            item_data = {
+                'quantity': int(data['quantity']),
+                'price': float(data['price']),
+                'condition': str(data['condition']),
+                'name': str(data['name']),
+                'description': str(data['description'])
+            }
+            
+            print(f"Predicting category for: {item_data['name']}")
+            
+            # Create DataFrame from item data
+            df_item = pd.DataFrame([item_data])
+            
+            # ENCODE condition using CONDITION label encoder (not category encoder!)
+            try:
+                df_item['condition_encoded'] = condition_le.transform(df_item['condition'])
+                print(f"Condition '{item_data['condition']}' encoded as: {df_item['condition_encoded'].iloc[0]}")
+            except ValueError as e:
+                # If condition not in label encoder, use unknown encoding
+                print(f"Warning: Condition '{item_data['condition']}' not in training data. Using default encoding.")
+                df_item['condition_encoded'] = len(condition_le.classes_)
+            
+            # Map name and description using mappings
+            df_item['name_encoded'] = df_item['name'].map(lambda x: name_mapping.get(x, 0))
+            df_item['description_encoded'] = df_item['description'].map(lambda x: desc_mapping.get(x, 0))
+            
+            print(f"Name encoded as: {df_item['name_encoded'].iloc[0]}")
+            print(f"Description encoded as: {df_item['description_encoded'].iloc[0]}")
+            
+            # Drop original text columns
+            df_item = df_item.drop(['condition', 'name', 'description'], axis=1)
+            
+            # Ensure correct feature order (MUST match training order)
+            feature_order = ['quantity', 'price', 'condition_encoded', 'name_encoded', 'description_encoded']
+            df_item = df_item[feature_order]
+            
+            print(f"Features before scaling: {df_item.values}")
+            
+            # Scale features
+            scaled_features = scaler.transform(df_item)
+            
+            print(f"Features after scaling: {scaled_features}")
+            
+            # Make prediction
+            prediction_probs = model.predict(scaled_features, verbose=0)
+            predicted_class = np.argmax(prediction_probs, axis=1)[0]
+            confidence = np.max(prediction_probs, axis=1)[0]
+            
+            print(f"Predicted class: {predicted_class}")
+            print(f"Confidence: {confidence:.4f}")
+            print(f"All probabilities: {prediction_probs[0]}")
+            
+            # DECODE: Convert predicted class to actual category label using CATEGORY encoder
+            predicted_label = category_le.inverse_transform([predicted_class])[0]
+            
+            print(f"Predicted category: {predicted_label}")
+            
+            # Prepare response
+            result = {
+                'success': True,
+                'predicted_category': int(predicted_class),
+                'predicted_label': predicted_label,  # Decoded category name
+                'category_name': predicted_label,    # Add for clarity
+                'confidence': float(confidence),
+                'all_probabilities': prediction_probs[0].tolist(),
+                'top_3_categories': []
+            }
+            
+            # Add top 3 categories for better UX
+            top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
+            for idx in top_3_indices:
+                category_label = category_le.inverse_transform([idx])[0]  # Decode each top category
+                result['top_3_categories'].append({
+                    'category_id': int(idx),
+                    'category_name': category_label,  # Decoded category name
+                    'confidence': float(prediction_probs[0][idx]),
+                    'label': category_label  # Same as category_name for compatibility
+                })
+            
+            print(f"Top 3 categories: {result['top_3_categories']}")
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except FileNotFoundError as e:
+            print(f"❌ FileNotFoundError: {str(e)}")
+            return Response(
+                {'success': False, 'error': f'Model file not found: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        except Exception as e:
+            print(f"❌ Prediction error: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return Response(
+                {'success': False, 'error': f'Prediction failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     def get_queryset(self):
         # Get user_id from request data instead of authenticated user
         user_id = self.request.data.get('customer_id')
@@ -7549,9 +7719,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 "message": "No seller found for this user",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-        
-
-
         
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer

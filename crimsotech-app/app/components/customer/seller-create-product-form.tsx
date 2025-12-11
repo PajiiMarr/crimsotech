@@ -9,8 +9,9 @@ import { Badge } from "~/components/ui/badge";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Switch } from "~/components/ui/switch";
 import { Separator } from "~/components/ui/separator";
-import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck } from "lucide-react";
-import { useState } from 'react';
+import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles } from "lucide-react";
+import { useState, useEffect } from 'react';
+import AxiosInstance from '~/components/axios/Axios';
 import Breadcrumbs from "~/components/ui/breadcrumbs";
 
 // --- INTERFACE DEFINITIONS ---
@@ -87,9 +88,32 @@ interface CreateProductFormProps {
   errors: FormErrors;
 }
 
+// --- PREDICTION STATE INTERFACE ---
+interface PredictionResult {
+  success: boolean;
+  predicted_category: number;
+  predicted_label: string;
+  category_name: string;
+  confidence: number;
+  all_probabilities: number[];
+  top_3_categories: {
+    category_id: number;
+    category_name: string;
+    confidence: number;
+    label: string;
+  }[];
+}
+
 // --- REACT COMPONENT ---
 
 export default function CreateProductForm({ selectedShop, globalCategories, errors }: CreateProductFormProps) {
+  // Form state
+  const [productName, setProductName] = useState('');
+  const [productDescription, setProductDescription] = useState('');
+  const [productQuantity, setProductQuantity] = useState<number | ''>('');
+  const [productPrice, setProductPrice] = useState<number | ''>('');
+  const [productCondition, setProductCondition] = useState('');
+  
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
   const [showVariants, setShowVariants] = useState(false);
   const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
@@ -101,15 +125,92 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const [productWidth, setProductWidth] = useState<number | ''>('');
   const [productHeight, setProductHeight] = useState<number | ''>('');
   const [shippingZones, setShippingZones] = useState<ShippingZone[]>([
-  { id: crypto.randomUUID(), name: 'Local', fee: '', freeShipping: false },
-  { id: crypto.randomUUID(), name: 'Nearby City', fee: '', freeShipping: false },
-  { id: crypto.randomUUID(), name: 'Far Province', fee: '', freeShipping: false },
-]);
-const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
-  setShippingZones(prev => prev.map(zone => 
-    zone.id === zoneId ? { ...zone, fee } : zone
-  ));
-};
+    { id: crypto.randomUUID(), name: 'Local', fee: '', freeShipping: false },
+    { id: crypto.randomUUID(), name: 'Nearby City', fee: '', freeShipping: false },
+    { id: crypto.randomUUID(), name: 'Far Province', fee: '', freeShipping: false },
+  ]);
+  
+  // Prediction state
+  const [isPredicting, setIsPredicting] = useState(false);
+  const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
+  const [showPrediction, setShowPrediction] = useState(false);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('none');
+
+  // Check if all required prediction fields are filled
+  const arePredictionFieldsValid = () => {
+    return (
+      productName.trim().length >= 2 &&
+      productDescription.trim().length >= 10 &&
+      productPrice !== '' && productPrice > 0 &&
+      productCondition !== '' &&
+      productQuantity !== '' && productQuantity >= 0
+    );
+  };
+
+  // Function to trigger category prediction
+  const predictCategory = async () => {
+    if (!arePredictionFieldsValid() || isPredicting) return;
+    
+    setIsPredicting(true);
+    setShowPrediction(true);
+    
+    try {
+      const predictionData = {
+        quantity: productQuantity,
+        price: productPrice,
+        condition: productCondition,
+        name: productName,
+        description: productDescription
+      };
+      
+      const response = await AxiosInstance.post('/seller-products/global-categories/predict/', predictionData);
+      
+      if (response.data.success) {
+        setPredictionResult(response.data);
+        
+        // Auto-select the predicted category
+        const predictedCategory = response.data.top_3_categories[0];
+        setSelectedCategoryId(predictedCategory.category_id.toString());
+        
+        // Update the hidden form field with the predicted category
+        const categoryInput = document.getElementById('category_admin_id') as HTMLSelectElement;
+        if (categoryInput) {
+          categoryInput.value = predictedCategory.category_id.toString();
+        }
+      }
+    } catch (error) {
+      console.error('Category prediction failed:', error);
+      // Don't show error to user, just silently fail
+    } finally {
+      setIsPredicting(false);
+    }
+  };
+
+  // Auto-predict when all fields are filled
+  useEffect(() => {
+    if (arePredictionFieldsValid()) {
+      // Debounce the prediction to avoid too many requests
+      const timer = setTimeout(() => {
+        predictCategory();
+      }, 1000); // Wait 1 second after last change
+      
+      return () => clearTimeout(timer);
+    }
+  }, [productName, productDescription, productPrice, productCondition, productQuantity]);
+
+  // Reset prediction when form is cleared
+  useEffect(() => {
+    if (!arePredictionFieldsValid()) {
+      setPredictionResult(null);
+      setShowPrediction(false);
+    }
+  }, [productName, productDescription, productPrice, productCondition, productQuantity]);
+
+  const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
+    setShippingZones(prev => prev.map(zone => 
+      zone.id === zoneId ? { ...zone, fee } : zone
+    ));
+  };
 
   // --- MAIN MEDIA HANDLERS ---
   const handleMainMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,21 +245,19 @@ const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
     setMainMedia(prev => prev.filter((_, i) => i !== index));
   };
 
- 
-
-const toggleZoneFreeShipping = (zoneId: string) => {
-  setShippingZones(prev => prev.map(zone => {
-    if (zone.id === zoneId) {
-      const newFreeShipping = !zone.freeShipping;
-      return {
-        ...zone,
-        freeShipping: newFreeShipping,
-        fee: newFreeShipping ? 0 : ''
-      };
-    }
-    return zone;
-  }));
-};
+  const toggleZoneFreeShipping = (zoneId: string) => {
+    setShippingZones(prev => prev.map(zone => {
+      if (zone.id === zoneId) {
+        const newFreeShipping = !zone.freeShipping;
+        return {
+          ...zone,
+          freeShipping: newFreeShipping,
+          fee: newFreeShipping ? 0 : ''
+        };
+      }
+      return zone;
+    }));
+  };
 
   // --- VARIANT HANDLERS ---
   const addVariantGroup = () => {
@@ -173,7 +272,7 @@ const toggleZoneFreeShipping = (zoneId: string) => {
             title: "Red",
             quantity: 0,
             price: 0,
-            weight_unit: 'g' as const, // Explicitly type as const to match the union type
+            weight_unit: 'g' as const,
           },
         ],
       },
@@ -196,7 +295,7 @@ const toggleZoneFreeShipping = (zoneId: string) => {
       title: title.trim(),
       quantity: 0,
       price: 0,
-      weight_unit: 'g' as const, // Explicitly type as const to match the union type
+      weight_unit: 'g' as const,
     };
     
     setVariantGroups(prev => prev.map(group => 
@@ -261,13 +360,251 @@ const toggleZoneFreeShipping = (zoneId: string) => {
     e.target.value = '';
   };
 
+  // Handle category selection change
+  const handleCategoryChange = (value: string) => {
+    setSelectedCategoryId(value);
+    
+    // Also update the hidden form field
+    const categoryInput = document.getElementById('category_admin_id') as HTMLSelectElement;
+    if (categoryInput) {
+      categoryInput.value = value;
+    }
+  };
+
   // --- RENDER ---
   return (
-    <div className="space-y-8">
-      {/* 1. Media Card */}
+    <form method="post" encType="multipart/form-data" className="space-y-8">
+      {/* Hidden category field for form submission */}
+      <input type="hidden" id="category_admin_id" name="category_admin_id" value={selectedCategoryId} />
+      
+      {/* STEP 1: AI Category Prediction Section */}
+      <Card id="ai-category-prediction">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-purple-600" />
+            Step 1: AI Category Prediction
+          </CardTitle>
+          <CardDescription>
+            Fill in these basic details first. Our AI will suggest the best category for your product.
+          </CardDescription>
+        </CardHeader>
+        
+        <CardContent>
+          <div className="space-y-6">
+            {/* Model Required Fields Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Product Name */}
+              <div className="space-y-2">
+                <Label htmlFor="name">Product Name *</Label>
+                <Input 
+                  type="text" 
+                  id="name" 
+                  name="name" 
+                  required 
+                  placeholder="Enter product name"
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  className={showPrediction && predictionResult ? 'border-green-500' : ''}
+                />
+                {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
+              </div>
+
+              {/* Condition */}
+              <div className="space-y-2">
+                <Label htmlFor="condition">Condition *</Label>
+                <Select 
+                  name="condition" 
+                  required
+                  value={productCondition}
+                  onValueChange={setProductCondition}
+                >
+                  <SelectTrigger className={showPrediction && predictionResult ? 'border-green-500' : ''}>
+                    <SelectValue placeholder="Select condition" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Like New">Like New</SelectItem>
+                    <SelectItem value="New">New</SelectItem>
+                    <SelectItem value="Refurbished">Refurbished</SelectItem>
+                    <SelectItem value="Used - Excellent">Used - Excellent</SelectItem>
+                    <SelectItem value="Used - Good">Used - Good</SelectItem>
+                  </SelectContent>
+                </Select>
+                {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
+              </div>
+
+              {/* Quantity */}
+              <div className="space-y-2">
+                <Label htmlFor="quantity">Quantity *</Label>
+                <Input
+                  type="number"
+                  id="quantity"
+                  name="quantity"
+                  required
+                  min="0"
+                  placeholder="0"
+                  value={productQuantity}
+                  onChange={(e) => setProductQuantity(parseInt(e.target.value) || '')}
+                  className={showPrediction && predictionResult ? 'border-green-500' : ''}
+                />
+                {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
+              </div>
+              
+              {/* Price */}
+              <div className="space-y-2">
+                <Label htmlFor="price">Price *</Label>
+                <Input
+                  type="number"
+                  id="price"
+                  name="price"
+                  required
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={productPrice}
+                  onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
+                  className={showPrediction && predictionResult ? 'border-green-500' : ''}
+                />
+                {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
+              </div>
+            </div>
+
+            {/* Description */}
+            <div className="space-y-2">
+              <Label htmlFor="description">Description *</Label>
+              <Textarea 
+                id="description" 
+                name="description" 
+                required 
+                rows={4} 
+                placeholder="Enter detailed product description"
+                value={productDescription}
+                onChange={(e) => setProductDescription(e.target.value)}
+                className={showPrediction && predictionResult ? 'border-green-500' : ''}
+              />
+              {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
+            </div>
+
+            {/* AI Prediction Result */}
+            {showPrediction && (
+              <div className="space-y-4 p-4 border rounded-lg bg-gradient-to-r from-purple-50 to-blue-50">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Sparkles className="h-5 w-5 text-purple-600" />
+                    AI Category Suggestion
+                  </h3>
+                  {isPredicting && (
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Analyzing...
+                    </div>
+                  )}
+                </div>
+                
+                {predictionResult && (
+                  <>
+                    {/* Top Prediction */}
+                    <div className="p-4 bg-white border rounded-lg shadow-sm">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <span className="font-medium text-lg">{predictionResult.category_name}</span>
+                          <Badge className="ml-2 bg-green-100 text-green-800 hover:bg-green-100">
+                            {Math.round(predictionResult.confidence * 100)}% confidence
+                          </Badge>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCategoryChange(predictionResult.predicted_category.toString())}
+                          className="border-green-500 text-green-700 hover:bg-green-50"
+                        >
+                          Select This Category
+                        </Button>
+                      </div>
+                      <p className="text-sm text-gray-600">
+                        Based on your product details, this category seems to be the best fit.
+                      </p>
+                    </div>
+
+                    {/* Other Suggestions */}
+                    {predictionResult.top_3_categories.length > 1 && (
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-700 mb-2">Other suggestions:</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {predictionResult.top_3_categories.slice(1).map((cat) => (
+                            <div 
+                              key={cat.category_id}
+                              className="flex items-center justify-between p-3 border rounded-md bg-white hover:bg-gray-50 cursor-pointer"
+                              onClick={() => handleCategoryChange(cat.category_id.toString())}
+                            >
+                              <div>
+                                <span className="font-medium">{cat.category_name}</span>
+                                <span className="text-xs text-gray-500 ml-2">
+                                  {Math.round(cat.confidence * 100)}%
+                                </span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                              >
+                                Select
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Manual Category Selection (Optional) */}
+                    <div className="pt-4 border-t">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-medium text-gray-700">Prefer a different category?</h4>
+                        <Badge variant="outline" className="text-xs">
+                          Optional
+                        </Badge>
+                      </div>
+                      <Select 
+                        value={selectedCategoryId} 
+                        onValueChange={handleCategoryChange}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose from available categories" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No Category (Not Recommended)</SelectItem>
+                          {globalCategories && globalCategories.map((category: Category) => (
+                            <SelectItem key={category.id} value={category.id}>
+                              {category.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        You can override the AI suggestion by selecting a different category here.
+                      </p>
+                    </div>
+                  </>
+                )}
+                
+                {/* Prediction Status */}
+                <div className="text-xs text-gray-500 flex items-center gap-1">
+                  <div className={`h-2 w-2 rounded-full ${arePredictionFieldsValid() ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                  {arePredictionFieldsValid() 
+                    ? 'All required fields filled ✓' 
+                    : 'Fill all required fields above for AI prediction'}
+                </div>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* STEP 2: Product Media */}
       <Card id="media">
         <CardHeader>
-          <CardTitle>Product Media</CardTitle>
+          <CardTitle>Step 2: Product Media</CardTitle>
           <CardDescription>
             Upload main product images and videos (max 9 files, 50MB each)
           </CardDescription>
@@ -322,6 +659,7 @@ const toggleZoneFreeShipping = (zoneId: string) => {
                   <Input 
                     type="file" 
                     id="main-media-upload" 
+                    name="media_files"
                     multiple 
                     accept="image/*,video/*" 
                     onChange={handleMainMediaChange}
@@ -338,75 +676,10 @@ const toggleZoneFreeShipping = (zoneId: string) => {
         </CardContent>
       </Card>
 
-      {/* 2. Basic Information Card */}
-      <Card id="basic-information">
-        <CardHeader>
-          <CardTitle>Basic Information</CardTitle>
-          <CardDescription>
-            Enter essential product details, name, and description.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          {/* Error Alert */}
-          {errors.message && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{errors.message}</AlertDescription>
-            </Alert>
-          )}
-          
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label htmlFor="name">Product Name *</Label>
-                <Input type="text" id="name" name="name" required placeholder="Enter product name" />
-                {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="condition">Condition *</Label>
-                <Select name="condition" required>
-                  <SelectTrigger><SelectValue placeholder="Select condition" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="New">New</SelectItem>
-                    <SelectItem value="Used">Used</SelectItem>
-                    <SelectItem value="Refurbished">Refurbished</SelectItem>
-                  </SelectContent>
-                </Select>
-                {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="category_admin_id">Global Category</Label>
-                <Select name="category_admin_id">
-                  <SelectTrigger><SelectValue placeholder="No Category" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No Category</SelectItem>
-                    {globalCategories && globalCategories.map((category: Category) => (
-                      <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.category_admin_id && <p className="text-sm text-red-600">{errors.category_admin_id}</p>}
-              </div>
-
-              
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="description">Description *</Label>
-              <Textarea id="description" name="description" required rows={4} placeholder="Enter product description" />
-              {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 3. Variations Card */}
+      {/* STEP 3: Variations */}
       <Card id="variations">
         <CardHeader>
-          <CardTitle>Variations (Optional)</CardTitle>
+          <CardTitle>Step 3: Variations (Optional)</CardTitle>
           <CardDescription>
             Define product variants like size or color with individual images and dimensions.
           </CardDescription>
@@ -723,262 +996,268 @@ const toggleZoneFreeShipping = (zoneId: string) => {
         </CardContent>
       </Card>
 
-      {/* 4. Pricing Card */}
-      <Card id="pricing">
-        <CardHeader>
-          <CardTitle>Pricing</CardTitle>
-          <CardDescription>
-            {showVariants 
-              ? "Set price and compare price for each variant option" 
-              : "Set the base price and compare price for the product"}
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="space-y-6">
-            {showVariants && variantGroups.length > 0 ? (
-              <div className="space-y-4">
-                <Label className="text-lg font-medium">Variant Pricing</Label>
-                
-                {variantGroups.map((group) => (
-                  <div key={group.id} className="space-y-3">
-                    <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
-                    
-                    {group.options.map((option, optionIndex) => (
-                      <div key={option.id} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-center">
-                        {/* Option Label */}
-                        <div className="md:col-span-1">
-                          <span className="text-sm font-medium">{group.title}: {option.title}</span>
-                        </div>
-                        
-                        {/* Small Image Box */}
-                        <div className="md:col-span-1">
-                          {option.imagePreview ? (
-                            <div className="relative h-12 w-12 rounded-md overflow-hidden border">
-                              <img 
-                                src={option.imagePreview} 
-                                alt={`${option.title} variant`}
-                                className="h-full w-full object-cover"
-                              />
-                              <Button
-                                type="button"
-                                variant="destructive"
-                                size="sm"
-                                className="absolute top-0 right-0 h-4 w-4 rounded-full p-0"
-                                onClick={() => updateOption(group.id, option.id, 'image', null)}
-                              >
-                                <X className="h-2 w-2" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <div>
-                              <Input 
-                                type="file" 
-                                id={`variant-image-${group.id}-${option.id}`}
-                                accept="image/*"
-                                onChange={(e) => handleVariantImageChange(group.id, option.id, e)}
-                                className="hidden"
-                              />
-                              <Label 
-                                htmlFor={`variant-image-${group.id}-${option.id}`}
-                                className="cursor-pointer flex items-center justify-center h-12 w-12 border-2 border-dashed border-gray-300 rounded-md text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50"
-                                title="Upload variant image"
-                              >
-                                <ImageIcon className="h-5 w-5" />
-                              </Label>
-                            </div>
-                          )}
-                        </div>
-                        
-                        {/* Price */}
-                        <div className="md:col-span-1">
-                          <Input
-                            type="number"
-                            name={optionIndex === 0 ? `variant_option_price` : `option_price_${group.id}_${option.id}`}
-                            min="0"
-                            step="0.01"
-                            placeholder="Price"
-                            value={option.price === 0 ? '' : option.price}
-                            onChange={(e) => updateOption(group.id, option.id, 'price', e.target.value)}
-                            className="w-full"
-                          />
-                        </div>
-                        
-                        {/* Compare Price */}
-                        <div className="md:col-span-2">
-                          <Input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            placeholder="Compare Price (Optional)"
-                            value={option.compare_price || ''}
-                            onChange={(e) => updateOption(group.id, option.id, 'compare_price', e.target.value)}
-                            className="w-full"
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <Label htmlFor="price">Price *</Label>
-                  <Input
-                    type="number"
-                    id="price"
-                    name="price"
-                    required
-                    min="0"
-                    step="0.01"
-                    placeholder="0.00"
-                  />
-                  {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="compare_price">Compare Price (Optional)</Label>
-                  <Input
-                    type="number"
-                    id="compare_price"
-                    name="compare_price"
-                    min="0"
-                    step="0.01"
-                    placeholder="0.00"
-                  />
-                  <p className="text-xs text-gray-500">
-                    Original price to show as crossed out
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 5. Stock Card */}
-      <Card id="stock">
-        <CardHeader>
-          <CardTitle>Stock & Critical Trigger</CardTitle>
-          <CardDescription>
-            Set initial stock quantity and configure low stock alerts.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="space-y-6">
-            {/* Main Product Stock (when variants disabled) */}
-            {!showVariants && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="quantity">Quantity *</Label>
-                    <Input
-                      type="number"
-                      id="quantity"
-                      name="quantity"
-                      required
-                      min="0"
-                      placeholder="0"
-                    />
-                    {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
-                  </div>
+      {/* STEP 4: Pricing & Stock */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Pricing Card */}
+        <Card id="pricing">
+          <CardHeader>
+            <CardTitle>Step 4: Pricing</CardTitle>
+            <CardDescription>
+              {showVariants 
+                ? "Set price and compare price for each variant option" 
+                : "Set the base price and compare price for the product"}
+            </CardDescription>
+          </CardHeader>
+          
+          <CardContent>
+            <div className="space-y-6">
+              {showVariants && variantGroups.length > 0 ? (
+                <div className="space-y-4">
+                  <Label className="text-lg font-medium">Variant Pricing</Label>
                   
-                  <div className="space-y-4 border p-4 rounded-lg bg-red-50/50">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium">Critical Stock Trigger ⚠️</h4>
-                        <p className="text-sm text-muted-foreground">
-                          Receive notification when stock is low
-                        </p>
-                      </div>
-                      <Switch
-                        checked={enableCriticalTrigger}
-                        onCheckedChange={setEnableCriticalTrigger}
-                      />
-                    </div>
-
-                    {enableCriticalTrigger && (
-                      <div className="space-y-2">
-                        <Label htmlFor="critical_threshold">Critical Threshold</Label>
-                        <Input
-                          type="number"
-                          id="critical_threshold"
-                          name="critical_threshold"
-                          min="1"
-                          placeholder="e.g., 5"
-                          value={criticalThreshold}
-                          onChange={(e) => setCriticalThreshold(parseInt(e.target.value) || '')}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Variant Stock (when variants enabled) */}
-            {showVariants && variantGroups.length > 0 && (
-              <div className="space-y-4">
-                <Label className="text-lg font-medium">Variant Stock</Label>
-                
-                {variantGroups.map((group) => (
-                  <div key={group.id} className="space-y-3">
-                    <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
-                    
-                    {group.options.map((option, optionIndex) => (
-                      <div key={option.id} className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-                        {/* Option Label */}
-                        <div>
-                          <span className="text-sm font-medium">{group.title}: {option.title}</span>
-                        </div>
-                        
-                        {/* Quantity */}
-                        <div>
-                          <Input
-                            type="number"
-                            name={optionIndex === 0 ? `variant_option_quantity` : `option_quantity_${group.id}_${option.id}`}
-                            min="0"
-                            placeholder="Quantity"
-                            value={option.quantity}
-                            onChange={(e) => updateOption(group.id, option.id, 'quantity', e.target.value)}
-                            className="w-full"
-                          />
-                        </div>
-                        
-                        {/* Critical Trigger */}
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-2">
-                            <Switch
-                              checked={option.enable_critical_trigger || false}
-                              onCheckedChange={(checked) => updateOption(group.id, option.id, 'enable_critical_trigger', checked)}
-                              className="h-4 w-8"
-                            />
-                            <span className="text-sm">Critical</span>
+                  {variantGroups.map((group) => (
+                    <div key={group.id} className="space-y-3">
+                      <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
+                      
+                      {group.options.map((option, optionIndex) => (
+                        <div key={option.id} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-center">
+                          {/* Option Label */}
+                          <div className="md:col-span-1">
+                            <span className="text-sm font-medium">{group.title}: {option.title}</span>
                           </div>
                           
-                          {option.enable_critical_trigger && (
+                          {/* Small Image Box */}
+                          <div className="md:col-span-1">
+                            {option.imagePreview ? (
+                              <div className="relative h-12 w-12 rounded-md overflow-hidden border">
+                                <img 
+                                  src={option.imagePreview} 
+                                  alt={`${option.title} variant`}
+                                  className="h-full w-full object-cover"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  className="absolute top-0 right-0 h-4 w-4 rounded-full p-0"
+                                  onClick={() => updateOption(group.id, option.id, 'image', null)}
+                                >
+                                  <X className="h-2 w-2" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div>
+                                <Input 
+                                  type="file" 
+                                  id={`variant-image-${group.id}-${option.id}`}
+                                  accept="image/*"
+                                  onChange={(e) => handleVariantImageChange(group.id, option.id, e)}
+                                  className="hidden"
+                                />
+                                <Label 
+                                  htmlFor={`variant-image-${group.id}-${option.id}`}
+                                  className="cursor-pointer flex items-center justify-center h-12 w-12 border-2 border-dashed border-gray-300 rounded-md text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50"
+                                  title="Upload variant image"
+                                >
+                                  <ImageIcon className="h-5 w-5" />
+                                </Label>
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* Price */}
+                          <div className="md:col-span-1">
                             <Input
                               type="number"
-                              min="1"
-                              placeholder="Threshold"
-                              value={option.critical_trigger || ''}
-                              onChange={(e) => updateOption(group.id, option.id, 'critical_trigger', e.target.value)}
-                              className="w-24"
+                              name={optionIndex === 0 ? `variant_option_price` : `option_price_${group.id}_${option.id}`}
+                              min="0"
+                              step="0.01"
+                              placeholder="Price"
+                              value={option.price === 0 ? '' : option.price}
+                              onChange={(e) => updateOption(group.id, option.id, 'price', e.target.value)}
+                              className="w-full"
                             />
-                          )}
+                          </div>
+                          
+                          {/* Compare Price */}
+                          <div className="md:col-span-2">
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="Compare Price (Optional)"
+                              value={option.compare_price || ''}
+                              onChange={(e) => updateOption(group.id, option.id, 'compare_price', e.target.value)}
+                              className="w-full"
+                            />
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="price">Price *</Label>
+                    <Input
+                      type="number"
+                      id="price"
+                      name="price"
+                      required
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={productPrice}
+                      onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
+                    />
+                    {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="compare_price">Compare Price (Optional)</Label>
+                    <Input
+                      type="number"
+                      id="compare_price"
+                      name="compare_price"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                    />
+                    <p className="text-xs text-gray-500">
+                      Original price to show as crossed out
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
+        {/* Stock Card */}
+        <Card id="stock">
+          <CardHeader>
+            <CardTitle>Step 4: Stock</CardTitle>
+            <CardDescription>
+              Set initial stock quantity and configure low stock alerts.
+            </CardDescription>
+          </CardHeader>
+          
+          <CardContent>
+            <div className="space-y-6">
+              {/* Main Product Stock (when variants disabled) */}
+              {!showVariants && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="quantity">Quantity *</Label>
+                      <Input
+                        type="number"
+                        id="quantity"
+                        name="quantity"
+                        required
+                        min="0"
+                        placeholder="0"
+                        value={productQuantity}
+                        onChange={(e) => setProductQuantity(parseInt(e.target.value) || '')}
+                      />
+                      {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
+                    </div>
+                    
+                    <div className="space-y-4 border p-4 rounded-lg bg-red-50/50">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">Critical Stock Trigger ⚠️</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Receive notification when stock is low
+                          </p>
+                        </div>
+                        <Switch
+                          checked={enableCriticalTrigger}
+                          onCheckedChange={setEnableCriticalTrigger}
+                        />
+                      </div>
+
+                      {enableCriticalTrigger && (
+                        <div className="space-y-2">
+                          <Label htmlFor="critical_threshold">Critical Threshold</Label>
+                          <Input
+                            type="number"
+                            id="critical_threshold"
+                            name="critical_threshold"
+                            min="1"
+                            placeholder="e.g., 5"
+                            value={criticalThreshold}
+                            onChange={(e) => setCriticalThreshold(parseInt(e.target.value) || '')}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Variant Stock (when variants enabled) */}
+              {showVariants && variantGroups.length > 0 && (
+                <div className="space-y-4">
+                  <Label className="text-lg font-medium">Variant Stock</Label>
+                  
+                  {variantGroups.map((group) => (
+                    <div key={group.id} className="space-y-3">
+                      <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
+                      
+                      {group.options.map((option, optionIndex) => (
+                        <div key={option.id} className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                          {/* Option Label */}
+                          <div>
+                            <span className="text-sm font-medium">{group.title}: {option.title}</span>
+                          </div>
+                          
+                          {/* Quantity */}
+                          <div>
+                            <Input
+                              type="number"
+                              name={optionIndex === 0 ? `variant_option_quantity` : `option_quantity_${group.id}_${option.id}`}
+                              min="0"
+                              placeholder="Quantity"
+                              value={option.quantity}
+                              onChange={(e) => updateOption(group.id, option.id, 'quantity', e.target.value)}
+                              className="w-full"
+                            />
+                          </div>
+                          
+                          {/* Critical Trigger */}
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={option.enable_critical_trigger || false}
+                                onCheckedChange={(checked) => updateOption(group.id, option.id, 'enable_critical_trigger', checked)}
+                                className="h-4 w-8"
+                              />
+                              <span className="text-sm">Critical</span>
+                            </div>
+                            
+                            {option.enable_critical_trigger && (
+                              <Input
+                                type="number"
+                                min="1"
+                                placeholder="Threshold"
+                                value={option.critical_trigger || ''}
+                                onChange={(e) => updateOption(group.id, option.id, 'critical_trigger', e.target.value)}
+                                className="w-24"
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Submit Button */}
       <div className="pt-6">
@@ -992,6 +1271,6 @@ const toggleZoneFreeShipping = (zoneId: string) => {
           {selectedShop ? "Create Product" : "Create Shop First"}
         </Button>
       </div>
-    </div>
+    </form>
   );
 }
