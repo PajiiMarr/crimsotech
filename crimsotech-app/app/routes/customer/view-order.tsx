@@ -1849,20 +1849,19 @@ function CancelledStatusUI({ orderDetails, formatDate, formatCurrency }: any) {
 }
 
 function ReturnRefundStatusUI({ refundDetails, formatDate, formatCurrency, handleStatusChange }: any) {
-  // Transform refundDetails to match the customer view structure
   const order = {
     order_number: refundDetails.order.order_id,
     created_at: refundDetails.requested_at,
     items: [{
       id: 'item-1',
-      name: 'Product from order', // You might need to fetch actual items
+      name: 'Product from order', 
       quantity: 1,
       subtotal: refundDetails.refund_amount,
     }],
     shipping: {
       address: {
         contact_person: refundDetails.customer.name,
-        street: 'Address from order', // You'll need actual address data
+        street: 'Address from order', 
         city: '',
         province: '',
         zip_code: '',
@@ -1888,9 +1887,9 @@ function ReturnRefundStatusUI({ refundDetails, formatDate, formatCurrency, handl
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {/* Left Column - Seller View */}
+
       <div className="lg:col-span-2 space-y-4">
-        {/* Copy the structure from customer view but modify for seller */}
+       
         <Card className="border">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -1915,10 +1914,9 @@ function ReturnRefundStatusUI({ refundDetails, formatDate, formatCurrency, handl
                 <p className="font-medium text-sm">{refundDetails.customer.name}</p>
                 <p className="text-xs text-muted-foreground">{refundDetails.customer.email}</p>
               </div>
-              {/* ... rest of seller-specific view ... */}
             </div>
             
-            {/* Add seller decision buttons */}
+  
             <div className="flex gap-2">
               <Button
                 onClick={() => handleStatusChange('approved')}
@@ -1942,13 +1940,13 @@ function ReturnRefundStatusUI({ refundDetails, formatDate, formatCurrency, handl
       
       {/* Right Column */}
       <div className="space-y-4">
-        {/* Similar to customer view but with seller context */}
+    
         <Card className="border">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Return Summary</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
-            {/* Same content structure */}
+  
           </CardContent>
         </Card>
       </div>

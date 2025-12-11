@@ -407,13 +407,11 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
     
     // Apply main tab filter
     if (activeMainTab === 'return_refund') {
-      // Show all except cancelled for Return & Refund tab
       filtered = filtered.filter(item => item.status !== 'cancelled');
       
       // Apply sub-tab filter if not 'all'
       if (activeSubTab !== 'all') {
         if (activeSubTab === 'cancelled_sample') {
-          // Sample cancelled sub-tab - show cancelled items
           filtered = filtered.filter(item => item.status === 'cancelled');
         } else {
           filtered = filtered.filter(item => item.status === activeSubTab);

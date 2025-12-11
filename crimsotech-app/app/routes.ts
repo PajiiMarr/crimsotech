@@ -34,17 +34,18 @@ export default [
     route('view-cancelled-order/:id', 'components/customer/view-cancelled-order.tsx'),
     route('order-review/:id', 'components/customer/order-review.tsx'),  
     route('notifications', 'routes/customer/notifications.tsx'),  
-    route('return-refund-cancel', 'routes/customer/return-refund-cancel.tsx'),  
-    
     route('arrange-shipment', 'components/customer/arrange-shipment.tsx'), 
     route("customer-create-product", "routes/customer/customer-create-product.tsx"), 
-    // route("request-refund/:refundId", "routes/customer/request-refund-return.tsx"),
+
+    //customer-buyer
+    route('return-refund-cancel', 'routes/customer/return-refund-cancel.tsx'),  
     route("request-refund-return/:id", "routes/customer/request-refund-return.tsx"),
-    route('view-refund-request/:refundId', 'routes/customer/view-refund-request.tsx'),
-    route('customer-view-refund-request/:refundId', 'routes/customer/customer-view-refund-request.tsx'),
     route('view-order/:orderId', 'routes/customer/view-order.tsx'),
-    route('customer-return-cancel', 'routes/customer/customer-return-cancel.tsx'),
+
+    //customer-seller
     route('view-customer-return-cancel/:returnId', 'routes/customer/view-customer-return-cancel.tsx'),
+    route('view-refund-request/:refundId', 'routes/customer/view-refund-request.tsx'),
+    route('customer-return-cancel', 'routes/customer/customer-return-cancel.tsx'),
     
     
     

@@ -15,7 +15,19 @@ import {
   Calendar,
   CheckCircle,
   Clock,
+  Shield,
   RotateCcw,
+  Truck,
+  PackageCheck,
+  CheckSquare,
+  Search,
+  AlertTriangle,
+  BarChart,
+  Eye,
+  FileWarning,
+
+
+
   FileText,
   Download,
   Image as ImageIcon,
@@ -26,14 +38,14 @@ import {
   CreditCard,
   ChevronDown,
   PhilippinePeso,
-   Send, // Add this
-  DollarSign, // Add this
-  Wallet, // Add this
-  Tag, // Add this
-  RefreshCw, // Add this
-  Banknote, // Add this
-  MessageSquare, // Added for Reason icon
-  X, // Added for Dialog close icon
+  Send,
+  DollarSign, 
+  Wallet, 
+  Tag, 
+  RefreshCw, 
+  Banknote, 
+  MessageSquare,
+  X, 
 } from 'lucide-react';
 // Mock Dialog components for completeness - replace with actual UI library imports
 const Dialog = (props: any) => <div {...props}>{props.children}</div>;
@@ -101,9 +113,6 @@ const STATUS_CONFIG = {
 export async function loader({ params }: Route.LoaderArgs) {
   const { refundId } = params;
 
-  // Mock data structure - NOTE: The live status will depend on how the URL is loaded,
-  // but for the sake of presentation, we'll keep the default 'pending' here.
-  // The main component handles URL status overrides.
   const refundDetails = {
     refund: refundId,
     order: {
@@ -144,10 +153,7 @@ export async function loader({ params }: Route.LoaderArgs) {
   };
 }
 
-// --- Status-Specific UI Components (Minor additions for clarity/completeness) ---
 
-
-// Helper function to handle the image download
 const handleDownload = (imageUrl: string, fileName: string) => {
   fetch(imageUrl)
     .then((response) => response.blob())
@@ -1243,6 +1249,9 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedImageName, setSelectedImageName] = useState<string>('evidence.jpg');
+  const [trackingNumber, setTrackingNumber] = useState('TRK-123456789');
+  const [carrier, setCarrier] = useState('J&T Express');
+  const [estimatedDelivery, setEstimatedDelivery] = useState('2024-02-05');
 
   const attachments = refundDetails.attachments || [];
 
@@ -1276,6 +1285,56 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Tracking Information */}
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+              <div className="flex items-center gap-3 mb-3">
+                <Truck className="h-5 w-5 text-blue-600" />
+                <div>
+                  <h3 className="font-medium text-blue-800">Return Tracking</h3>
+                  <p className="text-sm text-blue-600">Item is on its way back to you</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <p className="text-xs text-blue-700">Tracking Number</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-mono font-bold text-sm">{trackingNumber}</p>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => navigator.clipboard.writeText(trackingNumber)}
+                    >
+                      <FileText className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="space-y-1">
+                  <p className="text-xs text-blue-700">Carrier</p>
+                  <p className="font-medium text-sm">{carrier}</p>
+                </div>
+                
+                <div className="space-y-1">
+                  <p className="text-xs text-blue-700">Estimated Delivery</p>
+                  <p className="font-medium text-sm">{estimatedDelivery}</p>
+                </div>
+              </div>
+              
+              <div className="mt-3 pt-3 border-t border-blue-200">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-blue-600 border-blue-300 hover:bg-blue-50"
+                  onClick={() => window.open(`https://tracking.com/${trackingNumber}`, '_blank')}
+                >
+                  <Truck className="h-3.5 w-3.5 mr-1.5" />
+                  Track Package
+                </Button>
+              </div>
+            </div>
+
             {/* Compact Info Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-0.5">
@@ -1299,18 +1358,18 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
 
               <div className="space-y-0.5">
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Package className="h-3 w-3" />
-                  Return Tracking
+                  <Calendar className="h-3 w-3" />
+                  Return Initiated
                 </p>
-                <p className="font-medium text-sm">TRK-123456789 (J&T Express)</p>
+                <p className="font-medium text-sm">{formatDate(new Date().toISOString())}</p>
               </div>
 
               <div className="space-y-0.5">
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Calendar className="h-3 w-3" />
-                  Estimated Delivery
+                  <CreditCard className="h-3 w-3" />
+                  Refund Method
                 </p>
-                <p className="font-medium text-sm">2024-02-05</p>
+                <p className="font-medium text-sm">{refundDetails.preferred_refund_method}</p>
               </div>
             </div>
 
@@ -1360,6 +1419,27 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
                 ))}
               </div>
             </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-2 pt-4">
+              <Button
+                variant="outline"
+                className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50 h-10"
+                size="sm"
+                onClick={() => handleStatusChange('approved')}
+              >
+                <ArrowLeft className="h-4 w-4 mr-1.5" />
+                Back to Approved
+              </Button>
+              <Button
+                className="flex-1 bg-green-600 hover:bg-green-700 h-10"
+                size="sm"
+                onClick={() => handleStatusChange('to_verify')}
+              >
+                <PackageCheck className="h-4 w-4 mr-1.5" />
+                Mark as Received
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1390,31 +1470,32 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
               <span className="font-medium">{formatCurrency(refundDetails.refund_amount)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Evidence:</span>
-              <span className="font-medium">{attachments.length} files</span>
+              <span className="text-muted-foreground">Tracking:</span>
+              <span className="font-medium text-blue-600">Active</span>
             </div>
           </CardContent>
         </Card>
 
         <Card className="border">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Next Action</CardTitle>
+            <CardTitle className="text-sm">Return Instructions</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <Button
-              className="w-full bg-green-600 hover:bg-green-700 h-10"
-              onClick={() => handleStatusChange('to_process')}
-              size="sm"
-            >
-              <CheckCircle className="h-4 w-4 mr-1.5" />
-              Mark as Returned
-            </Button>
-
-            <div className="pt-2 border-t text-xs text-muted-foreground">
-              <p className="font-medium mb-0.5">Note:</p>
-              <p className="text-xs">• Confirm item is received and verified</p>
-              <p className="text-xs">• Check for damages or missing parts</p>
-              <p className="text-xs">• Update tracking status if needed</p>
+          <CardContent className="space-y-2 text-xs text-gray-600">
+            <div className="flex items-start gap-2">
+              <CheckSquare className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
+              <span>Include all original accessories</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <CheckSquare className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
+              <span>Use original packaging if possible</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <CheckSquare className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
+              <span>Include return authorization slip</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <CheckSquare className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
+              <span>Ship within 7 days of approval</span>
             </div>
           </CardContent>
         </Card>
@@ -1428,18 +1509,9 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
               variant="ghost" 
               size="sm" 
               className="w-full justify-start h-8 text-xs"
-              onClick={() => handleStatusChange('approved')}
             >
-              <ArrowLeft className="h-3 w-3 mr-1.5" />
-              Back to Approved
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-full justify-start h-8 text-xs"
-            >
-              <Package className="h-3 w-3 mr-1.5" />
-              Update Tracking
+              <Truck className="h-3 w-3 mr-1.5" />
+              Update Tracking Info
             </Button>
             <Button 
               variant="ghost" 
@@ -1449,6 +1521,14 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
               <MessageCircle className="h-3 w-3 mr-1.5" />
               Contact Customer
             </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-start h-8 text-xs"
+            >
+              <FileText className="h-3 w-3 mr-1.5" />
+              View Return Label
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -1457,7 +1537,6 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
       {showImageModal && selectedImage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
           <div className="relative max-w-4xl w-full max-h-[90vh] bg-white rounded-lg shadow-2xl overflow-hidden">
-            {/* Image container */}
             <div className="relative h-[calc(90vh-80px)] flex items-center justify-center p-4">
               <img
                 src={selectedImage}
@@ -1465,8 +1544,6 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
                 className="max-w-full max-h-full object-contain"
               />
             </div>
-
-            {/* Action Buttons */}
             <div className="absolute top-4 right-4 flex gap-2">
               <Button
                 variant="secondary"
@@ -1478,8 +1555,6 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
                 <X className="h-5 w-5" />
               </Button>
             </div>
-
-            {/* Footer */}
             <div className="border-t p-4 bg-gray-50 flex justify-between items-center">
               <div className="text-sm text-gray-600 truncate">
                 {selectedImageName}
@@ -1499,11 +1574,655 @@ function WaitingStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
   );
 }
 
-// Add these imports at the top if not already there
-import { Package } from 'lucide-react';
+
+function ToVerifyStatusUI({ refundDetails, formatDate, formatCurrency, handleStatusChange }: any) {
+  const [verificationNotes, setVerificationNotes] = useState('');
+  const [itemCondition, setItemCondition] = useState('good');
+  const [isComplete, setIsComplete] = useState(true);
+  const [hasDamage, setHasDamage] = useState(false);
+  const [damageDescription, setDamageDescription] = useState('');
+
+  const handleVerificationSubmit = () => {
+    if (!verificationNotes.trim()) {
+      alert('Please add verification notes');
+      return;
+    }
+
+    console.log('Verification submitted:', {
+      condition: itemCondition,
+      isComplete,
+      hasDamage,
+      damageDescription,
+      notes: verificationNotes
+    });
+
+    // Move to next status based on verification
+    if (hasDamage) {
+      // If damaged, go to dispute or negotiation
+      const shouldDispute = confirm('Item has damage. Do you want to file a dispute instead?');
+      if (shouldDispute) {
+        handleStatusChange('dispute');
+      } else {
+        handleStatusChange('negotiation');
+      }
+    } else {
+      // If good condition, proceed to processing
+      handleStatusChange('to_process');
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Left Column */}
+      <div className="lg:col-span-2 space-y-4">
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <ShoppingBag className="h-4 w-4" />
+                #{refundDetails.refund}
+              </CardTitle>
+              <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
+                <PackageCheck className="h-3 w-3 mr-1" />
+                To Verify
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Verification Alert */}
+            <Alert className="bg-orange-50 border-orange-200">
+              <AlertTitle className="text-orange-800 flex items-center gap-2">
+                <Search className="h-4 w-4" />
+                Item Received - Verification Required
+              </AlertTitle>
+              <AlertDescription className="text-orange-700 text-sm">
+                The returned item has been received. Please verify its condition and completeness before proceeding with the refund.
+              </AlertDescription>
+            </Alert>
+
+            {/* Verification Form */}
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-medium mb-2">Item Condition</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {['excellent', 'good', 'poor'].map((condition) => (
+                    <Button
+                      key={condition}
+                      type="button"
+                      variant={itemCondition === condition ? 'default' : 'outline'}
+                      className={`capitalize ${itemCondition === condition ? 'bg-blue-600' : ''}`}
+                      onClick={() => setItemCondition(condition)}
+                    >
+                      {condition}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium mb-2">Item Completeness</p>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={isComplete}
+                      onChange={() => setIsComplete(true)}
+                      className="h-4 w-4"
+                    />
+                    <span>All accessories included</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={!isComplete}
+                      onChange={() => setIsComplete(false)}
+                      className="h-4 w-4"
+                    />
+                    <span>Missing items</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 mb-2">
+                  <input
+                    type="checkbox"
+                    checked={hasDamage}
+                    onChange={(e) => setHasDamage(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  <span className="text-sm font-medium">Item has damage</span>
+                </label>
+                
+                {hasDamage && (
+                  <textarea
+                    placeholder="Describe the damage..."
+                    value={damageDescription}
+                    onChange={(e) => setDamageDescription(e.target.value)}
+                    className="w-full p-2 border rounded-md text-sm min-h-[80px]"
+                  />
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-medium mb-2">Verification Notes *</p>
+                <textarea
+                  placeholder="Add verification notes (required)..."
+                  value={verificationNotes}
+                  onChange={(e) => setVerificationNotes(e.target.value)}
+                  className="w-full p-2 border rounded-md text-sm min-h-[100px]"
+                  required
+                />
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-2 pt-4">
+              <Button
+                variant="outline"
+                className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-50 h-10"
+                size="sm"
+                onClick={() => handleStatusChange('waiting')}
+              >
+                <ArrowLeft className="h-4 w-4 mr-1.5" />
+                Back to Waiting
+              </Button>
+              <Button
+                className="flex-1 bg-green-600 hover:bg-green-700 h-10"
+                size="sm"
+                onClick={handleVerificationSubmit}
+                disabled={!verificationNotes.trim()}
+              >
+                <CheckCircle className="h-4 w-4 mr-1.5" />
+                Complete Verification
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Right Column */}
+      <div className="space-y-4">
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Summary</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Request ID:</span>
+              <span className="font-medium">#{refundDetails.refund}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Status:</span>
+              <Badge variant="outline" className="bg-orange-50 text-orange-700 text-xs">
+                To Verify
+              </Badge>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Customer:</span>
+              <span className="font-medium">{refundDetails.customer.name}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Amount:</span>
+              <span className="font-medium">{formatCurrency(refundDetails.refund_amount)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Received:</span>
+              <span className="font-medium text-green-600">Yes</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Verification Checklist</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs text-gray-600">
+            <div className="flex items-start gap-2">
+              <Search className="h-3 w-3 text-orange-500 mt-0.5 flex-shrink-0" />
+              <span>Verify item matches original product</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <Search className="h-3 w-3 text-orange-500 mt-0.5 flex-shrink-0" />
+              <span>Check for physical damage</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <Search className="h-3 w-3 text-orange-500 mt-0.5 flex-shrink-0" />
+              <span>Confirm all accessories included</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <Search className="h-3 w-3 text-orange-500 mt-0.5 flex-shrink-0" />
+              <span>Test functionality if applicable</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <Search className="h-3 w-3 text-orange-500 mt-0.5 flex-shrink-0" />
+              <span>Check serial numbers match</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Quick Actions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-start h-8 text-xs text-red-600 hover:text-red-700"
+              onClick={() => handleStatusChange('dispute')}
+            >
+              <AlertTriangle className="h-3 w-3 mr-1.5" />
+              Flag as Damaged
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-start h-8 text-xs"
+            >
+              <ImageIcon className="h-3 w-3 mr-1.5" />
+              Upload Inspection Photos
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-start h-8 text-xs"
+            >
+              <MessageCircle className="h-3 w-3 mr-1.5" />
+              Request More Info
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+function DisputeStatusUI({ refundDetails, formatDate, formatCurrency, handleStatusChange, navigate }: any) {
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [selectedImageName, setSelectedImageName] = useState<string>('evidence.jpg');
+  
+  const attachments = refundDetails.attachments || [];
+  
+  // Mock dispute data 
+  const disputeDetails = {
+    id: 'DSP-2024-001',
+    filed_by: 'Buyer',
+    filed_by_name: refundDetails.customer.name,
+    filed_date: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
+    reason: 'Unfair rejection - item meets refund criteria',
+    description: 'The seller rejected my refund request unfairly. The item is clearly defective as shown in my evidence. I request admin review and full refund as per platform policy.',
+    status: 'pending_review', // pending_review, under_review, resolved
+    admin_decision: null, // approved, rejected, partial
+    admin_response: null,
+    admin_response_date: null,
+    evidence_count: 3
+  };
+
+  const handleImagePreview = (attachment: { url: string; name: string }) => {
+    setSelectedImage(attachment.url);
+    setSelectedImageName(attachment.name || 'evidence.jpg');
+    setShowImageModal(true);
+  };
+
+  const handleModalClose = () => {
+    setShowImageModal(false);
+    setSelectedImage(null);
+    setSelectedImageName('evidence.jpg');
+  };
+
+  const getStatusBadge = () => {
+    switch (disputeDetails.status) {
+      case 'pending_review':
+        return <Badge className="bg-yellow-100 text-yellow-800">Pending Admin Review</Badge>;
+      case 'under_review':
+        return <Badge className="bg-blue-100 text-blue-800">Under Admin Review</Badge>;
+      case 'resolved':
+        if (disputeDetails.admin_decision === 'approved') {
+          return <Badge className="bg-green-100 text-green-800">Dispute Approved</Badge>;
+        } else if (disputeDetails.admin_decision === 'rejected') {
+          return <Badge className="bg-red-100 text-red-800">Dispute Rejected</Badge>;
+        } else {
+          return <Badge className="bg-yellow-100 text-yellow-800">Partially Resolved</Badge>;
+        }
+      default:
+        return <Badge className="bg-gray-100 text-gray-800">Unknown</Badge>;
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Left Column */}
+      <div className="lg:col-span-2 space-y-4">
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShoppingBag className="h-4 w-4" />
+                <CardTitle className="text-base">
+                  #{refundDetails.refund} - Buyer Dispute
+                </CardTitle>
+              </div>
+              {getStatusBadge()}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Dispute Header */}
+            <Alert className="bg-orange-50 border-orange-200">
+              <AlertTriangle className="h-4 w-4 text-orange-600" />
+              <AlertTitle className="text-orange-800">Buyer Filed Dispute</AlertTitle>
+              <AlertDescription className="text-orange-700">
+                The buyer has disputed your rejection of their refund request. This is now under admin review.
+              </AlertDescription>
+            </Alert>
+
+            {/* Dispute Details */}
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Filed By</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <User className="h-4 w-4 text-blue-600" />
+                    <div>
+                      <p className="font-medium">{disputeDetails.filed_by_name}</p>
+                      <Badge variant="outline" className="bg-red-50 text-red-700 text-xs">
+                        Buyer
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Filed Date</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Calendar className="h-4 w-4 text-blue-600" />
+                    <p className="font-medium">{formatDate(disputeDetails.filed_date)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Dispute Reason</p>
+                <div className="bg-red-50 p-3 rounded border border-red-100">
+                  <p className="font-medium text-sm text-red-800">{disputeDetails.reason}</p>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Buyer's Statement</p>
+                <div className="bg-gray-50 p-3 rounded border">
+                  <p className="text-sm text-gray-700">{disputeDetails.description}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Buyer's Evidence */}
+            <div>
+              <p className="text-xs text-muted-foreground flex items-center gap-1 mb-2">
+                <ImageIcon className="h-3 w-3" />
+                Buyer's Evidence ({disputeDetails.evidence_count} files)
+              </p>
+
+              <div className="grid grid-cols-4 gap-2 mb-3"> 
+                {attachments.slice(0, 4).map((attachment: any, index: number) => (
+                  <div
+                    key={attachment.id}
+                    className="relative cursor-pointer group"
+                    onClick={() => handleImagePreview(attachment)} 
+                  >
+                    <div className="aspect-square rounded overflow-hidden border bg-muted/30"> 
+                      <img
+                        src={attachment.url}
+                        alt={attachment.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                      />
+                    </div>
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] px-1 py-0.5 truncate">
+                      {attachment.name}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Admin Response (if available) */}
+            {disputeDetails.admin_response && (
+              <div className="border-t pt-4">
+                <p className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-1">
+                  <Shield className="h-3 w-3" />
+                  Admin Response
+                </p>
+                <div className="bg-blue-50 border border-blue-200 rounded p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Shield className="h-4 w-4 text-blue-600" />
+                    <div>
+                      <p className="text-sm font-medium text-blue-800">Decision: {disputeDetails.admin_decision}</p>
+                      <p className="text-xs text-blue-700">
+                        {disputeDetails.admin_response_date && formatDate(disputeDetails.admin_response_date)}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-700">{disputeDetails.admin_response}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Action Button - File Counter Dispute */}
+            <div className="pt-4 border-t">
+              <p className="text-sm font-medium text-gray-700 mb-2">Need to file your own dispute?</p>
+              <p className="text-xs text-gray-500 mb-3">
+                If you have additional evidence or information that wasn't considered in the original review, you can file a counter dispute.
+              </p>
+              <Button
+                variant="outline"
+                className="w-full border-orange-300 text-orange-700 hover:bg-orange-50 h-10"
+                size="sm"
+                onClick={() => navigate(`/file-counter-dispute/${refundDetails.refund}`)}
+              >
+                <FileWarning className="h-4 w-4 mr-1.5" />
+                File Counter Dispute
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Right Column */}
+      <div className="space-y-4">
+        {/* Dispute Summary */}
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Dispute Summary</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Dispute ID:</span>
+              <span className="font-medium">{disputeDetails.id}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Original Request:</span>
+              <span className="font-medium">#{refundDetails.refund}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Status:</span>
+              {getStatusBadge()}
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Filed By:</span>
+              <Badge variant="outline" className="bg-red-50 text-red-700 text-xs">
+                Buyer
+              </Badge>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Filed Date:</span>
+              <span className="font-medium">{formatDate(disputeDetails.filed_date)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Evidence:</span>
+              <span className="font-medium">{disputeDetails.evidence_count} files</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Original Refund Details */}
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Original Refund Request</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Customer:</span>
+              <span className="font-medium">{refundDetails.customer.name}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Amount:</span>
+              <span className="font-medium">{formatCurrency(refundDetails.refund_amount)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Method:</span>
+              <span className="font-medium text-right">{refundDetails.preferred_refund_method}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Your Decision:</span>
+              <Badge variant="outline" className="bg-red-50 text-red-700 text-xs">
+                Rejected
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Dispute Timeline */}
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Dispute Timeline</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+              <div>
+                <p className="font-medium">Refund Rejected</p>
+                <p className="text-gray-500">{formatDate(refundDetails.requested_at)}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+              <div>
+                <p className="font-medium">Buyer Filed Dispute</p>
+                <p className="text-gray-500">{formatDate(disputeDetails.filed_date)}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${
+                disputeDetails.status !== 'pending_review' ? 'bg-blue-500' : 'bg-gray-300'
+              }`}></div>
+              <div>
+                <p className={`font-medium ${
+                  disputeDetails.status !== 'pending_review' ? '' : 'text-gray-400'
+                }`}>Admin Review</p>
+                <p className="text-gray-500">24-48 hours</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${
+                disputeDetails.status === 'resolved' ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
+              <div>
+                <p className={`font-medium ${
+                  disputeDetails.status === 'resolved' ? '' : 'text-gray-400'
+                }`}>Final Decision</p>
+                <p className="text-gray-500">Binding resolution</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Quick Actions */}
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Quick Actions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => handleStatusChange('rejected')}
+            >
+              <ArrowLeft className="h-3 w-3 mr-1.5" />
+              Back to Rejection Details
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => navigate(`/chat/customer/${refundDetails.customer.name}`)}
+            >
+              <MessageCircle className="h-3 w-3 mr-1.5" />
+              Contact Buyer
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-start h-8 text-xs"
+            >
+              <FileText className="h-3 w-3 mr-1.5" />
+              View Dispute Policy
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Image Modal */}
+      {showImageModal && selectedImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+          <div className="relative max-w-4xl w-full max-h-[90vh] bg-white rounded-lg shadow-2xl overflow-hidden">
+            <div className="relative h-[calc(90vh-80px)] flex items-center justify-center p-4">
+              <img
+                src={selectedImage}
+                alt="Evidence preview"
+                className="max-w-full max-h-full object-contain"
+              />
+            </div>
+            <div className="absolute top-4 right-4 flex gap-2">
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={handleModalClose}
+                className="bg-white hover:bg-gray-100 shadow-md"
+                title="Close Preview"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="border-t p-4 bg-gray-50 flex justify-between items-center">
+              <div className="text-sm text-gray-600 truncate">
+                {selectedImageName}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(selectedImage, '_blank')}
+              >
+                Open in new tab
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
 
 function ToProcessStatusUI({ refundDetails, formatDate, formatCurrency, handleStatusChange }: any) {
-  // ... (Component body is the same as provided) ...
+  
   return (
     <>
       <Alert className="mb-6 bg-blue-50 border-blue-200 border-l-4 border-l-blue-500">
@@ -1558,7 +2277,7 @@ function ToProcessStatusUI({ refundDetails, formatDate, formatCurrency, handleSt
 }
 
 function CompletedStatusUI({ refundDetails, formatDate, formatCurrency, navigate  }: any) {
-  // ... (Component body is the same as provided) ...
+  
   return (
     <>
       <Alert className="mb-6 bg-green-50 border-green-200 border-l-4 border-l-green-500">
@@ -1620,10 +2339,13 @@ const STATUS_UI_COMPONENTS = {
   pending: PendingStatusUI,
   approved: ApprovedStatusUI,
   rejected: RejectedStatusUI,
+  negotiation: NegotiationStatusUI,
   waiting: WaitingStatusUI,
+  to_verify: ToVerifyStatusUI,
   to_process: ToProcessStatusUI,
-  completed: CompletedStatusUI,
-  negotiation: NegotiationStatusUI 
+  dispute: DisputeStatusUI,
+  completed: CompletedStatusUI
+
 };
 
 // --- Main Component ---
@@ -1668,18 +2390,14 @@ export default function ViewRefundRequest({ loaderData }: Route.ComponentProps) 
   };
 
   const formatCurrency = (amount: number) => {
-    // Assuming amount is in centavos/smallest unit and converting to PHP
+   
     const valueInPesos = amount / 100;
     return `₱${valueInPesos.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
   };
   
-  // Example: 45000 in centavos = ₱450.00
-  // Note: The mock data has 45000, which usually means 450.00 or 45,000.00 depending on locale/standard.
-  // I will assume 45000 means ₱45,000.00 for the sake of a high-value item refund.
-
   const handleStatusChange = (newStatus: string) => {
     console.log(`Changing status for refund ${refundId} to: ${newStatus}`);
-    // Simulate navigation to the new status view
+  
     const newUrl = `/view-refund-request/${refundId}?status=${newStatus}`;
     navigate(newUrl); // Use navigate for state-based change simulation
   };
