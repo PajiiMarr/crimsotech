@@ -1,22 +1,74 @@
 "use client";
 
 import type { Route } from './+types/purchases';
-import SidebarLayout from '~/components/layouts/sidebar';
+import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
+import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { Input } from '~/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select';
-import { Tabs, TabsList, TabsTrigger } from '~/components/ui/tabs';
+import { 
+  Card, 
+  CardContent
+} from '~/components/ui/card';
+import { Badge } from '~/components/ui/badge';
 import { Button } from '~/components/ui/button';
-import { Link } from 'react-router';
+import { 
+  Clock,
+  Package,
+  Calendar,
+  PhilippinePeso,
+  Eye,
+  CheckCircle,
+  XCircle,
+  RefreshCcw,
+  List,
+  RotateCcw,
+  User,
+  Truck,
+  MessageCircle,
+  CreditCard,
+  FileText,
+  Search,
+  ChevronDown,
+  ChevronUp,
+  ShoppingBag,
+  Tag,
+  Store,
+  MapPin,
+  CalendarDays,
+  ShoppingCart,
+  Truck as ShippingIcon,
+  PackageCheck,
+  Handshake,
+  ShieldAlert,
+  CheckSquare
+} from 'lucide-react';
 
-// 💡 REQUIRED ICONS IMPORTED FOR VISUAL STATUS TAGS
-import { MapPin, Package, CheckCircle, Clock, XCircle, RefreshCcw, CalendarDays } from "lucide-react";
-
-
-// --- Remix/Route Specific Exports ---
 export function meta(): Route.MetaDescriptors {
-  return [{ title: "Purchases" }];
+  return [
+    {
+      title: "Purchases",
+    },
+  ];
+}
+
+interface PurchaseItem {
+  id: string;
+  order: {
+    order_id: string;
+    total_amount: number;
+    created_at: string;
+  };
+  product_name: string;
+  shop_name: string;
+  color: string;
+  quantity: number;
+  status: 'pending' | 'to_ship' | 'to_receive' | 'completed' | 'cancelled' | 'return_refund' | 'in_progress';
+  purchased_at: string;
+  tracking_number?: string;
+  image: string;
+  reason?: string;
+  refund_request_id?: string; // Add this field
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -34,350 +86,577 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   await requireRole(request, context, ["isCustomer"]);
 
-  return user;
+  
+  
+
+  const purchaseItems: PurchaseItem[] = [
+    {
+      id: "PUR-2024-00123",
+      order: {
+        order_id: "ORD-2024-00123",
+        total_amount: 45000,
+        created_at: "2024-01-20T08:30:00Z"
+      },
+      product_name: "Apple iPhone 13 Pro",
+      shop_name: "TechWorld Shop",
+      color: "Black",
+      quantity: 1,
+      status: "in_progress",
+      purchased_at: "2024-01-20T10:30:00Z",
+      image: "/phon.jpg"
+    },
+    {
+      id: "PUR-2024-00124",
+      order: {
+        order_id: "ORD-2024-00124",
+        total_amount: 12000,
+        created_at: "2024-01-19T12:20:00Z"
+      },
+      product_name: "Samsung Galaxy Watch 4",
+      shop_name: "TechWorld Shop",
+      color: "White",
+      quantity: 2,
+      status: "completed",
+      purchased_at: "2024-01-19T14:20:00Z",
+      tracking_number: "TRK-789012",
+      image: "/controller.jpg"
+    },
+    {
+      id: "PUR-2024-00125",
+      order: {
+        order_id: "ORD-2024-00125",
+        total_amount: 32000,
+        created_at: "2024-01-15T08:15:00Z"
+      },
+      product_name: "MacBook Air M1",
+      shop_name: "GadgetHub",
+      color: "Gray",
+      quantity: 1,
+      status: "completed",
+      purchased_at: "2024-01-15T09:15:00Z",
+      image: "/power_supply.jpg"
+    },
+    {
+      id: "PUR-2024-00126",
+      order: {
+        order_id: "ORD-2024-00126",
+        total_amount: 8500,
+        created_at: "2024-01-18T10:30:00Z"
+      },
+      product_name: "Wireless Headphones",
+      shop_name: "GadgetHub",
+      color: "Black",
+      quantity: 1,
+      status: "to_ship",
+      purchased_at: "2024-01-18T11:30:00Z",
+      image: "/phon.jpg"
+    },
+    {
+      id: "PUR-2024-00127",
+      order: {
+        order_id: "ORD-2024-00127",
+        total_amount: 1000,
+        created_at: "2024-01-22T07:45:00Z"
+      },
+      product_name: "USB-C Cable",
+      shop_name: "AccessoryStore",
+      color: "Silver",
+      quantity: 1,
+      status: "cancelled",
+      purchased_at: "2024-01-22T08:45:00Z",
+      reason: "Out of stock",
+      image: "/phon.jpg"
+    },
+    {
+      id: "PUR-2024-00128",
+      order: {
+        order_id: "ORD-2024-00128",
+        total_amount: 25000,
+        created_at: "2024-01-23T14:30:00Z"
+      },
+      product_name: "Smartwatch",
+      shop_name: "GadgetHub",
+      color: "Black",
+      quantity: 1,
+      status: "to_receive",
+      purchased_at: "2024-01-23T16:30:00Z",
+      tracking_number: "TRK-123456",
+      image: "/phon.jpg"
+    },
+    {
+      id: "PUR-2024-00129",
+      order: {
+        order_id: "ORD-2024-00129",
+        total_amount: 15000,
+        created_at: "2024-01-24T09:15:00Z"
+      },
+      product_name: "Digital Camera",
+      shop_name: "AccessoryStore",
+      color: "Black",
+      quantity: 1,
+      status: "pending",
+      purchased_at: "2024-01-24T11:15:00Z",
+      image: "/phon.jpg"
+    },
+    {
+      id: "PUR-2024-00130",
+      order: {
+        order_id: "ORD-2024-00130",
+        total_amount: 8000,
+        created_at: "2024-01-25T13:45:00Z"
+      },
+      product_name: "Bluetooth Speaker",
+      shop_name: "TechWorld Shop",
+      color: "Blue",
+      quantity: 1,
+      status: "return_refund",
+      purchased_at: "2024-01-25T15:45:00Z",
+      tracking_number: "TRK-RET-567890",
+      reason: "Product defective",
+      image: "/phon.jpg"
+    }
+  ];
+
+  return {
+    user: {
+      id: "demo-customer-123",
+      name: "John Customer",
+      email: "customer@example.com",
+      isCustomer: true,
+      isAdmin: false,
+      isRider: false,
+      isModerator: false,
+      isSeller: false,
+      username: "john_customer",
+    },
+    purchaseItems
+  };
 }
-// --- END Remix/Route Specific Exports ---
 
+// Tabs configuration - EXACTLY like return/refund page
+const STATUS_TABS = [
+  { id: 'all', label: 'All', icon: List },
+  { id: 'pending', label: 'Pending', icon: Clock },
+  { id: 'in_progress', label: 'In Progress', icon: Clock },
+  { id: 'to_ship', label: 'To Ship', icon: Package },
+  { id: 'to_receive', label: 'To Receive', icon: Truck },
+  { id: 'completed', label: 'Completed', icon: CheckCircle },
+  { id: 'return_refund', label: 'Return & Refund', icon: RefreshCcw },
+  { id: 'cancelled', label: 'Cancelled', icon: XCircle }
+];
 
-// --- Types (Ensuring TypeScript compliance) ---
-interface Purchase {
-  id: string;
-  shopId: string;
-  shopName: string;
-  name: string;
-  color: string;
-  price: number;
-  quantity: number;
-  date: string;
-  status: string;
-  image: string;
-}
-
-// 💡 REQUIRED HELPER FUNCTION ADDED
-// Helper function to format currency
-const formatCurrency = (amount: number): string => `₱${amount.toFixed(2)}`;
-
-/**
- * 💡 REQUIRED HELPER FUNCTION ADDED
- * Helper function to return Tailwind classes and Icon for the status tag.
- */
-const getStatusProps = (status: string): { classes: string, Icon: React.ElementType, title: string } => {
-  switch (status) {
-    case "Completed":
-      return { classes: "bg-green-100 text-green-700 border-green-200", Icon: CheckCircle, title: "Order Completed" };
-    case "Cancelled":
-      return { classes: "bg-red-100 text-red-700 border-red-200", Icon: XCircle, title: "Order Cancelled" };
-    case "Return & Refund":
-      return { classes: "bg-yellow-100 text-yellow-700 border-yellow-200", Icon: RefreshCcw, title: "Refund in Process" };
-    case "To Ship":
-      return { classes: "bg-indigo-100 text-indigo-700 border-indigo-200", Icon: Package, title: "Awaiting Shipment" };
-    case "To Receive":
-      return { classes: "bg-blue-100 text-blue-700 border-blue-200", Icon: Package, title: "Out for Delivery" };
-    case "In Progress":
-    case "Pending":
-    default:
-      return { classes: "bg-gray-100 text-gray-700 border-gray-200", Icon: Clock, title: "Pending Seller Action" };
+// Status badges configuration - EXACTLY like return/refund page
+const STATUS_CONFIG = {
+  pending: { 
+    label: 'Pending', 
+    color: 'bg-yellow-100 text-yellow-800',
+    icon: Clock
+  },
+  in_progress: { 
+    label: 'In Progress', 
+    color: 'bg-blue-100 text-blue-800',
+    icon: Clock
+  },
+  to_ship: { 
+    label: 'To Ship', 
+    color: 'bg-indigo-100 text-indigo-800',
+    icon: Package
+  },
+  to_receive: { 
+    label: 'To Receive', 
+    color: 'bg-blue-100 text-blue-800',
+    icon: Truck
+  },
+  completed: { 
+    label: 'Completed', 
+    color: 'bg-green-100 text-green-800',
+    icon: CheckCircle
+  },
+  cancelled: { 
+    label: 'Cancelled', 
+    color: 'bg-red-100 text-red-800',
+    icon: XCircle
+  },
+  return_refund: { 
+    label: 'Return & Refund', 
+    color: 'bg-orange-100 text-orange-800',
+    icon: RefreshCcw
   }
 };
 
-
-// --- Purchase Item Card (Externalized for clarity, as in the first response) ---
-const PurchaseItemCard = ({ item }: { item: Purchase }) => {
-  
-  // Define a simple outline button class for professional look
-  const simpleOutlineClass = "text-gray-700 border-gray-300 hover:bg-gray-100";
-  
-  // Calculate total price for the item line
-  const totalPrice = item.price * item.quantity;
-
-  return (
-    <div className="flex justify-between items-center py-4 border-b last:border-b-0">
-      <div className="flex items-center gap-4 flex-1">
-        {/* Product Image */}
-        <img 
-          src={item.image} 
-          alt={item.name} 
-          className="h-16 w-16 rounded-md object-cover border" 
-        />
-        
-        {/* Product Details & Order Date */}
-        <div>
-          <div className="font-medium text-gray-900">{item.name}</div>
-          <div className="text-xs text-gray-500">
-            Variation: {item.color} | Qty: {item.quantity}
-          </div>
-          {/* ORDER DATE INSIDE CARD */}
-          <div className="flex items-center text-xs text-gray-600 mt-1">
-            <CalendarDays className="h-3.5 w-3.5 mr-1 text-gray-400" />
-            <span className="font-semibold">{item.date}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Price and Actions */}
-      <div className="flex flex-col items-end gap-2 min-w-[140px]">
-        {/* PRICE: Black font only, using formatCurrency */}
-        <div className="text-lg font-medium text-gray-700"> 
-          {formatCurrency(totalPrice)}
-        </div>
-        
-        {/* Status-specific action buttons - size="sm" (small button) and simple styling */}
-        {item.status === "To Receive" && (
-          <Link to={`/track-order/${item.id}`}>
-            <Button size="sm" variant="outline" className={simpleOutlineClass}>Track Order</Button>
-          </Link>
-        )}
-
-        {item.status === "Completed" && (
-          <div className="flex gap-2">
-            <Link to={`/view-completed-order/${item.id}`}>
-            <Button size="sm" variant="outline" className={simpleOutlineClass}>View Details</Button>
-            </Link>
-            <Link to={`/order-review/${item.id}`}>
-            <Button size="sm" variant="outline" className={simpleOutlineClass}>Rate</Button>
-            </Link>
-          </div>
-        )}
-
-        {(item.status === "In Progress" || item.status === "Pending") && (
-          <div className="flex gap-2">
-          <Link to={`/track-order/${item.id}`}>
-            <Button size="sm" variant="outline" className={simpleOutlineClass}>View Order</Button>
-            </Link>
-          <Button size="sm" variant="outline">Cancel Order</Button>
-          </div>
-        )}
-
-        {item.status === "To Ship" && (
-          <Link to={`/track-order/${item.id}`}>
-            <Button size="sm" variant="outline" className={simpleOutlineClass}>View Shipping</Button>
-          </Link>
-        )}
-        
-        {item.status === "Return & Refund" && (
-        <Link to={`/request-refund/${item.id}`}>
-          <Button size="sm" variant="outline" className={simpleOutlineClass}>
-            View Refund
-          </Button>
-        </Link>
-      )}
-
-        
-        {item.status === "Cancelled" && (
-          <div className="flex gap-2">
-          <Link to={`/view-cancelled-order/${item.id}`}>
-          <Button size="sm" variant="outline" className={simpleOutlineClass}>View Details</Button>
-          </Link>
-          <Button size="sm" variant="secondary" disabled>Cancelled</Button>
-          </div>
-        )}
-
-        {/* Default View Purchase Button for other statuses (or if none matched above) */}
-        {!(item.status === "To Receive" || item.status === "Completed" || item.status === "In Progress" || item.status === "Pending" || item.status === "Return & Refund" || item.status === "To Ship" || item.status === "Cancelled") && (
-          <Button size="sm" variant="outline" className={simpleOutlineClass}>View Purchase</Button>
-        )}
-      </div>
-    </div>
-  );
-};
-
-
-// --- MAIN PURCHASES COMPONENT ---
 export default function Purchases({ loaderData }: Route.ComponentProps) {
-  const user = loaderData;
+  const { user, purchaseItems } = loaderData;
+  const [activeTab, setActiveTab] = useState<string>('all');
+  const navigate = useNavigate();
+  const [expandedPurchases, setExpandedPurchases] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("");
-  const [activeTab, setActiveTab] = useState("all");
 
-  // ⚠️ IMAGE PATHS CORRECTED: Should reference root of /public, not /public/
-  const purchases: Purchase[] = [
-    { id: "1", shopId: "shopA", shopName: "TechWorld Shop", name: "Desktop Computer", color: "Black", price: 599.99, quantity: 1, date: "07 Feb, 2022", status: "In Progress", image: "/public/phon.jpg" },
-    { id: "2", shopId: "shopA", shopName: "TechWorld Shop", name: "Wireless Mouse", color: "White", price: 29.99, quantity: 2, date: "15 Mar, 2022", status: "Completed", image: "/public/controller.jpg" },
-    { id: "3", shopId: "shopB", shopName: "GadgetHub", name: "Mechanical Keyboard", color: "Gray", price: 89.99, quantity: 1, date: "02 Apr, 2022", status: "In Progress", image: "/public/power_supply.jpg" },
-    { id: "4", shopId: "shopB", shopName: "GadgetHub", name: "Gaming Chair", color: "Black", price: 199.99, quantity: 1, date: "10 Apr, 2022", status: "To Ship", image: "/public/phon.jpg" },
-    { id: "5", shopId: "shopB", shopName: "GadgetHub", name: "USB Hub", color: "Silver", price: 15.99, quantity: 1, date: "12 Apr, 2022", status: "Completed", image: "/public/phon.jpg" },
-    { id: "6", shopId: "shopC", shopName: "AccessoryStore", name: "Laptop Sleeve", color: "Blue", price: 25.99, quantity: 1, date: "20 May, 2022", status: "To Receive", image: "/public/phon.jpg" },
-    { id: "7", shopId: "shopC", shopName: "AccessoryStore", name: "Webcam", color: "Black", price: 49.99, quantity: 1, date: "22 May, 2022", status: "Cancelled", image: "/public/phon.jpg" },
-    { id: "8", shopId: "shopA", shopName: "TechWorld Shop", name: "External Hard Drive", color: "Black", price: 79.99, quantity: 1, date: "30 May, 2022", status: "Return & Refund", image: "/public/phon.jpg" },
-  ];
-
-  const filteredPurchases = purchases.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
-    const matchesFilter = filter === "" || filter === "all" || p.status === filter;
-    const matchesTab =
-      activeTab === "all"
-        ? true
-        : activeTab === "pending"
-        ? p.status === "Pending" || p.status === "In Progress"
-        : activeTab === "toShip"
-        ? p.status === "To Ship"
-        : activeTab === "toReceive"
-        ? p.status === "To Receive"
-        : activeTab === "completed"
-        ? p.status === "Completed"
-        : activeTab === "returnRefund"
-        ? p.status === "Return & Refund"
-        : activeTab === "cancelled"
-        ? p.status === "Cancelled"
-        : true;
-
-    return matchesSearch && matchesFilter && matchesTab;
-  });
-
-  const grouped = filteredPurchases.reduce((acc, item) => {
-    if (!acc[item.shopId]) acc[item.shopId] = [];
-    acc[item.shopId].push(item);
-    return acc;
-  }, {} as Record<string, Purchase[]>);
-
-  /**
-   * Helper function for tab trigger className (Active tab text and underline color: Orange)
-   */
-  const getTabTriggerClass = (tabValue: string) => {
-    // Base classes for a professional, underlined tab look
-    const baseClasses = "data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-orange-600 transition-colors duration-200";
+  // Filter purchase items based on active tab
+  const getFilteredPurchaseItems = () => {
+    let filtered = purchaseItems;
     
-    // Active state classes for the underline
-    const activeClasses = tabValue === activeTab 
-      ? "relative after:content-[''] after:absolute after:bottom-0 after:left-0 after:h-[2px] after:w-full after:bg-orange-600 after:transition-all after:duration-200" 
-      : "text-gray-500 hover:text-gray-900";
-
-    return `${baseClasses} ${activeClasses}`;
+    // Apply search filter
+    if (search) {
+      filtered = filtered.filter(item => 
+        item.product_name.toLowerCase().includes(search.toLowerCase()) ||
+        item.shop_name.toLowerCase().includes(search.toLowerCase()) ||
+        item.order.order_id.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+    
+    // Apply tab filter
+    if (activeTab === 'all') {
+      return filtered;
+    } else {
+      return filtered.filter(item => item.status === activeTab);
+    }
   };
 
+  const filteredPurchaseItems = getFilteredPurchaseItems();
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
+
+  const getStatusBadge = (status: string) => {
+    const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] || 
+                   { label: status, color: 'bg-gray-100 text-gray-800', icon: Clock };
+    const Icon = config.icon;
+    
+    return (
+      <Badge 
+        className={`text-[10px] h-5 px-1.5 py-0 flex items-center gap-1 ${config.color}`}
+      >
+        <Icon className="w-2.5 h-2.5" />
+        {config.label}
+      </Badge>
+    );
+  };
+
+  const getTabCount = (tabId: string) => {
+    if (tabId === 'all') return purchaseItems.length;
+    return purchaseItems.filter(item => item.status === tabId).length;
+  };
+
+  const togglePurchaseExpansion = (orderId: string) => {
+    const newExpanded = new Set(expandedPurchases);
+    if (newExpanded.has(orderId)) {
+      newExpanded.delete(orderId);
+    } else {
+      newExpanded.add(orderId);
+    }
+    setExpandedPurchases(newExpanded);
+  };
+
+  const getActionButtons = (item: PurchaseItem) => {
+    switch(item.status) {
+      case 'to_receive':
+        return (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+              title="Track Order"
+              onClick={() => navigate(`/track-order/${item.id}`)}
+            >
+              <Truck className="w-3 h-3" />
+            </Button>
+          </>
+        );
+      case 'completed':
+        return (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+              title="Rate Product"
+              onClick={() => navigate(`/rate/${item.id}`)}
+            >
+              <CheckCircle className="w-3 h-3" />
+            </Button>
+          </>
+        );
+      case 'pending':
+      case 'in_progress':
+        return (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+            title="Cancel Order"
+            onClick={() => navigate(`/cancel-order/${item.id}`)}
+          >
+            <XCircle className="w-3 h-3" />
+          </Button>
+        );
+      case 'to_ship':
+        return (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+            title="View Shipping"
+            onClick={() => navigate(`/shipping/${item.id}`)}
+          >
+            <ShippingIcon className="w-3 h-3" />
+          </Button>
+        );
+      // In the getActionButtons function, update the return_refund case:
+      case 'return_refund':
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className="h-6 w-6 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+      title="View Refund"
+      onClick={() => navigate(`/customer-view-refund-request/${item.refund_request_id || item.id}?status=approved`)}
+    >
+      <RefreshCcw className="w-3 h-3" />
+    </Button>
+  );
+      case 'cancelled':
+        
+        return (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50"
+            title="View Details"
+            onClick={() => navigate(`/cancelled/${item.id}`)}
+          >
+            <FileText className="w-3 h-3" />
+          </Button>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <UserProvider user={user}>
       <SidebarLayout>
-        <div className="p-6 space-y-6">
-            <h1 className="text-2xl font-bold text-gray-900">Your Purchases</h1>
+        <div className="space-y-3 p-3">
+          {/* Header - EXACTLY like return/refund page */}
+          <div className="mb-2">
+            <h1 className="text-lg font-bold">Your Purchases</h1>
+            <p className="text-gray-500 text-xs">Manage your purchased items and orders</p>
+          </div>
 
-          {/* Tabs */}
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            {/* TabsList container that provides the bottom border */}
-            <TabsList className="h-auto bg-transparent border-b border-gray-200 p-0">
-              <TabsTrigger 
-                value="all" 
-                className={getTabTriggerClass("all")}
-              >
-                All Purchases
-              </TabsTrigger>
-              <TabsTrigger 
-                value="pending"
-                className={getTabTriggerClass("pending")}
-              >
-                Pending
-              </TabsTrigger>
-              <TabsTrigger 
-                value="toShip"
-                className={getTabTriggerClass("toShip")}
-              >
-                To Ship
-              </TabsTrigger>
-              <TabsTrigger 
-                value="toReceive"
-                className={getTabTriggerClass("toReceive")}
-              >
-                To Receive
-              </TabsTrigger>
-              <TabsTrigger 
-                value="completed"
-                className={getTabTriggerClass("completed")}
-              >
-                Completed
-              </TabsTrigger>
-              <TabsTrigger 
-                value="returnRefund"
-                className={getTabTriggerClass("returnRefund")}
-              >
-                Return & Refund
-              </TabsTrigger>
-              <TabsTrigger 
-                value="cancelled"
-                className={getTabTriggerClass("cancelled")}
-              >
-                Cancelled
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          {/* Search and Filter */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mt-4">
-            <div className="flex-1">
-              <Input 
-                placeholder="Search purchases..." 
-                value={search} 
-                onChange={(e) => setSearch(e.target.value)} 
+          {/* Search Bar - Added like in your purchases page */}
+          <div className="mb-2">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
+              <Input
+                type="text"
+                placeholder="Search purchases..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8 text-sm h-8"
               />
-            </div>
-
-            <div className="w-full sm:w-64">
-              <Select value={filter} onValueChange={setFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Filter by status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="toShip">To Ship</SelectItem>
-                  <SelectItem value="toReceive">To Receive</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="returnRefund">Return & Refund</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
           </div>
 
-          {/* Purchases List - Grouped by Shop (Enhanced with status tag and box styling) */}
-          <div className="mt-6 space-y-6">
-            {Object.values(grouped).length === 0 ? (
-              <div className="text-gray-500 py-10 text-center border rounded-lg bg-white">
-                No purchases found matching the current filters.
+          {/* Status Tabs - EXACTLY like return/refund page */}
+          <div className="flex items-center space-x-1 overflow-x-auto mb-2">
+            {STATUS_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const count = getTabCount(tab.id);
+              const isActive = activeTab === tab.id;
+              
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap ${
+                    isActive 
+                      ? 'bg-blue-50 text-blue-600 border border-blue-200' 
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Icon className="w-3 h-3" />
+                  <span>{tab.label}</span>
+                  {count > 0 && (
+                    <span className={`text-[10px] px-1 py-0.5 rounded ${
+                      isActive ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Purchases List - EXACTLY like return/refund page */}
+          <div className="space-y-2">
+            {filteredPurchaseItems.length === 0 ? (
+              <div className="text-center py-4">
+                <ShoppingBag className="mx-auto h-6 w-6 text-gray-300 mb-2" />
+                <p className="text-gray-500 text-xs">
+                  {activeTab === 'all' ? 'No purchases found' :
+                   activeTab === 'pending' ? 'No pending purchases' :
+                   activeTab === 'in_progress' ? 'No in progress purchases' :
+                   activeTab === 'to_ship' ? 'No items to ship' :
+                   activeTab === 'to_receive' ? 'No items to receive' :
+                   activeTab === 'completed' ? 'No completed purchases' :
+                   activeTab === 'return_refund' ? 'No return & refund requests' :
+                   'No cancelled purchases'}
+                </p>
               </div>
             ) : (
-              Object.values(grouped).map(shopItems => {
-                const currentStatus = shopItems[0].status;
-                const statusProps = getStatusProps(currentStatus);
-
+              filteredPurchaseItems.map((item) => {
+                const isExpanded = expandedPurchases.has(item.id);
+                
                 return (
-                  <div 
-                    key={shopItems[0].shopId} 
-                    className="bg-white rounded-lg border shadow-sm divide-y divide-gray-100"
-                  >
-                    {/* SHOP HEADER */}
-                    <div className="p-4 flex items-center justify-between bg-gray-50 border-b">
-                      <div className="flex items-center gap-3">
-                        <MapPin className="h-4 w-4 text-gray-500" />
-                        <Link 
-                            to={`/shop/${shopItems[0].shopId}`}
-                            className="font-semibold text-base text-blue-600 hover:text-blue-700 cursor-pointer"
-                        >
-                            {shopItems[0].shopName}
-                        </Link>
+                  <Card key={item.id} className="overflow-hidden border">
+                    <CardContent className="p-3">
+                      {/* Top Section - Header - EXACTLY like return/refund page */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Package className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                            <span className="text-sm font-medium truncate">{item.product_name}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <span className="truncate">{item.id}</span>
+                            <span>•</span>
+                            <span>{formatDate(item.purchased_at)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {getStatusBadge(item.status)}
+                          <button 
+                            onClick={() => togglePurchaseExpansion(item.id)}
+                            className="p-1 hover:bg-gray-100 rounded"
+                          >
+                            {isExpanded ? (
+                              <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                            )}
+                          </button>
+                        </div>
                       </div>
-                      
-                      {/* ORDER STATUS TAG with ICON */}
-                      <div className={`flex items-center gap-1 text-sm font-medium px-3 py-1 rounded-full border ${statusProps.classes}`}>
-                        <statusProps.Icon className="h-3.5 w-3.5" />
-                        <span>{shopItems[0].status}</span>
-                      </div>
-                    </div>
-                    
-                    {/* PURCHASE ITEMS */}
-                    <div className="p-4 divide-y divide-y-reverse divide-gray-100">
-                      {shopItems.map(item => (
-                        <PurchaseItemCard key={item.id} item={item} />
-                      ))}
-                    </div>
 
-                    
-                  </div>
+                      {/* Middle Section - Summary */}
+                      <div className="mb-2">
+                        <div className="flex items-center gap-2 text-xs text-gray-600 mb-1">
+                          <Store className="w-3 h-3" />
+                          <span className="truncate">{item.shop_name}</span>
+                        </div>
+                        <div className="text-xs text-gray-500 mb-1 truncate">
+                          Variation: {item.color} • Qty: {item.quantity}
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <div className="text-xs text-gray-500">
+                            {item.order.order_id}
+                          </div>
+                          <div className="font-medium text-sm">
+                            <PhilippinePeso className="inline w-3 h-3 mr-0.5" />
+                            {item.order.total_amount.toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Product Image */}
+                      <div className="my-2">
+                        <img 
+                          src={item.image} 
+                          alt={item.product_name} 
+                          className="h-16 w-16 rounded-md object-cover border"
+                        />
+                      </div>
+
+                      {/* Expanded Section - Details */}
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t">
+                          <div className="text-xs space-y-2">
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">Order Details</div>
+                              <div className="text-gray-600 space-y-1">
+                                <div>Order ID: {item.order.order_id}</div>
+                                <div>Order Date: {formatDate(item.order.created_at)}</div>
+                                <div>Purchase Date: {formatDate(item.purchased_at)}</div>
+                              </div>
+                            </div>
+                            
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">Product Details</div>
+                              <div className="text-gray-600">
+                                {item.product_name} ({item.color})
+                              </div>
+                            </div>
+                            
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">Shop</div>
+                              <div className="text-gray-600">
+                                {item.shop_name}
+                              </div>
+                            </div>
+                            
+                            {item.tracking_number && (
+                              <div>
+                                <div className="font-medium text-gray-700 mb-1">Tracking</div>
+                                <div className="text-gray-600">
+                                  {item.tracking_number}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {item.reason && (
+                              <div>
+                                <div className="font-medium text-gray-700 mb-1">Reason</div>
+                                <div className="text-gray-600">
+                                  {item.reason}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Bottom Section - Actions */}
+                      <div className="flex items-center justify-between pt-2 border-t">
+                        {/* View Order Button - navigates to /view-order/{id}?status={status} */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigate(`/view-order/${item.id}?status=${item.status}`)}
+                          className="h-6 px-2 text-xs"
+                        >
+                          <Eye className="w-3 h-3 mr-1" />
+                          View Order
+                        </Button>
+                        
+                        <div className="flex gap-1">
+                          {getActionButtons(item)}
+                          
+                          {/* Contact Seller button for all statuses except completed and cancelled */}
+                          {item.status !== 'completed' && item.status !== 'cancelled' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                              title="Contact Seller"
+                              onClick={() => navigate(`/chat/seller/${item.shop_name}`)}
+                            >
+                              <MessageCircle className="w-3 h-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
                 );
               })
             )}
           </div>
-
         </div>
       </SidebarLayout>
     </UserProvider>

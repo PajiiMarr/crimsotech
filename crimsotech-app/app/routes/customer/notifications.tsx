@@ -417,10 +417,7 @@ export default function SellerNotifications({ loaderData }: Route.ComponentProps
         <div className="space-y-6 p-6">
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">Notifications</h1>
-              <p className="text-gray-600 mt-1">All your shop notifications in one place</p>
-            </div>
+           
             <div className="flex items-center gap-3">
               <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
                 <Bell className="w-3 h-3 mr-1" />
