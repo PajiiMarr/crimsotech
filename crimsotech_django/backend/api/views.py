@@ -7322,71 +7322,56 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": "Failed to fetch global categories",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
     @action(detail=False, methods=['post'], url_path='global-categories/predict')    
     def predict_category(self, request):
         """
-        Predict category for a product based on its attributes.
-        Returns decoded category names (actual category labels).
+        Predict category for a product - FIXED VERSION
         """
         try:
-            # Import required modules
             import pandas as pd
             import numpy as np
             import tensorflow as tf
             import joblib
             import os
             
-            # IMPORTANT: Use the correct model directory
-            # The models are saved in: /Users/mar/SE GROUP 5/crimsotech_web/crimsotech_django/backend/model/
-            # But your views.py is in: /Users/mar/SE GROUP 5/crimsotech_web/crimsotech_django/backend/api/views.py
-            # So we need to go up one level from api/ to backend/, then to model/
-            
-            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))  # This gives api/ directory
-            
-            # Option 1: If models are in backend/model (as shown in training output)
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
             MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
             
-            # Option 2: Or use absolute path for certainty
-            # MODEL_DIR = '/Users/mar/SE GROUP 5/crimsotech_web/crimsotech_django/backend/model'
-            
-            print(f"Current directory: {CURRENT_DIR}")
             print(f"Looking for models in: {MODEL_DIR}")
+
             
-            # Check if directory exists
-            if not os.path.exists(MODEL_DIR):
+            # Load the trained models
+            try:
+                category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+                scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+                model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
+                
+                # Load the EXACT feature columns used during training
+                feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
+                
+                print(f"✅ Models loaded successfully!")
+                print(f"Model expects {len(feature_columns)} features: {feature_columns}")
+
+
+                print(f"Model input shape: {model.input_shape}")
+                print(f"Model expects {model.input_shape[1]} features")
+                print(f"Loaded {len(feature_columns)} features from file")
+                
+            except FileNotFoundError as e:
+                print(f"❌ Model file not found: {str(e)}")
                 return Response(
-                    {'success': False, 'error': f'Model directory not found: {MODEL_DIR}'},
+                    {'success': False, 'error': f'Model files not found. Please train the model first.'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-            
-            # List files in directory for debugging
-            print(f"Files in model directory: {os.listdir(MODEL_DIR)}")
-            
-            # Load the trained models - USE CORRECT FILES
-            # 1. Category label encoder (for decoding predictions)
-            category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
-            
-            # 2. Condition label encoder (for encoding condition input)
-            condition_le = joblib.load(os.path.join(MODEL_DIR, 'condition_label_encoder.pkl'))
-            
-            # 3. Name and description mappings
-            name_mapping = joblib.load(os.path.join(MODEL_DIR, 'name_mapping.pkl'))
-            desc_mapping = joblib.load(os.path.join(MODEL_DIR, 'desc_mapping.pkl'))
-            
-            # 4. Feature scaler
-            scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
-            
-            # 5. TensorFlow model (NOTE: it's .h5, not .keras)
-            model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.h5'))
-            
-            print("✅ All models loaded successfully!")
             
             # Extract data from request
             data = request.data
             
+            # Required fields from UI
+            required_fields = ['name', 'description', 'quantity', 'price', 'condition']
+            
             # Validate required fields
-            required_fields = ['quantity', 'price', 'condition', 'name', 'description']
             for field in required_fields:
                 if field not in data:
                     return Response(
@@ -7394,104 +7379,258 @@ class SellerProducts(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
             
-            # Prepare item data as dictionary
+            # Prepare item data
             item_data = {
+                'name': str(data['name']),
+                'description': str(data['description']),
                 'quantity': int(data['quantity']),
                 'price': float(data['price']),
-                'condition': str(data['condition']),
-                'name': str(data['name']),
-                'description': str(data['description'])
+                'condition': str(data['condition'])
             }
             
-            print(f"Predicting category for: {item_data['name']}")
+            print(f"\n=== PREDICTION STARTED ===")
+            print(f"Product: {item_data['name']}")
+            print(f"Price: ${item_data['price']}, Quantity: {item_data['quantity']}")
             
-            # Create DataFrame from item data
-            df_item = pd.DataFrame([item_data])
+            # ================================================
+            # CREATE FEATURES - EXACTLY AS DURING TRAINING
+            # ================================================
             
-            # ENCODE condition using CONDITION label encoder (not category encoder!)
+            # Initialize all features to 0
+            features = {col: 0 for col in feature_columns}
+            
+            # Basic numeric features - only if they're in feature_columns
+            price = item_data['price']
+            quantity = item_data['quantity']
+            
+            # Set only the features that exist in feature_columns
+            if 'price' in feature_columns:
+                features['price'] = price
+            if 'quantity' in feature_columns:
+                features['quantity'] = quantity
+            if 'price_quantity_interaction' in feature_columns:
+                features['price_quantity_interaction'] = price * np.log1p(quantity + 1)
+            if 'log_price' in feature_columns:
+                features['log_price'] = np.log1p(price)
+            if 'price_per_unit' in feature_columns:
+                features['price_per_unit'] = price / (quantity + 1)
+            if 'price_to_quantity_ratio' in feature_columns:
+                features['price_to_quantity_ratio'] = price / (quantity + 1e-5)
+            if 'price_scaled' in feature_columns:
+                features['price_scaled'] = price / 10000  # Use same scaling as training
+            if 'quantity_scaled' in feature_columns:
+                features['quantity_scaled'] = quantity / 100  # Use same scaling as training
+            
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            
+            if 'condition_score' in feature_columns:
+                if 'new' in condition_lower:
+                    features['condition_score'] = 3
+                elif 'like new' in condition_lower:
+                    features['condition_score'] = 2
+                elif 'refurbished' in condition_lower:
+                    features['condition_score'] = 1
+                elif 'excellent' in condition_lower:
+                    features['condition_score'] = 0
+                elif 'good' in condition_lower:
+                    features['condition_score'] = -1
+                elif 'fair' in condition_lower:
+                    features['condition_score'] = -2
+                else:
+                    features['condition_score'] = 0
+            
+            # is_refurbished feature (if present)
+            if 'is_refurbished' in feature_columns:
+                features['is_refurbished'] = 1 if 'refurbished' in condition_lower else 0
+            
+            # Text features
+            name_lower = item_data['name'].lower()
+            desc_lower = item_data['description'].lower()
+            all_text = name_lower + ' ' + desc_lower
+            
+            if 'name_length' in feature_columns:
+                features['name_length'] = len(item_data['name'])
+            if 'desc_length' in feature_columns:
+                features['desc_length'] = len(item_data['description'])
+            if 'name_desc_ratio' in feature_columns:
+                desc_len = len(item_data['description'])
+                if desc_len > 0:
+                    features['name_desc_ratio'] = len(item_data['name']) / desc_len
+                else:
+                    features['name_desc_ratio'] = len(item_data['name'])
+            
+            # Keyword features - only for features that start with 'has_' AND are in feature_columns
+            for feature in feature_columns:
+                if feature.startswith('has_'):
+                    keyword = feature[4:]  # Remove 'has_' prefix
+                    features[feature] = 1 if keyword in all_text else 0
+            
+            # Price bins - only if they're in feature_columns
+            if 'price_bin_0' in feature_columns:
+                features['price_bin_0'] = 1 if price < 100 else 0
+            if 'price_bin_1' in feature_columns:
+                features['price_bin_1'] = 1 if 100 <= price < 500 else 0
+            if 'price_bin_2' in feature_columns:
+                features['price_bin_2'] = 1 if 500 <= price < 1000 else 0
+            if 'price_bin_3' in feature_columns:
+                features['price_bin_3'] = 1 if 1000 <= price < 2000 else 0
+            if 'price_bin_4' in feature_columns:
+                features['price_bin_4'] = 1 if price >= 2000 else 0
+            
+            # Category-specific features (these use category stats, so set to 0 for prediction)
+            if 'price_category_zscore' in feature_columns:
+                features['price_category_zscore'] = 0  # Can't compute without category
+            if 'quantity_category_zscore' in feature_columns:
+                features['quantity_category_zscore'] = 0  # Can't compute without category
+            if 'price_category_quartile' in feature_columns:
+                features['price_category_quartile'] = 2  # Default middle quartile
+            
+            # Additional simple text features
+            if 'name_word_count' in feature_columns:
+                features['name_word_count'] = len(item_data['name'].split())
+            if 'desc_word_count' in feature_columns:
+                features['desc_word_count'] = len(item_data['description'].split())
+            if 'keyword_count' in feature_columns:
+                # Count keyword features that are set to 1
+                keyword_features = [f for f in feature_columns if f.startswith('has_')]
+                features['keyword_count'] = sum(1 for f in keyword_features if features.get(f, 0) == 1)
+            if 'unique_keywords' in feature_columns:
+                # Same as keyword_count for prediction
+                keyword_features = [f for f in feature_columns if f.startswith('has_')]
+                features['unique_keywords'] = sum(1 for f in keyword_features if features.get(f, 0) == 1)
+            
+            # Brand mentions
+            for brand_feature in ['has_iphone', 'has_samsung', 'has_apple', 'has_sony']:
+                if brand_feature in feature_columns:
+                    brand_name = brand_feature[4:]  # Remove 'has_' prefix
+                    features[brand_feature] = 1 if brand_name in all_text else 0
+            
+            # New/Used flags
+            if 'is_new' in feature_columns:
+                features['is_new'] = 1 if 'new' in condition_lower else 0
+            if 'is_used' in feature_columns:
+                features['is_used'] = 1 if 'used' in condition_lower else 0
+            
+            print(f"\n=== FEATURE SUMMARY ===")
+            print(f"Total features created: {len(features)}")
+            print(f"Features expected: {len(feature_columns)}")
+            
+            # Create DataFrame with EXACTLY the expected features
+            X_item = pd.DataFrame([features])
+            
+            # Ensure we only have the expected features (remove extras, add missing)
+            for col in feature_columns:
+                if col not in X_item.columns:
+                    X_item[col] = 0
+            
+            # Remove any columns not in feature_columns
+            extra_cols = [col for col in X_item.columns if col not in feature_columns]
+            if extra_cols:
+                print(f"Removing extra columns: {extra_cols}")
+                X_item = X_item.drop(columns=extra_cols)
+            
+            # Reorder columns to match training order
+            X_item = X_item[feature_columns]
+            
+            print(f"DataFrame shape: {X_item.shape}")
+            print(f"Columns: {list(X_item.columns)}")
+            
+            # Show top non-zero features
+            non_zero = X_item.loc[:, (X_item != 0).any()].columns.tolist()
+            print(f"Non-zero features ({len(non_zero)}): {non_zero}")
+            
+            # ================================================
+            # SCALE AND PREDICT
+            # ================================================
+            
             try:
-                df_item['condition_encoded'] = condition_le.transform(df_item['condition'])
-                print(f"Condition '{item_data['condition']}' encoded as: {df_item['condition_encoded'].iloc[0]}")
-            except ValueError as e:
-                # If condition not in label encoder, use unknown encoding
-                print(f"Warning: Condition '{item_data['condition']}' not in training data. Using default encoding.")
-                df_item['condition_encoded'] = len(condition_le.classes_)
-            
-            # Map name and description using mappings
-            df_item['name_encoded'] = df_item['name'].map(lambda x: name_mapping.get(x, 0))
-            df_item['description_encoded'] = df_item['description'].map(lambda x: desc_mapping.get(x, 0))
-            
-            print(f"Name encoded as: {df_item['name_encoded'].iloc[0]}")
-            print(f"Description encoded as: {df_item['description_encoded'].iloc[0]}")
-            
-            # Drop original text columns
-            df_item = df_item.drop(['condition', 'name', 'description'], axis=1)
-            
-            # Ensure correct feature order (MUST match training order)
-            feature_order = ['quantity', 'price', 'condition_encoded', 'name_encoded', 'description_encoded']
-            df_item = df_item[feature_order]
-            
-            print(f"Features before scaling: {df_item.values}")
-            
-            # Scale features
-            scaled_features = scaler.transform(df_item)
-            
-            print(f"Features after scaling: {scaled_features}")
+                X_scaled = scaler.transform(X_item)
+                print(f"Scaled successfully to shape: {X_scaled.shape}")
+            except Exception as e:
+                print(f"Scaling error: {e}, using raw features")
+                X_scaled = X_item.values.astype(np.float32)
             
             # Make prediction
-            prediction_probs = model.predict(scaled_features, verbose=0)
+            prediction_probs = model.predict(X_scaled, verbose=0)
             predicted_class = np.argmax(prediction_probs, axis=1)[0]
             confidence = np.max(prediction_probs, axis=1)[0]
             
-            print(f"Predicted class: {predicted_class}")
-            print(f"Confidence: {confidence:.4f}")
-            print(f"All probabilities: {prediction_probs[0]}")
-            
-            # DECODE: Convert predicted class to actual category label using CATEGORY encoder
+            # Convert predicted class to actual category label
             predicted_label = category_le.inverse_transform([predicted_class])[0]
             
-            print(f"Predicted category: {predicted_label}")
+            print(f"\n✅ PREDICTION SUCCESSFUL!")
+            print(f"Predicted: {predicted_label}")
+            print(f"Confidence: {confidence:.2%}")
             
-            # Prepare response
-            result = {
-                'success': True,
-                'predicted_category': int(predicted_class),
-                'predicted_label': predicted_label,  # Decoded category name
-                'category_name': predicted_label,    # Add for clarity
-                'confidence': float(confidence),
-                'all_probabilities': prediction_probs[0].tolist(),
-                'top_3_categories': []
-            }
+            # ================================================
+            # PREPARE RESPONSE
+            # ================================================
             
-            # Add top 3 categories for better UX
+            # Get all category names
+            all_categories = list(category_le.classes_)
+            
+            # Prepare top 3 categories
             top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
+            top_categories = []
+            
             for idx in top_3_indices:
-                category_label = category_le.inverse_transform([idx])[0]  # Decode each top category
-                result['top_3_categories'].append({
+                category_label = category_le.inverse_transform([idx])[0]
+                top_categories.append({
                     'category_id': int(idx),
-                    'category_name': category_label,  # Decoded category name
-                    'confidence': float(prediction_probs[0][idx]),
-                    'label': category_label  # Same as category_name for compatibility
+                    'category_name': category_label,
+                    'confidence': float(prediction_probs[0][idx])
                 })
             
-            print(f"Top 3 categories: {result['top_3_categories']}")
+            # Get keywords found
+            keyword_cols = [col for col in feature_columns if col.startswith('has_')]
+            keywords_found = [col.replace('has_', '') for col in keyword_cols if features.get(col, 0) == 1]
+            
+            # Determine price range
+            if price < 100:
+                price_range = 'Ultra Budget'
+            elif price < 500:
+                price_range = 'Budget'
+            elif price < 1000:
+                price_range = 'Mid-range'
+            elif price < 2000:
+                price_range = 'Premium'
+            else:
+                price_range = 'Luxury'
+            
+            result = {
+                'success': True,
+                'predicted_category': {
+                    'category_id': int(predicted_class),
+                    'category_name': predicted_label,
+                    'confidence': float(confidence)
+                },
+                'alternative_categories': top_categories[1:] if len(top_categories) > 1 else [],
+                'all_categories': all_categories,
+                'feature_insights': {
+                    'keywords_found': keywords_found,
+                    'price_range': price_range,
+                    'price': float(price),
+                    'quantity': int(quantity),
+                    'condition': item_data['condition']
+                }
+            }
             
             return Response(result, status=status.HTTP_200_OK)
             
-        except FileNotFoundError as e:
-            print(f"❌ FileNotFoundError: {str(e)}")
-            return Response(
-                {'success': False, 'error': f'Model file not found: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
         except Exception as e:
-            print(f"❌ Prediction error: {str(e)}")
+            print(f"\n❌ PREDICTION ERROR: {str(e)}")
             import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            traceback.print_exc()
+            
             return Response(
-                {'success': False, 'error': f'Prediction failed: {str(e)}'},
+                {
+                    'success': False, 
+                    'error': f'Prediction failed: {str(e)}'
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
     
     def get_queryset(self):
         # Get user_id from request data instead of authenticated user

@@ -10,9 +10,8 @@ import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Switch } from "~/components/ui/switch";
 import { Separator } from "~/components/ui/separator";
 import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles } from "lucide-react";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
-import Breadcrumbs from "~/components/ui/breadcrumbs";
 
 // --- INTERFACE DEFINITIONS ---
 
@@ -89,24 +88,29 @@ interface CreateProductFormProps {
 }
 
 // --- PREDICTION STATE INTERFACE ---
-interface PredictionResult {
-  success: boolean;
-  predicted_category: number;
-  predicted_label: string;
+// UPDATED: Based on actual API response
+interface PredictionCategory {
+  category_id: number;
   category_name: string;
   confidence: number;
-  all_probabilities: number[];
-  top_3_categories: {
-    category_id: number;
-    category_name: string;
-    confidence: number;
-    label: string;
-  }[];
+}
+
+interface PredictionResult {
+  success: boolean;
+  predicted_category: PredictionCategory; // Changed from number to object
+  alternative_categories?: PredictionCategory[];
+  all_categories?: string[];
+  feature_insights?: any;
 }
 
 // --- REACT COMPONENT ---
 
 export default function CreateProductForm({ selectedShop, globalCategories, errors }: CreateProductFormProps) {
+  // Generate a simple UUID function
+  const generateId = () => {
+    return Math.random().toString(36).substring(2) + Date.now().toString(36);
+  };
+
   // Form state
   const [productName, setProductName] = useState('');
   const [productDescription, setProductDescription] = useState('');
@@ -125,9 +129,9 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const [productWidth, setProductWidth] = useState<number | ''>('');
   const [productHeight, setProductHeight] = useState<number | ''>('');
   const [shippingZones, setShippingZones] = useState<ShippingZone[]>([
-    { id: crypto.randomUUID(), name: 'Local', fee: '', freeShipping: false },
-    { id: crypto.randomUUID(), name: 'Nearby City', fee: '', freeShipping: false },
-    { id: crypto.randomUUID(), name: 'Far Province', fee: '', freeShipping: false },
+    { id: generateId(), name: 'Local', fee: '', freeShipping: false },
+    { id: generateId(), name: 'Nearby City', fee: '', freeShipping: false },
+    { id: generateId(), name: 'Far Province', fee: '', freeShipping: false },
   ]);
   
   // Prediction state
@@ -135,9 +139,15 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
   const [showPrediction, setShowPrediction] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('none');
+  
+  // Refs for preventing duplicate requests
+  const predictionInProgress = useRef(false);
+  const predictionAbortController = useRef<AbortController | null>(null);
+  const lastPredictionTime = useRef<number>(0);
+  const predictionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if all required prediction fields are filled
-  const arePredictionFieldsValid = () => {
+  const arePredictionFieldsValid = useCallback(() => {
     return (
       productName.trim().length >= 2 &&
       productDescription.trim().length >= 10 &&
@@ -145,14 +155,54 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
       productCondition !== '' &&
       productQuantity !== '' && productQuantity >= 0
     );
+  }, [productName, productDescription, productPrice, productCondition, productQuantity]);
+
+  // Handle category selection change
+  const handleCategoryChange = (value: string) => {
+    console.log('Category changed to:', value);
+    setSelectedCategoryId(value);
+    
+    // Also update the hidden form field
+    const categoryInput = document.getElementById('category_admin_id') as HTMLSelectElement;
+    if (categoryInput) {
+      categoryInput.value = value;
+    }
   };
 
   // Function to trigger category prediction
-  const predictCategory = async () => {
-    if (!arePredictionFieldsValid() || isPredicting) return;
+  const predictCategory = useCallback(async (source: string = 'auto') => {
+    console.log(`predictCategory called from: ${source}. Valid:`, arePredictionFieldsValid(), 'In progress:', predictionInProgress.current);
+    
+    if (!arePredictionFieldsValid()) {
+      console.log('Prediction blocked: fields not valid');
+      return;
+    }
+    
+    // Prevent duplicate requests
+    if (predictionInProgress.current) {
+      console.log('Prediction already in progress, skipping...');
+      return;
+    }
+    
+    // Debounce: Don't make requests too frequently
+    const now = Date.now();
+    if (now - lastPredictionTime.current < 2000) { // 2 second cooldown
+      console.log('Prediction debounced: too soon since last request');
+      return;
+    }
+    
+    // Abort any previous request
+    if (predictionAbortController.current) {
+      predictionAbortController.current.abort();
+    }
+    
+    // Create new abort controller
+    predictionAbortController.current = new AbortController();
     
     setIsPredicting(true);
     setShowPrediction(true);
+    predictionInProgress.current = true;
+    lastPredictionTime.current = now;
     
     try {
       const predictionData = {
@@ -163,48 +213,108 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
         description: productDescription
       };
       
-      const response = await AxiosInstance.post('/seller-products/global-categories/predict/', predictionData);
+      console.log('Sending prediction request with data:', predictionData);
+      
+      const response = await AxiosInstance.post('/seller-products/global-categories/predict/', predictionData, {
+        signal: predictionAbortController.current.signal
+      });
+      
+      console.log('Prediction API response:', response.data);
+      console.log('Predicted category object:', response.data.predicted_category);
       
       if (response.data.success) {
         setPredictionResult(response.data);
         
         // Auto-select the predicted category
-        const predictedCategory = response.data.top_3_categories[0];
-        setSelectedCategoryId(predictedCategory.category_id.toString());
-        
-        // Update the hidden form field with the predicted category
-        const categoryInput = document.getElementById('category_admin_id') as HTMLSelectElement;
-        if (categoryInput) {
-          categoryInput.value = predictedCategory.category_id.toString();
+        if (response.data.predicted_category?.category_id) {
+          const predictedCategoryId = response.data.predicted_category.category_id.toString();
+          console.log('Setting selected category to:', predictedCategoryId);
+          setSelectedCategoryId(predictedCategoryId);
+          
+          const categoryInput = document.getElementById('category_admin_id') as HTMLSelectElement;
+          if (categoryInput) {
+            categoryInput.value = predictedCategoryId;
+          }
         }
+      } else {
+        console.error('Prediction API returned success: false', response.data);
       }
-    } catch (error) {
+    } catch (error: any) {
+      // Don't log if error is from abort
+      if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
+        console.log('Prediction request was cancelled');
+        return;
+      }
+      
       console.error('Category prediction failed:', error);
-      // Don't show error to user, just silently fail
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+      } else if (error.request) {
+        console.error('No response received');
+      } else {
+        console.error('Error setting up request:', error.message);
+      }
     } finally {
       setIsPredicting(false);
+      predictionInProgress.current = false;
+      predictionAbortController.current = null;
     }
-  };
+  }, [arePredictionFieldsValid, productQuantity, productPrice, productCondition, productName, productDescription]);
 
-  // Auto-predict when all fields are filled
+  // Clean up on component unmount
+  useEffect(() => {
+    return () => {
+      // Clear any pending timeout
+      if (predictionTimeoutRef.current) {
+        clearTimeout(predictionTimeoutRef.current);
+      }
+      
+      // Abort any pending request
+      if (predictionAbortController.current) {
+        predictionAbortController.current.abort();
+      }
+    };
+  }, []);
+
+  // Auto-predict when all fields are filled - with better debouncing
   useEffect(() => {
     if (arePredictionFieldsValid()) {
-      // Debounce the prediction to avoid too many requests
-      const timer = setTimeout(() => {
-        predictCategory();
-      }, 1000); // Wait 1 second after last change
+      // Clear any existing timeout
+      if (predictionTimeoutRef.current) {
+        clearTimeout(predictionTimeoutRef.current);
+      }
       
-      return () => clearTimeout(timer);
-    }
-  }, [productName, productDescription, productPrice, productCondition, productQuantity]);
-
-  // Reset prediction when form is cleared
-  useEffect(() => {
-    if (!arePredictionFieldsValid()) {
+      // Set new timeout with debounce
+      predictionTimeoutRef.current = setTimeout(() => {
+        predictCategory('auto');
+      }, 1500); // Increased debounce time
+      
+      return () => {
+        if (predictionTimeoutRef.current) {
+          clearTimeout(predictionTimeoutRef.current);
+        }
+      };
+    } else {
+      // Reset prediction when fields are not valid
       setPredictionResult(null);
       setShowPrediction(false);
     }
-  }, [productName, productDescription, productPrice, productCondition, productQuantity]);
+  }, [arePredictionFieldsValid, predictCategory]);
+
+  // Manual trigger for prediction
+  const handleManualPredict = () => {
+    console.log('Manual predict button clicked');
+    if (arePredictionFieldsValid() && !isPredicting) {
+      // Clear auto-prediction timeout if exists
+      if (predictionTimeoutRef.current) {
+        clearTimeout(predictionTimeoutRef.current);
+        predictionTimeoutRef.current = null;
+      }
+      
+      predictCategory('manual');
+    }
+  };
 
   const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
     setShippingZones(prev => prev.map(zone => 
@@ -264,11 +374,11 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     setVariantGroups(prev => [
       ...prev,
       {
-        id: crypto.randomUUID(),
+        id: generateId(),
         title: "Color",
         options: [
           {
-            id: crypto.randomUUID(),
+            id: generateId(),
             title: "Red",
             quantity: 0,
             price: 0,
@@ -291,7 +401,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
 
   const addOption = (groupId: string, title: string) => {
     const newOption: VariantOption = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       title: title.trim(),
       quantity: 0,
       price: 0,
@@ -358,17 +468,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
       updateOption(groupId, optionId, 'image', file);
     }
     e.target.value = '';
-  };
-
-  // Handle category selection change
-  const handleCategoryChange = (value: string) => {
-    setSelectedCategoryId(value);
-    
-    // Also update the hidden form field
-    const categoryInput = document.getElementById('category_admin_id') as HTMLSelectElement;
-    if (categoryInput) {
-      categoryInput.value = value;
-    }
   };
 
   // --- RENDER ---
@@ -484,6 +583,41 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
               {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
             </div>
 
+            {/* Debug Panel (can be removed in production) */}
+            <div className="text-xs p-2 border rounded bg-gray-50 text-gray-600">
+              <div className="font-medium mb-1">Debug Info:</div>
+              <div>Fields Valid: {arePredictionFieldsValid() ? '✓' : '✗'}</div>
+              <div>Name: {productName.length >= 2 ? '✓' : '✗'} ({productName.length}/2)</div>
+              <div>Desc: {productDescription.length >= 10 ? '✓' : '✗'} ({productDescription.length}/10)</div>
+              <div>Price: {productPrice > 0 ? '✓' : '✗'} (${productPrice})</div>
+              <div>Condition: {productCondition ? '✓' : '✗'}</div>
+              <div>Quantity: {productQuantity >= 0 ? '✓' : '✗'} ({productQuantity})</div>
+              <div>Status: {isPredicting ? 'Predicting...' : predictionResult ? 'Predicted ✓' : 'Waiting for input'}</div>
+            </div>
+
+            {/* Manual Predict Button */}
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleManualPredict}
+                disabled={!arePredictionFieldsValid() || isPredicting}
+                className="flex items-center gap-2"
+              >
+                {isPredicting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    Get AI Category Suggestion
+                  </>
+                )}
+              </Button>
+            </div>
+
             {/* AI Prediction Result */}
             {showPrediction && (
               <div className="space-y-4 p-4 border rounded-lg bg-gradient-to-r from-purple-50 to-blue-50">
@@ -500,22 +634,25 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                   )}
                 </div>
                 
-                {predictionResult && (
+                {predictionResult && predictionResult.predicted_category ? (
                   <>
                     {/* Top Prediction */}
                     <div className="p-4 bg-white border rounded-lg shadow-sm">
                       <div className="flex items-center justify-between mb-2">
                         <div>
-                          <span className="font-medium text-lg">{predictionResult.category_name}</span>
+                          <span className="font-medium text-lg">
+                            {predictionResult.predicted_category.category_name}
+                          </span>
                           <Badge className="ml-2 bg-green-100 text-green-800 hover:bg-green-100">
-                            {Math.round(predictionResult.confidence * 100)}% confidence
+                            {/* Convert confidence from decimal (e.g., 0.9991) to percentage */}
+                            {Math.round(predictionResult.predicted_category.confidence * 100)}% confidence
                           </Badge>
                         </div>
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
-                          onClick={() => handleCategoryChange(predictionResult.predicted_category.toString())}
+                          onClick={() => handleCategoryChange(predictionResult.predicted_category.category_id.toString())}
                           className="border-green-500 text-green-700 hover:bg-green-50"
                         >
                           Select This Category
@@ -526,31 +663,17 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                       </p>
                     </div>
 
-                    {/* Other Suggestions */}
-                    {predictionResult.top_3_categories.length > 1 && (
-                      <div>
-                        <h4 className="text-sm font-medium text-gray-700 mb-2">Other suggestions:</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {predictionResult.top_3_categories.slice(1).map((cat) => (
-                            <div 
-                              key={cat.category_id}
-                              className="flex items-center justify-between p-3 border rounded-md bg-white hover:bg-gray-50 cursor-pointer"
-                              onClick={() => handleCategoryChange(cat.category_id.toString())}
-                            >
-                              <div>
-                                <span className="font-medium">{cat.category_name}</span>
-                                <span className="text-xs text-gray-500 ml-2">
-                                  {Math.round(cat.confidence * 100)}%
-                                </span>
-                              </div>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2"
-                              >
-                                Select
-                              </Button>
+                    {/* Alternative Categories (Optional) */}
+                    {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
+                      <div className="pt-4 border-t">
+                        <h4 className="text-sm font-medium text-gray-700 mb-2">Alternative Suggestions:</h4>
+                        <div className="space-y-2">
+                          {predictionResult.alternative_categories.map((category, index) => (
+                            <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                              <span className="text-sm">{category.category_name}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {Math.round(category.confidence * 100)}%
+                              </Badge>
                             </div>
                           ))}
                         </div>
@@ -574,11 +697,17 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">No Category (Not Recommended)</SelectItem>
-                          {globalCategories && globalCategories.map((category: Category) => (
-                            <SelectItem key={category.id} value={category.id}>
-                              {category.name}
+                          {globalCategories && globalCategories.length > 0 ? (
+                            globalCategories.map((category: Category) => (
+                              <SelectItem key={category.id} value={category.id}>
+                                {category.name}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="none" disabled>
+                              No categories available
                             </SelectItem>
-                          ))}
+                          )}
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-gray-500 mt-1">
@@ -586,6 +715,15 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                       </p>
                     </div>
                   </>
+                ) : isPredicting ? (
+                  <div className="p-4 bg-white border rounded-lg shadow-sm text-center">
+                    <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
+                    <p className="text-sm text-gray-600">Analyzing your product details...</p>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-white border rounded-lg shadow-sm text-center">
+                    <p className="text-sm text-gray-600">No prediction available yet. Fill all required fields above.</p>
+                  </div>
                 )}
                 
                 {/* Prediction Status */}
@@ -704,11 +842,11 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                     if (checked && variantGroups.length === 0) {
                       setVariantGroups([
                         {
-                          id: crypto.randomUUID(),
+                          id: generateId(),
                           title: "Size",
                           options: [
                             {
-                              id: crypto.randomUUID(),
+                              id: generateId(),
                               title: "Small",
                               quantity: 0,
                               price: 0,

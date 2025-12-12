@@ -37,7 +37,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
 
   const shopId = session.get("shopId");
-  console.log("Loader Session Shop ID:", shopId);
 
   await requireRole(request, context, ["isCustomer"]);
 
@@ -52,7 +51,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     );
 
     const shop = shopsResponse.data.shop
-    console.log('ShopId', shop)
 
     const selectedShop = shop
 
@@ -62,7 +60,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
       if (categoriesResponse.data.success) {
         globalCategories = categoriesResponse.data.categories || [];
-        console.log('Global categories loaded:', globalCategories.length);
       }
     } catch (categoryError) {
       console.error('Failed to fetch global categories:', categoryError);

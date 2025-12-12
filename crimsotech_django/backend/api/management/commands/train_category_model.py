@@ -3,93 +3,253 @@ import tensorflow as tf
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.feature_selection import mutual_info_classif
 import joblib
 from django.core.management.base import BaseCommand
 from django.conf import settings
 from api.models import Product, Category
 import sys
-from django.db.models import Count
+import re
+from collections import defaultdict, Counter
+import warnings
+warnings.filterwarnings('ignore')
+
+class StopAt90Accuracy(tf.keras.callbacks.Callback):
+    """Custom callback to stop training when both training and validation accuracy reach 90%"""
+    
+    def __init__(self, patience=30, min_epochs=50):
+        super().__init__()
+        self.patience = patience
+        self.min_epochs = min_epochs
+        self.wait = 0
+        self.best_val_acc = 0
+        self.best_train_acc = 0
+        self.stopped_epoch = 0
+        
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        
+        train_acc = logs.get('accuracy', 0)
+        val_acc = logs.get('val_accuracy', 0)
+        
+        if train_acc > self.best_train_acc:
+            self.best_train_acc = train_acc
+        if val_acc > self.best_val_acc:
+            self.best_val_acc = val_acc
+        
+        if train_acc >= 0.90 and val_acc >= 0.90:
+            if epoch >= self.min_epochs:
+                self.stopped_epoch = epoch
+                self.model.stop_training = True
+                print(f"\n✅ Both training ({train_acc:.2%}) and validation ({val_acc:.2%}) accuracy reached 90%!")
+                return
+        
+        if epoch > self.min_epochs:
+            if train_acc < 0.90 and val_acc < 0.90:
+                self.wait += 1
+                if self.wait >= self.patience:
+                    self.stopped_epoch = epoch
+                    self.model.stop_training = True
+                    print(f"\n⚠️  Training stopped after {self.patience} epochs without reaching 90% accuracy")
+                    print(f"   Best training accuracy: {self.best_train_acc:.2%}")
+                    print(f"   Best validation accuracy: {self.best_val_acc:.2%}")
+            else:
+                self.wait = 0
 
 class Command(BaseCommand):
     help = 'Train a category prediction model using data from Django database'
     
     def add_arguments(self, parser):
-        parser.add_argument(
-            '--min-samples',
-            type=int,
-            default=5,
-            help='Minimum number of samples per category (default: 5)'
-        )
-        parser.add_argument(
-            '--model-dir',
-            type=str,
-            default=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'model'),
-            help='Directory to save trained models'
-        )
-        parser.add_argument(
-            '--epochs',
-            type=int,
-            default=500,
-            help='Maximum number of training epochs (default: 500)'
-        )
-        parser.add_argument(
-            '--force',
-            action='store_true',
-            help='Force training even with limited data'
-        )
+        parser.add_argument('--min-samples', type=int, default=5)
+        parser.add_argument('--model-dir', type=str, 
+            default=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'model'))
+        parser.add_argument('--epochs', type=int, default=500)
+        parser.add_argument('--target-accuracy', type=float, default=0.90)
+        parser.add_argument('--patience', type=int, default=30)
+    
+    def _extract_top_keywords(self, df, n_keywords=10):
+        """Extract top keywords for each category"""
+        category_keywords = {}
+        
+        for category in df['category'].unique():
+            category_text = ' '.join(
+                df[df['category'] == category]['name'].fillna('').astype(str) + ' ' +
+                df[df['category'] == category]['description'].fillna('').astype(str)
+            ).lower()
+            
+            tokens = re.findall(r'\b[a-z]{3,}\b', category_text)
+            common_words = set(['new', 'used', 'like', 'good', 'excellent', 'condition', 
+                               'with', 'for', 'and', 'the', 'this', 'that', 'brand'])
+            tokens = [t for t in tokens if t not in common_words]
+            
+            word_counts = Counter(tokens)
+            top_keywords = [word for word, _ in word_counts.most_common(n_keywords)]
+            category_keywords[category] = top_keywords
+        
+        return category_keywords
+    
+    def _create_price_quantity_features(self, df):
+        """Create enhanced price and quantity features"""
+        features = pd.DataFrame(index=df.index)
+        
+        features['price_quantity_interaction'] = df['price'] * np.log1p(df['quantity'] + 1)
+        features['log_price'] = np.log1p(df['price'])
+        features['price'] = df['price']
+        features['price_per_unit'] = df['price'] / (df['quantity'] + 1)
+        features['price_to_quantity_ratio'] = df['price'] / (df['quantity'] + 1e-5)
+        features['quantity_scaled'] = df['quantity'] / (df['quantity'].max() + 1e-5)
+        features['price_scaled'] = df['price'] / (df['price'].max() + 1e-5)
+        
+        price_bins = pd.qcut(df['price'], q=5, labels=False, duplicates='drop')
+        for i in range(5):
+            features[f'price_bin_{i}'] = (price_bins == i).astype(int)
+        
+        return features
+    
+    def _create_keyword_features(self, df, category_keywords):
+        """Create keyword presence features"""
+        features = pd.DataFrame(index=df.index)
+        
+        for category, keywords in category_keywords.items():
+            for keyword in keywords:
+                col_name = f'has_{keyword}'
+                features[col_name] = df['name'].str.lower().str.contains(keyword, na=False).astype(int) | \
+                                    df['description'].str.lower().str.contains(keyword, na=False).astype(int)
+        
+        keyword_cols = [col for col in features.columns if col.startswith('has_')]
+        if keyword_cols:
+            features['keyword_count'] = features[keyword_cols].sum(axis=1)
+            features['unique_keywords'] = features[keyword_cols].gt(0).sum(axis=1)
+        
+        return features
+    
+    def _create_condition_features(self, df):
+        """Create condition features"""
+        features = pd.DataFrame(index=df.index)
+        
+        condition_mapping = {
+            'New': 3,
+            'Like New': 2,
+            'Refurbished': 1,
+            'Used - Excellent': 0,
+            'Used - Good': -1,
+            'Used - Fair': -2
+        }
+        
+        features['condition_score'] = df['condition'].map(condition_mapping).fillna(0)
+        features['is_new'] = df['condition'].str.contains('New', case=False, na=False).astype(int)
+        features['is_used'] = df['condition'].str.contains('Used', case=False, na=False).astype(int)
+        features['is_refurbished'] = df['condition'].str.contains('Refurbished', case=False, na=False).astype(int)
+        
+        return features
+    
+    def _create_simple_text_features(self, df):
+        """Create simple text-based features"""
+        features = pd.DataFrame(index=df.index)
+        
+        features['name_length'] = df['name'].fillna('').str.len()
+        features['name_word_count'] = df['name'].fillna('').str.split().str.len()
+        features['desc_length'] = df['description'].fillna('').str.len()
+        features['desc_word_count'] = df['description'].fillna('').str.split().str.len()
+        features['name_desc_ratio'] = features['name_length'] / (features['desc_length'] + 1)
+        
+        features['has_iphone'] = df['name'].str.lower().str.contains('iphone', na=False).astype(int)
+        features['has_samsung'] = df['name'].str.lower().str.contains('samsung', na=False).astype(int)
+        features['has_apple'] = df['name'].str.lower().str.contains('apple', na=False).astype(int)
+        features['has_sony'] = df['name'].str.lower().str.contains('sony', na=False).astype(int)
+        
+        return features
+    
+    def _create_category_specific_stats(self, df):
+        """Create features based on category statistics"""
+        features = pd.DataFrame(index=df.index)
+        
+        category_stats = df.groupby('category').agg({
+            'price': ['mean', 'std'],
+            'quantity': ['mean', 'std']
+        }).round(2)
+        
+        for idx, row in df.iterrows():
+            category = row['category']
+            price = row['price']
+            quantity = row['quantity']
+            
+            if category in category_stats.index:
+                cat_price_mean = category_stats.loc[category, ('price', 'mean')]
+                cat_price_std = category_stats.loc[category, ('price', 'std')]
+                
+                if cat_price_std > 0:
+                    features.loc[idx, 'price_category_zscore'] = (price - cat_price_mean) / cat_price_std
+                else:
+                    features.loc[idx, 'price_category_zscore'] = 0
+                
+                cat_qty_mean = category_stats.loc[category, ('quantity', 'mean')]
+                cat_qty_std = category_stats.loc[category, ('quantity', 'std')]
+                
+                if cat_qty_std > 0:
+                    features.loc[idx, 'quantity_category_zscore'] = (quantity - cat_qty_mean) / cat_qty_std
+                else:
+                    features.loc[idx, 'quantity_category_zscore'] = 0
+                
+                cat_prices = df[df['category'] == category]['price']
+                if len(cat_prices) > 1:
+                    q1 = cat_prices.quantile(0.25)
+                    q3 = cat_prices.quantile(0.75)
+                    if price <= q1:
+                        features.loc[idx, 'price_category_quartile'] = 1
+                    elif price <= q3:
+                        features.loc[idx, 'price_category_quartile'] = 2
+                    else:
+                        features.loc[idx, 'price_category_quartile'] = 3
+                else:
+                    features.loc[idx, 'price_category_quartile'] = 2
+            else:
+                features.loc[idx, 'price_category_zscore'] = 0
+                features.loc[idx, 'quantity_category_zscore'] = 0
+                features.loc[idx, 'price_category_quartile'] = 2
+        
+        return features
     
     def handle(self, *args, **options):
         min_samples = options['min_samples']
         model_dir = options['model_dir']
-        epochs = options['epochs']
-        force = options['force']
+        max_epochs = options['epochs']
+        target_accuracy = options['target_accuracy']
+        patience = options['patience']
         
         self.stdout.write(self.style.SUCCESS('Starting category prediction model training...'))
+        self.stdout.write(f'Target accuracy: {target_accuracy:.0%} for both training and validation')
+        self.stdout.write(f'Maximum epochs: {max_epochs}')
+        self.stdout.write(f'Patience: {patience} epochs')
         self.stdout.write(f'Model directory: {model_dir}')
         
-        # Create model directory if it doesn't exist
         os.makedirs(model_dir, exist_ok=True)
         
         try:
-            # 1. Fetch data from database
-            self.stdout.write('Fetching product data from database...')
-            
-            # Get all products with any category (admin or global)
-            products = Product.objects.filter(
-                category_admin__isnull=False
-            ).select_related('category_admin')
-            
-            self.stdout.write(f'Found {products.count()} products with admin categories')
+            # Fetch data
+            self.stdout.write('\nFetching product data from database...')
+            products = Product.objects.filter(category_admin__isnull=False).select_related('category_admin')
             
             if products.count() == 0:
-                self.stdout.write(self.style.WARNING('No products with admin categories found.'))
-                self.stdout.write('Looking for products with global categories...')
-                
-                # Try to get products with global categories
                 products = Product.objects.filter(
                     category__isnull=False,
                     category__shop__isnull=True
                 ).select_related('category')
-                
-                self.stdout.write(f'Found {products.count()} products with global categories')
             
             if products.count() == 0:
-                self.stderr.write(self.style.ERROR('No products with categories found in database!'))
-                self.stderr.write(self.style.ERROR('Please add some products with categories first.'))
+                self.stderr.write(self.style.ERROR('No products with categories found!'))
                 sys.exit(1)
             
-            # 2. Prepare data for training
+            # Prepare data
             data_list = []
-            
             for product in products:
-                # Determine which category to use
                 if product.category_admin:
                     category_name = product.category_admin.name
                 elif product.category and product.category.shop is None:
                     category_name = product.category.name
                 else:
-                    continue  # Skip products without valid category
+                    continue
                 
                 data_list.append({
                     'name': product.name,
@@ -100,274 +260,295 @@ class Command(BaseCommand):
                     'category': category_name
                 })
             
-            # Create DataFrame
-            df = pd.DataFrame(data_list)
-            
-            # Remove rows with missing categories
-            df = df.dropna(subset=['category'])
-            
-            self.stdout.write(self.style.SUCCESS(f'Loaded {len(df)} records for training'))
-            
-            # Show category distribution
+            df = pd.DataFrame(data_list).dropna(subset=['category'])
             category_counts = df['category'].value_counts()
-            self.stdout.write(f'\nCategory distribution:')
-            for category, count in category_counts.items():
-                self.stdout.write(f'  {category}: {count} samples')
-            
-            # Filter categories with enough samples
             valid_categories = category_counts[category_counts >= min_samples].index
-            df_filtered = df[df['category'].isin(valid_categories)]
+            df = df[df['category'].isin(valid_categories)]
             
-            if len(df_filtered) == 0:
-                if force:
-                    self.stdout.write(self.style.WARNING(f'No categories with at least {min_samples} samples, but forcing training with all data'))
-                    df_filtered = df.copy()
-                    valid_categories = df['category'].unique()
-                else:
-                    self.stderr.write(self.style.ERROR(f'No categories with at least {min_samples} samples!'))
-                    self.stderr.write(self.style.ERROR(f'Use --force flag to train with all data'))
-                    self.stderr.write(self.style.ERROR(f'Or use --min-samples={min(category_counts.values)} to use all categories'))
-                    sys.exit(1)
+            self.stdout.write(self.style.SUCCESS(f'Loaded {len(df)} records for {len(valid_categories)} categories'))
             
-            self.stdout.write(f'\nUsing {len(valid_categories)} categories')
-            self.stdout.write(f'Total samples: {len(df_filtered)}')
+            # =========== FEATURE ENGINEERING ===========
+            self.stdout.write('\n' + '='*60)
+            self.stdout.write('FEATURE ENGINEERING')
+            self.stdout.write('='*60)
             
-            if len(df_filtered) < 20:
-                self.stdout.write(self.style.WARNING('Warning: Very small dataset. Model may not train well.'))
+            self.stdout.write('\nExtracting category keywords...')
+            category_keywords = self._extract_top_keywords(df, n_keywords=5)
             
-            # 3. Prepare the data
-            df_filtered = df_filtered.copy()
+            self.stdout.write('Creating features...')
+            price_qty_features = self._create_price_quantity_features(df)
+            keyword_features = self._create_keyword_features(df, category_keywords)
+            condition_features = self._create_condition_features(df)
+            text_features = self._create_simple_text_features(df)
+            category_stats_features = self._create_category_specific_stats(df)
             
-            # Data type conversion
-            df_filtered['name'] = df_filtered['name'].astype('string')
-            df_filtered['description'] = df_filtered['description'].astype('string')
-            df_filtered['quantity'] = df_filtered['quantity'].astype('int32')
-            df_filtered['price'] = df_filtered['price'].astype('float32')
-            df_filtered['condition'] = df_filtered['condition'].astype('category')
-            df_filtered['category'] = df_filtered['category'].astype('category')
+            # Combine features
+            all_features = pd.concat([
+                price_qty_features,
+                keyword_features,
+                condition_features,
+                text_features,
+                category_stats_features
+            ], axis=1).fillna(0)
             
-            # Remove outliers (optional for small datasets)
-            if len(df_filtered) > 30:
-                numeric_cols = ['quantity', 'price']
-                Q1 = df_filtered[numeric_cols].quantile(0.25)
-                Q3 = df_filtered[numeric_cols].quantile(0.75)
-                IQR = Q3 - Q1
-                df_no_outliers = df_filtered[
-                    ~((df_filtered[numeric_cols] < (Q1 - 1.5 * IQR)) |
-                      (df_filtered[numeric_cols] > (Q3 + 1.5 * IQR))).any(axis=1)
-                ]
-                self.stdout.write(f'Samples after removing outliers: {len(df_no_outliers)}')
-            else:
-                df_no_outliers = df_filtered.copy()
-                self.stdout.write('Skipping outlier removal due to small dataset')
+            all_features['category'] = df['category']
             
-            # 4. Create separate encoders
-            # Category encoder (for predicting categories)
+            # =========== FEATURE SELECTION ===========
+            self.stdout.write('\n' + '='*60)
+            self.stdout.write('FEATURE SELECTION')
+            self.stdout.write('='*60)
+            
+            X = all_features.drop('category', axis=1)
+            y = all_features['category']
+            
+            # 🔧 FIX: Remove duplicate columns from X before feature selection
+            self.stdout.write(f'\nOriginal feature count: {X.shape[1]}')
+            duplicate_cols = X.columns[X.columns.duplicated()].tolist()
+            if duplicate_cols:
+                self.stdout.write(f'⚠️  Found duplicate columns: {duplicate_cols}')
+                X = X.loc[:, ~X.columns.duplicated()]
+                self.stdout.write(f'After removing duplicates: {X.shape[1]}')
+            
             category_le = LabelEncoder()
-            df_no_outliers['category_encoded'] = category_le.fit_transform(df_no_outliers['category'])
+            y_encoded = category_le.fit_transform(y)
             
-            # Condition encoder (for encoding condition as a feature)
-            condition_le = LabelEncoder()
-            df_no_outliers['condition_encoded'] = condition_le.fit_transform(df_no_outliers['condition'])
+            self.stdout.write('Calculating feature importance...')
+            mi_scores = mutual_info_classif(X, y_encoded, random_state=42, n_neighbors=3)
+            feature_importance = pd.DataFrame({
+                'feature': X.columns,
+                'importance': mi_scores
+            }).sort_values('importance', ascending=False)
             
-            # Get number of unique classes
-            num_classes = len(df_no_outliers['category_encoded'].unique())
+            # Select top features
+            n_features = min(30, X.shape[1])
+            important_features = feature_importance.head(n_features)['feature'].tolist()
             
-            self.stdout.write(self.style.SUCCESS(f'\nNumber of CATEGORY classes: {num_classes}'))
-            self.stdout.write('Category classes:')
-            for i, cls in enumerate(category_le.classes_):
-                self.stdout.write(f'  {i}. {cls}')
+            # 🔧 FIX: Ensure important_features list has no duplicates
+            from collections import Counter
+            feature_counts = Counter(important_features)
+            duplicate_features = [f for f, count in feature_counts.items() if count > 1]
+            if duplicate_features:
+                self.stdout.write(f'⚠️  Found duplicate features in selection: {duplicate_features}')
+                # Remove duplicates while preserving order
+                seen = set()
+                important_features = [x for x in important_features if not (x in seen or seen.add(x))]
+                self.stdout.write(f'After removing duplicates: {len(important_features)} features')
             
-            self.stdout.write(f'\nNumber of CONDITION classes: {len(condition_le.classes_)}')
-            self.stdout.write('Condition classes:')
-            for i, cls in enumerate(condition_le.classes_):
-                self.stdout.write(f'  {i}. {cls}')
+            self.stdout.write(f'\nSelected {len(important_features)} most important features:')
+            for i, (feature, imp) in enumerate(feature_importance.head(10).itertuples(index=False), 1):
+                self.stdout.write(f'  {i:2}. {feature}: {imp:.4f}')
             
-            # 5. Create mapping dictionaries for name and description
-            self.stdout.write('\nCreating name and description mappings...')
+            X_important = X[important_features].copy()
             
-            # Fill missing values with 0
-            name_mapping = df_no_outliers.groupby('name')['category_encoded'].agg(
-                lambda x: x.mode()[0] if not x.mode().empty else 0
-            ).to_dict()
+            # ⚠️ CRITICAL FIX: Verify feature count BEFORE scaling
+            self.stdout.write(f'\n🔍 VERIFICATION:')
+            self.stdout.write(f'   X_important.shape[1] = {X_important.shape[1]}')
+            self.stdout.write(f'   len(important_features) = {len(important_features)}')
+            self.stdout.write(f'   X_important columns: {list(X_important.columns)}')
             
-            desc_mapping = df_no_outliers.groupby('description')['category_encoded'].agg(
-                lambda x: x.mode()[0] if not x.mode().empty else 0
-            ).to_dict()
+            # Double-check for duplicates in the DataFrame itself
+            df_duplicate_cols = X_important.columns[X_important.columns.duplicated()].tolist()
+            if df_duplicate_cols:
+                self.stdout.write(f'⚠️  Found duplicate columns in X_important: {df_duplicate_cols}')
+                X_important = X_important.loc[:, ~X_important.columns.duplicated()]
+                self.stdout.write(f'   After removing: {X_important.shape[1]} columns')
             
-            df_no_outliers['name_encoded'] = df_no_outliers['name'].map(name_mapping).fillna(0).astype(int)
-            df_no_outliers['description_encoded'] = df_no_outliers['description'].map(desc_mapping).fillna(0).astype(int)
+            # Final assertion
+            if X_important.shape[1] != len(important_features):
+                self.stderr.write(self.style.ERROR(f'ERROR: X_important has {X_important.shape[1]} columns but important_features has {len(important_features)} items'))
+                self.stderr.write(f'X_important columns: {list(X_important.columns)}')
+                self.stderr.write(f'important_features: {important_features}')
+                raise ValueError("Feature count mismatch!")
             
-            # Drop original text columns
-            df_no_outliers = df_no_outliers.drop(['category', 'condition', 'name', 'description'], axis=1)
+            self.stdout.write(f'✅ Feature count verified: {X_important.shape[1]} features')
             
-            # 6. Scale features
-            self.stdout.write('Scaling features...')
-            target = df_no_outliers['category_encoded']
-            features = df_no_outliers.drop(['category_encoded'], axis=1)
+            # Scale features
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X_important)
             
-            scaler = MinMaxScaler()
-            scaled_features = pd.DataFrame(
-                scaler.fit_transform(features),
-                columns=features.columns,
-                index=features.index
+            # =========== MODEL TRAINING ===========
+            self.stdout.write('\n' + '='*60)
+            self.stdout.write('MODEL TRAINING')
+            self.stdout.write('='*60)
+            
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_scaled, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
             )
             
-            # Prepare final dataset
-            df_scaled = scaled_features.copy()
-            df_scaled['category_encoded'] = target
-            
-            # Prepare X and y
-            X = df_scaled.drop('category_encoded', axis=1).values
-            y = df_scaled['category_encoded'].values
-            
-            # 7. Split data
-            self.stdout.write('Splitting data into train/validation sets...')
-            
-            if len(X) < 10:
-                # For very small datasets, use all data for training
-                X_train, X_val, y_train, y_val = X, X, y, y
-                self.stdout.write(self.style.WARNING('Very small dataset, using all data for training and validation'))
-            else:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X, y, test_size=0.2, random_state=42, stratify=y
-                )
-            
-            input_shape = X.shape[1]
-            self.stdout.write(f'Input shape: {input_shape}')
             self.stdout.write(f'Training samples: {len(X_train)}')
             self.stdout.write(f'Validation samples: {len(X_val)}')
+            self.stdout.write(f'Number of classes: {len(category_le.classes_)}')
+            self.stdout.write(f'Input features: {X_train.shape[1]}')
             
-            # 8. Build and train model
-            self.stdout.write('\nBuilding neural network model...')
+            # Build model - MUST match X_train.shape[1]
+            input_shape = X_train.shape[1]
+            num_classes = len(category_le.classes_)
             
-            # Adjust model complexity based on data size
-            if num_classes <= 5 or len(X_train) < 50:
-                # Simplified model for small datasets
-                model = tf.keras.Sequential([
-                    tf.keras.layers.Dense(32, activation='relu', input_shape=(input_shape,)),
-                    tf.keras.layers.Dropout(0.2),
-                    tf.keras.layers.Dense(16, activation='relu'),
-                    tf.keras.layers.Dense(num_classes, activation='softmax')
-                ])
-                self.stdout.write('Using simplified model for small dataset')
-            else:
-                # Standard model
-                model = tf.keras.Sequential([
-                    tf.keras.layers.Dense(64, activation='relu', input_shape=(input_shape,)),
-                    tf.keras.layers.Dropout(0.3),
-                    tf.keras.layers.Dense(32, activation='relu'),
-                    tf.keras.layers.Dropout(0.3),
-                    tf.keras.layers.Dense(16, activation='relu'),
-                    tf.keras.layers.Dense(num_classes, activation='softmax')
-                ])
+            model = tf.keras.Sequential([
+                tf.keras.layers.Input(shape=(input_shape,)),
+                tf.keras.layers.Dense(256, activation='relu'),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Dropout(0.4),
+                tf.keras.layers.Dense(128, activation='relu'),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Dropout(0.3),
+                tf.keras.layers.Dense(64, activation='relu'),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Dropout(0.2),
+                tf.keras.layers.Dense(32, activation='relu'),
+                tf.keras.layers.Dense(num_classes, activation='softmax')
+            ])
+            
+            # ⚠️ CRITICAL: Verify model input matches feature count
+            self.stdout.write(f'\n🔍 Model verification:')
+            self.stdout.write(f'   Model input shape: {model.input_shape}')
+            self.stdout.write(f'   Expected: (None, {len(important_features)})')
+            
+            if model.input_shape[1] != len(important_features):
+                raise ValueError(f"Model expects {model.input_shape[1]} but got {len(important_features)} features!")
+            
+            self.stdout.write(f'✅ Model input shape verified')
+            
+            optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, weight_decay=0.0001)
             
             model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                optimizer=optimizer,
                 loss='sparse_categorical_crossentropy',
                 metrics=['accuracy']
             )
             
-            # Adjust patience based on dataset size
-            patience = min(20, max(5, len(X_train) // 10))
+            stop_at_90 = StopAt90Accuracy(patience=patience, min_epochs=50)
             
-            early_stopping = tf.keras.callbacks.EarlyStopping(
-                monitor='val_loss',
-                patience=patience,
-                restore_best_weights=True
+            reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
+                monitor='val_accuracy',
+                factor=0.5,
+                patience=patience//2,
+                min_lr=0.00001,
+                mode='max',
+                verbose=1
             )
             
-            self.stdout.write('Training model...')
+            checkpoint_path = os.path.join(model_dir, 'best_model.keras')
+            model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
+                checkpoint_path,
+                monitor='val_accuracy',
+                save_best_only=True,
+                mode='max',
+                verbose=0
+            )
+            
+            self.stdout.write(f'\nTraining model (will stop when both accuracies reach {target_accuracy:.0%})...')
             history = model.fit(
                 X_train, y_train,
-                validation_data=(X_val, y_val) if len(X_val) > 0 else None,
-                epochs=epochs,
+                validation_data=(X_val, y_val),
+                epochs=max_epochs,
                 batch_size=min(32, len(X_train)),
-                callbacks=[early_stopping] if len(X_val) > 0 else [],
+                callbacks=[stop_at_90, reduce_lr, model_checkpoint],
                 verbose=2
             )
             
-            # 9. Evaluate
-            if len(X_val) > 0:
-                val_loss, val_accuracy = model.evaluate(X_val, y_val, verbose=0)
-                self.stdout.write(self.style.SUCCESS(f'Validation Accuracy: {val_accuracy:.4f}'))
+            if os.path.exists(checkpoint_path):
+                model = tf.keras.models.load_model(checkpoint_path)
+                self.stdout.write('Loaded best model from checkpoint')
             
             train_loss, train_accuracy = model.evaluate(X_train, y_train, verbose=0)
-            self.stdout.write(self.style.SUCCESS(f'Training Accuracy: {train_accuracy:.4f}'))
+            val_loss, val_accuracy = model.evaluate(X_val, y_val, verbose=0)
             
-            # Show training summary
-            trained_epochs = len(history.history.get('loss', []))
-            self.stdout.write(f'Training epochs: {trained_epochs}')
+            self.stdout.write('\n' + '='*60)
+            self.stdout.write('FINAL RESULTS')
+            self.stdout.write('='*60)
             
-            # 10. Save models and preprocessing objects
-            self.stdout.write('\nSaving models and preprocessing objects...')
+            self.stdout.write(f'Training Accuracy:   {train_accuracy:.2%}')
+            self.stdout.write(f'Validation Accuracy: {val_accuracy:.2%}')
+            self.stdout.write(f'Epochs trained:      {len(history.history["loss"])}')
             
-            # Save category label encoder
-            category_le_path = os.path.join(model_dir, 'category_label_encoder.pkl')
-            joblib.dump(category_le, category_le_path)
-            self.stdout.write(f'✓ Saved category label encoder to: {category_le_path}')
+            target_reached = train_accuracy >= target_accuracy and val_accuracy >= target_accuracy
             
-            # Save condition label encoder
-            condition_le_path = os.path.join(model_dir, 'condition_label_encoder.pkl')
-            joblib.dump(condition_le, condition_le_path)
-            self.stdout.write(f'✓ Saved condition label encoder to: {condition_le_path}')
+            if target_reached:
+                self.stdout.write(self.style.SUCCESS(f'\n✅ SUCCESS: Both accuracies reached {target_accuracy:.0%}!'))
+            else:
+                self.stdout.write(self.style.WARNING(f'\n⚠️  Target of {target_accuracy:.0%} not reached'))
             
-            # Save name mapping
-            name_mapping_path = os.path.join(model_dir, 'name_mapping.pkl')
-            joblib.dump(name_mapping, name_mapping_path)
-            self.stdout.write(f'✓ Saved name mapping to: {name_mapping_path}')
+            # Analyze predictions
+            y_pred_probs = model.predict(X_val, verbose=0)
+            y_pred = np.argmax(y_pred_probs, axis=1)
             
-            # Save description mapping
-            desc_mapping_path = os.path.join(model_dir, 'desc_mapping.pkl')
-            joblib.dump(desc_mapping, desc_mapping_path)
-            self.stdout.write(f'✓ Saved description mapping to: {desc_mapping_path}')
+            from sklearn.metrics import classification_report, confusion_matrix
+            self.stdout.write('\n' + '-'*60)
+            self.stdout.write('DETAILED VALIDATION PERFORMANCE')
+            self.stdout.write('-'*60)
             
-            # Save scaler
-            scaler_path = os.path.join(model_dir, 'scaler.pkl')
-            joblib.dump(scaler, scaler_path)
-            self.stdout.write(f'✓ Saved scaler to: {scaler_path}')
+            report = classification_report(y_val, y_pred, 
+                                         target_names=category_le.classes_,
+                                         output_dict=False)
+            self.stdout.write(report)
             
-            # Save TensorFlow model
-            model_path = os.path.join(model_dir, 'category_classifier.h5')
-            model.save(model_path)
-            self.stdout.write(f'✓ Saved TensorFlow model to: {model_path}')
+            cm = confusion_matrix(y_val, y_pred)
+            self.stdout.write('\nCategories with perfect predictions:')
+            perfect_categories = []
+            for i in range(len(category_le.classes_)):
+                if cm[i, i] == cm[i].sum() and cm[i].sum() > 0:
+                    perfect_categories.append(category_le.classes_[i])
             
-            # Save a summary file
-            summary_path = os.path.join(model_dir, 'model_summary.txt')
-            with open(summary_path, 'w') as f:
-                f.write(f'Model Training Summary\n')
-                f.write(f'=====================\n')
-                f.write(f'Training date: {pd.Timestamp.now()}\n')
-                f.write(f'Number of categories: {num_classes}\n')
-                f.write(f'Categories: {", ".join(category_le.classes_)}\n')
-                f.write(f'Training samples: {len(X_train)}\n')
-                f.write(f'Validation samples: {len(X_val)}\n')
-                f.write(f'Training accuracy: {train_accuracy:.4f}\n')
-                if len(X_val) > 0:
-                    f.write(f'Validation accuracy: {val_accuracy:.4f}\n')
-                f.write(f'Input shape: {input_shape}\n')
-                f.write(f'Total products in database: {products.count()}\n')
-                f.write(f'Used for training: {len(df_filtered)}\n')
+            if perfect_categories:
+                for cat in perfect_categories:
+                    self.stdout.write(f'  ✅ {cat}')
+            else:
+                self.stdout.write('  None')
             
-            self.stdout.write(f'✓ Saved model summary to: {summary_path}')
+            # =========== SAVE MODELS ===========
+            self.stdout.write('\n' + '='*60)
+            self.stdout.write('SAVING MODELS')
+            self.stdout.write('='*60)
             
-            # Test the model with a sample prediction
-            self.stdout.write('\nTesting model with sample prediction...')
-            if len(X) > 0:
-                sample_pred = model.predict(X[:1], verbose=0)
-                predicted_class = np.argmax(sample_pred, axis=1)[0]
-                predicted_label = category_le.inverse_transform([predicted_class])[0]
-                self.stdout.write(f'Sample prediction: {predicted_label}')
+            # ⚠️ CRITICAL: Final verification before saving
+            self.stdout.write(f'\n🔍 FINAL CHECK:')
+            self.stdout.write(f'   Model input shape: {model.input_shape}')
+            self.stdout.write(f'   Feature list length: {len(important_features)}')
+            self.stdout.write(f'   Match: {model.input_shape[1] == len(important_features)}')
             
-            self.stdout.write(self.style.SUCCESS('\n✅ Model training completed successfully!'))
-            self.stdout.write(self.style.SUCCESS(f'All models saved in: {model_dir}'))
+            if model.input_shape[1] != len(important_features):
+                raise ValueError(f"CRITICAL ERROR: Model expects {model.input_shape[1]} features but feature list has {len(important_features)}!")
             
-            # Show how to use in Django view
-            self.stdout.write('\n📋 To use in Django view, update your predict_category function:')
-
+            joblib.dump({
+                'category_keywords': category_keywords,
+                'important_features': important_features,
+                'feature_importance': feature_importance.to_dict('records')
+            }, os.path.join(model_dir, 'feature_info.pkl'))
+            
+            joblib.dump(category_le, os.path.join(model_dir, 'category_label_encoder.pkl'))
+            joblib.dump(scaler, os.path.join(model_dir, 'scaler.pkl'))
+            
+            final_model_path = os.path.join(model_dir, 'category_classifier.keras')
+            model.save(final_model_path)
+            
+            # Save feature columns
+            joblib.dump(important_features, os.path.join(model_dir, 'feature_columns.pkl'))
+            
+            training_summary = {
+                'train_accuracy': float(train_accuracy),
+                'val_accuracy': float(val_accuracy),
+                'train_loss': float(train_loss),
+                'val_loss': float(val_loss),
+                'epochs_trained': len(history.history.get('loss', [])),
+                'target_accuracy': target_accuracy,
+                'reached_target': target_reached,
+                'categories': list(category_le.classes_),
+                'num_samples': len(df),
+                'num_features': len(important_features),
+                'important_features': important_features[:10]
+            }
+            
+            joblib.dump(training_summary, os.path.join(model_dir, 'training_summary.pkl'))
+            
+            self.stdout.write(self.style.SUCCESS('\n✅ Model training completed!'))
+            self.stdout.write(f'   Model saved to: {final_model_path}')
+            self.stdout.write(f'   Features saved: {len(important_features)}')
+            self.stdout.write(f'   Categories: {len(category_le.classes_)}')
+            self.stdout.write(f'   Model input shape: {model.input_shape}')
+            
         except Exception as e:
             self.stderr.write(self.style.ERROR(f'Error during training: {str(e)}'))
             import traceback
             self.stderr.write(traceback.format_exc())
             sys.exit(1)
-
