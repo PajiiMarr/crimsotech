@@ -101,7 +101,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
-  // ... (Action content remains exactly the same) ...
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
@@ -111,16 +110,19 @@ export async function action({ request }: Route.ActionArgs) {
   const name = String(formData.get("name"));
   const description = String(formData.get("description"));
   const quantity = String(formData.get("quantity"));
-  const used_for = String(formData.get("used_for"));
+  const used_for = String(formData.get("used_for") || "General use");
   const price = String(formData.get("price"));
   const condition = String(formData.get("condition"));
   const category_admin_id = String(formData.get("category_admin_id"));
 
-  // Get variant fields
-  const variant_title = String(formData.get("variant_title"));
-  const variant_option_title = String(formData.get("variant_option_title"));
-  const variant_option_quantity = String(formData.get("variant_option_quantity"));
-  const variant_option_price = String(formData.get("variant_option_price"));
+  // Get dimension fields
+  const length = formData.get("length");
+  const width = formData.get("width");
+  const height = formData.get("height");
+  const weight = formData.get("weight");
+
+  // Get critical trigger fields
+  const critical_threshold = formData.get("critical_threshold");
 
   // Get media files
   const media_files = formData.getAll("media_files") as File[];
@@ -130,8 +132,6 @@ export async function action({ request }: Route.ActionArgs) {
   cleanInput(description);
   cleanInput(used_for);
   cleanInput(condition);
-  cleanInput(variant_title);
-  cleanInput(variant_option_title);
 
   const errors: Record<string, string> = {};
 
@@ -181,22 +181,6 @@ export async function action({ request }: Route.ActionArgs) {
     }
   });
 
-  // Validate variants (if any variant field is filled, all should be filled)
-  if (variant_title || variant_option_title || variant_option_quantity || variant_option_price) {
-    if (!variant_title.trim()) {
-      errors.variant_title = "Variant title is required";
-    }
-    if (!variant_option_title.trim()) {
-      errors.variant_option_title = "Variant option title is required";
-    }
-    if (!variant_option_quantity.trim() || isNaN(parseInt(variant_option_quantity)) || parseInt(variant_option_quantity) < 0) {
-      errors.variant_option_quantity = "Please enter a valid variant quantity";
-    }
-    if (!variant_option_price.trim() || isNaN(parseFloat(variant_option_price)) || parseFloat(variant_option_price) <= 0) {
-      errors.variant_option_price = "Please enter a valid variant price";
-    }
-  }
-
   if (Object.keys(errors).length > 0) {
     console.log("Product validation errors:", errors);
     return data({ errors }, { status: 400 });
@@ -211,11 +195,11 @@ export async function action({ request }: Route.ActionArgs) {
     // Create FormData for API request
     const apiFormData = new FormData();
     
-    // Append individual fields directly
+    // Append basic fields
     apiFormData.append('name', name.trim());
     apiFormData.append('description', description.trim());
     apiFormData.append('quantity', quantity);
-    apiFormData.append('used_for', used_for.trim() || "General use");
+    apiFormData.append('used_for', used_for.trim());
     apiFormData.append('price', price);
     apiFormData.append('condition', condition.trim());
     apiFormData.append('shop', shop_id ?? "");
@@ -227,12 +211,15 @@ export async function action({ request }: Route.ActionArgs) {
       apiFormData.append('category_admin_id', category_admin_id.trim());
     }
 
-    // Add variants if provided
-    if (variant_title.trim() && variant_option_title.trim()) {
-      apiFormData.append('variant_title', variant_title.trim());
-      apiFormData.append('variant_option_title', variant_option_title.trim());
-      apiFormData.append('variant_option_quantity', variant_option_quantity);
-      apiFormData.append('variant_option_price', variant_option_price);
+    // Add dimensions if provided
+    if (length) apiFormData.append('length', String(length));
+    if (width) apiFormData.append('width', String(width));
+    if (height) apiFormData.append('height', String(height));
+    if (weight) apiFormData.append('weight', String(weight));
+
+    // Add critical threshold if provided
+    if (critical_threshold) {
+      apiFormData.append('critical_threshold', String(critical_threshold));
     }
 
     // Append media files
@@ -242,8 +229,133 @@ export async function action({ request }: Route.ActionArgs) {
       }
     });
 
+    // Handle variants - collect all variant data
+    const variantData: any[] = [];
+    
+    // Parse all form data to find variant groups and options
+    const formDataObj: Record<string, any> = {};
+    for (const [key, value] of formData.entries()) {
+      if (key.startsWith('variant_')) {
+        formDataObj[key] = value;
+      }
+    }
+
+    // Extract variant structure from form data
+    // The form sends variant data with naming patterns like:
+    // - variant_group_{groupId}_title
+    // - variant_group_{groupId}_option_{optionId}_title
+    // - variant_group_{groupId}_option_{optionId}_quantity
+    // etc.
+
+    const variantGroups: Map<string, any> = new Map();
+    
+    for (const [key, value] of Object.entries(formDataObj)) {
+      const groupMatch = key.match(/^variant_group_([^_]+)_title$/);
+      if (groupMatch) {
+        const groupId = groupMatch[1];
+        if (!variantGroups.has(groupId)) {
+          variantGroups.set(groupId, {
+            title: value,
+            options: []
+          });
+        }
+      }
+
+      const optionMatch = key.match(/^variant_group_([^_]+)_option_([^_]+)_(.+)$/);
+      if (optionMatch) {
+        const groupId = optionMatch[1];
+        const optionId = optionMatch[2];
+        const field = optionMatch[3];
+
+        if (!variantGroups.has(groupId)) {
+          variantGroups.set(groupId, {
+            title: '',
+            options: []
+          });
+        }
+
+        const group = variantGroups.get(groupId);
+        let option = group.options.find((o: any) => o.id === optionId);
+        
+        if (!option) {
+          option = { id: optionId };
+          group.options.push(option);
+        }
+
+        option[field] = value;
+      }
+    }
+
+    // Convert variant groups to array format
+    const variantsArray = Array.from(variantGroups.values()).map(group => ({
+      title: group.title,
+      options: group.options.map((option: any) => ({
+        title: option.title,
+        quantity: parseInt(option.quantity) || 0,
+        price: parseFloat(option.price) || 0,
+        compare_price: option.compare_price ? parseFloat(option.compare_price) : undefined,
+        critical_trigger: option.critical_trigger ? parseInt(option.critical_trigger) : undefined,
+        enable_critical_trigger: option.enable_critical_trigger === 'true',
+        length: option.length ? parseFloat(option.length) : undefined,
+        width: option.width ? parseFloat(option.width) : undefined,
+        height: option.height ? parseFloat(option.height) : undefined,
+        weight: option.weight ? parseFloat(option.weight) : undefined,
+        weight_unit: option.weight_unit || 'g',
+      }))
+    }));
+
+    // Add variants to form data as JSON string if they exist
+    if (variantsArray.length > 0) {
+      apiFormData.append('variants', JSON.stringify(variantsArray));
+    }
+
+    // Handle variant images
+    for (const [key, value] of formData.entries()) {
+      if (key.startsWith('variant_image_')) {
+        const file = value as File;
+        if (file.size > 0) {
+          apiFormData.append(key, file);
+        }
+      }
+    }
+
+    // Handle shipping zones
+    const shippingZones: any[] = [];
+    const shippingZoneIds = new Set<string>();
+    
+    for (const [key, value] of formData.entries()) {
+      const zoneMatch = key.match(/^shipping_zone_([^_]+)_(.+)$/);
+      if (zoneMatch) {
+        const zoneId = zoneMatch[1];
+        const field = zoneMatch[2];
+        
+        shippingZoneIds.add(zoneId);
+        
+        let zone = shippingZones.find(z => z.id === zoneId);
+        if (!zone) {
+          zone = { id: zoneId };
+          shippingZones.push(zone);
+        }
+        
+        zone[field] = value;
+      }
+    }
+
+    // Format shipping zones for API
+    const formattedShippingZones = shippingZones.map(zone => ({
+      name: zone.name,
+      fee: zone.freeShipping === 'true' ? 0 : parseFloat(zone.fee) || 0,
+      free_shipping: zone.freeShipping === 'true'
+    }));
+
+    if (formattedShippingZones.length > 0) {
+      apiFormData.append('shipping_zones', JSON.stringify(formattedShippingZones));
+    }
+
     console.log("Sending product data to API with user ID:", userId);
     console.log("Category admin ID:", category_admin_id);
+    console.log("Variants count:", variantsArray.length);
+    console.log("Shipping zones count:", formattedShippingZones.length);
     
     const response = await AxiosInstance.post('/seller-products/', apiFormData, {
       headers: { 

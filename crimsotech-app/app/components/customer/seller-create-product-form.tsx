@@ -226,8 +226,8 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
         setPredictionResult(response.data);
         
         // Auto-select the predicted category
-        if (response.data.predicted_category?.category_id) {
-          const predictedCategoryId = response.data.predicted_category.category_id.toString();
+        if (response.data.predicted_category?.category_uuid) {
+          const predictedCategoryId = response.data.predicted_category.category_uuid.toString();
           console.log('Setting selected category to:', predictedCategoryId);
           setSelectedCategoryId(predictedCategoryId);
           
@@ -583,18 +583,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
               {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
             </div>
 
-            {/* Debug Panel (can be removed in production) */}
-            <div className="text-xs p-2 border rounded bg-gray-50 text-gray-600">
-              <div className="font-medium mb-1">Debug Info:</div>
-              <div>Fields Valid: {arePredictionFieldsValid() ? '✓' : '✗'}</div>
-              <div>Name: {productName.length >= 2 ? '✓' : '✗'} ({productName.length}/2)</div>
-              <div>Desc: {productDescription.length >= 10 ? '✓' : '✗'} ({productDescription.length}/10)</div>
-              <div>Price: {productPrice > 0 ? '✓' : '✗'} (${productPrice})</div>
-              <div>Condition: {productCondition ? '✓' : '✗'}</div>
-              <div>Quantity: {productQuantity >= 0 ? '✓' : '✗'} ({productQuantity})</div>
-              <div>Status: {isPredicting ? 'Predicting...' : predictionResult ? 'Predicted ✓' : 'Waiting for input'}</div>
-            </div>
-
             {/* Manual Predict Button */}
             <div className="flex justify-end">
               <Button
@@ -863,10 +851,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
 
             {showVariants ? (
               <div className="space-y-6 p-4 border rounded-lg bg-gray-50">
-                <p className="text-sm text-red-500 italic">
-                  **Important**: Since the backend expects a single variant title and option, 
-                  only the **first variant option's data** will be submitted.
-                </p>
                 
                 {/* Variant Options Definition */}
                 <div className="space-y-4">
@@ -1045,13 +1029,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
               </div>
             ) : (
               <div className="space-y-6">
-                <Alert className='text-sm text-muted-foreground'>
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    Variants are currently **disabled**. When enabled, you can add individual images and pricing for each variant.
-                  </AlertDescription>
-                </Alert>
-                
                 {/* Single Product Dimensions (when variants disabled) */}
                 <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
                   <h3 className="text-lg font-medium">Product Dimensions & Weight</h3>

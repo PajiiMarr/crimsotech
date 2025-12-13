@@ -10,6 +10,7 @@ import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
 // import { requireRole } from '~/middleware/role-require.server';
 // import { userContext } from '~/contexts/user-role';
+import AxiosInstance from "~/components/axios/Axios";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -38,7 +39,6 @@ type Plan = {
   additionalFeatures: Feature[];
 };
 
-// --- SIMPLIFIED PLANS ARRAY ---
 const plans: Plan[] = [
   {
     name: "Basic",
@@ -99,7 +99,6 @@ const plans: Plan[] = [
     ]
   }
 ];
-// --- END OF SIMPLIFIED PLANS ARRAY ---
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
@@ -116,6 +115,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
 
   await requireRole(request, context, ["isCustomer"]);
+
+  let data;
+  try {
+    data = await AxiosInstance.get('/customer-boost-plans/get_boost_plans/')
+
+    console.log(data)
+  } catch {
+
+  }
 
   return user;
 }
