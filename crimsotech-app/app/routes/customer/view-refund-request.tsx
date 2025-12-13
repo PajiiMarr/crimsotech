@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import type { Route } from './+types/view-refund-request';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { Button } from '~/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card';

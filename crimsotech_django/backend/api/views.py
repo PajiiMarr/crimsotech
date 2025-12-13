@@ -8310,3 +8310,20 @@ class CheckoutView(viewsets.ViewSet):
                 {'error': 'Checkout failed', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+class CustomerBoostPlan(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_boost_plans(self, request):
+        try: 
+            plans = BoostPlan.objects.all()
+            serializer = BoostPlanSerializer(plans, many=True)
+
+            return Response({
+                'success': True,
+                'plans': serializer.data 
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e),
+            })
