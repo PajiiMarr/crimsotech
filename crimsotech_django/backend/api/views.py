@@ -3110,7 +3110,6 @@ class AdminProduct(viewsets.ViewSet):
                 "name": product.name,
                 "description": product.description,
                 "quantity": product.quantity,
-                "used_for": product.used_for,
                 "price": str(product.price),
                 "upload_status": product.upload_status,
                 "status": product.status,
@@ -7326,7 +7325,7 @@ class SellerProducts(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='global-categories/predict')    
     def predict_category(self, request):
         """
-        Predict category for a product - FIXED VERSION
+        Predict category for a product - FIXED VERSION with UUIDs
         """
         try:
             import pandas as pd
@@ -7340,7 +7339,6 @@ class SellerProducts(viewsets.ModelViewSet):
             
             print(f"Looking for models in: {MODEL_DIR}")
 
-            
             # Load the trained models
             try:
                 category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
@@ -7352,7 +7350,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 
                 print(f"✅ Models loaded successfully!")
                 print(f"Model expects {len(feature_columns)} features: {feature_columns}")
-
 
                 print(f"Model input shape: {model.input_shape}")
                 print(f"Model expects {model.input_shape[1]} features")
@@ -7564,11 +7561,69 @@ class SellerProducts(viewsets.ModelViewSet):
             print(f"Confidence: {confidence:.2%}")
             
             # ================================================
-            # PREPARE RESPONSE
+            # GET UUID FROM DATABASE (NEW CODE)
             # ================================================
             
-            # Get all category names
-            all_categories = list(category_le.classes_)
+            # Try to find the category in the database
+            try:
+                # First, try to find the category by name (case-insensitive)
+                category_obj = Category.objects.filter(
+                    name__iexact=predicted_label,
+                    shop__isnull=True  # Only global categories
+                ).first()
+                
+                if category_obj:
+                    category_uuid = str(category_obj.id)
+                    category_name = category_obj.name
+                    print(f"✅ Found category in DB: {category_name} (UUID: {category_uuid})")
+                else:
+                    # If not found by exact name, try to find similar
+                    # You might need to adjust this based on your category naming
+                    similar_categories = Category.objects.filter(
+                        name__icontains=predicted_label,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if similar_categories:
+                        category_uuid = str(similar_categories.id)
+                        category_name = similar_categories.name
+                        print(f"✅ Found similar category in DB: {category_name} (UUID: {category_uuid})")
+                    else:
+                        # Fallback: get the first available global category
+                        first_category = Category.objects.filter(shop__isnull=True).first()
+                        if first_category:
+                            category_uuid = str(first_category.id)
+                            category_name = first_category.name
+                            print(f"⚠️  Category not found, using first available: {category_name}")
+                        else:
+                            # No categories in database
+                            category_uuid = None
+                            category_name = predicted_label
+                            print(f"❌ No categories found in database")
+                            
+            except Exception as db_error:
+                print(f"Database lookup error: {db_error}")
+                category_uuid = None
+                category_name = predicted_label
+            
+            # ================================================
+            # PREPARE RESPONSE WITH UUIDs
+            # ================================================
+            
+            # Get all category names from database (not just from model)
+            try:
+                all_categories_objs = Category.objects.filter(shop__isnull=True)
+                all_categories_list = []
+                
+                for cat in all_categories_objs:
+                    all_categories_list.append({
+                        'uuid': str(cat.id),
+                        'name': cat.name,
+                        'id': str(cat.id)  # Include both uuid and id for compatibility
+                    })
+            except Exception as e:
+                print(f"Error fetching categories from DB: {e}")
+                all_categories_list = list(category_le.classes_)
             
             # Prepare top 3 categories
             top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
@@ -7576,9 +7631,29 @@ class SellerProducts(viewsets.ModelViewSet):
             
             for idx in top_3_indices:
                 category_label = category_le.inverse_transform([idx])[0]
+                
+                # Try to find this category in DB for UUID
+                try:
+                    cat_obj = Category.objects.filter(
+                        name__iexact=category_label,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if cat_obj:
+                        category_uuid_for_alt = str(cat_obj.id)
+                        category_name_for_alt = cat_obj.name
+                    else:
+                        category_uuid_for_alt = None
+                        category_name_for_alt = category_label
+                        
+                except Exception:
+                    category_uuid_for_alt = None
+                    category_name_for_alt = category_label
+                
                 top_categories.append({
-                    'category_id': int(idx),
-                    'category_name': category_label,
+                    'category_id': int(idx),  # Keep numeric ID for model reference
+                    'category_uuid': category_uuid_for_alt,  # Add UUID for database
+                    'category_name': category_name_for_alt,
                     'confidence': float(prediction_probs[0][idx])
                 })
             
@@ -7598,15 +7673,17 @@ class SellerProducts(viewsets.ModelViewSet):
             else:
                 price_range = 'Luxury'
             
+            # Build the response
             result = {
                 'success': True,
                 'predicted_category': {
-                    'category_id': int(predicted_class),
+                    'category_id': int(predicted_class),  # Numeric ID from model
+                    'category_uuid': category_uuid,  # UUID from database
                     'category_name': predicted_label,
                     'confidence': float(confidence)
                 },
                 'alternative_categories': top_categories[1:] if len(top_categories) > 1 else [],
-                'all_categories': all_categories,
+                'all_categories': all_categories_list,
                 'feature_insights': {
                     'keywords_found': keywords_found,
                     'price_range': price_range,
@@ -7631,7 +7708,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-    
     def get_queryset(self):
         # Get user_id from request data instead of authenticated user
         user_id = self.request.data.get('customer_id')
@@ -7740,7 +7816,6 @@ class SellerProducts(viewsets.ModelViewSet):
                                 "name": product.name,
                                 "description": product.description,
                                 "quantity": product.quantity,
-                                "used_for": product.used_for,
                                 "price": str(product.price),
                                 "status": product.status,
                                 "condition": product.condition,
@@ -7822,7 +7897,6 @@ class SellerProducts(viewsets.ModelViewSet):
                     "name": product.name,
                     "description": product.description,
                     "quantity": product.quantity,
-                    "used_for": product.used_for,
                     "price": str(product.price),
                     "status": product.status,
                     "upload_status": product.upload_status,
@@ -8000,7 +8074,6 @@ class CustomerProducts(viewsets.ModelViewSet):
                                 "name": product.name,
                                 "description": product.description,
                                 "quantity": product.quantity,
-                                "used_for": product.used_for,
                                 "price": str(product.price),
                                 "status": product.status,
                                 "condition": product.condition,
@@ -8083,7 +8156,6 @@ class CustomerProducts(viewsets.ModelViewSet):
                     "name": product.name,
                     "description": product.description,
                     "quantity": product.quantity,
-                    "used_for": product.used_for,
                     "price": str(product.price),
                     "status": product.status,
                     "upload_status": product.upload_status,

@@ -226,8 +226,8 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
         setPredictionResult(response.data);
         
         // Auto-select the predicted category
-        if (response.data.predicted_category?.category_id) {
-          const predictedCategoryId = response.data.predicted_category.category_id.toString();
+        if (response.data.predicted_category?.category_uuid) {
+          const predictedCategoryId = response.data.predicted_category.category_uuid.toString();
           console.log('Setting selected category to:', predictedCategoryId);
           setSelectedCategoryId(predictedCategoryId);
           
