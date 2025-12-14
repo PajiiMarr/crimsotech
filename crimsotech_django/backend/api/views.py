@@ -7780,13 +7780,18 @@ class SellerProducts(viewsets.ModelViewSet):
                     
                     # Handle media files if any
                     media_files = request.FILES.getlist('media_files')
-                    for media_file in media_files:
-                        ProductMedia.objects.create(
-                            product=product,
-                            file_data=media_file,
-                            file_type=media_file.content_type
-                        )
-                    
+                    print(f"Number of media files received: {len(media_files)}")  # Debug
+                    for i, media_file in enumerate(media_files):
+                        print(f"Media file {i}: name={media_file.name}, size={media_file.size}, type={media_file.content_type}")  # Debug
+                        try:
+                            product_media = ProductMedia.objects.create(
+                                product=product,
+                                file_data=media_file,
+                                file_type=media_file.content_type
+                            )
+                            print(f"Created ProductMedia: {product_media.id}, file saved to: {product_media.file_data}")  # Debug
+                        except Exception as e:
+                            print(f"Error creating ProductMedia: {e}")  # Debug
                     # Handle variants if any (simple approach)
                     variant_title = request.data.get('variant_title')
                     variant_option_title = request.data.get('variant_option_title')
@@ -7985,7 +7990,14 @@ class CustomerProducts(viewsets.ModelViewSet):
         return Product.objects.none()
 
     def create(self, request):
-        # For personal listings, no shop is required
+        print("Request FILES:", request.FILES)
+        print("Request data keys:", request.data.keys())
+        media_files = request.FILES.getlist('media_files')
+        print(f"Number of media files: {len(media_files)}")
+        
+        for file in media_files:
+            print(f"File: {file.name}, Size: {file.size}, Type: {file.content_type}")
+            
         required_fields = ["name", "description", "quantity", "price", "condition", "customer_id"]
         missing_fields = [f for f in required_fields if f not in request.data]
 
@@ -8399,3 +8411,201 @@ class CustomerBoostPlan(viewsets.ViewSet):
                 'success': False,
                 'message': str(e),
             })
+        
+
+class SellerOrderList(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def order_list(self, request):
+        """
+        Get seller orders with shop_id parameter
+        Query param: shop_id - Required shop ID
+        """
+        try:
+            # Get shop_id from query parameters
+            shop_id = request.GET.get('shop_id')
+            if not shop_id:
+                return Response({
+                    "success": False,
+                    "message": "Shop ID is required",
+                    "data": []
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get seller's shop
+            from .models import Shop
+            try:
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Shop not found",
+                    "data": []
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get all orders for this shop
+            from .models import Order, Delivery, Checkout, CartItem, Product
+            
+            # Prefetch related data efficiently
+            deliveries_prefetch = Prefetch(
+                'delivery_set',
+                queryset=Delivery.objects.select_related('rider__rider')
+            )
+            
+            product_prefetch = Prefetch(
+                'product',
+                queryset=Product.objects.select_related('shop')
+            )
+            
+            cart_item_prefetch = Prefetch(
+                'cart_item',
+                queryset=CartItem.objects.select_related('product').prefetch_related(product_prefetch)
+            )
+            
+            checkouts_prefetch = Prefetch(
+                'checkout_set',
+                queryset=Checkout.objects.select_related(
+                    'cart_item',
+                    'cart_item__product',
+                    'voucher'
+                ).prefetch_related(cart_item_prefetch)
+            )
+            
+            # Get all orders with prefetched data
+            orders = Order.objects.filter(
+                checkout__cart_item__product__shop=shop
+            ).select_related(
+                'user'
+            ).prefetch_related(
+                deliveries_prefetch,
+                checkouts_prefetch
+            ).distinct().order_by('-created_at')
+            
+            # Prepare response data
+            orders_data = []
+            
+            for order in orders:
+                # Get delivery status
+                delivery_status = None
+                delivery = order.delivery_set.first()
+                if delivery:
+                    delivery_status = delivery.status
+                
+                # Calculate shipping status
+                shipping_status = self._get_shipping_status(order.status, delivery_status)
+                
+                # Get checkouts for this shop only
+                shop_checkouts = []
+                for checkout in order.checkout_set.all():
+                    if checkout.cart_item and checkout.cart_item.product.shop == shop:
+                        shop_checkouts.append(checkout)
+                
+                if not shop_checkouts:
+                    continue
+                
+                # Prepare order items
+                order_items = []
+                total_amount = 0
+                
+                for checkout in shop_checkouts:
+                    cart_item = checkout.cart_item
+                    if not cart_item or not cart_item.product:
+                        continue
+                    
+                    product = cart_item.product
+                    
+                    # Get delivery info for this order
+                    tracking_number = None
+                    shipping_method = None
+                    estimated_delivery = None
+                    
+                    if delivery:
+                        tracking_number = f"TRK-{str(delivery.id)[:10]}"
+                        shipping_method = "Standard Shipping"
+                        if delivery.delivered_at:
+                            estimated_delivery = delivery.delivered_at.strftime('%Y-%m-%d')
+                        else:
+                            estimated_delivery = (timezone.now() + timedelta(days=3)).strftime('%Y-%m-%d')
+                    
+                    order_items.append({
+                        "id": str(checkout.id),
+                        "cart_item": {
+                            "id": str(cart_item.id),
+                            "product": {
+                                "id": str(product.id),
+                                "name": product.name,
+                                "price": float(product.price),
+                                "variant": product.condition,  # Using condition as variant placeholder
+                                "shop": {
+                                    "id": str(shop.id),
+                                    "name": shop.name
+                                }
+                            },
+                            "quantity": cart_item.quantity
+                        },
+                        "quantity": checkout.quantity,
+                        "total_amount": float(checkout.total_amount),
+                        "status": shipping_status,
+                        "created_at": checkout.created_at.isoformat(),
+                        "shipping_status": shipping_status,
+                        "is_shipped": shipping_status in ['shipped', 'in_transit', 'out_for_delivery', 'completed'],
+                        "is_processed": shipping_status not in ['pending_shipment'],
+                        "tracking_number": tracking_number,
+                        "shipping_method": shipping_method,
+                        "estimated_delivery": estimated_delivery
+                    })
+                    
+                    total_amount += float(checkout.total_amount)
+                
+                # Format customer name
+                customer_name = f"{order.user.first_name} {order.user.last_name}"
+                if not customer_name.strip():
+                    customer_name = order.user.username
+                
+                orders_data.append({
+                    "order_id": str(order.order),
+                    "user": {
+                        "id": str(order.user.id),
+                        "username": order.user.username,
+                        "email": order.user.email,
+                        "first_name": order.user.first_name,
+                        "last_name": order.user.last_name,
+                        "phone": order.user.contact_number or None
+                    },
+                    "status": shipping_status,
+                    "total_amount": total_amount,
+                    "payment_method": order.payment_method,
+                    "delivery_address": order.delivery_address,
+                    "created_at": order.created_at.isoformat(),
+                    "updated_at": order.updated_at.isoformat(),
+                    "items": order_items
+                })
+            
+            return Response({
+                "success": True,
+                "message": "Orders retrieved successfully",
+                "data": orders_data,
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": f"Error retrieving orders: {str(e)}",
+                "data": []
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_shipping_status(self, order_status, delivery_status):
+        """Map order and delivery status to shipping status for UI"""
+        if order_status == 'cancelled':
+            return 'cancelled'
+        elif order_status == 'completed':
+            return 'completed'
+        elif delivery_status:
+            # Map delivery status to UI status
+            status_map = {
+                'pending': 'pending_shipment',
+                'picked_up': 'in_transit',
+                'delivered': 'completed'
+            }
+            return status_map.get(delivery_status, 'pending_shipment')
+        else:
+            return 'pending_shipment'

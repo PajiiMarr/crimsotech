@@ -1,16 +1,7 @@
 import type { Route } from './+types/seller-product-list'
 import SellerSidebarLayout from '~/components/layouts/seller-sidebar'
-import AxiosInstance from '~/components/axios/Axios';
 import { Link, useLoaderData } from "react-router";
 import { useEffect, useState } from 'react';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
@@ -24,6 +15,9 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
 import { Search, Plus, Edit, Trash2, Eye, Store, Tag, MoreHorizontal, Package } from "lucide-react";
+import { DataTable } from "~/components/ui/data-table";
+import { type ColumnDef } from "@tanstack/react-table";
+import AxiosInstance from '~/components/axios/Axios';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -87,6 +81,19 @@ interface ProductListResponse {
 
 // Add loader function to get session data
 export async function loader({ request, context }: Route.LoaderArgs) {
+  const { registrationMiddleware } = await import("~/middleware/registration.server");
+  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
+  const { requireRole } = await import("~/middleware/role-require.server");
+  const { fetchUserRole } = await import("~/middleware/role.server");
+  const { userContext } = await import("~/contexts/user-role");
+
+  let user = (context as any).get(userContext);
+  if (!user) {
+      user = await fetchUserRole({ request, context });
+  }
+
+  await requireRole(request, context, ["isCustomer"]);
+
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
   
@@ -100,7 +107,6 @@ export default function SellerProductList() {
   const { userId, shopId } = useLoaderData<typeof loader>();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
   const [productLimitInfo, setProductLimitInfo] = useState<{
     current_count: number;
     limit: number;
@@ -186,13 +192,6 @@ export default function SellerProductList() {
     }
   };
 
-  const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (product.category_admin?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
-    (product.category?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false)
-  );
-
   const formatPrice = (price: string) => {
     const priceNumber = parseFloat(price);
     return new Intl.NumberFormat('en-PH', {
@@ -213,19 +212,20 @@ export default function SellerProductList() {
     return product.category_admin?.name || product.category?.name || 'No Category';
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, type: 'status' | 'upload_status' = 'status') => {
     const statusConfig = {
       active: { variant: "default" as const, label: "Active" },
       inactive: { variant: "secondary" as const, label: "Inactive" },
       draft: { variant: "outline" as const, label: "Draft" },
-      sold: { variant: "secondary" as const, label: "Sold" }
+      sold: { variant: "secondary" as const, label: "Sold" },
+      published: { variant: "default" as const, label: "Published" }
     };
 
     const config = statusConfig[status as keyof typeof statusConfig] || 
                    { variant: "outline" as const, label: status };
 
     return (
-      <Badge variant={config.variant}>
+      <Badge variant={config.variant} className="capitalize">
         {config.label}
       </Badge>
     );
@@ -235,20 +235,164 @@ export default function SellerProductList() {
     return product.variants && product.variants.length > 0;
   };
 
-  const getVariantSummary = (product: Product) => {
-    if (!hasVariants(product)) return null;
 
-    const totalOptions = product.variants?.reduce((sum, variant) => 
-      sum + (variant.options?.length || 0), 0) || 0;
-    
-    const variantTypes = product.variants?.map(v => v.title).join(', ') || '';
+  // Define columns for the data table
+  const columns: ColumnDef<Product>[] = [
+    {
+      accessorKey: "name",
+      header: "Product",
+      cell: ({ row }) => {
+        const product = row.original;
+        return (
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center">
+              <Tag className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium truncate">{product.name}</div>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "shop.name",
+      header: "Shop",
+      cell: ({ row }) => {
+        const product = row.original;
+        return product.shop ? (
+          <div className="flex items-center gap-2">
+            <Store className="h-3 w-3 text-muted-foreground" />
+            <span className="text-sm">{product.shop.name}</span>
+          </div>
+        ) : (
+          <Badge variant="outline">No Shop</Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "category",
+      header: "Category",
+      cell: ({ row }) => {
+        const product = row.original;
+        return (
+          <Badge variant="outline">
+            {getCategoryName(product)}
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "price",
+      header: "Price",
+      cell: ({ row }) => {
+        return (
+          <div className="text-right font-medium">
+            {formatPrice(row.original.price)}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "quantity",
+      header: "Stock",
+      cell: ({ row }) => {
+        const quantity = row.original.quantity;
+        return (
+          <div className={`text-right ${quantity === 0 ? 'text-red-600 font-medium' : ''}`}>
+            {quantity}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "condition",
+      header: "Condition",
+      cell: ({ row }) => {
+        return (
+          <Badge variant="outline" className="capitalize">
+            {row.original.condition}
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "upload_status",
+      header: "Upload Status",
+      cell: ({ row }) => {
+        return getStatusBadge(row.original.upload_status, 'upload_status');
+      },
+    },
+    {
+      accessorKey: "status",
+      header: "Status",
+      cell: ({ row }) => {
+        return getStatusBadge(row.original.status, 'status');
+      },
+    },
+    {
+      accessorKey: "created_at",
+      header: "Date Added",
+      cell: ({ row }) => {
+        return formatDate(row.original.created_at);
+      },
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => {
+        const product = row.original;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="h-8 w-8 p-0">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => handleViewProduct(product.id)}>
+                <Eye className="h-4 w-4 mr-2" />
+                View Product
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleEditProduct(product.id)}>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Product
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => handleToggleStatus(product.id, product.status)}
+              >
+                {product.status === 'active' ? 'Deactivate' : 'Activate'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                onClick={() => handleDeleteProduct(product.id)}
+                className="text-red-600 focus:text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Product
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+    },
+  ];
 
-    return (
-      <div className="text-xs text-muted-foreground mt-1">
-        <Package className="h-3 w-3 inline mr-1" />
-        Variants: {variantTypes} ({totalOptions} options)
-      </div>
-    );
+  // Configuration for filters
+  const filterConfig = {
+    status: {
+      options: ["active", "inactive", "draft", "sold"],
+      placeholder: "Status"
+    },
+    upload_status: {
+      options: ["published", "draft", "pending"],
+      placeholder: "Upload Status"
+    },
+    condition: {
+      options: ["new", "used", "refurbished"],
+      placeholder: "Condition"
+    }
   };
 
   if (loading) {
@@ -309,8 +453,8 @@ export default function SellerProductList() {
           </Card>
         )}
 
-        {/* Stats and Search */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold">{products.length}</div>
@@ -333,27 +477,14 @@ export default function SellerProductList() {
               <div className="text-sm text-muted-foreground">Out of Stock</div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <Search className="h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search products..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                />
-              </div>
-            </CardContent>
-          </Card>
         </div>
 
-        {/* Products Table */}
+        {/* Products Data Table */}
         <Card>
           <CardHeader>
             <CardTitle>Products</CardTitle>
             <CardDescription>
-              {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''} found
+              {products.length} product{products.length !== 1 ? 's' : ''} found
               {productLimitInfo && ` • ${productLimitInfo.remaining} products remaining`}
             </CardDescription>
           </CardHeader>
@@ -366,136 +497,21 @@ export default function SellerProductList() {
                 </Button>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Shop</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead className="text-right">Price</TableHead>
-                    <TableHead className="text-right">Stock</TableHead>
-                    <TableHead>Condition</TableHead>
-                    <TableHead>Upload Status</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Date Added</TableHead>
-                    <TableHead>Upload Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredProducts.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                        {products.length === 0 ? 'No products found. Start by adding your first product.' : 'No products match your search.'}
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredProducts.map((product) => (
-                      <TableRow key={product.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center">
-                              <Tag className="h-5 w-5 text-muted-foreground" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="font-medium truncate">{product.name}</div>
-                              <div className="text-sm text-muted-foreground line-clamp-1">
-                                {product.description}
-                              </div>
-                              {product.used_for && (
-                                <div className="text-xs text-muted-foreground mt-1">
-                                  Used for: {product.used_for}
-                                </div>
-                              )}
-                              {getVariantSummary(product)}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {product.shop ? (
-                            <div className="flex items-center gap-2">
-                              <Store className="h-3 w-3 text-muted-foreground" />
-                              <span className="text-sm">{product.shop.name}</span>
-                            </div>
-                          ) : (
-                            <Badge variant="outline">No Shop</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">
-                            {getCategoryName(product)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatPrice(product.price)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <span className={product.quantity === 0 ? 'text-red-600 font-medium' : ''}>
-                            {product.quantity}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="capitalize">
-                            {product.condition}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {getStatusBadge(product.upload_status)}
-                        </TableCell>
-                        <TableCell>
-                          {getStatusBadge(product.status)}
-                        </TableCell>
-
-                        <TableCell>
-                          <Badge variant={
-                            product.upload_status === 'published' ? 'default' :
-                            product.upload_status === 'draft' ? 'secondary' :
-                            'outline'
-                          }>
-                            {product.upload_status.charAt(0).toUpperCase() + product.upload_status.slice(1)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {formatDate(product.created_at)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" className="h-8 w-8 p-0">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                              <DropdownMenuItem onClick={() => handleViewProduct(product.id)}>
-                                <Eye className="h-4 w-4 mr-2" />
-                                View Product
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleEditProduct(product.id)}>
-                                <Edit className="h-4 w-4 mr-2" />
-                                Edit Product
-                              </DropdownMenuItem>
-                              <DropdownMenuItem 
-                                onClick={() => handleToggleStatus(product.id, product.status)}
-                              >
-                                {product.status === 'active' ? 'Deactivate' : 'Activate'}
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem 
-                                onClick={() => handleDeleteProduct(product.id)}
-                                className="text-red-600 focus:text-red-600"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete Product
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+              <DataTable
+                columns={columns}
+                data={products}
+                searchConfig={{
+                  column: "name",
+                  placeholder: "Search products by name, description, or category..."
+                }}
+                filterConfig={filterConfig}
+                defaultSorting={[
+                  {
+                    id: "created_at",
+                    desc: true, // Sort by newest first
+                  },
+                ]}
+              />
             )}
           </CardContent>
         </Card>

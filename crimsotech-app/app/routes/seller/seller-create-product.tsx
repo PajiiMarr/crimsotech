@@ -106,6 +106,8 @@ export async function action({ request }: Route.ActionArgs) {
 
   const formData = await request.formData();
 
+  console.log('this is a formdata: ', formData)
+
   // Get basic product fields
   const name = String(formData.get("name"));
   const description = String(formData.get("description"));
@@ -365,11 +367,11 @@ export async function action({ request }: Route.ActionArgs) {
     
     if (response.data.success) {
       console.log("Product created successfully:", response.data);
-      return redirect('/seller/seller-product-list', {
-        headers: {
-          "Set-Cookie": await commitSession(session),
-        },
-      });
+      // return redirect('/seller/seller-product-list', {
+      //   headers: {
+      //     "Set-Cookie": await commitSession(session),
+      //   },
+      // });
     } else {
       throw new Error(response.data.message || "Product creation failed");
     }
