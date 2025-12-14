@@ -8203,30 +8203,76 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "message": "No customer found for this user",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-
         
-        
-
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
-    # Use the serializer that includes media_files
-    serializer_class = ProductSerializer  # Make sure this includes media_files
-    
+
+    serializer_class = ProductSerializer
+
     def get_queryset(self):
-        # Optimize the queryset with prefetch_related
-        queryset = Product.objects.all().order_by('-created_at')
-        
-        # Prefetch media files to avoid N+1 queries
-        queryset = queryset.prefetch_related(
-            'productmedia_set',  # This is key for getting media files
-            'variants_set',
+        user_id = self.request.headers.get('X-User-Id')
+        print(f"DEBUG: user_id = {user_id}")
+        total_products = Product.objects.filter(
+            upload_status='published',
+            is_removed=False
+        ).count()
+        print(f"DEBUG: Total published products = {total_products}")
+
+        user_products_customer = Product.objects.filter(
+            upload_status='published',
+            is_removed=False,
+            customer__customer__id=user_id
+        ).count()
+        print(f"DEBUG: Products owned via customer = {user_products_customer}")
+
+        user_products_shop = Product.objects.filter(
+            upload_status='published',
+            is_removed=False,
+            shop__customer__customer__id=user_id
+        ).count()
+        print(f"DEBUG: Products owned via shop = {user_products_shop}")
+
+        queryset = Product.objects.filter(
+            upload_status='published',
+            is_removed=False
         ).select_related(
             'shop',
+            'customer',
             'category',
             'category_admin'
+        ).prefetch_related(
+            Prefetch(
+                'productmedia_set',
+                queryset=ProductMedia.objects.all()
+            ),
+            Prefetch(
+                'variants_set',
+                queryset=Variants.objects.all().prefetch_related('variantoptions_set')
+            )
         )
+
+        if user_id:
+
+            queryset = queryset.exclude(
+
+                Q(customer__customer__id=user_id) | 
+
+                Q(shop__customer__customer__id=user_id)
+
+            )
+
         
-        return queryset
+
+        final_count = queryset.count()
+
+        print(f"DEBUG: Final count after exclusion = {final_count}")
+
+        
+
+        return queryset.order_by('-created_at')
+
     
+
+
 class AddToCartView(APIView):
 
     def post(self, request):
@@ -8271,27 +8317,29 @@ class AddToCartView(APIView):
 
 
 
-#CHECKOUT
 class CartListView(APIView):
     """
     Returns all cart items for a given session user.
     Frontend passes user_id from loader session.
+    Latest items first with product images included.
     """
-
     def get(self, request):
-        user_id = request.GET.get("user_id")  # <-- session-based user ID from frontend
+        user_id = request.GET.get("user_id")
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
-
         try:
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
-
-        cart_items = CartItem.objects.filter(user=user).select_related("product", "product__shop")
+        
+        # Optimized query with prefetch for media files
+        cart_items = CartItem.objects.filter(user=user)\
+            .select_related("product", "product__shop")\
+            .prefetch_related('product__productmedia_set')\
+            .order_by('-added_at')
+        
         serializer = CartItemSerializer(cart_items, many=True)
-        return Response({"success": True, "cart_items": serializer.data})
-
+        return Response({"success": True, "cart_items": serializer.data})    
 
 class CheckoutView(viewsets.ViewSet):
     """

@@ -8,7 +8,7 @@ import CreateProductForm from '~/components/customer/seller-create-product-form'
 import { useState } from 'react';
 import { Button } from '~/components/ui/button';
 
-// --- BACKEND/SERVER FUNCTIONS (UNCHANGED) ---
+// --- BACKEND/SERVER FUNCTIONS (UPDATED) ---
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -243,12 +243,6 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     // Extract variant structure from form data
-    // The form sends variant data with naming patterns like:
-    // - variant_group_{groupId}_title
-    // - variant_group_{groupId}_option_{optionId}_title
-    // - variant_group_{groupId}_option_{optionId}_quantity
-    // etc.
-
     const variantGroups: Map<string, any> = new Map();
     
     for (const [key, value] of Object.entries(formDataObj)) {
@@ -367,11 +361,13 @@ export async function action({ request }: Route.ActionArgs) {
     
     if (response.data.success) {
       console.log("Product created successfully:", response.data);
-      // return redirect('/seller/seller-product-list', {
-      //   headers: {
-      //     "Set-Cookie": await commitSession(session),
-      //   },
-      // });
+      
+      // SSR Redirect to product list page
+      return redirect('/seller/seller-product-list', {
+        headers: {
+          "Set-Cookie": await commitSession(session),
+        },
+      });
     } else {
       throw new Error(response.data.message || "Product creation failed");
     }
