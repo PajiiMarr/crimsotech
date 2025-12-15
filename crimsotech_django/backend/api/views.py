@@ -8595,6 +8595,8 @@ class CustomerFavoritesView(APIView):
                 "success": False,
                 "message": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            
 class SellerOrderList(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def order_list(self, request):

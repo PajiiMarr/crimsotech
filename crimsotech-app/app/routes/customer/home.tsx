@@ -2,8 +2,8 @@
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider'
-import { useState } from "react"
-import { Search, X } from 'lucide-react'
+import { useState, useEffect } from "react"
+import { Search, X, Heart } from 'lucide-react'
 import { Input } from '~/components/ui/input'
 import { useNavigate } from 'react-router'
 import AxiosInstance from '~/components/axios/Axios'
@@ -108,7 +108,7 @@ const getImageUrl = (url: string | null | undefined): string => {
   const baseUrl = import.meta.env.VITE_MEDIA_URL || 'http://127.0.0.1:8000';
   
   if (!url) {
-    return '../../../public/crimsonity.png';
+    return '../../../public/phon.jpg';
   }
   
   if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -142,28 +142,89 @@ const getProductImage = (product: Product): string => {
     return getImageUrl(product.shop.shop_picture);
   }
   
-  return '/crimsonity.png';
+  return '/phon.jpg';
 }
 
 // ----------------------------
-// Compact Product Card
+// Compact Product Card (with favorite)
 // ----------------------------
-const CompactProductCard = ({ product }: { product: Product }) => {
+const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite }: { product: Product, user?: any, favoriteIds?: string[], onToggleFavorite?: (productId: string, nowFavorite: boolean) => void }) => {
   const navigate = useNavigate();
-  
+  const [isFavorite, setIsFavorite] = useState(favoriteIds.includes(product.id));
+  const [loadingFav, setLoadingFav] = useState(false);
+
+  useEffect(() => setIsFavorite(favoriteIds.includes(product.id)), [favoriteIds, product.id]);
+
   const handleClick = () => {
     navigate(`/product/${product.id}`);
+  };
+
+  const handleFavoriteClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user?.user_id) {
+      console.error('No user id available');
+      return;
+    }
+
+    setLoadingFav(true);
+    try {
+      if (!isFavorite) {
+        await AxiosInstance.post('/customer-favorites/', { product: product.id, customer: user.user_id }, { headers: { 'X-User-Id': user.user_id } });
+        // optimistic add
+        try {
+          const raw = localStorage.getItem('optimistic_favorites');
+          const existing = raw ? JSON.parse(raw) : [];
+          existing.push({ id: product.id, name: product.name, description: product.description, price: product.price, discount: product.discount || 0, primary_image: (product as any).primary_image || null, media_files: product.media_files || [], shop: product.shop || null });
+          localStorage.setItem('optimistic_favorites', JSON.stringify(existing));
+        } catch (e) {
+          console.warn('Failed to set optimistic favorites', e);
+        }
+        setIsFavorite(true);
+        onToggleFavorite && onToggleFavorite(product.id, true);
+      } else {
+        await AxiosInstance.delete('/customer-favorites/', { data: { product: product.id, customer: user.user_id }, headers: { 'X-User-Id': user.user_id } });
+        // optimistic remove
+        try {
+          const raw = localStorage.getItem('optimistic_favorites');
+          if (raw) {
+            const existing = JSON.parse(raw).filter((p: any) => p.id !== product.id);
+            if (existing.length) localStorage.setItem('optimistic_favorites', JSON.stringify(existing));
+            else localStorage.removeItem('optimistic_favorites');
+          }
+        } catch (e) {
+          console.warn('Failed to remove optimistic favorite', e);
+        }
+        setIsFavorite(false);
+        onToggleFavorite && onToggleFavorite(product.id, false);
+      }
+    } catch (err) {
+      console.error('Failed to update favorite:', err);
+    } finally {
+      setLoadingFav(false);
+    }
   };
 
   return (
     <div 
       onClick={handleClick}
-      className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col"
+      className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col relative"
     >
+
+      {/* Heart Button */}
+      <button
+        onClick={handleFavoriteClick}
+        disabled={loadingFav}
+        className="absolute top-1 right-1 z-10 p-1 bg-white rounded-full shadow-sm hover:bg-red-50 transition-colors"
+        title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+      >
+        <Heart className={`h-4 w-4 transition-colors ${isFavorite ? 'fill-red-500 text-red-500' : 'text-gray-400'}`} />
+      </button>
+
       <div className="aspect-square w-full overflow-hidden bg-gray-100">
         <img
           src={getProductImage(product)}
           alt={product.name}
+          onError={(e) => { const el = e.currentTarget as HTMLImageElement; el.onerror = null; el.src = '/images/placeholder-product.jpg'; }}
           className="w-full h-full object-cover"
         />
       </div>
@@ -172,6 +233,15 @@ const CompactProductCard = ({ product }: { product: Product }) => {
         <h3 className="text-xs font-medium text-gray-900 mb-1 line-clamp-2 min-h-[32px]">
           {product.name}
         </h3>
+        
+        {(() => {
+          const categoryName = typeof product.category === 'string' ? product.category : product.category?.name || product.category_admin?.name;
+          return categoryName ? (
+            <p className="text-[10px] text-blue-600 font-medium truncate mb-1">
+              {categoryName}
+            </p>
+          ) : null;
+        })()}
         
         {product.shop?.name && (
           <p className="text-[10px] text-gray-500 truncate mb-1">
@@ -214,6 +284,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const userId = session.get('userId')
 
   console.log(userId)
+
 
   console.log(userId)
 
@@ -269,7 +340,26 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export default function Home({ loaderData }: any) {
   const { user, products, categories } = loaderData;
   const [searchTerm, setSearchTerm] = useState("");
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const navigate = useNavigate();
+
+  // Fetch favorites for heart states
+  const fetchFavorites = async () => {
+    if (!user?.user_id) return;
+    try {
+      const res = await AxiosInstance.get('/customer-favorites/', {
+        headers: { 'X-User-Id': user.user_id }
+      });
+      const favIds = (res.data.favorites || []).map((f: any) => typeof f.product === 'string' ? f.product : f.product?.id).filter(Boolean);
+      setFavoriteIds(favIds);
+    } catch (err) {
+      console.error('Failed to fetch favorites:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchFavorites();
+  }, [user?.user_id]);
 
   // Filter products locally
   const filteredProducts: Product[] = products.filter((product: Product) =>
@@ -317,6 +407,16 @@ export default function Home({ loaderData }: any) {
                 <CompactProductCard 
                   key={product.id} 
                   product={product} 
+                  user={user}
+                  favoriteIds={favoriteIds}
+                  onToggleFavorite={async (productId: string, nowFavorite: boolean) => {
+                    setFavoriteIds(prev => {
+                      const set = new Set(prev);
+                      if (nowFavorite) set.add(productId); else set.delete(productId);
+                      return Array.from(set);
+                    });
+                    await fetchFavorites();
+                  }}
                 />
               ))
             ) : (
