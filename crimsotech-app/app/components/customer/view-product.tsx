@@ -22,6 +22,8 @@ import AxiosInstance from "~/components/axios/Axios";
 
 import type { Route } from './+types/view-product';
 
+const MEDIA_URL = import.meta.env.VITE_MEDIA_URL || "http://127.0.0.1:8000/";
+
 export function meta(): Route.MetaDescriptors {
   return [{ title: "Product Details" }];
 }
@@ -170,7 +172,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
           {/* Main Image */}
           <div className="relative aspect-square overflow-hidden rounded-lg border bg-gray-50">
             <img
-              src={images[activeImage]?.file_url || product.shop?.shop_picture || "/public/default.jpg"}
+              src={images[activeImage]?.file_url ? `${MEDIA_URL}${images[activeImage].file_url}` : (product.shop?.shop_picture ? `${MEDIA_URL}${product.shop.shop_picture}` : "/public/default.jpg")}
               alt={product.name}
               className="h-full w-full object-contain"
             />
@@ -215,7 +217,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                   }`}
                 >
                   <img
-                    src={img.file_url}
+                    src={`${MEDIA_URL}${img.file_url}`}
                     alt={`Thumb ${idx + 1}`}
                     className="h-full w-full object-cover"
                   />
@@ -377,7 +379,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               </div>
               <div className="flex items-start gap-3">
                 <img
-                  src={product.shop.shop_picture || "https://placehold.co/40x40?text=Shop"}
+                  src={product.shop.shop_picture ? `${MEDIA_URL}${product.shop.shop_picture}` : "https://placehold.co/40x40?text=Shop"}
                   alt="Shop"
                   className="h-10 w-10 rounded-full object-cover border"
                 />

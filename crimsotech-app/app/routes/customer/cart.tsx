@@ -1,3 +1,4 @@
+// app/routes/cart.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -9,11 +10,11 @@ import {
   Plus,
   Minus,
   Store,
-  ChevronRight,
   X,
   Package,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Image as ImageIcon
 } from "lucide-react";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Button } from "~/components/ui/button";
@@ -41,7 +42,8 @@ export type CartItemType = {
 };
 
 type MediaFile = {
-  file_url: string;
+  file_url?: string;
+  file_data?: string;
   file_type: string;
 };
 
@@ -70,6 +72,71 @@ type CartApiResponse = {
   success: boolean;
   cart_items: ApiCartItem[];
   error?: string;
+};
+
+// ------------------ CONSTANTS ------------------
+const DEFAULT_IMAGES = {
+  electronics: [
+    "/api/placeholder/64/64?text=📱",
+    "/api/placeholder/64/64?text=💻",
+    "/api/placeholder/64/64?text=🎮"
+  ],
+  gadgets: [
+    "/api/placeholder/64/64?text=⌚",
+    "/api/placeholder/64/64?text=🎧",
+    "/api/placeholder/64/64?text=🔋"
+  ],
+  home: [
+    "/api/placeholder/64/64?text=🏠",
+    "/api/placeholder/64/64?text=🔌",
+    "/api/placeholder/64/64?text=🛋️"
+  ],
+  default: [
+    "/api/placeholder/64/64?text=🛒",
+    "/api/placeholder/64/64?text=📦",
+    "/api/placeholder/64/64?text=🏪"
+  ]
+};
+
+// ------------------ HELPER FUNCTIONS ------------------
+const getDefaultImage = (productName: string, shopName: string): string => {
+  const name = productName.toLowerCase();
+  
+  // Determine category based on product name
+  if (name.includes('iphone') || name.includes('alienware') || name.includes('vivo')) {
+    return DEFAULT_IMAGES.electronics[Math.floor(Math.random() * DEFAULT_IMAGES.electronics.length)];
+  } else if (name.includes('charger') || name.includes('freezer') || name.includes('balance')) {
+    return DEFAULT_IMAGES.gadgets[Math.floor(Math.random() * DEFAULT_IMAGES.gadgets.length)];
+  } else if (name.includes('home') || name.includes('control') || name.includes('smart')) {
+    return DEFAULT_IMAGES.home[Math.floor(Math.random() * DEFAULT_IMAGES.home.length)];
+  }
+  
+  return DEFAULT_IMAGES.default[Math.floor(Math.random() * DEFAULT_IMAGES.default.length)];
+};
+
+const formatImageUrl = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  
+  // If it's already a full URL
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  
+  // If it's a media URL
+  if (url.startsWith('/media/')) {
+    const baseUrl = import.meta.env.VITE_MEDIA_URL || 'http://127.0.0.1:8000';
+    return `${baseUrl}${url}`;
+  }
+  
+  // If it starts with /, prepend base URL
+  if (url.startsWith('/')) {
+    const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+    return `${baseUrl}${url}`;
+  }
+  
+  // If it's just a filename, try to construct media URL
+  const baseUrl = import.meta.env.VITE_MEDIA_URL || 'http://127.0.0.1:8000';
+  return `${baseUrl}/media/${url}`;
 };
 
 // ------------------ META ------------------
@@ -149,7 +216,7 @@ const ShopHeader = ({
   );
 };
 
-// Compact Cart Item
+// Compact Cart Item with Image Fallback
 const CompactCartItem = ({ 
   item, 
   onUpdateQuantity, 
@@ -161,6 +228,9 @@ const CompactCartItem = ({
   onRemove: (id: string) => void;
   onSelect: (id: string, checked: boolean) => void;
 }) => {
+  const finalImage = item.image || getDefaultImage(item.name, item.shop_name);
+  const [imageError, setImageError] = useState(false);
+  
   return (
     <div className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 transition-colors">
       <Checkbox
@@ -169,12 +239,18 @@ const CompactCartItem = ({
         className="h-4 w-4"
       />
       
-      <div className="h-16 w-16 flex-shrink-0">
+      <div className="h-16 w-16 flex-shrink-0 relative">
         <img
-          src={item.image || "/api/placeholder/64/64"}
+          src={imageError ? getDefaultImage(item.name, item.shop_name) : finalImage}
           alt={item.name}
           className="h-full w-full object-cover rounded-md bg-gray-100"
+          onError={() => setImageError(true)}
         />
+        {!item.image && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-md">
+            <ImageIcon className="h-6 w-6 text-gray-400" />
+          </div>
+        )}
       </div>
 
       <div className="flex-1 min-w-0">
@@ -213,6 +289,7 @@ const CompactCartItem = ({
             <button
               onClick={() => onRemove(item.id)}
               className="text-gray-400 hover:text-red-600 p-1 transition-colors"
+              title="Remove item"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -407,29 +484,42 @@ const SimpleOrderSummary = ({
 // ------------------ TRANSFORM API DATA ------------------
 const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
   return apiItems.map((item) => {
-    const productName = item.product_details?.name || item.item_name || "Product";
-    const productPrice = item.product_details?.price || item.item_price || "0";
-    const shopName = item.product_details?.shop_name || "Store";
-    const shopId = item.product_details?.shop_id;
+    // Get product details with proper fallbacks
+    const productDetails = item.product_details;
+    const productName = productDetails?.name || item.item_name || "Product";
+    const productPrice = productDetails?.price || item.item_price || "0";
+    const shopName = productDetails?.shop_name || "Store";
+    const shopId = productDetails?.shop_id;
     const price = parseFloat(productPrice) || 0;
     
+    // Try multiple image sources
     let image: string | null = null;
     
+    // 1. Try item_image field
     if (item.item_image) {
-      image = item.item_image;
-    } else if (item.product_details?.media_files && 
-               item.product_details.media_files.length > 0 && 
-               item.product_details.media_files[0]?.file_url) {
-      image = item.product_details.media_files[0].file_url;
+      image = formatImageUrl(item.item_image);
     }
+    
+    // 2. Try media_files from product_details
+    if (!image && productDetails?.media_files && productDetails.media_files.length > 0) {
+      const firstMedia = productDetails.media_files[0];
+      if (firstMedia?.file_url) {
+        image = formatImageUrl(firstMedia.file_url);
+      } else if (firstMedia?.file_data) {
+        image = formatImageUrl(firstMedia.file_data);
+      }
+    }
+    
+    // 3. If still no image, we'll use default image (but return null to trigger fallback)
+    // The UI component will handle the fallback
     
     return {
       id: item.id,
-      product_id: item.product || item.product_details?.id || item.id,
+      product_id: item.product || productDetails?.id || item.id,
       name: productName,
       price: price,
       quantity: item.quantity || 1,
-      image: image,
+      image: image, // Could be null - UI will handle fallback
       shop_name: shopName,
       shop_id: shopId,
       selected: true,
@@ -572,7 +662,6 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     
     // Store checkout data if needed in orders page
     try {
-      // You can store the selected items if needed for the orders page
       localStorage.setItem('selectedCartItems', JSON.stringify(selectedItems));
       localStorage.setItem('checkoutSummary', JSON.stringify({
         subtotal,
@@ -607,7 +696,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
               <div className="lg:w-2/3 space-y-3">
                 {[1, 2, 3].map((i) => (
                   <div key={i} className="flex gap-3 p-3 border rounded">
-                    <Skeleton className="h-16 w-16" />
+                    <Skeleton className="h-16 w-16 rounded-md" />
                     <div className="flex-1 space-y-2">
                       <Skeleton className="h-4 w-3/4" />
                       <Skeleton className="h-3 w-1/4" />
@@ -616,7 +705,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                 ))}
               </div>
               <div className="lg:w-1/3">
-                <Skeleton className="h-64 w-full" />
+                <Skeleton className="h-64 w-full rounded-lg" />
               </div>
             </div>
           </div>

@@ -123,10 +123,17 @@ class FavoritesSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ProductMediaSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = ProductMedia
-        fields = '__all__'
-
+        fields = ['id', 'file_data', 'file_type', 'file_url']
+        
+    def get_file_url(self, obj):
+        if obj.file_data:
+            return obj.file_data.url
+        return None
+    
 class VariantsSerializer(serializers.ModelSerializer):
     class Meta:
         model = Variants
@@ -173,19 +180,6 @@ class AiRecommendationSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 
-class CartItemSerializer(serializers.ModelSerializer):
-    
-    class Meta:
-        model = CartItem
-        fields = ['id', 'product', 'user', 'quantity', 'added_at']
-        read_only_fields = ['id', 'added_at']
-
-    def validate_quantity(self, value):
-        if value < 1:
-            raise serializers.ValidationError("Quantity must be at least 1.")
-        return value
-
-
 
 class OrderSerializer(serializers.ModelSerializer):
     class Meta:
@@ -224,30 +218,29 @@ class ProductSerializer(serializers.ModelSerializer):
     category = CategorySerializer()
     category_admin = CategorySerializer()
     variants = VariantsSerializer(source='variants_set', many=True)
-    # ADD THESE TWO LINES ↓
     media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
     primary_image = serializers.SerializerMethodField()
-
+    
     class Meta:
         model = Product
         fields = [
             'id', 'name', 'description', 'quantity', 'price',
             'status', 'upload_status', 'condition', 'created_at', 'updated_at',
             'shop', 'customer', 'category_admin', 'category', 'variants',
-            'media_files', 'primary_image'  # ADD THESE TO THE FIELDS LIST
+            'media_files', 'primary_image'
         ]
-
+    
     def get_primary_image(self, obj):
         """Get the first media file as primary image"""
-        if hasattr(obj, 'productmedia_set') and obj.productmedia_set.exists():
-            media = obj.productmedia_set.first()
+        media = obj.productmedia_set.first()
+        if media:
             return {
                 'id': str(media.id),
                 'url': media.file_data.url if media.file_data else None,
                 'file_type': media.file_type
             }
         return None
-    
+        
 class ReviewDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)
     shop_id = ShopSerializer(read_only=True)
@@ -265,6 +258,100 @@ class BoostDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Boost
         fields = '__all__'
+
+
+#CHECKOUT
+class CartProductSerializer(serializers.ModelSerializer):
+    """Serializer for product details in cart"""
+    shop_name = serializers.SerializerMethodField()
+    media_files = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Product
+        fields = ['id', 'name', 'price', 'shop_name', 'media_files']
+    
+    def get_shop_name(self, obj):
+        return obj.shop.name if obj.shop else "Unknown Shop"
+    
+    def get_media_files(self, obj):
+        if hasattr(obj, 'media_files') and obj.media_files.exists():
+            return obj.media_files.first().file_url
+        return None
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    """Serializer for cart items with product details"""
+    item_name = serializers.CharField(source='product.name', read_only=True)
+    item_price = serializers.DecimalField(
+        source='product.price', 
+        max_digits=10, 
+        decimal_places=2, 
+        read_only=True
+    )
+    item_image = serializers.SerializerMethodField()
+    subtotal = serializers.SerializerMethodField()
+    product_details = serializers.SerializerMethodField()
+    shop_name = serializers.CharField(source='product.shop.name', read_only=True)
+    
+    class Meta:
+        model = CartItem
+        fields = [
+            'id', 
+            'product', 
+            'product_details',
+            'item_name',
+            'item_price',
+            'item_image',
+            'shop_name',
+            'quantity', 
+            'added_at',
+            'subtotal'
+        ]
+        read_only_fields = ['id', 'added_at']
+    
+    def get_subtotal(self, obj):
+        if obj.product and obj.product.price:
+            return float(obj.product.price) * obj.quantity
+        return 0
+    
+    def get_item_image(self, obj):
+        # Get the first media file from product
+        if obj.product:
+            # Access the related media files
+            media_files = obj.product.productmedia_set.all()
+            if media_files.exists():
+                first_media = media_files.first()
+                if first_media.file_data:
+                    request = self.context.get('request')
+                    if request:
+                        return request.build_absolute_uri(first_media.file_data.url)
+                    return first_media.file_data.url
+        return None
+    
+    def get_product_details(self, obj):
+        if obj.product:
+            media_files = []
+            for media in obj.product.productmedia_set.all():
+                if media.file_data:
+                    request = self.context.get('request')
+                    file_url = media.file_data.url
+                    if request:
+                        file_url = request.build_absolute_uri(file_url)
+                    
+                    media_files.append({
+                        'id': str(media.id),
+                        'file_url': file_url,
+                        'file_type': media.file_type
+                    })
+            
+            return {
+                'id': str(obj.product.id),
+                'name': obj.product.name,
+                'price': str(obj.product.price),
+                'shop_name': obj.product.shop.name if obj.product.shop else None,
+                'media_files': media_files if media_files else None
+            }
+        return None
 
 class CheckoutDetailSerializer(serializers.ModelSerializer):
     voucher_id = VoucherSerializer(read_only=True)
@@ -323,57 +410,6 @@ class RefundMediasSerializer(serializers.ModelSerializer):
 
 
 
-
-#CHECKOUT
-class CartProductSerializer(serializers.ModelSerializer):
-    """Serializer for product details in cart"""
-    shop_name = serializers.SerializerMethodField()
-    media_files = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = Product
-        fields = ['id', 'name', 'price', 'shop_name', 'media_files']
-    
-    def get_shop_name(self, obj):
-        return obj.shop.name if obj.shop else "Unknown Shop"
-    
-    def get_media_files(self, obj):
-        if hasattr(obj, 'media_files') and obj.media_files.exists():
-            return obj.media_files.first().file_url
-        return None
-
-class CartItemSerializer(serializers.ModelSerializer):
-    """Serializer for cart items with product details"""
-    product_details = CartProductSerializer(source='product', read_only=True)
-    subtotal = serializers.SerializerMethodField()
-    item_name = serializers.CharField(source='product.name', read_only=True)
-    item_price = serializers.DecimalField(source='product.price', max_digits=10, decimal_places=2, read_only=True)
-    item_image = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = CartItem
-        fields = [
-            'id', 
-            'product', 
-            'product_details',
-            'item_name',
-            'item_price',
-            'item_image',
-            'quantity', 
-            'added_at',
-            'subtotal'
-        ]
-        read_only_fields = ['id', 'added_at']
-    
-    def get_subtotal(self, obj):
-        if obj.product and obj.product.price:
-            return obj.quantity * obj.product.price
-        return 0
-    
-    def get_item_image(self, obj):
-        if obj.product and hasattr(obj.product, 'media_files') and obj.product.media_files.exists():
-            return obj.product.media_files.first().file_url
-        return None
 
 class CartItemCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating cart items"""

@@ -8,7 +8,7 @@ import CreateProductForm from '~/components/customer/seller-create-product-form'
 import { useState } from 'react';
 import { Button } from '~/components/ui/button';
 
-// --- BACKEND/SERVER FUNCTIONS (UNCHANGED) ---
+// --- BACKEND/SERVER FUNCTIONS (UPDATED) ---
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -105,6 +105,8 @@ export async function action({ request }: Route.ActionArgs) {
   const session = await getSession(request.headers.get("Cookie"));
 
   const formData = await request.formData();
+
+  console.log('this is a formdata: ', formData)
 
   // Get basic product fields
   const name = String(formData.get("name"));
@@ -241,12 +243,6 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     // Extract variant structure from form data
-    // The form sends variant data with naming patterns like:
-    // - variant_group_{groupId}_title
-    // - variant_group_{groupId}_option_{optionId}_title
-    // - variant_group_{groupId}_option_{optionId}_quantity
-    // etc.
-
     const variantGroups: Map<string, any> = new Map();
     
     for (const [key, value] of Object.entries(formDataObj)) {
@@ -365,6 +361,8 @@ export async function action({ request }: Route.ActionArgs) {
     
     if (response.data.success) {
       console.log("Product created successfully:", response.data);
+      
+      // SSR Redirect to product list page
       return redirect('/seller/seller-product-list', {
         headers: {
           "Set-Cookie": await commitSession(session),

@@ -12,6 +12,7 @@ import { Separator } from "~/components/ui/separator";
 import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
+import { useFetcher } from "react-router"
 
 // --- INTERFACE DEFINITIONS ---
 
@@ -106,6 +107,11 @@ interface PredictionResult {
 // --- REACT COMPONENT ---
 
 export default function CreateProductForm({ selectedShop, globalCategories, errors }: CreateProductFormProps) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const mediaFilesRef = useRef<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fetcher = useFetcher();
+
   // Generate a simple UUID function
   const generateId = () => {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -161,12 +167,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const handleCategoryChange = (value: string) => {
     console.log('Category changed to:', value);
     setSelectedCategoryId(value);
-    
-    // Also update the hidden form field
-    const categoryInput = document.getElementById('category_admin_id') as HTMLSelectElement;
-    if (categoryInput) {
-      categoryInput.value = value;
-    }
   };
 
   // Function to trigger category prediction
@@ -230,11 +230,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
           const predictedCategoryId = response.data.predicted_category.category_uuid.toString();
           console.log('Setting selected category to:', predictedCategoryId);
           setSelectedCategoryId(predictedCategoryId);
-          
-          const categoryInput = document.getElementById('category_admin_id') as HTMLSelectElement;
-          if (categoryInput) {
-            categoryInput.value = predictedCategoryId;
-          }
         }
       } else {
         console.error('Prediction API returned success: false', response.data);
@@ -274,6 +269,19 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
       if (predictionAbortController.current) {
         predictionAbortController.current.abort();
       }
+      
+      // Revoke object URLs to prevent memory leaks
+      mainMedia.forEach(item => {
+        URL.revokeObjectURL(item.preview);
+      });
+      
+      variantGroups.forEach(group => {
+        group.options.forEach(option => {
+          if (option.imagePreview) {
+            URL.revokeObjectURL(option.imagePreview);
+          }
+        });
+      });
     };
   }, []);
 
@@ -327,12 +335,10 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     const files = Array.from(e.target.files || []);
     const maxMedia = 9;
     
-    // Filter files to only accept images and videos
     const validFiles = files.filter(file => 
       file.type.startsWith('image/') || file.type.startsWith('video/')
     );
     
-    // Calculate available slots
     const availableSlots = maxMedia - mainMedia.length;
     const filesToAdd = validFiles.slice(0, availableSlots);
     
@@ -347,11 +353,17 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
       type: file.type.startsWith('image/') ? 'image' : 'video' as 'image' | 'video'
     }));
 
+    // Store files in ref
+    mediaFilesRef.current = [...mediaFilesRef.current, ...filesToAdd];
     setMainMedia(prev => [...prev, ...newMedia]);
-    e.target.value = '';
   };
 
   const removeMainMedia = (index: number) => {
+    // Revoke the object URL
+    URL.revokeObjectURL(mainMedia[index].preview);
+    
+    // Remove from ref
+    mediaFilesRef.current = mediaFilesRef.current.filter((_, i) => i !== index);
     setMainMedia(prev => prev.filter((_, i) => i !== index));
   };
 
@@ -390,6 +402,16 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   };
 
   const removeVariantGroup = (groupId: string) => {
+    // Clean up image previews
+    const group = variantGroups.find(g => g.id === groupId);
+    if (group) {
+      group.options.forEach(option => {
+        if (option.imagePreview) {
+          URL.revokeObjectURL(option.imagePreview);
+        }
+      });
+    }
+    
     setVariantGroups(prev => prev.filter(group => group.id !== groupId));
   };
 
@@ -416,6 +438,15 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   };
 
   const removeOption = (groupId: string, optionId: string) => {
+    // Clean up image preview if exists
+    const group = variantGroups.find(g => g.id === groupId);
+    if (group) {
+      const option = group.options.find(o => o.id === optionId);
+      if (option?.imagePreview) {
+        URL.revokeObjectURL(option.imagePreview);
+      }
+    }
+    
     setVariantGroups(prev => prev.map(group => 
       group.id === groupId
         ? { ...group, options: group.options.filter(option => option.id !== optionId) }
@@ -447,6 +478,11 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
           } else if (field === 'enable_critical_trigger') {
             updatedOption.enable_critical_trigger = value as boolean;
           } else if (field === 'image') {
+            // Clean up previous image preview
+            if (updatedOption.imagePreview) {
+              URL.revokeObjectURL(updatedOption.imagePreview);
+            }
+            
             updatedOption.image = value as File | null;
             if (value instanceof File) {
               updatedOption.imagePreview = URL.createObjectURL(value);
@@ -470,11 +506,110 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     e.target.value = '';
   };
 
+  // --- FORM SUBMISSION HANDLER ---
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!formRef.current) return;
+    
+    // Create FormData
+    const formData = new FormData();
+    
+    // Add basic form fields
+    const basicFormData = new FormData(formRef.current);
+    for (const [key, value] of basicFormData.entries()) {
+      // Don't add file inputs that we'll handle separately
+      if (key !== 'media_files' && !key.startsWith('variant_image_')) {
+        if (value instanceof File) {
+          formData.append(key, value);
+        } else {
+          formData.append(key, value.toString());
+        }
+      }
+    }
+    
+    // Add category
+    formData.append('category_admin_id', selectedCategoryId);
+    
+    // Add media files from ref
+    mediaFilesRef.current.forEach(file => {
+      if (file.size > 0) {
+        formData.append('media_files', file);
+      }
+    });
+    
+    // Add variant data
+    if (variantGroups.length > 0) {
+      variantGroups.forEach((group) => {
+        formData.append(`variant_group_${group.id}_title`, group.title);
+        group.options.forEach((option) => {
+          formData.append(`variant_group_${group.id}_option_${option.id}_title`, option.title);
+          formData.append(`variant_group_${group.id}_option_${option.id}_quantity`, String(option.quantity));
+          formData.append(`variant_group_${group.id}_option_${option.id}_price`, String(option.price));
+          
+          if (option.compare_price) {
+            formData.append(`variant_group_${group.id}_option_${option.id}_compare_price`, String(option.compare_price));
+          }
+          
+          if (option.enable_critical_trigger) {
+            formData.append(`variant_group_${group.id}_option_${option.id}_enable_critical_trigger`, 'true');
+          }
+          
+          if (option.critical_trigger) {
+            formData.append(`variant_group_${group.id}_option_${option.id}_critical_trigger`, String(option.critical_trigger));
+          }
+          
+          if (option.length) {
+            formData.append(`variant_group_${group.id}_option_${option.id}_length`, String(option.length));
+          }
+          
+          if (option.width) {
+            formData.append(`variant_group_${group.id}_option_${option.id}_width`, String(option.width));
+          }
+          
+          if (option.height) {
+            formData.append(`variant_group_${group.id}_option_${option.id}_height`, String(option.height));
+          }
+          
+          if (option.weight) {
+            formData.append(`variant_group_${group.id}_option_${option.id}_weight`, String(option.weight));
+          }
+          
+          if (option.weight_unit) {
+            formData.append(`variant_group_${group.id}_option_${option.id}_weight_unit`, option.weight_unit);
+          }
+          
+          // Add variant image if exists
+          if (option.image) {
+            formData.append(`variant_image_${group.id}_${option.id}`, option.image);
+          }
+        });
+      });
+    }
+    
+    // Add shipping zones
+    shippingZones.forEach((zone) => {
+      formData.append(`shipping_zone_${zone.id}_name`, zone.name);
+      formData.append(`shipping_zone_${zone.id}_fee`, String(zone.fee));
+      formData.append(`shipping_zone_${zone.id}_freeShipping`, String(zone.freeShipping));
+    });
+    
+    // Submit using fetcher
+    fetcher.submit(formData, {
+      method: 'post',
+      encType: 'multipart/form-data',
+    });
+  };
+
   // --- RENDER ---
   return (
-    <form method="post" encType="multipart/form-data" className="space-y-8">
+    <form 
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className="space-y-8"
+    >
       {/* Hidden category field for form submission */}
-      <input type="hidden" id="category_admin_id" name="category_admin_id" value={selectedCategoryId} />
+      <input type="hidden" name="category_admin_id" value={selectedCategoryId} />
       
       {/* STEP 1: AI Category Prediction Section */}
       <Card id="ai-category-prediction">
@@ -783,6 +918,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
               {mainMedia.length < 9 && (
                 <div className="aspect-square">
                   <Input 
+                    ref={fileInputRef}
                     type="file" 
                     id="main-media-upload" 
                     name="media_files"
@@ -1184,7 +1320,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                           <div className="md:col-span-1">
                             <Input
                               type="number"
-                              name={optionIndex === 0 ? `variant_option_price` : `option_price_${group.id}_${option.id}`}
                               min="0"
                               step="0.01"
                               placeholder="Price"
@@ -1332,7 +1467,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                           <div>
                             <Input
                               type="number"
-                              name={optionIndex === 0 ? `variant_option_quantity` : `option_quantity_${group.id}_${option.id}`}
                               min="0"
                               placeholder="Quantity"
                               value={option.quantity}

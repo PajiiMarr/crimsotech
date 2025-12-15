@@ -146,3 +146,31 @@ TWILIO_SERVICE_ID = os.getenv('TWILIO_SERVICE_ID')
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+
+# In your settings.py
+LOGGING = {
+    "version": 1,
+    # CRITICAL: Keep existing loggers enabled
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+    },
+    "formatters": {
+        "simple": {
+            "format": "{levelname} {message}",
+            "style": "{",
+        },
+    },
+    "loggers": {
+        # This name must match your custom logger
+        "api.views": {
+            "handlers": ["console"],
+            "level": "DEBUG",  # Set to DEBUG to see all your logs
+            "propagate": False,
+        },
+    },
+}
