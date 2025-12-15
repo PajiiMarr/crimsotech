@@ -81,8 +81,8 @@ const getProductImage = (product: Product): string => {
     return `${baseUrl}/media/${url}`;
   }
   
-  // Fallback to default image
-  return "/default-product.jpg";
+ 
+  return "/images/placeholder-product.jpg";
 };
 
 export function ProductCard({ product }: ProductCardProps) {
@@ -95,10 +95,8 @@ export function ProductCard({ product }: ProductCardProps) {
           <img
             src={productImage}
             alt={product.name}
+            onError={(e) => { const el = e.currentTarget as HTMLImageElement; el.onerror = null; el.src = '/images/placeholder-product.jpg'; }}
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
-            // onError={(e) => {
-            //   e.currentTarget.src = "/default.jpg";
-            // }}
           />
           {product.discount && (
             <span className="absolute top-2 left-2 rounded-full bg-black px-2 text-xs font-medium text-white">

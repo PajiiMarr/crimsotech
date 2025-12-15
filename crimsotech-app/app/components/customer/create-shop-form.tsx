@@ -27,38 +27,59 @@ export function CreateShopForm({ className, ...props }: CreateShopFormProps) {
     barangay: "",
     street: "",
     contact_number: "",
+    // Business Info
+    tax_id: "",
+    business_reg_no: "",
+    business_email: "",
+    business_type: "",
+    vatr_status: "",
+    // Owner / Verification
+    owner_name: "",
+    owner_id_number: "",
+    owner_id_file: null as File | null
+   
   });
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [ownerIdPreview, setOwnerIdPreview] = useState<string | null>(null);
 
-  // Handle file input change
+  // Handle file input change for shop picture
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
     if (file) {
       setFormData({ ...formData, shop_picture: file });
-      
-      // Create image preview
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
+      reader.onloadend = () => setImagePreview(reader.result as string);
       reader.readAsDataURL(file);
     }
   };
 
-  // Handle drag and drop
-  const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => {
+  // Handle owner ID file input change
+  const handleOwnerIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (file) {
+      setFormData({ ...formData, owner_id_file: file });
+      const reader = new FileReader();
+      reader.onloadend = () => setOwnerIdPreview(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLLabelElement>, field: "shop_picture" | "owner_id_file") => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
     if (file && file.type.startsWith('image/')) {
-      setFormData({ ...formData, shop_picture: file });
-      
-      // Create image preview
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      if (field === "shop_picture") {
+        setFormData({ ...formData, shop_picture: file });
+        const reader = new FileReader();
+        reader.onloadend = () => setImagePreview(reader.result as string);
+        reader.readAsDataURL(file);
+      } else {
+        setFormData({ ...formData, owner_id_file: file });
+        const reader = new FileReader();
+        reader.onloadend = () => setOwnerIdPreview(reader.result as string);
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -66,39 +87,28 @@ export function CreateShopForm({ className, ...props }: CreateShopFormProps) {
     e.preventDefault();
   };
 
-  // Remove selected image
-  const handleRemoveImage = () => {
-    setFormData({ ...formData, shop_picture: null });
-    setImagePreview(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+  const handleRemoveFile = (field: "shop_picture" | "owner_id_file") => {
+    if (field === "shop_picture") {
+      setFormData({ ...formData, shop_picture: null });
+      setImagePreview(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } else {
+      setFormData({ ...formData, owner_id_file: null });
+      setOwnerIdPreview(null);
     }
   };
 
-  // Handle address changes from the dropdowns
   const handleAddressChange = (field: string, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value === "none" ? "" : value // Handle the "none" placeholder
-    }));
+    setFormData(prev => ({ ...prev, [field]: value === "none" ? "" : value }));
   };
 
-  // Handle form submission
-  // Handle form submission
-const handleSubmit = (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  // Use the form's FormData directly to capture all fields including address dropdowns
-  const form = e.currentTarget as HTMLFormElement;
-  const submitFormData = new FormData(form);
-  
-  fetcher.submit(submitFormData, {
-    method: "post",
-    encType: "multipart/form-data",
-  });
-};
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const form = e.currentTarget as HTMLFormElement;
+    const submitFormData = new FormData(form);
+    fetcher.submit(submitFormData, { method: "post", encType: "multipart/form-data" });
+  };
 
-  // Handle successful shop creation
   if (fetcher.data && fetcher.state === "idle" && !fetcher.data.errors) {
     return (
       <div className={cn("w-full max-w-2xl mx-auto", className)} {...props}>
@@ -114,160 +124,93 @@ const handleSubmit = (e: React.FormEvent) => {
 
   return (
     <div className={cn("w-full max-w-4xl mx-auto", className)} {...props}>
-      {/* Header */}
-      <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-gray-900">Create Your Shop</h1>
-        <p className="text-gray-600 mt-2">
-          Fill in the details below to set up your new shop and start selling.
-        </p>
-      </div>
-
-      {/* Create Shop Form */}
       <Card className="p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Shop Name */}
-          <div className="space-y-2">
-            <Label htmlFor="name" className="text-sm font-medium">
-              Shop Name *
-            </Label>
-            <Input
-              type="text"
-              id="name"
-              name="name"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              placeholder="Enter your shop name"
-              className={cn(errors?.name && "border-red-500")}
-            />
-            {errors?.name && (
-              <p className="text-red-500 text-sm">{errors.name}</p>
-            )}
-          </div>
-
-          {/* Shop Description */}
-          <div className="space-y-2">
-            <Label htmlFor="description" className="text-sm font-medium">
-              Description *
-            </Label>
-            <textarea
-              id="description"
-              name="description"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              rows={4}
-              className={cn(
-                "flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                errors?.description && "border-red-500"
-              )}
-              placeholder="Describe what your shop offers..."
-            />
-            {errors?.description && (
-              <p className="text-red-500 text-sm">{errors.description}</p>
-            )}
-          </div>
-
-          {/* Address Section */}
+          {/* ================== Shop Information ================== */}
           <div className="space-y-4">
-            <Label className="text-sm font-medium">Shop Address *</Label>
-            
-            {/* Address Dropdowns */}
-            <AddressDropdowns errors={errors} />
-            
-            {/* Street Address */}
+            <h3 className="text-lg font-semibold text-gray-700">Shop Information</h3>
+
+            {/* Shop Name */}
             <div className="space-y-2">
-              <Label htmlFor="street" className="text-sm font-medium">
-                Street Address *
-              </Label>
+              <Label htmlFor="name">Shop Name *</Label>
               <Input
                 type="text"
-                id="street"
-                name="street"
-                value={formData.street}
-                onChange={(e) => setFormData({ ...formData, street: e.target.value })}
-                placeholder="Enter complete street address, building, house number, etc."
-                className={cn(errors?.street && "border-red-500")}
+                id="name"
+                name="name"
+                value={formData.name}
+                onChange={e => setFormData({ ...formData, name: e.target.value })}
+                placeholder="Enter your shop name"
+                className={cn(errors?.name && "border-red-500")}
               />
-              {errors?.street && (
-                <p className="text-red-500 text-sm">{errors.street}</p>
-              )}
+              {errors?.name && <p className="text-red-500 text-sm">{errors.name}</p>}
             </div>
-          </div>
 
-          {/* Contact Number */}
-          <div className="space-y-2">
-            <Label htmlFor="contact_number" className="text-sm font-medium">
-              Contact Number *
-            </Label>
-            <Input
-              type="text"
-              id="contact_number"
-              name="contact_number"
-              value={formData.contact_number}
-              onChange={(e) => setFormData({ ...formData, contact_number: e.target.value })}
-              placeholder="Enter contact number"
-              className={cn(errors?.contact_number && "border-red-500")}
-            />
-            {errors?.contact_number && (
-              <p className="text-red-500 text-sm">{errors.contact_number}</p>
-            )}
-          </div>
-
-          {/* Shop Picture */}
-          <div className="space-y-4">
+            {/* Description */}
             <div className="space-y-2">
-              <Label htmlFor="shop_picture" className="text-sm font-medium">
-                Shop Picture
-              </Label>
-              
-              {/* Custom file input styling */}
+              <Label htmlFor="description">Description *</Label>
+              <textarea
+                id="description"
+                name="description"
+                value={formData.description}
+                onChange={e => setFormData({ ...formData, description: e.target.value })}
+                rows={4}
+                className={cn("w-full rounded-md border px-3 py-2 text-sm", errors?.description && "border-red-500")}
+                placeholder="Describe what your shop offers..."
+              />
+              {errors?.description && <p className="text-red-500 text-sm">{errors.description}</p>}
+            </div>
+
+            {/* Address */}
+            <div className="space-y-4">
+              <Label>Shop Address *</Label>
+              <AddressDropdowns errors={errors} />
+              <div className="space-y-2">
+                <Label htmlFor="street">Street Address *</Label>
+                <Input
+                  type="text"
+                  id="street"
+                  name="street"
+                  value={formData.street}
+                  onChange={e => setFormData({ ...formData, street: e.target.value })}
+                  placeholder="Enter complete street address"
+                  className={cn(errors?.street && "border-red-500")}
+                />
+                {errors?.street && <p className="text-red-500 text-sm">{errors.street}</p>}
+              </div>
+            </div>
+
+            {/* Contact Number */}
+            <div className="space-y-2">
+              <Label htmlFor="contact_number">Contact Number *</Label>
+              <Input
+                type="text"
+                id="contact_number"
+                name="contact_number"
+                value={formData.contact_number}
+                onChange={e => setFormData({ ...formData, contact_number: e.target.value })}
+                placeholder="Enter contact number"
+                className={cn(errors?.contact_number && "border-red-500")}
+              />
+              {errors?.contact_number && <p className="text-red-500 text-sm">{errors.contact_number}</p>}
+            </div>
+
+            {/* Shop Picture */}
+            <div className="space-y-2">
+              <Label>Shop Picture</Label>
               <div className={cn(
-                "flex items-center justify-center w-full",
-                "border-2 border-dashed border-gray-300 rounded-lg",
-                "transition-colors duration-200 ease-in-out",
-                "hover:border-blue-400 hover:bg-blue-50/50",
-                "focus-within:border-blue-500 focus-within:bg-blue-50/30",
-                errors?.shop_picture && "border-red-300 hover:border-red-400 focus-within:border-red-500"
+                "flex items-center justify-center w-full border-2 border-dashed rounded-lg h-32",
+                errors?.shop_picture && "border-red-500"
               )}>
                 <label 
-                  htmlFor="shop_picture" 
-                  className="flex flex-col items-center justify-center w-full h-32 cursor-pointer"
-                  onDrop={handleDrop}
+                  htmlFor="shop_picture"
+                  className="flex flex-col items-center justify-center w-full h-full cursor-pointer"
+                  onDrop={e => handleDrop(e, "shop_picture")}
                   onDragOver={handleDragOver}
                 >
                   {imagePreview ? (
-                    // Show image preview when image is selected
-                    <div className="relative">
-                      <img 
-                        src={imagePreview} 
-                        alt="Shop preview" 
-                        className="w-20 h-20 object-cover  border-2 border-gray-200"
-                      />
-                      
-                    </div>
+                    <img src={imagePreview} alt="Shop" className="w-20 h-20 object-cover"/>
                   ) : (
-                    // Show upload instructions when no image is selected
-                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                      <svg 
-                        className="w-8 h-8 mb-3 text-gray-400" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        viewBox="0 0 24 24" 
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        <path 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          strokeWidth="2" 
-                          d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                        ></path>
-                      </svg>
-                      <p className="mb-2 text-sm text-gray-500">
-                        <span className="font-semibold">Click to upload</span> or drag and drop
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        PNG, JPG, GIF, WEBP (MAX. 5MB)
-                      </p>
-                    </div>
+                    <p className="text-gray-500">Click or drag to upload</p>
                   )}
                   <Input
                     ref={fileInputRef}
@@ -280,51 +223,149 @@ const handleSubmit = (e: React.FormEvent) => {
                   />
                 </label>
               </div>
-
-              {/* Selected file info */}
-              {formData.shop_picture && (
-                <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-shrink-0 w-12 h-12 bg-green-100 rounded-md flex items-center justify-center">
-                      <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-green-800 truncate">
-                        {formData.shop_picture.name}
-                      </p>
-                      <p className="text-xs text-green-600">
-                        {(formData.shop_picture.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
-                    </div>
-                   
-                  </div>
-                </div>
-              )}
-
-              {errors?.shop_picture && (
-                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                  <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                  </svg>
-                  <p className="text-sm text-red-700">{errors.shop_picture}</p>
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Error Message */}
-          {errors?.message && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-md">
-              <p className="text-red-700 text-sm">{errors.message}</p>
-              {errors.details && (
-                <p className="text-red-600 text-xs mt-1">{errors.details}</p>
-              )}
-            </div>
-          )}
+          {/* ================== Business Information ================== */}
+          <hr className="my-6 border-t border-gray-300" />
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-700">Business Information</h3>
 
-          {/* Buttons */}
+            <div className="space-y-2">
+              <Label htmlFor="tax_id">Tax Identification Number *</Label>
+              <Input
+                type="text"
+                id="tax_id"
+                name="tax_id"
+                value={formData.tax_id}
+                onChange={e => setFormData({ ...formData, tax_id: e.target.value })}
+                placeholder="Enter your TIN"
+                className={cn(errors?.tax_id && "border-red-500")}
+              />
+              {errors?.tax_id && <p className="text-red-500 text-sm">{errors.tax_id}</p>}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="business_reg_no">Business Registration Number</Label>
+              <Input
+                type="text"
+                id="business_reg_no"
+                name="business_reg_no"
+                value={formData.business_reg_no}
+                onChange={e => setFormData({ ...formData, business_reg_no: e.target.value })}
+                placeholder="Enter business registration number"
+                className={cn(errors?.business_reg_no && "border-red-500")}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="business_email">Business Email</Label>
+              <Input
+                type="email"
+                id="business_email"
+                name="business_email"
+                value={formData.business_email}
+                onChange={e => setFormData({ ...formData, business_email: e.target.value })}
+                placeholder="Enter business email"
+                className={cn(errors?.business_email && "border-red-500")}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="business_type">Business Type</Label>
+              <select
+                id="business_type"
+                name="business_type"
+                value={formData.business_type}
+                onChange={e => setFormData({ ...formData, business_type: e.target.value })}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <option value="">Select business type</option>
+                <option value="Individual">Individual</option>
+                <option value="Corporation">Corporation</option>
+                <option value="Sole Proprietor">Sole Proprietor</option>
+                <option value="Partnership">Partnership</option>
+                <option value="LLC">LLC</option>
+              </select>
+            </div>
+
+
+            <div className="space-y-2">
+              <Label htmlFor="vatr_status">VAT Registration Status</Label>
+              <select
+                id="vatr_status"
+                name="vatr_status"
+                value={formData.vatr_status}
+                onChange={e => setFormData({ ...formData, vatr_status: e.target.value })}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <option value="">Select VAT status</option>
+                <option value="Registered">Registered</option>
+                <option value="Not Registered">Not Registered</option>
+              </select>
+            </div>
+
+          </div>
+
+          {/* ================== Owner / Verification ================== */}
+          <hr className="my-6 border-t border-gray-300" />
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-700">Owner / Verification</h3>
+
+            <div className="space-y-2">
+              <Label htmlFor="owner_name">Owner / Authorized Person Name *</Label>
+              <Input
+                type="text"
+                id="owner_name"
+                name="owner_name"
+                value={formData.owner_name}
+                onChange={e => setFormData({ ...formData, owner_name: e.target.value })}
+                placeholder="Full name of shop owner"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="owner_id_number">Government ID Number *</Label>
+              <Input
+                type="text"
+                id="owner_id_number"
+                name="owner_id_number"
+                value={formData.owner_id_number}
+                onChange={e => setFormData({ ...formData, owner_id_number: e.target.value })}
+                placeholder="e.g., Passport, Driver's License number"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Upload Government ID</Label>
+              <div className="flex items-center border-2 border-dashed rounded-lg h-32 justify-center">
+                <label
+                  htmlFor="owner_id_file"
+                  className="flex flex-col items-center justify-center w-full h-full cursor-pointer"
+                  onDrop={e => handleDrop(e, "owner_id_file")}
+                  onDragOver={handleDragOver}
+                >
+                  {ownerIdPreview ? (
+                    <img src={ownerIdPreview} alt="Owner ID" className="w-20 h-20 object-cover"/>
+                  ) : (
+                    <p className="text-gray-500">Click or drag to upload ID</p>
+                  )}
+                  <Input
+                    type="file"
+                    id="owner_id_file"
+                    name="owner_id_file"
+                    accept="image/*,application/pdf"
+                    onChange={handleOwnerIdChange}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          
+
+          {/* ================== Buttons ================== */}
           <div className="flex gap-3 pt-4">
             <Button
               type="button"

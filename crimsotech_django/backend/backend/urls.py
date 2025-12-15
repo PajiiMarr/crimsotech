@@ -53,6 +53,7 @@ urlpatterns = [
     path('api/', include(router.urls)),
     path('', UserView.as_view(), name='user-list'),
     path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),
+    path('api/customer-favorites/', CustomerFavoritesView.as_view(), name='customer-favorites'),
     path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
     path('api/view-cart/', CartListView.as_view(), name='view-cart'),
     path('api/register/', Register.as_view(), name='register'),

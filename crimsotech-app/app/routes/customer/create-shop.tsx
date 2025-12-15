@@ -3,7 +3,8 @@ import { UserProvider } from '~/components/providers/user-role-provider';
 import { CreateShopForm } from '~/components/customer/create-shop-form';
 import AxiosInstance from '~/components/axios/Axios';
 import { cleanInput } from '~/clean/clean';
-
+import { Button } from "~/components/ui/button";
+import { ArrowLeft } from "lucide-react";
 export function meta(): Route.MetaDescriptors {
   return [
     {
@@ -156,7 +157,26 @@ export default function CreateShop({ loaderData }: Route.ComponentProps) {
   const user = loaderData;
   return (
     <UserProvider user={user}>
-      <div className="w-full p-6">
+      <div className="min-h-screen bg-gray-50">
+        {/* Header */}
+        <div className="border-b bg-white px-4 py-6 sm:px-6 lg:px-8 mb-8">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.history.back()}
+              className="flex items-center gap-2"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to shop List
+            </Button>
+            <div className="text-center">
+              <h1 className="text-xl font-bold text-gray-900">Create Shop</h1>
+              <p className="text-sm text-gray-500">Fill out the following to create your shop</p>
+            </div>
+            <div className="w-24"></div> {/* Spacer for alignment */}
+          </div>
+        </div>
         <CreateShopForm />
       </div>
     </UserProvider>
