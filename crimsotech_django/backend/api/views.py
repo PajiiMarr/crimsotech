@@ -8341,6 +8341,59 @@ class CartListView(APIView):
         serializer = CartItemSerializer(cart_items, many=True)
         return Response({"success": True, "cart_items": serializer.data})    
 
+    def put(self, request, item_id):
+        user_id = request.data.get("user_id")
+        quantity = request.data.get("quantity")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        if not quantity or quantity < 1:
+            return Response({"error": "Valid quantity is required"}, status=400)
+        
+        try:
+            cart_item = CartItem.objects.get(id=item_id, user_id=user_id)
+            
+            # Check available product quantity
+            if cart_item.product:
+                available_quantity = cart_item.product.quantity
+                if quantity > available_quantity:
+                    return Response({
+                        "error": f"Only {available_quantity} items available in stock",
+                        "available_quantity": available_quantity
+                    }, status=400)
+            
+            cart_item.quantity = quantity
+            cart_item.save()
+            
+            return Response({
+                "success": True,
+                "message": "Quantity updated"
+            })
+        except CartItem.DoesNotExist:
+            return Response({"error": "Cart item not found"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+
+    def delete(self, request, item_id):
+        user_id = request.data.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        try:
+            cart_item = CartItem.objects.get(id=item_id, user_id=user_id)
+            cart_item.delete()
+            
+            return Response({
+                "success": True,
+                "message": "Item removed from cart"
+            })
+        except CartItem.DoesNotExist:
+            return Response({"error": "Cart item not found"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+
 class CheckoutView(viewsets.ViewSet):
     """
     Simplified Checkout ViewSet
@@ -8657,3 +8710,182 @@ class SellerOrderList(viewsets.ViewSet):
             return status_map.get(delivery_status, 'pending_shipment')
         else:
             return 'pending_shipment'
+
+
+from django.shortcuts import get_object_or_404
+
+class CheckoutOrder(viewsets.ViewSet):
+    @action(detail=False, methods=['GET'])
+    def get_checkout_items(self, request):
+        """
+        Get checkout items based on selected cart item IDs.
+        URL: /api/checkout/get-checkout-items/?selected=id1,id2,id3&user_id=user_uuid
+        """
+        user_id = request.GET.get("user_id")
+        selected_ids_str = request.GET.get("selected", "")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not selected_ids_str:
+            return Response({"error": "No items selected for checkout"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Convert comma-separated string to list of UUIDs
+            selected_ids = selected_ids_str.split(',')
+            
+            # Get cart items for this user and selected IDs
+            cart_items = CartItem.objects.filter(
+                id__in=selected_ids,
+                user_id=user_id
+            ).select_related(
+                "product", 
+                "product__shop"
+            ).prefetch_related(
+                'product__productmedia_set'
+            )
+            
+            if not cart_items.exists():
+                return Response(
+                    {"error": "No cart items found for the selected IDs"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Prepare response data
+            checkout_items = []
+            for cart_item in cart_items:
+                item_data = {
+                    "id": str(cart_item.id),
+                    "product_id": str(cart_item.product.id) if cart_item.product else None,
+                    "name": cart_item.product.name if cart_item.product else "Unknown Product",
+                    "price": float(cart_item.product.price) if cart_item.product else 0,
+                    "quantity": cart_item.quantity,
+                    "shop_name": cart_item.product.shop.name if cart_item.product and cart_item.product.shop else "Unknown Shop",
+                    "shop_id": str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None,
+                    "added_at": cart_item.added_at.isoformat() if cart_item.added_at else None,
+                    "subtotal": float(cart_item.product.price * cart_item.quantity) if cart_item.product else 0,
+                }
+                
+                # Get product image if available
+                if cart_item.product and cart_item.product.productmedia_set.exists():
+                    first_media = cart_item.product.productmedia_set.first()
+                    if first_media.file_data:
+                        item_data["image"] = request.build_absolute_uri(first_media.file_data.url)
+                    else:
+                        item_data["image"] = None
+                else:
+                    item_data["image"] = None
+                
+                checkout_items.append(item_data)
+            
+            # Calculate totals
+            subtotal = sum(item["subtotal"] for item in checkout_items)
+            tax = subtotal * 0.12  # 12% VAT
+            delivery = 50.00  # Base delivery fee
+            total = subtotal + tax + delivery
+            
+            response_data = {
+                "success": True,
+                "checkout_items": checkout_items,
+                "summary": {
+                    "subtotal": subtotal,
+                    "tax": tax,
+                    "delivery": delivery,
+                    "total": total,
+                    "item_count": len(checkout_items),
+                    "shop_count": len(set(item["shop_id"] for item in checkout_items if item["shop_id"]))
+                }
+            }
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            logger.error(f"Error in get_checkout_items: {str(e)}")
+            return Response(
+                {"error": "Internal server error", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['POST'])
+    def create_order(self, request):
+        """
+        Create an order from selected cart items.
+        Expected data: {
+            "user_id": "user_uuid",
+            "selected_ids": ["cart_item_id1", "cart_item_id2"],
+            "shipping_address": {...},
+            "payment_method": "cod",
+            "shipping_method": "pickup"
+        }
+        """
+        user_id = request.data.get("user_id")
+        selected_ids = request.data.get("selected_ids", [])
+        shipping_address = request.data.get("shipping_address", {})
+        payment_method = request.data.get("payment_method", "cod")
+        shipping_method = request.data.get("shipping_method", "pickup")
+        
+        if not user_id or not selected_ids:
+            return Response(
+                {"error": "user_id and selected_ids are required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get user
+            user = get_object_or_404(User, id=user_id)
+            
+            # Get cart items
+            cart_items = CartItem.objects.filter(
+                id__in=selected_ids,
+                user=user
+            ).select_related("product", "product__shop")
+            
+            if not cart_items.exists():
+                return Response(
+                    {"error": "No cart items found"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Calculate total
+            total_amount = sum(
+                cart_item.product.price * cart_item.quantity 
+                for cart_item in cart_items 
+                if cart_item.product
+            )
+            
+            # Create Order
+            order = Order.objects.create(
+                user=user,
+                status='pending',
+                total_amount=total_amount,
+                payment_method=payment_method,
+                delivery_method=shipping_method,
+                delivery_address=f"{shipping_address.get('street', '')}, {shipping_address.get('barangay', '')}, {shipping_address.get('city', '')}, {shipping_address.get('province', '')}"
+            )
+            
+            # Create Checkout entries for each cart item
+            for cart_item in cart_items:
+                Checkout.objects.create(
+                    order=order,
+                    cart_item=cart_item,
+                    quantity=cart_item.quantity,
+                    total_amount=cart_item.product.price * cart_item.quantity if cart_item.product else 0,
+                    status='pending'
+                )
+            
+            # Remove cart items after checkout
+            cart_items.delete()
+            
+            return Response({
+                "success": True,
+                "message": "Order created successfully",
+                "order_id": str(order.order),
+                "total_amount": float(total_amount)
+            })
+            
+        except Exception as e:
+            logger.error(f"Error creating order: {str(e)}")
+            return Response(
+                {"error": "Failed to create order", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

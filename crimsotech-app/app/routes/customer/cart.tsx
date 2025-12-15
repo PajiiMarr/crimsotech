@@ -272,7 +272,6 @@ const CompactCartItem = ({
             <div className="flex items-center border rounded">
               <button
                 onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
-                disabled={item.quantity <= 1}
                 className="h-6 w-6 flex items-center justify-center hover:bg-gray-100 disabled:opacity-50 rounded-l"
               >
                 <Minus className="h-3 w-3" />
@@ -573,13 +572,14 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
 
   // Item handlers
   const updateQuantity = async (id: string, quantity: number) => {
+    // If quantity becomes 0 or less, remove the item
     if (quantity < 1) {
       removeItem(id);
       return;
     }
 
     try {
-      await AxiosInstance.put(`/view-cart/items/${id}/update/`, { 
+      await AxiosInstance.put(`/view-cart/update/${id}/`, { 
         user_id: userId,
         quantity 
       });
@@ -602,9 +602,9 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   };
 
   const removeItem = async (id: string) => {
-    try {
-      await AxiosInstance.delete(`/view-cart/items/${id}/remove/`, {
-        params: { user_id: userId }
+  try {
+      await AxiosInstance.delete(`/view-cart/delete/${id}/`, {
+        data: { user_id: userId }  // Send in request body for DELETE
       });
       setCartItems((items) => items.filter((item) => item.id !== id));
     } catch (err) {
@@ -653,12 +653,15 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   const delivery = selectedItems.length > 0 ? 50.00 : 0; // Base delivery
   const tax = subtotal * 0.12;
 
-  // Navigation - UPDATED TO NAVIGATE TO ORDERS.TSX
+// Navigation - UPDATED TO NAVIGATE TO ORDERS.TSX
   const handleCheckout = () => {
     if (selectedItems.length === 0) {
       alert("Please select items to checkout");
       return;
     }
+    
+    // Create a comma-separated string of selected item IDs
+    const selectedIds = selectedItems.map(item => item.id).join(',');
     
     // Store checkout data if needed in orders page
     try {
@@ -676,10 +679,10 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
       console.error("Failed to store checkout data:", err);
     }
     
-    // Navigate to orders page
-    navigate("/orders");
+    // Navigate to orders page with selected IDs as query parameter
+    navigate(`/orders?selected=${selectedIds}`);
   };
-
+  
   const handleApplyCoupon = (code: string) => {
     console.log("Applying coupon:", code);
     // Implement coupon validation

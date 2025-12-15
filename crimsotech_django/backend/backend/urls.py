@@ -47,18 +47,26 @@ router.register(r'customer-boost-plans', CustomerBoostPlan, basename='customer-b
 router.register(r'seller-order-list', SellerOrderList, basename='seller-order-list')
 
 
-
-
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
     path('', UserView.as_view(), name='user-list'),
     path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),
     path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
+    
+    # GET all items (no item_id in URL)
     path('api/view-cart/', CartListView.as_view(), name='view-cart'),
+    
+    # PUT for updates
+    path('api/view-cart/update/<uuid:item_id>/', CartListView.as_view(), name='update-cart-item'),
+    
+    # DELETE for removal
+    path('api/view-cart/delete/<uuid:item_id>/', CartListView.as_view(), name='delete-cart-item'),
+    
     path('api/register/', Register.as_view(), name='register'),
     path('api/login/', Login.as_view(), name='login'),
     path('api/profiling/', Profiling.as_view(), name='profiling'),
     path('api/get-role/', GetRole.as_view(), name='get-role'),
     path('api/get-registration/', GetRegistration.as_view(), name='get-registration'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
