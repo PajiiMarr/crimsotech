@@ -41,6 +41,7 @@ export default [
     route('return-refund-cancel', 'routes/customer/return-refund-cancel.tsx'),  
     route("request-refund-return/:id", "routes/customer/request-refund-return.tsx"),
     route('view-order/:orderId', 'routes/customer/view-order.tsx'),
+    route('shop/:shopName', 'routes/customer/view-shop.tsx'),
 
     //customer-seller
     route('view-customer-return-cancel/:returnId', 'routes/customer/view-customer-return-cancel.tsx'),

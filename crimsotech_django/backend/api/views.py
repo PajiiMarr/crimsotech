@@ -8406,96 +8406,107 @@ class CheckoutView(viewsets.ViewSet):
     @action(methods=["post"], detail=False)
     def checkout(self, request):
         """
-        Simple checkout endpoint
+        Cart-based checkout
         Request body:
         {
-            "customer_id": "uuid",
-            "product_id": "uuid",
-            "quantity": 1
+            "user_id": "uuid",
+            "payment_method": "cod | gcash | paymaya | paypal",
+            "delivery_method": "pickup | standard",
+            "delivery_address": "string"
         }
         """
         try:
             data = request.data
-            customer_id = data.get('customer_id')
-            product_id = data.get('product_id')
-            quantity = data.get('quantity', 1)
-            
-            # Validate required fields
-            if not customer_id:
-                return Response(
-                    {'error': 'customer_id is required'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            if not product_id:
-                return Response(
-                    {'error': 'product_id is required'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Get customer
+
+            user_id = data.get("user_id")
+            payment_method = data.get("payment_method")
+            delivery_method = data.get("delivery_method")
+            delivery_address = data.get("delivery_address")
+
+            # ---- VALIDATION ----
+            if not user_id:
+                return Response({"error": "user_id is required"}, status=400)
+
+            if not payment_method:
+                return Response({"error": "payment_method is required"}, status=400)
+
+            if not delivery_address:
+                return Response({"error": "delivery_address is required"}, status=400)
+
             try:
-                customer = Customer.objects.get(id=customer_id)
-            except Customer.DoesNotExist:
-                return Response(
-                    {'error': 'Customer not found'}, 
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Start transaction
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({"error": "User not found"}, status=404)
+
+            cart_items = CartItem.objects.select_related("product").filter(user=user)
+
+            if not cart_items.exists():
+                return Response({"error": "Cart is empty"}, status=400)
+
+            # ---- TRANSACTION ----
             with transaction.atomic():
-                # Get product with lock
-                product = Product.objects.select_for_update().get(
-                    id=product_id,
-                    upload_status='published',
-                    is_removed=False
+                total_amount = Decimal("0.00")
+
+                # Create order
+                order = Order.objects.create(
+                    user=user,
+                    status="pending",
+                    payment_method=payment_method,
+                    delivery_method=delivery_method,
+                    delivery_address=delivery_address,
+                    total_amount=0  # temporary
                 )
-                
-                # Check stock
-                if product.quantity < quantity:
-                    return Response(
-                        {'error': f'Insufficient stock. Available: {product.quantity}'},
-                        status=status.HTTP_400_BAD_REQUEST
+
+                for cart_item in cart_items:
+                    product = cart_item.product
+
+                    if not product:
+                        continue
+
+                    if product.quantity < cart_item.quantity:
+                        raise Exception(f"Insufficient stock for {product.name}")
+
+                    line_total = product.price * cart_item.quantity
+                    total_amount += line_total
+
+                    # Deduct stock
+                    product.quantity -= cart_item.quantity
+                    product.save(update_fields=["quantity"])
+
+                    # Create checkout row
+                    Checkout.objects.create(
+                        order=order,
+                        cart_item=cart_item,
+                        quantity=cart_item.quantity,
+                        total_amount=line_total,
+                        status="pending"
                     )
-                
-                # Calculate total
-                total_amount = product.price * quantity
-                
-                # Update stock
-                product.quantity -= quantity
-                product.save(update_fields=['quantity'])
-                
-                # Generate order reference
-                order_ref = f"ORD-{customer_id[:8]}-{product_id[:8]}"
-                
-                return Response({
-                    'success': True,
-                    'message': 'Purchase successful',
-                    'order_reference': order_ref,
-                    'product': {
-                        'id': str(product.id),
-                        'name': product.name,
-                        'price': str(product.price)
-                    },
-                    'quantity': quantity,
-                    'total_amount': str(total_amount),
-                    'customer': {
-                        'id': str(customer.id),
-                        'name': str(customer.user) if customer.user else 'Unknown'
-                    }
-                }, status=status.HTTP_201_CREATED)
-                
-        except Product.DoesNotExist:
-            return Response(
-                {'error': 'Product not found or unavailable'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+
+                # Update order total
+                order.total_amount = total_amount
+                order.save(update_fields=["total_amount"])
+
+                # Clear cart
+                cart_items.delete()
+
+            return Response({
+                "success": True,
+                "message": "Checkout successful",
+                "order_id": str(order.order),
+                "total_amount": str(order.total_amount),
+                "payment_method": order.payment_method,
+                "delivery_method": order.delivery_method,
+                "delivery_address": order.delivery_address
+            }, status=201)
+
         except Exception as e:
             return Response(
-                {'error': 'Checkout failed', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": "Checkout failed", "details": str(e)},
+                status=500
             )
-        
+
+
+
 class CustomerBoostPlan(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_boost_plans(self, request):
@@ -8514,6 +8525,138 @@ class CustomerBoostPlan(viewsets.ViewSet):
             })
         
 
+
+
+class CustomerFavoritesView(APIView):
+    def get(self, request):
+        try:
+            # Identify user by X-User-Id header (set by frontend) or query param
+            user_id = request.headers.get('X-User-Id') or request.GET.get('userId')
+            if not user_id:
+                # Gracefully return empty favorites when no user id is provided
+                return Response({'success': True, 'favorites': []})
+
+            try:
+                user = User.objects.get(id=user_id)
+                customer = user.customer
+            except (User.DoesNotExist, Customer.DoesNotExist):
+                # No user/customer => return empty list
+                return Response({'success': True, 'favorites': []})     
+
+            favorites = Favorites.objects.filter(customer=customer).order_by('-id')
+            serializer = FavoritesSerializer(favorites, many=True)
+            return Response({
+                'success': True,
+                'favorites': serializer.data
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def post(self, request):
+
+        try:
+            # Get customer ID from request body or header
+            user_id = request.data.get("customer") or request.headers.get('X-User-Id') or request.GET.get('userId')
+            product_id = request.data.get("product")
+
+            print(f"POST /customer-favorites/ - user_id: {user_id}, product_id: {product_id}")
+
+            if not user_id:
+                return Response({"success": False, "message": "Customer ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not product_id:
+                return Response({"success": False, "message": "Product ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Fetch user
+            try:
+                user = User.objects.get(id=user_id)
+                print(f"User found: {user.id}")
+            except User.DoesNotExist:
+                print(f"User {user_id} not found")
+                return Response({"success": False, "message": f"User {user_id} not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Ensure customer profile exists
+            customer, created = Customer.objects.get_or_create(customer=user)
+            if created:
+                print(f"Created customer profile for user {user_id}")
+            else:
+                print(f"Customer profile found for user {user_id}")
+
+            # Ensure product exists
+            try:
+                product = Product.objects.get(id=product_id)
+            except Product.DoesNotExist:
+                print(f"Product {product_id} not found")
+                return Response({"success": False, "message": f"Product {product_id} not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            if Favorites.objects.filter(customer=customer, product=product).exists():
+                return Response({"success": False, "message": "Already favorited"}, status=status.HTTP_400_BAD_REQUEST)
+
+            favorite = Favorites.objects.create(customer=customer, product=product)
+            print(f"Favorite created: {favorite.id} for product {product.id} and customer {customer.customer.id}")
+
+            serializer = FavoritesSerializer(favorite)
+            return Response({"success": True, "favorite": serializer.data}, status=status.HTTP_201_CREATED)
+
+
+        except Exception as e:
+            print(f"Error in POST /customer-favorites/: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    "success": False,
+                    "message": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+
+    def delete(self, request, pk=None):
+        """Remove a product from customer favorites"""
+        try:
+            # Get customer ID from request body or header
+            user_id = request.data.get("customer") or request.headers.get('X-User-Id') or request.GET.get('userId')
+            product_id = pk or request.data.get("product")
+            
+            if not user_id:
+                return Response({"success": False, "message": "Customer ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not product_id:
+                return Response({"success": False, "message": "Product ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Fetch user
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({"success": False, "message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Fetch or create customer profile
+            try:
+                customer = user.customer
+            except Customer.DoesNotExist:
+                return Response({"success": False, "message": "Favorite not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Find favorite and delete
+            favorite = Favorites.objects.filter(customer=customer, product_id=product_id).first()
+            if not favorite:
+                return Response({"success": False, "message": "Favorite not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            favorite.delete()
+            print(f"Favorite removed for product {product_id} by user {user_id}")
+            return Response({"success": True, "message": "Removed from favorites"}, status=status.HTTP_200_OK)
+
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            
 class SellerOrderList(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def order_list(self, request):

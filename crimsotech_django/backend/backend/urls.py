@@ -52,6 +52,7 @@ urlpatterns = [
     path('api/', include(router.urls)),
     path('', UserView.as_view(), name='user-list'),
     path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),
+    path('api/customer-favorites/', CustomerFavoritesView.as_view(), name='customer-favorites'),
     path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
     
     # GET all items (no item_id in URL)
