@@ -3195,67 +3195,6 @@ class AdminProduct(viewsets.ViewSet):
                 }
                 for variant in product.variants_set.all()
             ]
-
-            # SKUs (per-variant combinations) including image_url
-            skus_qs = ProductSKU.objects.filter(product=product)
-            sku_items = []
-            for sku in skus_qs:
-                image = None
-                try:
-                    if sku.image:
-                        url = sku.image
-                        img_url = request.build_absolute_uri(url) if request else url
-                except Exception:
-                    img_url = None
-
-                # Debug: log SKU image/internal state when fetching product
-                try:
-                    print(f"GET_PRODUCT SKU {sku.id} option_ids={sku.option_ids} image_name={(sku.image.name if sku.image else None)} image={image}")
-                except Exception:
-                    pass
-
-                sku_items.append({
-                    'id': str(sku.id),
-                    'option_ids': sku.option_ids,
-                    'option_map': sku.option_map,
-                    'price': str(sku.price) if sku.price is not None else None,
-                    'compare_price': str(sku.compare_price) if sku.compare_price is not None else None,
-                    'quantity': sku.quantity,
-                    'sku_code': sku.sku_code,
-                    'image': image,
-                })
-
-            product_data['skus'] = sku_items
-
-            # Build availability mapping: Size -> available Colors (if both exist)
-            size_to_colors = {}
-            for sku in sku_items:
-                opt_map = sku.get('option_map') or {}
-                # detect keys
-                size_key = None
-                color_key = None
-                for k in opt_map.keys():
-                    kl = k.lower()
-                    if 'size' in kl:
-                        size_key = k
-                    if 'color' in kl or 'colour' in kl:
-                        color_key = k
-
-                if size_key and color_key:
-                    size_val = opt_map.get(size_key)
-                    color_val = opt_map.get(color_key)
-                    if size_val:
-                        lst = size_to_colors.setdefault(size_val, [])
-                        lst.append({
-                            'color': color_val,
-                            'sku_id': sku.get('id'),
-                            'image': sku.get('image'),
-                            'quantity': sku.get('quantity')
-                        })
-
-            product_data['variant_availability'] = {
-                'size_to_colors': size_to_colors
-            }
             
             # Reviews
             product_data["reviews"] = [
@@ -7833,7 +7772,18 @@ class SellerProducts(viewsets.ModelViewSet):
                     "error": "Invalid global category selected"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        # accepted_categories: handled per-SKU; do not process at product creation level
+        # If accepted_categories was sent as a JSON string, parse it into a list for the serializer
+        try:
+            import json
+            accepted_raw = product_data.get('accepted_categories')
+            if accepted_raw and isinstance(accepted_raw, str):
+                accepted_list = json.loads(accepted_raw)
+                try:
+                    product_data.setlist('accepted_categories', accepted_list)
+                except Exception:
+                    product_data['accepted_categories'] = accepted_list
+        except Exception as e:
+            print('Failed to parse accepted_categories:', e)
 
         serializer = ProductCreateSerializer(data=product_data, context={'request': request})
         if serializer.is_valid():
@@ -8268,7 +8218,7 @@ class CustomerProducts(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         # Get the user ID from session (sent from frontend)
-        user_id = request.data.get('customer_id')
+        user_id = request.data.get("customer_id")
         if not user_id:
             return Response({"error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -8302,7 +8252,18 @@ class CustomerProducts(viewsets.ModelViewSet):
                     "error": "Invalid global category selected"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        # accepted_categories: handled per-SKU; do not process at product creation level
+        # If accepted_categories was sent as a JSON string, parse it into a list for the serializer
+        try:
+            import json
+            accepted_raw = product_data.get('accepted_categories')
+            if accepted_raw and isinstance(accepted_raw, str):
+                accepted_list = json.loads(accepted_raw)
+                try:
+                    product_data.setlist('accepted_categories', accepted_list)
+                except Exception:
+                    product_data['accepted_categories'] = accepted_list
+        except Exception as e:
+            print('Failed to parse accepted_categories:', e)
 
         serializer = ProductCreateSerializer(data=product_data, context={'request': request})
         if serializer.is_valid():
@@ -8925,6 +8886,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                     return Response({"sku_id": str(sku.id), "fallback": True})
 
         return Response({"sku_id": None, "message": "No matching SKU found"}, status=404)
+    
+    
 class AddToCartView(APIView):
 
     def post(self, request):
@@ -8954,21 +8917,6 @@ class AddToCartView(APIView):
             return Response({"success": False, "error": "Product not found."},
                             status=status.HTTP_404_NOT_FOUND)
 
-        # If a sku_id is provided, validate against SKU quantity
-        sku_id = request.data.get('sku_id') or request.data.get('sku')
-        if sku_id:
-            try:
-                sku = ProductSKU.objects.get(id=sku_id, product=product)
-            except ProductSKU.DoesNotExist:
-                return Response({"success": False, "error": "Invalid SKU specified."}, status=status.HTTP_400_BAD_REQUEST)
-
-            if quantity > (sku.quantity or 0):
-                return Response({"success": False, "error": f"Only {sku.quantity or 0} items available for the selected variant."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # Validate against product-level quantity
-            if quantity > (product.quantity or 0):
-                return Response({"success": False, "error": f"Only {product.quantity or 0} items available in stock."}, status=status.HTTP_400_BAD_REQUEST)
-
         cart_item, created = CartItem.objects.get_or_create(
             user=user,
             product=product,
@@ -8980,10 +8928,7 @@ class AddToCartView(APIView):
             cart_item.save()
 
         serializer = CartItemSerializer(cart_item)
-        resp = {"success": True, "cart_item": serializer.data}
-        if sku_id:
-            resp['sku_id'] = str(sku_id)
-        return Response(resp)
+        return Response({"success": True, "cart_item": serializer.data})
 
 class CartListView(APIView):
     """

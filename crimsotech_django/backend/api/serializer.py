@@ -135,9 +135,26 @@ class ProductMediaSerializer(serializers.ModelSerializer):
         return None
     
 class VariantOptionsSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+    compare_price = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    length = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    width = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    height = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    weight = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    weight_unit = serializers.CharField(read_only=True)
+
     class Meta:
         model = VariantOptions
-        fields = ['id', 'variant', 'title', 'created_at']
+        fields = ['id', 'variant', 'title', 'quantity', 'price', 'compare_price', 'image_url', 'length', 'width', 'height', 'weight', 'weight_unit']
+
+    def get_image_url(self, obj):
+        if obj.image:
+            request = self.context.get('request')
+            url = obj.image.url
+            if request:
+                return request.build_absolute_uri(url)
+            return url
+        return None
 
 class VariantsSerializer(serializers.ModelSerializer):
     options = VariantOptionsSerializer(source='variantoptions_set', many=True, read_only=True)
@@ -344,6 +361,7 @@ class ProductSerializer(serializers.ModelSerializer):
                 })
             variants.append(vdata)
         return variants
+        
         
 class ReviewDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)
@@ -578,8 +596,6 @@ class CartDisplayItemSerializer(serializers.ModelSerializer):
 
     def get_selected(self, obj):
         return True  # default to selected
-    
-
     
 
 class ProductSKUSerializer(serializers.ModelSerializer):

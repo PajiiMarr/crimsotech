@@ -353,6 +353,7 @@ class Variants(models.Model):
     def __str__(self):
         return f"{self.title} for {self.product.name}"
 
+
 class VariantOptions(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     variant = models.ForeignKey(
@@ -375,54 +376,6 @@ class VariantOptions(models.Model):
 
     def __str__(self):
         return f"{self.title} - {self.variant.title if self.variant else ''}"
-
-
-class ProductSKU(models.Model):
-    """SKU combination for a product (generated from variants)"""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
-    product = models.ForeignKey(
-        Product,
-        on_delete=models.CASCADE,
-        related_name='skus'
-    )
-    # Store option ids and map as JSON for easy reconstruction
-    option_ids = models.JSONField(blank=True, null=True)
-    option_map = models.JSONField(blank=True, null=True)
-
-    sku_code = models.CharField(max_length=100, blank=True, null=True)
-
-    price = models.DecimalField(decimal_places=2, max_digits=9, null=True, blank=True)
-    compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    quantity = models.IntegerField(default=0)
-
-    length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    weight_unit = models.CharField(max_length=10, default='g', blank=True)
-
-    critical_trigger = models.IntegerField(null=True, blank=True)
-    is_active = models.BooleanField(default=True)
-
-    # Swap-related per-SKU
-    allow_swap = models.BooleanField(default=False)
-    swap_type = models.CharField(
-        max_length=30,
-        choices=[('direct_swap', 'Direct swap'), ('swap_plus_payment', 'Swap + payment')],
-        default='direct_swap'
-    )
-    minimum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
-    maximum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
-    swap_description = models.TextField(blank=True, null=True)
-    accepted_categories = models.ManyToManyField('Category', blank=True, related_name='accepted_for_sku_swaps')
-
-    image = models.ImageField(upload_to='product/skus/', null=True, blank=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"SKU for {self.product.name} ({self.sku_code or 'no-code'})"
 
 class Issues(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -1050,3 +1003,51 @@ class ReportComment(models.Model):
         return f"Comment by {self.user.username} on Report {self.report.id}"
     
 # Add this after the User model and before the Customer model
+
+
+class ProductSKU(models.Model):
+    """SKU combination for a product (generated from variants)"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='skus'
+    )
+    # Store option ids and map as JSON for easy reconstruction
+    option_ids = models.JSONField(blank=True, null=True)
+    option_map = models.JSONField(blank=True, null=True)
+
+    sku_code = models.CharField(max_length=100, blank=True, null=True)
+
+    price = models.DecimalField(decimal_places=2, max_digits=9, null=True, blank=True)
+    compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    quantity = models.IntegerField(default=0)
+
+    length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    weight_unit = models.CharField(max_length=10, default='g', blank=True)
+
+    critical_trigger = models.IntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    # Swap-related per-SKU
+    allow_swap = models.BooleanField(default=False)
+    swap_type = models.CharField(
+        max_length=30,
+        choices=[('direct_swap', 'Direct swap'), ('swap_plus_payment', 'Swap + payment')],
+        default='direct_swap'
+    )
+    minimum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
+    maximum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
+    swap_description = models.TextField(blank=True, null=True)
+    accepted_categories = models.ManyToManyField('Category', blank=True, related_name='accepted_for_sku_swaps')
+
+    image = models.ImageField(upload_to='product/skus/', null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"SKU for {self.product.name} ({self.sku_code or 'no-code'})"
