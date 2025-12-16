@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 
 load_dotenv()  # this loads the .env file
 
+# allow custom CORS headers
+from corsheaders.defaults import default_headers
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -49,13 +52,13 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
 ]
 
 REST_FRAMEWORK = {
@@ -63,6 +66,12 @@ REST_FRAMEWORK = {
 }
 
 CORS_ORIGIN_ALLOW_ALL = True
+
+# Allow the frontend to send the custom X-User-Id header in preflight
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'x-user-id',
+    'X-User-Id',
+]
 
 ROOT_URLCONF = 'backend.urls'
 

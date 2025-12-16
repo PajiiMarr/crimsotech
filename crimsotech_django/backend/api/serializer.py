@@ -134,15 +134,34 @@ class ProductMediaSerializer(serializers.ModelSerializer):
             return obj.file_data.url
         return None
     
-class VariantsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Variants
-        fields = '__all__'
-
 class VariantOptionsSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+    compare_price = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    length = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    width = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    height = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    weight = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    weight_unit = serializers.CharField(read_only=True)
+
     class Meta:
         model = VariantOptions
-        fields = '__all__'
+        fields = ['id', 'variant', 'title', 'quantity', 'price', 'compare_price', 'image_url', 'length', 'width', 'height', 'weight', 'weight_unit']
+
+    def get_image_url(self, obj):
+        if obj.image:
+            request = self.context.get('request')
+            url = obj.image.url
+            if request:
+                return request.build_absolute_uri(url)
+            return url
+        return None
+
+class VariantsSerializer(serializers.ModelSerializer):
+    options = VariantOptionsSerializer(source='variantoptions_set', many=True, read_only=True)
+
+    class Meta:
+        model = Variants
+        fields = ['id', 'title', 'options']
 
 class IssuesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -220,6 +239,18 @@ class ProductSerializer(serializers.ModelSerializer):
     variants = VariantsSerializer(source='variants_set', many=True)
     media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
     primary_image = serializers.SerializerMethodField()
+    accepted_categories = CategorySerializer(many=True, read_only=True)
+    open_for_swap = serializers.BooleanField(read_only=True)
+    swap_type = serializers.CharField(read_only=True)
+    minimum_additional_payment = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    maximum_additional_payment = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    swap_description = serializers.CharField(read_only=True, allow_blank=True)
+    compare_price = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    length = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    width = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    height = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    weight = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
+    weight_unit = serializers.CharField(read_only=True)
     
     class Meta:
         model = Product
@@ -227,7 +258,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'quantity', 'price',
             'status', 'upload_status', 'condition', 'created_at', 'updated_at',
             'shop', 'customer', 'category_admin', 'category', 'variants',
-            'media_files', 'primary_image'
+            'media_files', 'primary_image', 'open_for_swap', 'swap_type', 'accepted_categories', 'minimum_additional_payment', 'maximum_additional_payment', 'swap_description', 'compare_price', 'length', 'width', 'height', 'weight', 'weight_unit'
         ]
     
     def get_primary_image(self, obj):

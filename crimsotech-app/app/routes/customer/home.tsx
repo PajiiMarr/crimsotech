@@ -3,7 +3,7 @@ import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider'
 import { useState, useEffect } from "react"
-import { Search, X, Heart } from 'lucide-react'
+import { Search, X, Heart, Handshake } from 'lucide-react'
 import { Input } from '~/components/ui/input'
 import { useNavigate } from 'react-router'
 import AxiosInstance from '~/components/axios/Axios'
@@ -52,6 +52,8 @@ interface Product {
   category?: any
   variants?: any[]
   discount?: number
+  compare_price?: number
+  open_for_swap?: boolean
 }
 
 // ----------------------------
@@ -210,7 +212,15 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
       className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col relative"
     >
 
-      {/* Heart Button */}
+      {/* Open for Swap tag (left) */}
+      {product.open_for_swap && (
+        <div className="absolute top-1 left-1 z-10 px-2 py-0.5 bg-white rounded-full shadow-sm flex items-center gap-1">
+          <Handshake className="h-4 w-4 text-indigo-600" />
+          <span className="text-xs text-indigo-700 font-medium">Open for Swap</span>
+        </div>
+      )}
+
+      {/* Heart Button (right) */}
       <button
         onClick={handleFavoriteClick}
         disabled={loadingFav}
@@ -318,7 +328,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       category: p.category,
       variants: p.variants,
       discount: 0,
+      compare_price: p.compare_price ? parseFloat(p.compare_price) : undefined,
+      open_for_swap: p.open_for_swap || false,
     }));
+
+    // Debug: log how many swap-enabled products we received
+    console.log('Loaded products, open_for_swap count:', products.filter(p => p.open_for_swap).length);
   }
 
   // Fetch categories

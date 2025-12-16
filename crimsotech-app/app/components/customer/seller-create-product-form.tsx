@@ -123,6 +123,14 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const [productQuantity, setProductQuantity] = useState<number | ''>('');
   const [productPrice, setProductPrice] = useState<number | ''>('');
   const [productCondition, setProductCondition] = useState('');
+
+  // Swap-related state
+  const [openForSwap, setOpenForSwap] = useState(false);
+  const [swapType, setSwapType] = useState<'direct_swap' | 'swap_plus_payment'>('direct_swap');
+  const [acceptedCategoriesState, setAcceptedCategoriesState] = useState<string[]>([]);
+  const [minAdditionalPayment, setMinAdditionalPayment] = useState<number | ''>('');
+  const [maxAdditionalPayment, setMaxAdditionalPayment] = useState<number | ''>('');
+  const [swapDescription, setSwapDescription] = useState('');
   
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
   const [showVariants, setShowVariants] = useState(false);
@@ -328,6 +336,13 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     setShippingZones(prev => prev.map(zone => 
       zone.id === zoneId ? { ...zone, fee } : zone
     ));
+  };
+
+  // Toggle accepted categories for swap
+  const toggleAcceptedCategory = (categoryId: string) => {
+    setAcceptedCategoriesState(prev =>
+      prev.includes(categoryId) ? prev.filter(id => id !== categoryId) : [...prev, categoryId]
+    );
   };
 
   // --- MAIN MEDIA HANDLERS ---
@@ -1237,6 +1252,8 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                             <SelectItem value="oz">oz</SelectItem>
                           </SelectContent>
                         </Select>
+                        {/* Hidden input to include product weight unit in FormData */}
+                        <input type="hidden" name="weight_unit" value={productWeightUnit} />
                       </div>
                     </div>
                   </div>
@@ -1349,18 +1366,25 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <Label htmlFor="price">Price *</Label>
-                    <Input
-                      type="number"
-                      id="price"
-                      name="price"
-                      required
-                      min="0"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={productPrice}
-                      onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
-                    />
+                    <Label htmlFor="price">Price {openForSwap ? '(hidden for swap-only products)' : '*'}</Label>
+                    {!openForSwap ? (
+                      <Input
+                        type="number"
+                        id="price"
+                        name="price"
+                        required
+                        min="0"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={productPrice}
+                        onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
+                      />
+                    ) : (
+                      <>
+                        <input type="hidden" name="price" value="0" />
+                        <div className="text-xs text-gray-500">Swap-only product: price will be set to ₱0</div>
+                      </>
+                    )}
                     {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
                   </div>
                   
@@ -1507,6 +1531,123 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
           </CardContent>
         </Card>
       </div>
+
+      {/* STEP 5: Swap Options (Optional) */}
+      <Card id="swap-options">
+        <CardHeader>
+          <CardTitle>Step 5: Swap Options (Optional)</CardTitle>
+          <CardDescription>
+            Enable this if you're open to swapping this item. Configure accepted categories, payment differences, and swap details.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-medium">Open for Swap</h3>
+                <p className="text-xs text-muted-foreground">Allow other users to offer items in exchange for this product.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="open-for-swap">Open for swap</Label>
+                <Switch
+                  id="open-for-swap"
+                  checked={openForSwap}
+                  onCheckedChange={(checked) => setOpenForSwap(checked)}
+                />
+              </div>
+            </div>
+
+            {/* Hidden input to submit boolean value */}
+            <input type="hidden" name="open_for_swap" value={openForSwap ? 'true' : 'false'} />
+
+            {openForSwap && (
+              <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="swap_type">Swap Type</Label>
+                    <Select value={swapType} onValueChange={(v) => setSwapType(v as 'direct_swap' | 'swap_plus_payment')}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="direct_swap">Direct Swap (item for item)</SelectItem>
+                        <SelectItem value="swap_plus_payment">Swap + Payment (item + cash)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {/* Mirror value for native submission */}
+                    <input type="hidden" name="swap_type" value={swapType} />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="minimum_additional_payment">Minimum Additional Payment</Label>
+                    <Input
+                      id="minimum_additional_payment"
+                      name="minimum_additional_payment"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={minAdditionalPayment}
+                      onChange={(e) => setMinAdditionalPayment(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="maximum_additional_payment">Maximum Additional Payment</Label>
+                    <Input
+                      id="maximum_additional_payment"
+                      name="maximum_additional_payment"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={maxAdditionalPayment}
+                      onChange={(e) => setMaxAdditionalPayment(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    />
+                  </div>
+
+
+                </div>
+
+                {/* Accepted categories checkboxes */}
+                <div>
+                  <Label>Accepted Categories</Label>
+                  <div className="mt-2 grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {globalCategories && globalCategories.length > 0 ? (
+                      globalCategories.map((cat) => (
+                        <label key={cat.id} className="inline-flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            name="accepted_categories"
+                            value={cat.id}
+                            checked={acceptedCategoriesState.includes(cat.id)}
+                            onChange={(e) => toggleAcceptedCategory(cat.id)}
+                          />
+                          <span>{cat.name}</span>
+                        </label>
+                      ))
+                    ) : (
+                      <div className="text-xs text-muted-foreground">No categories available</div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="swap_description">Swap Description (Optional)</Label>
+                  <Textarea
+                    id="swap_description"
+                    name="swap_description"
+                    placeholder="Add details about what you expect in a swap"
+                    value={swapDescription}
+                    onChange={(e) => setSwapDescription(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Submit Button */}
       <div className="pt-6">
