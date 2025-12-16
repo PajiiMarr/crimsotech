@@ -88,13 +88,23 @@ class ProductSerializerTest(TestCase):
             'condition': 'New',
             'variants': json.dumps(variants_payload)
         }
+        # Provide SKUs so images can be stored on SKU level
+        skus_payload = [
+            {
+                'id': 'sku-1',
+                'option_ids': [option_id],
+                'option_map': {'Size': 'Small'},
+                'price': '5.00',
+                'quantity': 2,
+            }
+        ]
+        data['skus'] = json.dumps(skus_payload)
         # Key should match f"variant_image_{group_id}_{option_id}"
         files = {'variant_image_{}_{}'.format(group_id, option_id): img}
         res = client.post('/api/customer-products/', data, format='multipart', files=files)
         self.assertEqual(res.status_code, 201)
-        # Check option exists in DB
-        from .models import VariantOptions
-        opt = VariantOptions.objects.filter(title='Small').first()
-        self.assertIsNotNone(opt)
-        self.assertEqual(str(opt.compare_price), '6.00')
-        self.assertIsNotNone(opt.image)
+        # Check corresponding SKU exists and has image saved
+        from .models import ProductSKU
+        sku = ProductSKU.objects.filter(option_ids__contains=[option_id]).first()
+        self.assertIsNotNone(sku)
+        self.assertIsNotNone(sku.image)

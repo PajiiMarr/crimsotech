@@ -7812,12 +7812,16 @@ class SellerProducts(viewsets.ModelViewSet):
                     except Exception as e:
                         print(f"Error creating ProductMedia: {e}")  # Debug
 
-                # Process variants JSON (if provided) to create Variants and VariantOptions with images and dimensions
+                # Process variants JSON (if provided) to create Variants and VariantOptions
                 variants_raw = request.data.get('variants')
                 if variants_raw:
                     try:
                         import json
                         variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+                        # Collect uploaded files per option_id to later apply to matching SKUs
+                        option_image_files = {}
+                        # Map payload option ids -> created VariantOptions DB id
+                        option_id_map = {}
                         for g in variants_list:
                             group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
                             variant = Variants.objects.create(
@@ -7826,30 +7830,203 @@ class SellerProducts(viewsets.ModelViewSet):
                                 title=g.get('title') or ''
                             )
                             for opt in g.get('options', []):
-                                option_id = opt.get('id') or str(uuid.uuid4())
+                                provided_option_id = opt.get('id') or str(uuid.uuid4())
                                 vopt = VariantOptions.objects.create(
                                     variant=variant,
-                                    title=opt.get('title') or '',
-                                    quantity=int(opt.get('quantity') or 0),
-                                    price=Decimal(str(opt.get('price') or 0)),
-                                    compare_price=(Decimal(str(opt.get('compare_price'))) if opt.get('compare_price') not in (None, '') else None),
-                                    length=(Decimal(str(opt.get('length'))) if opt.get('length') not in (None, '') else None),
-                                    width=(Decimal(str(opt.get('width'))) if opt.get('width') not in (None, '') else None),
-                                    height=(Decimal(str(opt.get('height'))) if opt.get('height') not in (None, '') else None),
-                                    weight=(Decimal(str(opt.get('weight'))) if opt.get('weight') not in (None, '') else None),
-                                    weight_unit=opt.get('weight_unit') or 'g'
+                                    title=opt.get('title') or ''
                                 )
-                                file_key = f"variant_image_{group_id}_{option_id}"
+                                # Record mapping from provided option id to the actual DB id (string)
+                                option_id_map[str(provided_option_id)] = str(vopt.id)
+
+                                file_key = f"variant_image_{group_id}_{provided_option_id}"
+                                # Debug: log presence of file key and available FILES keys
+                                try:
+                                    files_keys = list(request.FILES.keys())
+                                except Exception:
+                                    files_keys = []
+                                print(f"Looking for variant file key '{file_key}' in request.FILES. Available keys: {files_keys}")
+
+                                target_key = None
                                 if file_key in request.FILES:
+                                    target_key = file_key
+                                else:
+                                    # Fallback: try match by option_id suffix if group_id mismatch occurred
+                                    for k in files_keys:
+                                        if k.endswith(f"_{provided_option_id}") and k.startswith("variant_image_"):
+                                            target_key = k
+                                            print(f"Fallback matched variant image key '{k}' for option {provided_option_id}")
+                                            break
+
+                                if target_key:
                                     try:
-                                        vopt.image = request.FILES[file_key]
-                                        vopt.save()
+                                        file_obj = request.FILES[target_key]
+                                        print(f"Queued variant image for option {provided_option_id} (db id {vopt.id}): name={getattr(file_obj, 'name', None)}, size={getattr(file_obj, 'size', None)}, content_type={getattr(file_obj, 'content_type', None)}")
+                                        # Store to map for assignment to SKUs later
+                                        # Keep both keys: the provided id and the actual DB id, so lookups using either work
+                                        option_image_files[str(provided_option_id)] = file_obj
+                                        option_image_files[str(vopt.id)] = file_obj
                                     except Exception as e:
-                                        print('Failed to save variant image', e)
+                                        print('Failed to read variant image file', e)
+
+                        # Handle SKUs payload (per-variant combination config including swap)
+                        skus_raw = request.data.get('skus')
+                        if skus_raw:
+                            try:
+                                import json
+                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+                                from decimal import Decimal
+                                # Debug: list incoming file keys and prepare available explicit sku image keys (preserve order)
+                                try:
+                                    files_keys = list(request.FILES.keys())
+                                except Exception:
+                                    files_keys = []
+                                print(f"Incoming FILES keys: {files_keys}")
+                                sku_file_keys = [k for k in files_keys if k.startswith('sku_image_')]
+                                print(f"Detected sku_image keys (ordered): {sku_file_keys}")
+                                print(f"SKUs payload: {skus_list}")
+                                for s in skus_list:
+                                    # Map provided option ids to DB VariantOptions ids when possible
+                                    provided_oids = s.get('option_ids') or []
+                                    mapped_oids = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oids ]
+
+                                    sku = ProductSKU.objects.create(
+                                        product=product,
+                                        option_ids=mapped_oids,
+                                        option_map=s.get('option_map'),
+                                        price=Decimal(str(s.get('price'))) if s.get('price') not in (None, '') else None,
+                                        compare_price=(Decimal(str(s.get('compare_price'))) if s.get('compare_price') not in (None, '') else None),
+                                        quantity=int(s.get('quantity') or 0),
+                                        length=(Decimal(str(s.get('length'))) if s.get('length') not in (None, '') else None),
+                                        width=(Decimal(str(s.get('width'))) if s.get('width') not in (None, '') else None),
+                                        height=(Decimal(str(s.get('height'))) if s.get('height') not in (None, '') else None),
+                                        weight=(Decimal(str(s.get('weight'))) if s.get('weight') not in (None, '') else None),
+                                        weight_unit=s.get('weight_unit') or 'g',
+                                        sku_code=s.get('sku_code') or '',
+                                        critical_trigger=s.get('critical_trigger') if s.get('critical_trigger') not in (None, '') else None,
+                                        allow_swap=bool(s.get('allow_swap', False)),
+                                        swap_type=s.get('swap_type') or 'direct_swap',
+                                        minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                        maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                        swap_description=s.get('swap_description') or '',
+                                    )
+
+                                    # Attach accepted categories if provided
+                                    accepted = s.get('accepted_categories') or []
+                                    if isinstance(accepted, str):
+                                        try:
+                                            import json
+                                            accepted = json.loads(accepted)
+                                        except Exception:
+                                            accepted = []
+                                    for cat_id in accepted:
+                                        try:
+                                            cat = Category.objects.get(id=cat_id)
+                                            sku.accepted_categories.add(cat)
+                                        except Exception:
+                                            pass
+
+                                    # Save SKU image if present in FILES keyed by provided sku id OR fallback to next available sku_image_* file key
+                                    provided_id = s.get('id')
+                                    print(f"Processing SKU: provided_id={provided_id}, option_ids={s.get('option_ids')}")
+                                    file_key = f"sku_image_{provided_id}" if provided_id else None
+                                    assigned = False
+                                    if file_key and file_key in request.FILES:
+                                        try:
+                                            sku.image = request.FILES[file_key]
+                                            sku.save()
+                                            assigned = True
+                                            print(f"SKU {sku.id} saved image from explicit key {file_key}: {sku.image.name}")
+                                        except Exception as e:
+                                            print('Failed to save sku image', e)
+                                    # Fallback: if explicit key not found, consume next sku_image_* from the FormData (preserve order)
+                                    if not assigned and sku_file_keys:
+                                        next_key = sku_file_keys.pop(0)
+                                        print(f"No explicit sku key for SKU {sku.id}; using next sku_image key {next_key}")
+                                        try:
+                                            sku.image = request.FILES[next_key]
+                                            sku.save()
+                                            assigned = True
+                                            print(f"SKU {sku.id} saved image from fallback key {next_key}: {sku.image.name}")
+                                        except Exception as e:
+                                            print('Failed to save sku image from fallback', e)
+                                    # Final fallback: map from option images by option_ids
+                                    if not assigned:
+                                        try:
+                                            provided_oid_list = s.get('option_ids') or []
+                                            # Prefer mapped DB option ids first, then the provided ids
+                                            mapped_oid_list = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oid_list ]
+                                            search_list = mapped_oid_list + [str(x) for x in provided_oid_list]
+                                            print(f"Attempting option->sku mapping using option_image_files keys: {list(option_image_files.keys())}; searching: {search_list}")
+                                            for oid in search_list:
+                                                f = option_image_files.get(str(oid))
+                                                if f:
+                                                    sku.image = f
+                                                    sku.save()
+                                                    print(f"SKU {sku.id} saved image from option {oid}: {sku.image.name}")
+                                                    break
+                                        except Exception as e:
+                                            print('Failed to map option image to sku', e)
+                            except Exception as e:
+                                print('Failed to parse skus payload:', e)
+                            else:
+                                # No SKUs provided - create simple SKU per option so images/quantities are stored
+                                try:
+                                    from decimal import Decimal
+                                    for g in variants_list:
+                                        for opt in g.get('options', []):
+                                            option_id = opt.get('id') or str(uuid.uuid4())
+                                            sku = ProductSKU.objects.create(
+                                                product=product,
+                                                option_ids=[option_id],
+                                                option_map={g.get('title') or 'Option': opt.get('title')},
+                                                price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
+                                                quantity=int(opt.get('quantity') or 0),
+                                            )
+                                            f = option_image_files.get(str(option_id))
+                                            if f:
+                                                sku.image = f
+                                                sku.save()
+                                                print(f"Auto-created SKU {sku.id} for option {option_id} and saved image {sku.image.name}")
+                                except Exception as e:
+                                    print('Failed to auto-create SKUs from variants:', e)
+                        else:
+                            # No SKUs provided - create simple SKU per option so images/quantities are stored
+                            try:
+                                from decimal import Decimal
+                                for g in variants_list:
+                                    for opt in g.get('options', []):
+                                        option_id = opt.get('id') or str(uuid.uuid4())
+                                        # Use DB id mapping when available
+                                        mapped_option_id = option_id_map.get(str(option_id), str(option_id))
+                                        sku = ProductSKU.objects.create(
+                                            product=product,
+                                            option_ids=[mapped_option_id],
+                                            option_map={g.get('title') or 'Option': opt.get('title')},
+                                            price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
+                                            quantity=int(opt.get('quantity') or 0),
+                                        )
+                                        # Try to get image by mapped id first, then provided id
+                                        f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(option_id))
+                                        if f:
+                                            sku.image = f
+                                            sku.save()
+                                            print(f"Auto-created SKU {sku.id} for option {option_id} (mapped {mapped_option_id}) and saved image {sku.image.name}")
+                            except Exception as e:
+                                print('Failed to auto-create SKUs from variants:', e)
                     except Exception as e:
                         print('Failed to parse variants payload:', e)
 
                 # Return same format as get_product_list
+                # Debug: list SKUs and their images
+                try:
+                    sku_debug = [{
+                        'id': str(s.id),
+                        'image': (s.image.name if s.image else None)
+                    } for s in product.skus.all()]
+                    print(f"Product {product.id} SKUs after creation: {sku_debug}")
+                except Exception as e:
+                    print('Failed to list skus after creation', e)
+
                 return Response({
                     "success": True,
                     "products": [
@@ -8109,36 +8286,201 @@ class CustomerProducts(viewsets.ModelViewSet):
                         try:
                             import json
                             variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
-                            for g in variants_list:
-                                group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
-                                variant = Variants.objects.create(
-                                    product=product,
-                                    shop=None,
-                                    title=g.get('title') or ''
-                                )
-                                for opt in g.get('options', []):
-                                    option_id = opt.get('id') or str(uuid.uuid4())
-                                    vopt = VariantOptions.objects.create(
-                                        variant=variant,
-                                        title=opt.get('title') or '',
-                                        quantity=int(opt.get('quantity') or 0),
-                                        price=Decimal(str(opt.get('price') or 0)),
-                                        compare_price=(Decimal(str(opt.get('compare_price'))) if opt.get('compare_price') not in (None, '') else None),
-                                        length=(Decimal(str(opt.get('length'))) if opt.get('length') not in (None, '') else None),
-                                        width=(Decimal(str(opt.get('width'))) if opt.get('width') not in (None, '') else None),
-                                        height=(Decimal(str(opt.get('height'))) if opt.get('height') not in (None, '') else None),
-                                        weight=(Decimal(str(opt.get('weight'))) if opt.get('weight') not in (None, '') else None),
-                                        weight_unit=opt.get('weight_unit') or 'g'
-                                    )
-                                    file_key = f"variant_image_{group_id}_{option_id}"
-                                    if file_key in request.FILES:
-                                        try:
-                                            vopt.image = request.FILES[file_key]
-                                            vopt.save()
-                                        except Exception as e:
-                                            print('Failed to save variant image', e)
                         except Exception as e:
                             print('Failed to parse variants payload:', e)
+                            variants_list = []
+
+                        # Create variants & options and collect option images to map to SKUs
+                        option_image_files = {}
+                        # Map payload option ids -> created VariantOptions DB id
+                        option_id_map = {}
+                        for g in variants_list:
+                            group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
+                            variant = Variants.objects.create(
+                                product=product,
+                                shop=None,
+                                title=g.get('title') or ''
+                            )
+                            for opt in g.get('options', []):
+                                provided_option_id = opt.get('id') or str(uuid.uuid4())
+                                vopt = VariantOptions.objects.create(
+                                    variant=variant,
+                                    title=opt.get('title') or ''
+                                )
+                                # Record mapping from provided option id to actual DB id
+                                option_id_map[str(provided_option_id)] = str(vopt.id)
+                                file_key = f"variant_image_{group_id}_{provided_option_id}"
+                                # Debug: log presence of file key and available FILES keys
+                                try:
+                                    files_keys = list(request.FILES.keys())
+                                except Exception:
+                                    files_keys = []
+                                print(f"Looking for variant file key '{file_key}' in request.FILES. Available keys: {files_keys}")
+
+                                target_key = None
+                                if file_key in request.FILES:
+                                    target_key = file_key
+                                else:
+                                    # Fallback: try match by option_id suffix if group_id mismatch occurred
+                                    for k in files_keys:
+                                        if k.endswith(f"_{option_id}") and k.startswith("variant_image_"):
+                                            target_key = k
+                                            print(f"Fallback matched variant image key '{k}' for option {option_id}")
+                                            break
+
+                                if target_key:
+                                    try:
+                                        file_obj = request.FILES[target_key]
+                                        print(f"Queued variant image for option {provided_option_id} (db id {vopt.id}): name={getattr(file_obj, 'name', None)}, size={getattr(file_obj, 'size', None)}, content_type={getattr(file_obj, 'content_type', None)}")
+                                        # Store to map for assignment to SKUs later; keep both provided id and db id
+                                        option_image_files[str(provided_option_id)] = file_obj
+                                        option_image_files[str(vopt.id)] = file_obj
+                                    except Exception as e:
+                                        print('Failed to read variant image file', e)
+
+                        # If no explicit SKUs provided, create simple SKUs per option to store images/quantities
+                        skus_raw_check = request.data.get('skus')
+                        if not skus_raw_check:
+                            try:
+                                from decimal import Decimal
+                                # For each variant group option, create a SKU with single option
+                                for g in variants_list:
+                                    for opt in g.get('options', []):
+                                        option_id = opt.get('id') or str(uuid.uuid4())
+                                        sku = ProductSKU.objects.create(
+                                            product=product,
+                                            option_ids=[option_id],
+                                            option_map={g.get('title') or 'Option': opt.get('title')},
+                                            price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
+                                            quantity=int(opt.get('quantity') or 0)
+                                        )
+                                        # assign image if available
+                                        f = option_image_files.get(str(option_id))
+                                        if f:
+                                            sku.image = f
+                                            sku.save()
+                                            print(f"Auto-created SKU {sku.id} for option {option_id} and saved image {sku.image.name}")
+                            except Exception as e:
+                                print('Failed to auto-create SKUs from variants:', e)
+
+                        # Handle SKUs payload (per-variant combination config including swap)
+                        skus_raw = request.data.get('skus')
+                        if skus_raw:
+                            try:
+                                import json
+                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+                                from decimal import Decimal
+                                # Prepare available explicit sku image keys (preserve order)
+                                try:
+                                    files_keys = list(request.FILES.keys())
+                                except Exception:
+                                    files_keys = []
+                                print(f"Incoming FILES keys (personal listing): {files_keys}")
+                                sku_file_keys = [k for k in files_keys if k.startswith('sku_image_')]
+                                print(f"Detected sku_image keys (personal listing): {sku_file_keys}")
+                                print(f"SKUs payload (personal listing): {skus_list}")
+
+                                for s in skus_list:
+                                    # Map provided option ids (which may be frontend temporary ids) to actual DB VariantOption ids
+                                    provided_oids = s.get('option_ids') or []
+                                    mapped_oids = []
+                                    for oid in provided_oids:
+                                        oid_str = str(oid)
+                                        # If option_id_map exists (from earlier variant creation), use it
+                                        if 'option_id_map' in locals() and option_id_map.get(oid_str):
+                                            mapped_oids.append(option_id_map.get(oid_str))
+                                            continue
+                                        # If oid already matches a VariantOption id, keep it
+                                        try:
+                                            if VariantOptions.objects.filter(id=oid_str).exists():
+                                                mapped_oids.append(oid_str)
+                                                continue
+                                        except Exception:
+                                            pass
+                                        # Fallback: try to find by title within this product's variants
+                                        try:
+                                            vopt = VariantOptions.objects.filter(variant__product=product, title=oid_str).first()
+                                            if vopt:
+                                                mapped_oids.append(str(vopt.id))
+                                                continue
+                                        except Exception:
+                                            pass
+                                        # As a last resort, keep the original provided value (so errors are visible)
+                                        mapped_oids.append(oid_str)
+
+                                    sku = ProductSKU.objects.create(
+                                        product=product,
+                                        option_ids=mapped_oids,
+                                        option_map=s.get('option_map'),
+                                        price=Decimal(str(s.get('price'))) if s.get('price') not in (None, '') else None,
+                                        compare_price=(Decimal(str(s.get('compare_price'))) if s.get('compare_price') not in (None, '') else None),
+                                        quantity=int(s.get('quantity') or 0),
+                                        length=(Decimal(str(s.get('length'))) if s.get('length') not in (None, '') else None),
+                                        width=(Decimal(str(s.get('width'))) if s.get('width') not in (None, '') else None),
+                                        height=(Decimal(str(s.get('height'))) if s.get('height') not in (None, '') else None),
+                                        weight=(Decimal(str(s.get('weight'))) if s.get('weight') not in (None, '') else None),
+                                        weight_unit=s.get('weight_unit') or 'g',
+                                        sku_code=s.get('sku_code') or '',
+                                        critical_trigger=s.get('critical_trigger') if s.get('critical_trigger') not in (None, '') else None,
+                                        allow_swap=bool(s.get('allow_swap', False)),
+                                        swap_type=s.get('swap_type') or 'direct_swap',
+                                        minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                        maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                        swap_description=s.get('swap_description') or '',
+                                    )
+
+                                    # Attach accepted categories if provided
+                                    accepted = s.get('accepted_categories') or []
+                                    if isinstance(accepted, str):
+                                        try:
+                                            import json
+                                            accepted = json.loads(accepted)
+                                        except Exception:
+                                            accepted = []
+                                    for cat_id in accepted:
+                                        try:
+                                            cat = Category.objects.get(id=cat_id)
+                                            sku.accepted_categories.add(cat)
+                                        except Exception:
+                                            pass
+
+                                    # Save SKU image if present in FILES keyed by provided sku id OR fallback to next available sku_image_* file key
+                                    provided_id = s.get('id')
+                                    print(f"Processing personal SKU: provided_id={provided_id}, option_ids={s.get('option_ids')}")
+                                    file_key = f"sku_image_{provided_id}" if provided_id else None
+                                    assigned = False
+                                    if file_key and file_key in request.FILES:
+                                        try:
+                                            sku.image = request.FILES[file_key]
+                                            sku.save()
+                                            assigned = True
+                                            print(f"Personal SKU {sku.id} saved image from explicit key {file_key}: {sku.image.name}")
+                                        except Exception as e:
+                                            print('Failed to save personal sku image', e)
+                                    if not assigned and sku_file_keys:
+                                        next_key = sku_file_keys.pop(0)
+                                        try:
+                                            sku.image = request.FILES[next_key]
+                                            sku.save()
+                                            assigned = True
+                                            print(f"Personal SKU {sku.id} saved image from fallback key {next_key}: {sku.image.name}")
+                                        except Exception as e:
+                                            print('Failed to save personal sku image from fallback', e)
+                                    if not assigned:
+                                        try:
+                                            print(f"Attempting personal option->sku mapping using option_image_files keys: {list(option_image_files.keys())}")
+                                            oid_list = s.get('option_ids') or []
+                                            for oid in oid_list:
+                                                f = option_image_files.get(str(oid))
+                                                if f:
+                                                    sku.image = f
+                                                    sku.save()
+                                                    print(f"Personal SKU {sku.id} saved image from option {oid}: {sku.image.name}")
+                                                    break
+                                        except Exception as e:
+                                            print('Failed to map personal option image to sku', e)
+                            except Exception as e:
+                                print('Failed to parse skus payload:', e)
                     else:
                         # Backwards-compatible simple variant handling
                         variant_title = request.data.get('variant_title')
@@ -8159,7 +8501,62 @@ class CustomerProducts(viewsets.ModelViewSet):
                                 quantity=int(variant_option_quantity) if variant_option_quantity else 0,
                                 price=float(variant_option_price) if variant_option_price else 0
                             )
-                    
+
+                    # Handle SKUs payload (per-variant combination config including swap)
+                    skus_raw = request.data.get('skus')
+                    if skus_raw:
+                        try:
+                            import json
+                            skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+                            from decimal import Decimal
+                            for s in skus_list:
+                                sku = ProductSKU.objects.create(
+                                    product=product,
+                                    option_ids=s.get('option_ids'),
+                                    option_map=s.get('option_map'),
+                                    price=Decimal(str(s.get('price'))) if s.get('price') not in (None, '') else None,
+                                    compare_price=(Decimal(str(s.get('compare_price'))) if s.get('compare_price') not in (None, '') else None),
+                                    quantity=int(s.get('quantity') or 0),
+                                    length=(Decimal(str(s.get('length'))) if s.get('length') not in (None, '') else None),
+                                    width=(Decimal(str(s.get('width'))) if s.get('width') not in (None, '') else None),
+                                    height=(Decimal(str(s.get('height'))) if s.get('height') not in (None, '') else None),
+                                    weight=(Decimal(str(s.get('weight'))) if s.get('weight') not in (None, '') else None),
+                                    weight_unit=s.get('weight_unit') or 'g',
+                                    sku_code=s.get('sku_code') or '',
+                                    critical_trigger=s.get('critical_trigger') if s.get('critical_trigger') not in (None, '') else None,
+                                    allow_swap=bool(s.get('allow_swap', False)),
+                                    swap_type=s.get('swap_type') or 'direct_swap',
+                                    minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                    maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                    swap_description=s.get('swap_description') or '',
+                                )
+
+                                # Attach accepted categories if provided
+                                accepted = s.get('accepted_categories') or []
+                                if isinstance(accepted, str):
+                                    try:
+                                        import json
+                                        accepted = json.loads(accepted)
+                                    except Exception:
+                                        accepted = []
+                                for cat_id in accepted:
+                                    try:
+                                        cat = Category.objects.get(id=cat_id)
+                                        sku.accepted_categories.add(cat)
+                                    except Exception:
+                                        pass
+
+                                # Save SKU image if present in FILES
+                                file_key = f"sku_image_{s.get('id') or sku.id}"
+                                if file_key in request.FILES:
+                                    try:
+                                        sku.image = request.FILES[file_key]
+                                        sku.save()
+                                    except Exception as e:
+                                        print('Failed to save sku image', e)
+                        except Exception as e:
+                            print('Failed to parse skus payload:', e)
+
                     # Return same format as get_product_list
                     return Response({
                         "success": True,
@@ -8288,32 +8685,11 @@ class CustomerProducts(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
         
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
-
     serializer_class = ProductSerializer
 
     def get_queryset(self):
         user_id = self.request.headers.get('X-User-Id')
-        print(f"DEBUG: user_id = {user_id}")
-        total_products = Product.objects.filter(
-            upload_status='published',
-            is_removed=False
-        ).count()
-        print(f"DEBUG: Total published products = {total_products}")
-
-        user_products_customer = Product.objects.filter(
-            upload_status='published',
-            is_removed=False,
-            customer__customer__id=user_id
-        ).count()
-        print(f"DEBUG: Products owned via customer = {user_products_customer}")
-
-        user_products_shop = Product.objects.filter(
-            upload_status='published',
-            is_removed=False,
-            shop__customer__customer__id=user_id
-        ).count()
-        print(f"DEBUG: Products owned via shop = {user_products_shop}")
-
+        
         queryset = Product.objects.filter(
             upload_status='published',
             is_removed=False
@@ -8330,29 +8706,188 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             Prefetch(
                 'variants_set',
                 queryset=Variants.objects.all().prefetch_related('variantoptions_set')
+            ),
+            Prefetch(
+                'skus',
+                queryset=ProductSKU.objects.filter(is_active=True).prefetch_related('accepted_categories')
             )
         )
 
         if user_id:
-
             queryset = queryset.exclude(
-
                 Q(customer__customer__id=user_id) | 
-
                 Q(shop__customer__customer__id=user_id)
-
             )
-
-        
-
-        final_count = queryset.count()
-
-        print(f"DEBUG: Final count after exclusion = {final_count}")
-
-        
 
         return queryset.order_by('-created_at')
 
+    def retrieve(self, request, pk=None):
+        """Return a single product with SKU images mapped to variant options"""
+        try:
+            product = self.get_queryset().get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get the serializer data
+        serializer = ProductSerializer(product, context={'request': request})
+        data = serializer.data
+        
+        # Manually enhance variant options with SKU images and price info
+        if data.get('variants') and data.get('skus'):
+            # Build a map of option_id -> list of SKUs containing that option
+            option_skus_map = {}
+            for sku in product.skus.filter(is_active=True):
+                for option_id in (sku.option_ids or []):
+                    option_id_str = str(option_id)
+                    if option_id_str not in option_skus_map:
+                        option_skus_map[option_id_str] = []
+                    option_skus_map[option_id_str].append(sku)
+            
+            # Enhance each variant option with data from SKUs
+            for variant_group in data['variants']:
+                for option in variant_group.get('options', []):
+                    option_id = option['id']
+                    
+                    # Find SKUs containing this option
+                    skus_for_option = option_skus_map.get(option_id, [])
+                    
+                    if skus_for_option:
+                        # Get price range
+                        prices = [float(sku.price) for sku in skus_for_option if sku.price]
+                        if prices:
+                            min_price = min(prices)
+                            max_price = max(prices)
+                            if min_price == max_price:
+                                option['price'] = f"₱{min_price:.2f}"
+                            else:
+                                option['price'] = f"₱{min_price:.2f} - ₱{max_price:.2f}"
+                        
+                        # Get total stock
+                        total_stock = sum([sku.quantity for sku in skus_for_option if sku.quantity])
+                        option['quantity'] = total_stock
+                        
+                        # Get first SKU image for this option
+                        sku_with_image = None
+                        for sku in skus_for_option:
+                            if sku.image:
+                                sku_with_image = sku
+                                break
+                        
+                        if sku_with_image and sku_with_image.image:
+                            option['image'] = request.build_absolute_uri(sku_with_image.image.url)
+                        else:
+                            option['image'] = None
+                    else:
+                        option['price'] = None
+                        option['quantity'] = 0
+                        option['image'] = None
+
+        return Response(data)
+
+    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'])
+    def get_sku_for_options(self, request):
+        """Get SKU details for specific selected options"""
+        product_id = request.query_params.get('product_id')
+        option_ids = request.query_params.getlist('option_ids[]') or []
+        
+        if not product_id:
+            return Response({"error": "product_id is required"}, status=400)
+        
+        try:
+            product = Product.objects.get(id=product_id, is_removed=False)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=404)
+        
+        # If no option_ids provided, return product-level info
+        if not option_ids:
+            return Response({
+                'price': float(product.price) if product.price else None,
+                'compare_price': float(product.compare_price) if product.compare_price else None,
+                'quantity': product.quantity,
+                'message': 'No options selected'
+            })
+        
+        # Find matching SKU (require exact match of option_ids)
+        matching_sku = None
+        all_skus = product.skus.filter(is_active=True)
+        
+        # Try to find exact match first
+        for sku in all_skus:
+            sku_option_ids = [str(oid) for oid in (sku.option_ids or [])]
+            if sorted(sku_option_ids) == sorted(option_ids):
+                matching_sku = sku
+                break
+
+        # Do not fallback to inclusive matching - only exact combinations are valid
+        # (Because ProductSKU already maps all valid combinations).
+
+        
+        if matching_sku:
+            # Build response with SKU details
+            response_data = {
+                'id': str(matching_sku.id),
+                'sku_code': matching_sku.sku_code,
+                'price': float(matching_sku.price) if matching_sku.price else None,
+                'compare_price': float(matching_sku.compare_price) if matching_sku.compare_price else None,
+                'quantity': matching_sku.quantity,
+                'image': request.build_absolute_uri(matching_sku.image.url) if matching_sku.image else None,
+                'length': float(matching_sku.length) if matching_sku.length else None,
+                'width': float(matching_sku.width) if matching_sku.width else None,
+                'height': float(matching_sku.height) if matching_sku.height else None,
+                'weight': float(matching_sku.weight) if matching_sku.weight else None,
+                'weight_unit': matching_sku.weight_unit,
+                'swap_type': matching_sku.swap_type,
+                'minimum_additional_payment': float(matching_sku.minimum_additional_payment) if matching_sku.minimum_additional_payment else None,
+                'maximum_additional_payment': float(matching_sku.maximum_additional_payment) if matching_sku.maximum_additional_payment else None,
+                'swap_description': matching_sku.swap_description,
+            }
+            return Response(response_data)
+        
+        # Return product-level details if no matching SKU found
+        return Response({
+            'price': float(product.price) if product.price else None,
+            'compare_price': float(product.compare_price) if product.compare_price else None,
+            'quantity': product.quantity,
+            'message': 'No matching SKU found for selected options'
+        })
+
+    @action(detail=False, methods=['get'])
+    def find_sku_id_for_options(self, request):
+        """Return the ProductSKU id that matches the given option_ids exactly (or fall back to inclusive match with fallback=true)."""
+        product_id = request.query_params.get('product_id')
+        option_ids = request.query_params.getlist('option_ids[]') or []
+        fallback = request.query_params.get('fallback', 'false').lower() == 'true'
+
+        if not product_id:
+            return Response({"error": "product_id is required"}, status=400)
+
+        try:
+            product = Product.objects.get(id=product_id, is_removed=False)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=404)
+
+        if not option_ids:
+            return Response({"error": "option_ids[] is required"}, status=400)
+
+        all_skus = product.skus.filter(is_active=True)
+
+        # exact match first
+        for sku in all_skus:
+            sku_option_ids = [str(oid) for oid in (sku.option_ids or [])]
+            if sorted(sku_option_ids) == sorted(option_ids):
+                return Response({"sku_id": str(sku.id)})
+
+        if fallback:
+            # inclusive match: return first SKU that contains all selected options
+            for sku in all_skus:
+                sku_option_ids = [str(oid) for oid in (sku.option_ids or [])]
+                if all(oid in sku_option_ids for oid in option_ids):
+                    return Response({"sku_id": str(sku.id), "fallback": True})
+
+        return Response({"sku_id": None, "message": "No matching SKU found"}, status=404)
+    
+    
 class AddToCartView(APIView):
 
     def post(self, request):

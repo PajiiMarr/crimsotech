@@ -62,24 +62,22 @@ interface ShippingZone {
 interface VariantOption {
   id: string;
   title: string;
-  quantity: number | '';
-  price: number | '';
-  compare_price?: number | '';
-  critical_trigger?: number | '';
-  enable_critical_trigger?: boolean;
   image?: File | null;
   imagePreview?: string;
-  length?: number | '';
-  width?: number | '';
-  height?: number | '';
-  weight?: number | '';
-  weight_unit?: 'g' | 'kg' | 'lb' | 'oz';
-}
+} 
 
 interface VariantGroup {
   id: string;
   title: string;
   options: VariantOption[];
+}
+
+interface VariantSwapConfig {
+  swapType: 'direct_swap' | 'swap_plus_payment';
+  minAdditionalPayment: number | '';
+  maxAdditionalPayment: number | '';
+  acceptedCategories: string[];
+  swapDescription: string;
 }
 
 interface CreateProductFormProps {
@@ -131,12 +129,41 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const [minAdditionalPayment, setMinAdditionalPayment] = useState<number | ''>('');
   const [maxAdditionalPayment, setMaxAdditionalPayment] = useState<number | ''>('');
   const [swapDescription, setSwapDescription] = useState('');
-  
+
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
   const [showVariants, setShowVariants] = useState(false);
   const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
+  const variantsEnabled = variantGroups.length > 0;
   const [enableCriticalTrigger, setEnableCriticalTrigger] = useState(false);
   const [criticalThreshold, setCriticalThreshold] = useState<number | ''>('');
+
+  // SKU combinations generated from variant groups (cartesian product)
+  interface SKUCombination {
+    id: string;
+    option_ids: string[]; // ordered by group order
+    option_map: Record<string, string>; // groupId -> optionId
+    price: number | '';
+    compare_price?: number | '';
+    quantity: number | '';
+    length?: number | '';
+    width?: number | '';
+    height?: number | '';
+    weight?: number | '';
+    weight_unit?: 'g' | 'kg' | 'lb' | 'oz' | '';
+    sku_code?: string;
+    // New: per-SKU image and critical stock trigger
+    image?: File | null;
+    imagePreview?: string;
+    critical_trigger?: number | '';
+    // Whether this combination is active (seller can disable combinations)
+    is_active?: boolean;
+    // Whether this SKU is allowed for swap (derived from option flags or explicitly toggled)
+    allow_swap?: boolean;
+  }
+
+  const [skuCombinations, setSkuCombinations] = useState<SKUCombination[]>([]);
+  const [skuSwapConfigs, setSkuSwapConfigs] = useState<Record<string, VariantSwapConfig>>({});
+  const hasSkuSwap = skuCombinations.some(s => !!s.allow_swap);
   const [productWeight, setProductWeight] = useState<number | ''>('');
   const [productWeightUnit, setProductWeightUnit] = useState<'g' | 'kg' | 'lb' | 'oz'>('g');
   const [productLength, setProductLength] = useState<number | ''>('');
@@ -407,9 +434,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
           {
             id: generateId(),
             title: "Red",
-            quantity: 0,
-            price: 0,
-            weight_unit: 'g' as const,
           },
         ],
       },
@@ -440,9 +464,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     const newOption: VariantOption = {
       id: generateId(),
       title: title.trim(),
-      quantity: 0,
-      price: 0,
-      weight_unit: 'g' as const,
     };
     
     setVariantGroups(prev => prev.map(group => 
@@ -451,6 +472,95 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
         : group
     ));
   };
+
+  // Create cartesian product of variant options and preserve existing SKU edits
+  const generateSkuCombinations = useCallback(() => {
+    if (variantGroups.length === 0) {
+      setSkuCombinations([]);
+      return;
+    }
+
+    // Build arrays of options per group
+    const arrays = variantGroups.map(g => g.options.map(o => ({ id: o.id, title: o.title })));
+
+    // Cartesian product
+    let combos: any[] = [];
+    arrays.forEach((arr, idx) => {
+      if (idx === 0) {
+        combos = arr.map((a) => ({ option_ids: [a.id], option_map: { [variantGroups[0].id]: a.id }, price: productPrice || '', quantity: productQuantity || '' }));
+      } else {
+        const groupId = variantGroups[idx].id;
+        const newCombos: any[] = [];
+        combos.forEach(existing => {
+          arr.forEach((a) => {
+            newCombos.push({
+              option_ids: [...existing.option_ids, a.id],
+              option_map: { ...existing.option_map, [groupId]: a.id },
+              price: existing.price ?? productPrice ?? '',
+              compare_price: existing.compare_price ?? undefined,
+              quantity: existing.quantity ?? productQuantity ?? '',
+              length: existing.length ?? productLength ?? '',
+              width: existing.width ?? productWidth ?? '',
+              height: existing.height ?? productHeight ?? '',
+              weight: existing.weight ?? productWeight ?? '',
+              weight_unit: existing.weight_unit ?? productWeightUnit ?? '',
+            });
+          });
+        });
+        combos = newCombos;
+      }
+    });
+
+    // Preserve existing skus where option_ids match (order-independent) by using a functional update
+    setSkuCombinations((prev) => {
+      const preserved = combos.map((c) => {
+        const ids = c.option_ids.slice().sort().join('|');
+        const found = prev.find(s => s.option_ids.slice().sort().join('|') === ids);
+        return {
+          id: found?.id || generateId(),
+          option_ids: c.option_ids,
+          option_map: c.option_map,
+          price: found?.price ?? c.price ?? productPrice ?? '',
+          compare_price: found?.compare_price ?? c.compare_price ?? undefined,
+          quantity: found?.quantity ?? c.quantity ?? 0,
+          length: found?.length ?? c.length ?? productLength ?? '',
+          width: found?.width ?? c.width ?? productWidth ?? '',
+          height: found?.height ?? c.height ?? productHeight ?? '',
+          weight: found?.weight ?? c.weight ?? productWeight ?? '',
+          weight_unit: found?.weight_unit ?? c.weight_unit ?? productWeightUnit ?? '',
+          sku_code: found?.sku_code || '',
+          // Preserve per-sku fields if user already edited them
+          image: found?.image ?? undefined,
+          imagePreview: found?.imagePreview ?? undefined,
+          critical_trigger: found?.critical_trigger ?? '',
+          is_active: found?.is_active ?? true,
+          // allow_swap: preserve existing value, default false
+          allow_swap: found?.allow_swap ?? false,
+        } as SKUCombination;
+      });
+
+      // Avoid unnecessary updates: if arrays are length-equal and every id matches prev, keep prev to prevent rerender loops
+      if (preserved.length === prev.length && preserved.every((p, i) => p.id === prev[i].id && p.price === prev[i].price && p.quantity === prev[i].quantity && p.sku_code === prev[i].sku_code)) {
+        return prev;
+      }
+
+      return preserved;
+    });
+  }, [variantGroups, productPrice]);
+
+  useEffect(() => {
+    generateSkuCombinations();
+  }, [variantGroups, productPrice]);
+
+  // Remove swap configs for SKUs that no longer exist
+  useEffect(() => {
+    setSkuSwapConfigs((prev) => {
+      const allowed = new Set(skuCombinations.map(s => s.id));
+      const nextEntries = Object.entries(prev).filter(([skuId]) => allowed.has(skuId));
+      const next = Object.fromEntries(nextEntries) as Record<string, VariantSwapConfig>;
+      return nextEntries.length === Object.keys(prev).length ? prev : next;
+    });
+  }, [skuCombinations]);
 
   const removeOption = (groupId: string, optionId: string) => {
     // Clean up image preview if exists
@@ -482,16 +592,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
           
           if (field === 'title') {
             updatedOption.title = value as string;
-          } else if (field === 'weight_unit') {
-            updatedOption.weight_unit = value as 'g' | 'kg' | 'lb' | 'oz';
-          } else if (field === 'quantity' || field === 'length' || field === 'width' || field === 'height' || field === 'weight') {
-            const numValue = parseInt(value as string);
-            updatedOption[field] = numValue >= 0 ? numValue : '';
-          } else if (field === 'price' || field === 'compare_price' || field === 'critical_trigger') {
-            const numValue = parseFloat(value as string);
-            updatedOption[field] = numValue >= 0 ? numValue : '';
-          } else if (field === 'enable_critical_trigger') {
-            updatedOption.enable_critical_trigger = value as boolean;
           } else if (field === 'image') {
             // Clean up previous image preview
             if (updatedOption.imagePreview) {
@@ -510,6 +610,83 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
         }),
       };
     }));
+
+    // small delay to allow variantGroups to update before regenerating skus
+    setTimeout(() => generateSkuCombinations(), 50);
+  };
+
+  // Update SKU fields (price / quantity / sku_code)
+  const updateSkuField = (skuId: string, field: keyof SKUCombination, value: any) => {
+    setSkuCombinations(prev => prev.map(sku => sku.id === skuId ? { ...sku, [field]: value } : sku));
+  };
+
+  const ensureSkuSwapConfig = (skuId: string) => {
+    setSkuSwapConfigs((prev) => {
+      if (prev[skuId]) return prev;
+      return {
+        ...prev,
+        [skuId]: {
+          swapType: 'direct_swap',
+          minAdditionalPayment: '',
+          maxAdditionalPayment: '',
+          acceptedCategories: [],
+          swapDescription: '',
+        },
+      };
+    });
+  };
+
+  const setSkuAllowSwap = (skuId: string, checked: boolean) => {
+    updateSkuField(skuId, 'allow_swap', checked);
+    if (checked) {
+      ensureSkuSwapConfig(skuId);
+    } else {
+      setSkuSwapConfigs((prev) => {
+        if (!prev[skuId]) return prev;
+        const copy = { ...prev };
+        delete copy[skuId];
+        return copy;
+      });
+    }
+  };
+
+  const updateSkuSwapConfig = (skuId: string, patch: Partial<VariantSwapConfig>) => {
+    setSkuSwapConfigs((prev) => {
+      const base: VariantSwapConfig = prev[skuId] ?? {
+        swapType: 'direct_swap',
+        minAdditionalPayment: '',
+        maxAdditionalPayment: '',
+        acceptedCategories: [],
+        swapDescription: '',
+      };
+      return { ...prev, [skuId]: { ...base, ...patch } };
+    });
+  };
+
+  const toggleSkuAcceptedCategory = (skuId: string, categoryId: string) => {
+    setSkuSwapConfigs((prev) => {
+      const base: VariantSwapConfig = prev[skuId] ?? {
+        swapType: 'direct_swap',
+        minAdditionalPayment: '',
+        maxAdditionalPayment: '',
+        acceptedCategories: [],
+        swapDescription: '',
+      };
+      const nextAccepted = base.acceptedCategories.includes(categoryId)
+        ? base.acceptedCategories.filter(id => id !== categoryId)
+        : [...base.acceptedCategories, categoryId];
+      return { ...prev, [skuId]: { ...base, acceptedCategories: nextAccepted } };
+    });
+  };
+
+  // Handle SKU image upload (per combination)
+  const handleSkuImageChange = (skuId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      const preview = URL.createObjectURL(file);
+      setSkuCombinations(prev => prev.map(sku => sku.id === skuId ? { ...sku, image: file, imagePreview: preview } : sku));
+    }
+    e.target.value = '';
   };
 
   // Handle variant image upload
@@ -559,47 +736,51 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
         formData.append(`variant_group_${group.id}_title`, group.title);
         group.options.forEach((option) => {
           formData.append(`variant_group_${group.id}_option_${option.id}_title`, option.title);
-          formData.append(`variant_group_${group.id}_option_${option.id}_quantity`, String(option.quantity));
-          formData.append(`variant_group_${group.id}_option_${option.id}_price`, String(option.price));
-          
-          if (option.compare_price) {
-            formData.append(`variant_group_${group.id}_option_${option.id}_compare_price`, String(option.compare_price));
-          }
-          
-          if (option.enable_critical_trigger) {
-            formData.append(`variant_group_${group.id}_option_${option.id}_enable_critical_trigger`, 'true');
-          }
-          
-          if (option.critical_trigger) {
-            formData.append(`variant_group_${group.id}_option_${option.id}_critical_trigger`, String(option.critical_trigger));
-          }
-          
-          if (option.length) {
-            formData.append(`variant_group_${group.id}_option_${option.id}_length`, String(option.length));
-          }
-          
-          if (option.width) {
-            formData.append(`variant_group_${group.id}_option_${option.id}_width`, String(option.width));
-          }
-          
-          if (option.height) {
-            formData.append(`variant_group_${group.id}_option_${option.id}_height`, String(option.height));
-          }
-          
-          if (option.weight) {
-            formData.append(`variant_group_${group.id}_option_${option.id}_weight`, String(option.weight));
-          }
-          
-          if (option.weight_unit) {
-            formData.append(`variant_group_${group.id}_option_${option.id}_weight_unit`, option.weight_unit);
-          }
-          
+
           // Add variant image if exists
           if (option.image) {
             formData.append(`variant_image_${group.id}_${option.id}`, option.image);
           }
         });
       });
+
+      // Add auto-generated SKU combinations (if any)
+      if (skuCombinations.length > 0) {
+        const skusPayload = skuCombinations.map(s => {
+          const allowSwap = s.allow_swap ?? false;
+          const cfg = skuSwapConfigs[s.id];
+          return {
+              id: s.id,
+            option_ids: s.option_ids,
+            price: s.price,
+            compare_price: s.compare_price,
+            quantity: s.quantity,
+            length: s.length,
+            width: s.width,
+            height: s.height,
+            weight: s.weight,
+            weight_unit: s.weight_unit,
+            sku_code: s.sku_code,
+            critical_trigger: s.critical_trigger || null,
+            allow_swap: allowSwap,
+            is_active: s.is_active ?? true,
+            // Per-SKU swap configuration (only meaningful if allow_swap=true)
+            swap_type: allowSwap ? (cfg?.swapType ?? null) : null,
+            minimum_additional_payment: allowSwap ? (cfg?.minAdditionalPayment ?? null) : null,
+            maximum_additional_payment: allowSwap ? (cfg?.maxAdditionalPayment ?? null) : null,
+            accepted_categories: allowSwap ? (cfg?.acceptedCategories ?? []) : [],
+            swap_description: allowSwap ? (cfg?.swapDescription ?? '') : '',
+          };
+        });
+        formData.append('skus', JSON.stringify(skusPayload));
+
+        // Append any SKU images as files with keys sku_image_<skuId>
+        skuCombinations.forEach(s => {
+          if (s.image) {
+            formData.append(`sku_image_${s.id}`, s.image);
+          }
+        });
+      }
     }
     
     // Add shipping zones
@@ -987,9 +1168,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                             {
                               id: generateId(),
                               title: "Small",
-                              quantity: 0,
-                              price: 0,
-                              weight_unit: 'g' as const,
                             },
                           ],
                         },
@@ -1071,101 +1249,12 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                   ))}
                 </div>
 
-                {/* Variant Dimensions Section */}
+                {/* Variant Dimensions */}
                 <div className="space-y-4 pt-4 border-t">
                   <h4 className="font-medium">Variant Dimensions</h4>
                   <p className="text-sm text-muted-foreground">
-                    Set dimensions and weight for each variant option.
+                    Dimensions and weights are now set per generated combination in the "Generated Combinations" table below.
                   </p>
-                  
-                  <div className="overflow-x-auto">
-                    {variantGroups.map((group) => (
-                      <div key={group.id} className="space-y-3 mb-4">
-                        <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
-                        
-                        <div className="min-w-[800px]">
-                          {group.options.map((option) => (
-                            <div key={option.id} className="grid grid-cols-7 gap-3 items-center mb-3 p-3 border rounded-lg bg-white">
-                              {/* Option Label */}
-                              <div className="col-span-1">
-                                <span className="text-sm font-medium">{group.title}: {option.title}</span>
-                              </div>
-                              
-                              {/* Length */}
-                              <div>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  placeholder="L (cm)"
-                                  value={option.length || ''}
-                                  onChange={(e) => updateOption(group.id, option.id, 'length', e.target.value)}
-                                  className="w-full text-sm"
-                                />
-                              </div>
-                              
-                              {/* Width */}
-                              <div>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  placeholder="W (cm)"
-                                  value={option.width || ''}
-                                  onChange={(e) => updateOption(group.id, option.id, 'width', e.target.value)}
-                                  className="w-full text-sm"
-                                />
-                              </div>
-                              
-                              {/* Height */}
-                              <div>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  placeholder="H (cm)"
-                                  value={option.height || ''}
-                                  onChange={(e) => updateOption(group.id, option.id, 'height', e.target.value)}
-                                  className="w-full text-sm"
-                                />
-                              </div>
-                              
-                              {/* Weight */}
-                              <div>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  placeholder="Weight"
-                                  value={option.weight || ''}
-                                  onChange={(e) => updateOption(group.id, option.id, 'weight', e.target.value)}
-                                  className="w-full text-sm"
-                                />
-                              </div>
-                              
-                              {/* Weight Unit */}
-                              <div>
-                                <Select 
-                                  value={option.weight_unit || 'g'} 
-                                  onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => updateOption(group.id, option.id, 'weight_unit', value)}
-                                >
-                                  <SelectTrigger className="w-full h-9 text-sm">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="g">g</SelectItem>
-                                    <SelectItem value="kg">kg</SelectItem>
-                                    <SelectItem value="lb">lb</SelectItem>
-                                    <SelectItem value="oz">oz</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 </div>
 
                 <Button 
@@ -1265,148 +1354,63 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
       </Card>
 
       {/* STEP 4: Pricing & Stock */}
+      {!showVariants && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Pricing Card */}
+        {/* Pricing Card (only for non-variant products) */}
         <Card id="pricing">
           <CardHeader>
             <CardTitle>Step 4: Pricing</CardTitle>
             <CardDescription>
-              {showVariants 
-                ? "Set price and compare price for each variant option" 
-                : "Set the base price and compare price for the product"}
+              Set the base price and compare price for the product
             </CardDescription>
           </CardHeader>
           
           <CardContent>
             <div className="space-y-6">
-              {showVariants && variantGroups.length > 0 ? (
-                <div className="space-y-4">
-                  <Label className="text-lg font-medium">Variant Pricing</Label>
-                  
-                  {variantGroups.map((group) => (
-                    <div key={group.id} className="space-y-3">
-                      <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
-                      
-                      {group.options.map((option, optionIndex) => (
-                        <div key={option.id} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-center">
-                          {/* Option Label */}
-                          <div className="md:col-span-1">
-                            <span className="text-sm font-medium">{group.title}: {option.title}</span>
-                          </div>
-                          
-                          {/* Small Image Box */}
-                          <div className="md:col-span-1">
-                            {option.imagePreview ? (
-                              <div className="relative h-12 w-12 rounded-md overflow-hidden border">
-                                <img 
-                                  src={option.imagePreview} 
-                                  alt={`${option.title} variant`}
-                                  className="h-full w-full object-cover"
-                                />
-                                <Button
-                                  type="button"
-                                  variant="destructive"
-                                  size="sm"
-                                  className="absolute top-0 right-0 h-4 w-4 rounded-full p-0"
-                                  onClick={() => updateOption(group.id, option.id, 'image', null)}
-                                >
-                                  <X className="h-2 w-2" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <div>
-                                <Input 
-                                  type="file" 
-                                  id={`variant-image-${group.id}-${option.id}`}
-                                  accept="image/*"
-                                  onChange={(e) => handleVariantImageChange(group.id, option.id, e)}
-                                  className="hidden"
-                                />
-                                <Label 
-                                  htmlFor={`variant-image-${group.id}-${option.id}`}
-                                  className="cursor-pointer flex items-center justify-center h-12 w-12 border-2 border-dashed border-gray-300 rounded-md text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50"
-                                  title="Upload variant image"
-                                >
-                                  <ImageIcon className="h-5 w-5" />
-                                </Label>
-                              </div>
-                            )}
-                          </div>
-                          
-                          {/* Price */}
-                          <div className="md:col-span-1">
-                            <Input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="Price"
-                              value={option.price === 0 ? '' : option.price}
-                              onChange={(e) => updateOption(group.id, option.id, 'price', e.target.value)}
-                              className="w-full"
-                            />
-                          </div>
-                          
-                          {/* Compare Price */}
-                          <div className="md:col-span-2">
-                            <Input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="Compare Price (Optional)"
-                              value={option.compare_price || ''}
-                              onChange={(e) => updateOption(group.id, option.id, 'compare_price', e.target.value)}
-                              className="w-full"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="price">Price {openForSwap ? '(hidden for swap-only products)' : '*'}</Label>
-                    {!openForSwap ? (
-                      <Input
-                        type="number"
-                        id="price"
-                        name="price"
-                        required
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={productPrice}
-                        onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
-                      />
-                    ) : (
-                      <>
-                        <input type="hidden" name="price" value="0" />
-                        <div className="text-xs text-gray-500">Swap-only product: price will be set to ₱0</div>
-                      </>
-                    )}
-                    {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="compare_price">Compare Price (Optional)</Label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="price">Price {openForSwap ? '(hidden for swap-only products)' : '*'}</Label>
+                  {!openForSwap ? (
                     <Input
                       type="number"
-                      id="compare_price"
-                      name="compare_price"
+                      id="price"
+                      name="price"
+                      required
                       min="0"
                       step="0.01"
                       placeholder="0.00"
+                      value={productPrice}
+                      onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
                     />
-                    <p className="text-xs text-gray-500">
-                      Original price to show as crossed out
-                    </p>
-                  </div>
+                  ) : (
+                    <>
+                      <input type="hidden" name="price" value="0" />
+                      <div className="text-xs text-gray-500">Swap-only product: price will be set to ₱0</div>
+                    </>
+                  )}
+                  {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
                 </div>
-              )}
+                
+                <div className="space-y-2">
+                  <Label htmlFor="compare_price">Compare Price (Optional)</Label>
+                  <Input
+                    type="number"
+                    id="compare_price"
+                    name="compare_price"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                  />
+                  <p className="text-xs text-gray-500">
+                    Original price to show as crossed out
+                  </p>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
+
+
 
         {/* Stock Card */}
         <Card id="stock">
@@ -1481,45 +1485,20 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                       <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
                       
                       {group.options.map((option, optionIndex) => (
-                        <div key={option.id} className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                        <div key={option.id} className="flex items-center justify-between gap-3">
                           {/* Option Label */}
                           <div>
                             <span className="text-sm font-medium">{group.title}: {option.title}</span>
                           </div>
-                          
-                          {/* Quantity */}
+
+                          {/* Variant Image Uploader */}
                           <div>
-                            <Input
-                              type="number"
-                              min="0"
-                              placeholder="Quantity"
-                              value={option.quantity}
-                              onChange={(e) => updateOption(group.id, option.id, 'quantity', e.target.value)}
-                              className="w-full"
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleVariantImageChange(group.id, option.id, e)}
+                              className="text-sm"
                             />
-                          </div>
-                          
-                          {/* Critical Trigger */}
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center gap-2">
-                              <Switch
-                                checked={option.enable_critical_trigger || false}
-                                onCheckedChange={(checked) => updateOption(group.id, option.id, 'enable_critical_trigger', checked)}
-                                className="h-4 w-8"
-                              />
-                              <span className="text-sm">Critical</span>
-                            </div>
-                            
-                            {option.enable_critical_trigger && (
-                              <Input
-                                type="number"
-                                min="1"
-                                placeholder="Threshold"
-                                value={option.critical_trigger || ''}
-                                onChange={(e) => updateOption(group.id, option.id, 'critical_trigger', e.target.value)}
-                                className="w-24"
-                              />
-                            )}
                           </div>
                         </div>
                       ))}
@@ -1531,37 +1510,268 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
           </CardContent>
         </Card>
       </div>
+      )}
+
+      {/* Generated Combinations (SKUs) */}
+      {showVariants && variantGroups.length > 0 && (
+        <Card id="generated-combinations">
+          <CardHeader>
+            <CardTitle>Generated Combinations</CardTitle>
+            <CardDescription>
+              All combinations generated from your variant choices. Edit per-combination price, quantity, dimensions, or SKU code before saving.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left">
+                    <th className="px-2 py-2 font-medium">Image</th>
+                    {variantGroups.map((g) => (
+                      <th key={g.id} className="px-2 py-2 font-medium">{g.title}</th>
+                    ))}
+                    <th className="px-2 py-2 font-medium">Price</th>
+                    <th className="px-2 py-2 font-medium">Compare Price</th>
+                    <th className="px-2 py-2 font-medium">Quantity</th>
+                    <th className="px-2 py-2 font-medium">Critical</th>
+                    <th className="px-2 py-2 font-medium">L (cm)</th>
+                    <th className="px-2 py-2 font-medium">W (cm)</th>
+                    <th className="px-2 py-2 font-medium">H (cm)</th>
+                    <th className="px-2 py-2 font-medium">Weight</th>
+                    <th className="px-2 py-2 font-medium">Unit</th>
+                    <th className="px-2 py-2 font-medium">SKU Code</th>
+                    <th className="px-2 py-2 font-medium">Swap</th>
+                    <th className="px-2 py-2 font-medium">Active</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {skuCombinations.map((sku) => (
+                    <tr key={sku.id} className="border-t">
+                      <td className="px-2 py-2 align-top">
+                        <div className="relative w-12 h-12 rounded overflow-hidden bg-gray-100 flex items-center justify-center">
+                          {sku.imagePreview ? (
+                            <img src={sku.imagePreview} alt="sku" className="w-full h-full object-cover" />
+                          ) : (
+                            <ImageIcon className="h-5 w-5 text-gray-400" />
+                          )}
+
+                          <input
+                            type="file"
+                            id={`sku_image_${sku.id}`}
+                            accept="image/*"
+                            onChange={(e) => handleSkuImageChange(sku.id, e)}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                          />
+                        </div>
+                        {sku.imagePreview && (
+                          <div className="mt-1">
+                            <Button type="button" variant="ghost" size="sm" onClick={() => updateSkuField(sku.id, 'image', null)}>Remove</Button>
+                          </div>
+                        )}
+                      </td>
+                      {variantGroups.map((g) => (
+                        <td key={g.id} className="px-2 py-2 align-top">
+                          {g.options.find(o => o.id === sku.option_map[g.id])?.title || ''}
+                        </td>
+                      ))}
+                      <td className="px-2 py-2">
+                        <Input type="number" min="0" step="0.01" value={sku.price || ''} onChange={(e) => updateSkuField(sku.id, 'price', parseFloat(e.target.value) || '')} />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input type="number" min="0" step="0.01" value={sku.compare_price || ''} onChange={(e) => updateSkuField(sku.id, 'compare_price', parseFloat(e.target.value) || '')} />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input type="number" min="0" value={sku.quantity || ''} onChange={(e) => updateSkuField(sku.id, 'quantity', parseInt(e.target.value) || '')} />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input type="number" min="1" placeholder="Threshold" value={sku.critical_trigger || ''} onChange={(e) => updateSkuField(sku.id, 'critical_trigger', parseInt(e.target.value) || '')} className="w-20 text-xs" />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input type="number" min="0" step="0.1" value={sku.length || ''} onChange={(e) => updateSkuField(sku.id, 'length', parseFloat(e.target.value) || '')} />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input type="number" min="0" step="0.1" value={sku.width || ''} onChange={(e) => updateSkuField(sku.id, 'width', parseFloat(e.target.value) || '')} />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input type="number" min="0" step="0.1" value={sku.height || ''} onChange={(e) => updateSkuField(sku.id, 'height', parseFloat(e.target.value) || '')} />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input type="number" min="0" step="0.01" value={sku.weight || ''} onChange={(e) => updateSkuField(sku.id, 'weight', parseFloat(e.target.value) || '')} />
+                      </td>
+                      <td className="px-2 py-2">
+                        <select className="border rounded p-1 text-sm" value={sku.weight_unit || ''} onChange={(e) => updateSkuField(sku.id, 'weight_unit', e.target.value as any)}>
+                          <option value="">Unit</option>
+                          <option value="g">g</option>
+                          <option value="kg">kg</option>
+                          <option value="lb">lb</option>
+                          <option value="oz">oz</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input type="text" value={sku.sku_code || ''} onChange={(e) => updateSkuField(sku.id, 'sku_code', e.target.value)} />
+                      </td>
+
+                      {/* Swap toggle per SKU (mirrors option-level flags unless changed) */}
+                      <td className="px-2 py-2">
+                        <Switch checked={sku.allow_swap ?? false} onCheckedChange={(checked) => setSkuAllowSwap(sku.id, checked)} />
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <Switch checked={sku.is_active ?? true} onCheckedChange={(checked) => updateSkuField(sku.id, 'is_active', checked)} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* STEP 5: Swap Options (Optional) */}
       <Card id="swap-options">
         <CardHeader>
           <CardTitle>Step 5: Swap Options (Optional)</CardTitle>
           <CardDescription>
-            Enable this if you're open to swapping this item. Configure accepted categories, payment differences, and swap details.
+            Configure swap details. When variations are enabled, swap is configured per variant (SKU).
           </CardDescription>
         </CardHeader>
 
         <CardContent>
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-medium">Open for Swap</h3>
-                <p className="text-xs text-muted-foreground">Allow other users to offer items in exchange for this product.</p>
+            {/* When variations are enabled, swap is controlled by the per-SKU toggle in the combinations table */}
+            {!variantsEnabled && (
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-medium">Open for Swap</h3>
+                  <p className="text-xs text-muted-foreground">Allow other users to offer items in exchange for this product.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="open-for-swap">Open for swap</Label>
+                  <Switch
+                    id="open-for-swap"
+                    checked={openForSwap}
+                    onCheckedChange={(checked) => setOpenForSwap(checked)}
+                  />
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Label htmlFor="open-for-swap">Open for swap</Label>
-                <Switch
-                  id="open-for-swap"
-                  checked={openForSwap}
-                  onCheckedChange={(checked) => setOpenForSwap(checked)}
-                />
+            )}
+
+            {/* Hidden input to submit boolean value or indicate variant-specific swap */}
+            <input
+              type="hidden"
+              name="open_for_swap"
+              value={variantsEnabled ? (hasSkuSwap ? 'variant_specific' : 'false') : (openForSwap ? 'true' : 'false')}
+            />
+
+            {variantsEnabled && !hasSkuSwap && (
+              <div className="p-4 border rounded bg-gray-50 text-sm">
+                Turn on <span className="font-medium">Swap</span> for a variant in the Generated Combinations table to configure swap details for that variant.
               </div>
-            </div>
+            )}
 
-            {/* Hidden input to submit boolean value */}
-            <input type="hidden" name="open_for_swap" value={openForSwap ? 'true' : 'false'} />
+            {variantsEnabled && hasSkuSwap && (
+              <div className="space-y-4">
+                {skuCombinations.filter(s => !!s.allow_swap).map((sku) => {
+                  const cfg = skuSwapConfigs[sku.id] ?? {
+                    swapType: 'direct_swap' as const,
+                    minAdditionalPayment: '' as number | '',
+                    maxAdditionalPayment: '' as number | '',
+                    acceptedCategories: [] as string[],
+                    swapDescription: '',
+                  };
 
-            {openForSwap && (
+                  const skuLabel = variantGroups
+                    .map((g) => {
+                      const optTitle = g.options.find(o => o.id === sku.option_map[g.id])?.title || '';
+                      return `${g.title}: ${optTitle}`;
+                    })
+                    .join(' / ');
+
+                  return (
+                    <div key={sku.id} className="space-y-4 p-4 border rounded-lg bg-gray-50">
+                      <div className="text-sm font-medium">{skuLabel || 'Variant'}</div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label>Swap Type</Label>
+                          <Select
+                            value={cfg.swapType}
+                            onValueChange={(v) => updateSkuSwapConfig(sku.id, { swapType: v as 'direct_swap' | 'swap_plus_payment' })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="direct_swap">Direct Swap (item for item)</SelectItem>
+                              <SelectItem value="swap_plus_payment">Swap + Payment (item + cash)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label>Minimum Additional Payment</Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={cfg.minAdditionalPayment}
+                            onChange={(e) => updateSkuSwapConfig(sku.id, { minAdditionalPayment: e.target.value === '' ? '' : parseFloat(e.target.value) })}
+                            disabled={cfg.swapType !== 'swap_plus_payment'}
+                          />
+                        </div>
+
+                        <div>
+                          <Label>Maximum Additional Payment</Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={cfg.maxAdditionalPayment}
+                            onChange={(e) => updateSkuSwapConfig(sku.id, { maxAdditionalPayment: e.target.value === '' ? '' : parseFloat(e.target.value) })}
+                            disabled={cfg.swapType !== 'swap_plus_payment'}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Accepted Categories</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {globalCategories.map((cat) => {
+                            const selected = cfg.acceptedCategories.includes(cat.id);
+                            return (
+                              <Button
+                                key={cat.id}
+                                type="button"
+                                variant={selected ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => toggleSkuAcceptedCategory(sku.id, cat.id)}
+                              >
+                                {cat.name}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label>Swap Description (Optional)</Label>
+                        <Textarea
+                          placeholder="Add details about what you expect in a swap"
+                          value={cfg.swapDescription}
+                          onChange={(e) => updateSkuSwapConfig(sku.id, { swapDescription: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {!variantsEnabled && openForSwap && (
               <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -1590,6 +1800,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                       placeholder="0.00"
                       value={minAdditionalPayment}
                       onChange={(e) => setMinAdditionalPayment(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                      disabled={swapType !== 'swap_plus_payment'}
                     />
                   </div>
 
@@ -1604,33 +1815,30 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                       placeholder="0.00"
                       value={maxAdditionalPayment}
                       onChange={(e) => setMaxAdditionalPayment(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                      disabled={swapType !== 'swap_plus_payment'}
                     />
                   </div>
-
-
                 </div>
 
-                {/* Accepted categories checkboxes */}
-                <div>
+                <div className="space-y-2">
                   <Label>Accepted Categories</Label>
-                  <div className="mt-2 grid grid-cols-2 md:grid-cols-3 gap-2">
-                    {globalCategories && globalCategories.length > 0 ? (
-                      globalCategories.map((cat) => (
-                        <label key={cat.id} className="inline-flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            name="accepted_categories"
-                            value={cat.id}
-                            checked={acceptedCategoriesState.includes(cat.id)}
-                            onChange={(e) => toggleAcceptedCategory(cat.id)}
-                          />
-                          <span>{cat.name}</span>
-                        </label>
-                      ))
-                    ) : (
-                      <div className="text-xs text-muted-foreground">No categories available</div>
-                    )}
+                  <div className="flex flex-wrap gap-2">
+                    {globalCategories.map((cat) => {
+                      const selected = acceptedCategoriesState.includes(cat.id);
+                      return (
+                        <Button
+                          key={cat.id}
+                          type="button"
+                          variant={selected ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => toggleAcceptedCategory(cat.id)}
+                        >
+                          {cat.name}
+                        </Button>
+                      );
+                    })}
                   </div>
+                  <input type="hidden" name="accepted_categories" value={JSON.stringify(acceptedCategoriesState)} />
                 </div>
 
                 <div>
