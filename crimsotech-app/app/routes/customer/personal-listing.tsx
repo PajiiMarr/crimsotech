@@ -384,47 +384,7 @@ function PersonalListingsContent() {
         </div>
       </div>
 
-      {/* Listing Limit Info */}
-      {listingLimitInfo && (
-        <Card className={`${
-          listingLimitInfo.remaining === 0 
-            ? 'bg-red-50 border-red-200' 
-            : listingLimitInfo.remaining <= 2 
-              ? 'bg-yellow-50 border-yellow-200'
-              : 'bg-blue-50 border-blue-200'
-        }`}>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-gray-800">Personal Listing Limit</h3>
-                <p className="text-gray-700 text-sm">
-                  {listingLimitInfo.current_count} / {listingLimitInfo.limit} listings used 
-                  ({listingLimitInfo.remaining} remaining)
-                </p>
-                {listingLimitInfo.remaining === 0 && (
-                  <p className="text-red-600 text-sm font-medium mt-1">
-                    You've reached your maximum of {listingLimitInfo.limit} personal listings
-                  </p>
-                )}
-              </div>
-              <div className="w-48 bg-gray-200 rounded-full h-2">
-                <div 
-                  className={`h-2 rounded-full transition-all duration-300 ${
-                    listingLimitInfo.remaining === 0 
-                      ? 'bg-red-600' 
-                      : listingLimitInfo.remaining <= 2 
-                        ? 'bg-yellow-600'
-                        : 'bg-blue-600'
-                  }`}
-                  style={{ 
-                    width: `${Math.min((listingLimitInfo.current_count / listingLimitInfo.limit) * 100, 100)}%` 
-                  }}
-                ></div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+
 
       {/* Info Alert */}
       <Alert>
@@ -434,43 +394,19 @@ function PersonalListingsContent() {
         </AlertDescription>
       </Alert>
 
-      {/* Stats and Search */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold">{products.length}</div>
-            <div className="text-sm text-muted-foreground">Total Listings</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-green-600">
-              {products.filter(p => p.status === 'active').length}
-            </div>
-            <div className="text-sm text-muted-foreground">Active Listings</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-orange-600">
-              {products.filter(p => p.quantity === 0).length}
-            </div>
-            <div className="text-sm text-muted-foreground">Out of Stock</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search listings..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-              />
-            </div>
-          </CardContent>
-        </Card>
+      {/* Search (simplified) */}
+      <div className="mb-4">
+        <div className="max-w-md">
+          <div className="flex items-center gap-2 border rounded-md px-3 py-2">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search listings..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Listings Table */}
@@ -633,16 +569,7 @@ function PersonalListingsContent() {
         </CardContent>
       </Card>
 
-      {/* Stats */}
-      {products.length > 0 && (
-        <Card className="p-4 bg-gray-50">
-          <div className="text-sm text-gray-600">
-            Total listings: <span className="font-semibold">{products.length}</span>
-            {listingLimitInfo && ` (${listingLimitInfo.remaining} remaining)`}
-            {hasShop && ` • ${products.filter(p => p.is_shop_visible).length} in your shop`}
-          </div>
-        </Card>
-      )}
+
     </div>
   );
 }

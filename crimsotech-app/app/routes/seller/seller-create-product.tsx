@@ -114,6 +114,7 @@ export async function action({ request }: Route.ActionArgs) {
   const quantity = String(formData.get("quantity"));
   const used_for = String(formData.get("used_for") || "General use");
   const price = String(formData.get("price"));
+  const open_for_swap = String(formData.get('open_for_swap') || 'false');
   const condition = String(formData.get("condition"));
   const category_admin_id = String(formData.get("category_admin_id"));
 
@@ -160,10 +161,18 @@ export async function action({ request }: Route.ActionArgs) {
     errors.quantity = "Please enter a valid quantity";
   }
 
-  if (!price.trim()) {
-    errors.price = "Price is required";
-  } else if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
-    errors.price = "Please enter a valid price";
+  if (open_for_swap !== 'true') {
+    // For normal products, price is required and must be > 0
+    if (!price.trim()) {
+      errors.price = "Price is required";
+    } else if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
+      errors.price = "Please enter a valid price";
+    }
+  } else {
+    // For swap-only products, accept price 0 or empty and coerce to '0' when sending
+    if (price.trim() && (isNaN(parseFloat(price)) || parseFloat(price) < 0)) {
+      errors.price = "Please enter a valid price";
+    }
   }
 
   if (!condition.trim()) {
@@ -202,7 +211,12 @@ export async function action({ request }: Route.ActionArgs) {
     apiFormData.append('description', description.trim());
     apiFormData.append('quantity', quantity);
     apiFormData.append('used_for', used_for.trim());
-    apiFormData.append('price', price);
+    // If this is a swap-only product, send price='0' for compatibility if no positive price provided
+    if (open_for_swap === 'true' && (!price.trim() || parseFloat(price) <= 0)) {
+      apiFormData.append('price', '0');
+    } else {
+      apiFormData.append('price', price);
+    }
     apiFormData.append('condition', condition.trim());
     apiFormData.append('shop', shop_id ?? "");
     apiFormData.append('status', "active");
@@ -213,9 +227,17 @@ export async function action({ request }: Route.ActionArgs) {
       apiFormData.append('category_admin_id', category_admin_id.trim());
     }
 
-    // Add dimensions if provided
-    if (length) apiFormData.append('length', String(length));
-    if (width) apiFormData.append('width', String(width));
+    // Swap-related fields (optional)
+    if (String(formData.get('open_for_swap')) === 'true') {
+      apiFormData.append('open_for_swap', 'true');
+      apiFormData.append('swap_type', String(formData.get('swap_type') || 'direct_swap'));
+      // accepted_categories may be sent as multiple values
+      const acceptedCategories = formData.getAll('accepted_categories') || [];
+      apiFormData.append('accepted_categories', JSON.stringify(acceptedCategories));
+      apiFormData.append('minimum_additional_payment', String(formData.get('minimum_additional_payment') || 0));
+      apiFormData.append('maximum_additional_payment', String(formData.get('maximum_additional_payment') || 0));
+      apiFormData.append('swap_description', String(formData.get('swap_description') || ''));
+    }
     if (height) apiFormData.append('height', String(height));
     if (weight) apiFormData.append('weight', String(weight));
 
@@ -282,38 +304,52 @@ export async function action({ request }: Route.ActionArgs) {
       }
     }
 
-    // Convert variant groups to array format
-    const variantsArray = Array.from(variantGroups.values()).map(group => ({
-      title: group.title,
-      options: group.options.map((option: any) => ({
-        title: option.title,
-        quantity: parseInt(option.quantity) || 0,
-        price: parseFloat(option.price) || 0,
-        compare_price: option.compare_price ? parseFloat(option.compare_price) : undefined,
-        critical_trigger: option.critical_trigger ? parseInt(option.critical_trigger) : undefined,
-        enable_critical_trigger: option.enable_critical_trigger === 'true',
-        length: option.length ? parseFloat(option.length) : undefined,
-        width: option.width ? parseFloat(option.width) : undefined,
-        height: option.height ? parseFloat(option.height) : undefined,
-        weight: option.weight ? parseFloat(option.weight) : undefined,
-        weight_unit: option.weight_unit || 'g',
-      }))
-    }));
+    // Convert variant groups to array format (we will include ids later when sending to API)
+    // Build from the map of parsed groups/options
+    // (ids are kept in the map keys and option.id fields)
 
     // Add variants to form data as JSON string if they exist
-    if (variantsArray.length > 0) {
-      apiFormData.append('variants', JSON.stringify(variantsArray));
+    if (variantGroups.size > 0) {
+      // include group and option ids so backend can match uploaded variant images
+      const variantsWithIds = Array.from(variantGroups.entries()).map(([groupId, group]) => ({
+        id: groupId,
+        title: group.title,
+        options: group.options.map((option: any) => ({
+          id: option.id,
+          title: option.title,
+          quantity: parseInt(option.quantity) || 0,
+          price: parseFloat(option.price) || 0,
+          compare_price: option.compare_price ? parseFloat(option.compare_price) : undefined,
+          critical_trigger: option.critical_trigger ? parseInt(option.critical_trigger) : undefined,
+          enable_critical_trigger: option.enable_critical_trigger === 'true',
+          length: option.length ? parseFloat(option.length) : undefined,
+          width: option.width ? parseFloat(option.width) : undefined,
+          height: option.height ? parseFloat(option.height) : undefined,
+          weight: option.weight ? parseFloat(option.weight) : undefined,
+          weight_unit: option.weight_unit || 'g',
+        }))
+      }));
+
+      apiFormData.append('variants', JSON.stringify(variantsWithIds));
     }
 
-    // Handle variant images
+    // Handle variant images by forwarding their original keys (variant_image_<groupId>_<optionId>)
     for (const [key, value] of formData.entries()) {
       if (key.startsWith('variant_image_')) {
         const file = value as File;
-        if (file.size > 0) {
+        if (file && (file as any).size > 0) {
           apiFormData.append(key, file);
         }
       }
     }
+
+    // Append product-level dimensions/weight unit if available
+    if (length) apiFormData.append('length', String(length));
+    if (width) apiFormData.append('width', String(width));
+    if (height) apiFormData.append('height', String(height));
+    if (weight) apiFormData.append('weight', String(weight));
+    const weightUnitVal = String(formData.get('weight_unit') || 'kg');
+    apiFormData.append('weight_unit', weightUnitVal);
 
     // Handle shipping zones
     const shippingZones: any[] = [];
@@ -350,7 +386,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     console.log("Sending product data to API with user ID:", userId);
     console.log("Category admin ID:", category_admin_id);
-    console.log("Variants count:", variantsArray.length);
+    console.log("Variants count:", variantGroups.size);
     console.log("Shipping zones count:", formattedShippingZones.length);
     
     const response = await AxiosInstance.post('/seller-products/', apiFormData, {

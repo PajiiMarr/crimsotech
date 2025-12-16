@@ -2,7 +2,7 @@ import type { Route } from './+types/favorites'
 import SidebarLayout from '~/components/layouts/sidebar'
 
 import { UserProvider } from '~/components/providers/user-role-provider'
-import { Search, X, Heart } from 'lucide-react'
+import { Search, X, Heart, Handshake } from 'lucide-react'
 import { Input } from '~/components/ui/input'
 import { useState, useEffect } from "react"
 import { useNavigate } from 'react-router'
@@ -48,6 +48,7 @@ interface Product {
   description: string
   price: number
   discount?: number
+  compare_price?: number
   image?: string
   media_files?: Array<{
     id: string
@@ -63,6 +64,7 @@ interface Product {
   shop?: { id: string; name: string; shop_picture: string | null } | null
   category?: any
   category_admin?: any
+  open_for_swap?: boolean
 }
 
 // ----------------------------
@@ -196,6 +198,14 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
       onClick={handleClick}
       className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col relative"
     >
+      {/* Open for Swap tag (left) */}
+      {product.open_for_swap && (
+        <div className="absolute top-1 left-1 z-10 px-2 py-0.5 bg-white rounded-full shadow-sm flex items-center gap-1">
+          <Handshake className="h-4 w-4 text-indigo-600" />
+          <span className="text-xs text-indigo-700 font-medium">Open for Swap</span>
+        </div>
+      )}
+
       {/* Heart Button */}
       <button
         onClick={handleFavoriteClick}
@@ -239,9 +249,16 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
         
         <div className="mt-auto pt-1">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-bold text-gray-900">
-              ₱{product.price.toFixed(2)}
-            </span>
+              <div className="text-sm font-medium">
+                {product.compare_price && product.compare_price > product.price ? (
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-xs text-gray-500 line-through">₱{product.compare_price?.toFixed(2)}</span>
+                    <span className="text-sm font-bold text-gray-900">₱{product.price.toFixed(2)}</span>
+                  </div>
+                ) : (
+                  <span className="text-sm font-bold text-gray-900">₱{product.price.toFixed(2)}</span>
+                )}
+              </div>
           </div>
         </div>
       </div>
@@ -311,9 +328,11 @@ export default function Favorites({ loaderData }: Route.ComponentProps) {
                 description: data.description || '',
                 price: Number(data.price) || 0,
                 discount: data.discount || 0,
+                compare_price: data.compare_price ? Number(data.compare_price) : undefined,
                 primary_image: data.primary_image || null,
                 media_files: data.media_files || [],
                 shop: data.shop || null,
+                open_for_swap: data.open_for_swap || false,
               };
             } catch (err) {
               const productId = typeof fav.product === 'string' ? fav.product : fav.product?.id;
@@ -324,6 +343,7 @@ export default function Favorites({ loaderData }: Route.ComponentProps) {
         );
         const validProducts = products.filter(p => p !== null) as Product[];
         console.log('Final products array:', validProducts);
+        console.log('Loaded favorite products with open_for_swap count:', validProducts.filter(p => p.open_for_swap).length);
 
         // Merge server results with optimistic list, server wins
         setFavoriteProducts(prev => {

@@ -3,6 +3,7 @@ from django.utils import timezone
 from datetime import timedelta
 import uuid
 from django.core.exceptions import ValidationError
+from decimal import Decimal
 
 class User(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -256,6 +257,24 @@ class Product(models.Model):
     upload_status = models.CharField(max_length=20, choices=[('draft','Draft'),('published','Published'),('archived','Archived')], default='draft')
     status = models.TextField()
     condition = models.CharField(max_length=50)
+    # Swap fields
+    open_for_swap = models.BooleanField(default=False)
+    swap_type = models.CharField(
+        max_length=30,
+        choices=[('direct_swap', 'Direct swap'), ('swap_plus_payment', 'Swap + payment')],
+        default='direct_swap'
+    )
+    accepted_categories = models.ManyToManyField('Category', blank=True, related_name='accepted_for_swaps')
+    minimum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
+    maximum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
+    swap_description = models.TextField(blank=True, null=True)
+    compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    # Physical dimensions
+    length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    weight_unit = models.CharField(max_length=10, default='kg', blank=True)
     critical_stock = models.IntegerField(null=True,blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -356,9 +375,17 @@ class VariantOptions(models.Model):
     title = models.CharField(max_length=100)
     quantity = models.IntegerField()
     price = models.DecimalField(decimal_places=2, max_digits=9)
+    compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    image = models.ImageField(upload_to='product/variants/', null=True, blank=True)
+    # Variant physical dimensions
+    length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    weight_unit = models.CharField(max_length=10, default='g', blank=True)
 
     def __str__(self):
-        return f"{self.title} - {self.variant.title}"
+        return f"{self.title} - {self.variant.title if self.variant else ''}"
 
 class Issues(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -880,3 +907,4 @@ class ReportComment(models.Model):
     def __str__(self):
         return f"Comment by {self.user.username} on Report {self.report.id}"
     
+

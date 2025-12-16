@@ -850,6 +850,8 @@ export default function CreateProductForm({
                             <SelectItem value="oz">oz</SelectItem>
                           </SelectContent>
                         </Select>
+                        {/* Hidden input to include product weight unit in FormData */}
+                        <input type="hidden" name="weight_unit" value={productWeightUnit} />
                       </div>
                     </div>
                   </div>

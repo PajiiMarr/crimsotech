@@ -230,6 +230,18 @@ export async function action({ request }: Route.ActionArgs) {
       apiFormData.append('category_admin_id', category_admin_id.trim());
     }
 
+    // Append product-level dimensions and weight unit when provided
+    const length = formData.get('length');
+    const width = formData.get('width');
+    const height = formData.get('height');
+    const weight = formData.get('weight');
+    const weightUnit = formData.get('weight_unit');
+    if (length) apiFormData.append('length', String(length));
+    if (width) apiFormData.append('width', String(width));
+    if (height) apiFormData.append('height', String(height));
+    if (weight) apiFormData.append('weight', String(weight));
+    if (weightUnit) apiFormData.append('weight_unit', String(weightUnit));
+
     // Add variants if provided
     if (variant_title.trim() && variant_option_title.trim()) {
       apiFormData.append('variant_title', variant_title.trim());

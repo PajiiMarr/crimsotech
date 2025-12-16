@@ -7771,88 +7771,121 @@ class SellerProducts(viewsets.ModelViewSet):
                 return Response({
                     "error": "Invalid global category selected"
                 }, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # If accepted_categories was sent as a JSON string, parse it into a list for the serializer
+        try:
+            import json
+            accepted_raw = product_data.get('accepted_categories')
+            if accepted_raw and isinstance(accepted_raw, str):
+                accepted_list = json.loads(accepted_raw)
+                try:
+                    product_data.setlist('accepted_categories', accepted_list)
+                except Exception:
+                    product_data['accepted_categories'] = accepted_list
+        except Exception as e:
+            print('Failed to parse accepted_categories:', e)
+
         serializer = ProductCreateSerializer(data=product_data, context={'request': request})
         if serializer.is_valid():
             with transaction.atomic():
+                # Save product and catch validation errors cleanly
                 try:
                     product = serializer.save()
-                    
-                    # Handle media files if any
-                    media_files = request.FILES.getlist('media_files')
-                    print(f"Number of media files received: {len(media_files)}")  # Debug
-                    for i, media_file in enumerate(media_files):
-                        print(f"Media file {i}: name={media_file.name}, size={media_file.size}, type={media_file.content_type}")  # Debug
-                        try:
-                            product_media = ProductMedia.objects.create(
-                                product=product,
-                                file_data=media_file,
-                                file_type=media_file.content_type
-                            )
-                            print(f"Created ProductMedia: {product_media.id}, file saved to: {product_media.file_data}")  # Debug
-                        except Exception as e:
-                            print(f"Error creating ProductMedia: {e}")  # Debug
-                    # Handle variants if any (simple approach)
-                    variant_title = request.data.get('variant_title')
-                    variant_option_title = request.data.get('variant_option_title')
-                    variant_option_quantity = request.data.get('variant_option_quantity')
-                    variant_option_price = request.data.get('variant_option_price')
-                    
-                    if variant_title and variant_option_title:
-                        variant = Variants.objects.create(
-                            product=product,
-                            shop=shop,
-                            title=variant_title
-                        )
-                        
-                        VariantOptions.objects.create(
-                            variant=variant,
-                            title=variant_option_title,
-                            quantity=int(variant_option_quantity) if variant_option_quantity else 0,
-                            price=float(variant_option_price) if variant_option_price else 0
-                        )
-                    
-                    # Return same format as get_product_list
-                    return Response({
-                        "success": True,
-                        "products": [
-                            {
-                                "id": str(product.id),
-                                "name": product.name,
-                                "description": product.description,
-                                "quantity": product.quantity,
-                                "price": str(product.price),
-                                "status": product.status,
-                                "condition": product.condition,
-                                "shop": {
-                                    "id": str(product.shop.id),
-                                    "name": product.shop.name
-                                } if product.shop else None,
-                                "category_admin": {
-                                    "id": str(product.category_admin.id),
-                                    "name": product.category_admin.name
-                                } if product.category_admin else None,
-                                "category": {
-                                    "id": str(product.category.id),
-                                    "name": product.category.name
-                                } if product.category else None,
-                                "created_at": product.created_at.isoformat() if product.created_at else None,
-                                "updated_at": product.updated_at.isoformat() if product.updated_at else None,
-                            }
-                        ],
-                        "message": "Product created successfully",
-                        "data_source": "database",
-                        "product_limit_info": {
-                            "current_count": seller.current_product_count,
-                            "limit": seller.product_limit,
-                            "remaining": seller.product_limit - seller.current_product_count
-                        }
-                    }, status=status.HTTP_201_CREATED)
                 except ValidationError as e:
                     return Response({
                         "error": "Validation failed",
                         "details": str(e)
                     }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Handle media files if any
+                media_files = request.FILES.getlist('media_files')
+                print(f"Number of media files received: {len(media_files)}")  # Debug
+                for i, media_file in enumerate(media_files):
+                    print(f"Media file {i}: name={media_file.name}, size={media_file.size}, type={media_file.content_type}")  # Debug
+                    try:
+                        product_media = ProductMedia.objects.create(
+                            product=product,
+                            file_data=media_file,
+                            file_type=media_file.content_type
+                        )
+                        print(f"Created ProductMedia: {product_media.id}, file saved to: {product_media.file_data}")  # Debug
+                    except Exception as e:
+                        print(f"Error creating ProductMedia: {e}")  # Debug
+
+                # Process variants JSON (if provided) to create Variants and VariantOptions with images and dimensions
+                variants_raw = request.data.get('variants')
+                if variants_raw:
+                    try:
+                        import json
+                        variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+                        for g in variants_list:
+                            group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
+                            variant = Variants.objects.create(
+                                product=product,
+                                shop=shop,
+                                title=g.get('title') or ''
+                            )
+                            for opt in g.get('options', []):
+                                option_id = opt.get('id') or str(uuid.uuid4())
+                                vopt = VariantOptions.objects.create(
+                                    variant=variant,
+                                    title=opt.get('title') or '',
+                                    quantity=int(opt.get('quantity') or 0),
+                                    price=Decimal(str(opt.get('price') or 0)),
+                                    compare_price=(Decimal(str(opt.get('compare_price'))) if opt.get('compare_price') not in (None, '') else None),
+                                    length=(Decimal(str(opt.get('length'))) if opt.get('length') not in (None, '') else None),
+                                    width=(Decimal(str(opt.get('width'))) if opt.get('width') not in (None, '') else None),
+                                    height=(Decimal(str(opt.get('height'))) if opt.get('height') not in (None, '') else None),
+                                    weight=(Decimal(str(opt.get('weight'))) if opt.get('weight') not in (None, '') else None),
+                                    weight_unit=opt.get('weight_unit') or 'g'
+                                )
+                                file_key = f"variant_image_{group_id}_{option_id}"
+                                if file_key in request.FILES:
+                                    try:
+                                        vopt.image = request.FILES[file_key]
+                                        vopt.save()
+                                    except Exception as e:
+                                        print('Failed to save variant image', e)
+                    except Exception as e:
+                        print('Failed to parse variants payload:', e)
+
+                # Return same format as get_product_list
+                return Response({
+                    "success": True,
+                    "products": [
+                        {
+                            "id": str(product.id),
+                            "name": product.name,
+                            "description": product.description,
+                            "quantity": product.quantity,
+                            "price": str(product.price),
+                            "status": product.status,
+                            "upload_status": product.upload_status,
+                            "condition": product.condition,
+                            "shop": {
+                                "id": str(product.shop.id),
+                                "name": product.shop.name
+                            } if product.shop else None,
+                            "category_admin": {
+                                "id": str(product.category_admin.id),
+                                "name": product.category_admin.name
+                            } if product.category_admin else None,
+                            "category": {
+                                "id": str(product.category.id),
+                                "name": product.category.name
+                            } if product.category else None,
+                            "created_at": product.created_at.isoformat() if product.created_at else None,
+                            "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                        }
+                    ],
+                    "message": "Product created successfully",
+                    "data_source": "database",
+                    "product_limit_info": {
+                        "current_count": seller.current_product_count,
+                        "limit": seller.product_limit,
+                        "remaining": seller.product_limit - seller.current_product_count
+                    }
+                }, status=status.HTTP_201_CREATED)
         else:
             return Response({
                 "error": "Validation failed",
@@ -8041,7 +8074,20 @@ class CustomerProducts(viewsets.ModelViewSet):
                 return Response({
                     "error": "Invalid global category selected"
                 }, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # If accepted_categories was sent as a JSON string, parse it into a list for the serializer
+        try:
+            import json
+            accepted_raw = product_data.get('accepted_categories')
+            if accepted_raw and isinstance(accepted_raw, str):
+                accepted_list = json.loads(accepted_raw)
+                try:
+                    product_data.setlist('accepted_categories', accepted_list)
+                except Exception:
+                    product_data['accepted_categories'] = accepted_list
+        except Exception as e:
+            print('Failed to parse accepted_categories:', e)
+
         serializer = ProductCreateSerializer(data=product_data, context={'request': request})
         if serializer.is_valid():
             with transaction.atomic():
@@ -8057,25 +8103,62 @@ class CustomerProducts(viewsets.ModelViewSet):
                             file_type=media_file.content_type
                         )
                     
-                    # Handle variants if any (simplified for personal listings)
-                    variant_title = request.data.get('variant_title')
-                    variant_option_title = request.data.get('variant_option_title')
-                    variant_option_quantity = request.data.get('variant_option_quantity')
-                    variant_option_price = request.data.get('variant_option_price')
-                    
-                    if variant_title and variant_option_title:
-                        variant = Variants.objects.create(
-                            product=product,
-                            shop=None,  # No shop for personal listings
-                            title=variant_title
-                        )
+                    # Handle variants if any: accept a JSON 'variants' payload with group & option ids (personal listings)
+                    variants_raw = request.data.get('variants')
+                    if variants_raw:
+                        try:
+                            import json
+                            variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+                            for g in variants_list:
+                                group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
+                                variant = Variants.objects.create(
+                                    product=product,
+                                    shop=None,
+                                    title=g.get('title') or ''
+                                )
+                                for opt in g.get('options', []):
+                                    option_id = opt.get('id') or str(uuid.uuid4())
+                                    vopt = VariantOptions.objects.create(
+                                        variant=variant,
+                                        title=opt.get('title') or '',
+                                        quantity=int(opt.get('quantity') or 0),
+                                        price=Decimal(str(opt.get('price') or 0)),
+                                        compare_price=(Decimal(str(opt.get('compare_price'))) if opt.get('compare_price') not in (None, '') else None),
+                                        length=(Decimal(str(opt.get('length'))) if opt.get('length') not in (None, '') else None),
+                                        width=(Decimal(str(opt.get('width'))) if opt.get('width') not in (None, '') else None),
+                                        height=(Decimal(str(opt.get('height'))) if opt.get('height') not in (None, '') else None),
+                                        weight=(Decimal(str(opt.get('weight'))) if opt.get('weight') not in (None, '') else None),
+                                        weight_unit=opt.get('weight_unit') or 'g'
+                                    )
+                                    file_key = f"variant_image_{group_id}_{option_id}"
+                                    if file_key in request.FILES:
+                                        try:
+                                            vopt.image = request.FILES[file_key]
+                                            vopt.save()
+                                        except Exception as e:
+                                            print('Failed to save variant image', e)
+                        except Exception as e:
+                            print('Failed to parse variants payload:', e)
+                    else:
+                        # Backwards-compatible simple variant handling
+                        variant_title = request.data.get('variant_title')
+                        variant_option_title = request.data.get('variant_option_title')
+                        variant_option_quantity = request.data.get('variant_option_quantity')
+                        variant_option_price = request.data.get('variant_option_price')
                         
-                        VariantOptions.objects.create(
-                            variant=variant,
-                            title=variant_option_title,
-                            quantity=int(variant_option_quantity) if variant_option_quantity else 0,
-                            price=float(variant_option_price) if variant_option_price else 0
-                        )
+                        if variant_title and variant_option_title:
+                            variant = Variants.objects.create(
+                                product=product,
+                                shop=None,  # No shop for personal listings
+                                title=variant_title
+                            )
+                            
+                            VariantOptions.objects.create(
+                                variant=variant,
+                                title=variant_option_title,
+                                quantity=int(variant_option_quantity) if variant_option_quantity else 0,
+                                price=float(variant_option_price) if variant_option_price else 0
+                            )
                     
                     # Return same format as get_product_list
                     return Response({
@@ -8562,7 +8645,13 @@ class CustomerFavoritesView(APIView):
             user_id = request.data.get("customer") or request.headers.get('X-User-Id') or request.GET.get('userId')
             product_id = request.data.get("product")
 
-            print(f"POST /customer-favorites/ - user_id: {user_id}, product_id: {product_id}")
+            # Normalize if the client sent objects
+            if isinstance(user_id, dict):
+                user_id = user_id.get('id') or user_id.get('user_id')
+            if isinstance(product_id, dict):
+                product_id = product_id.get('id') or product_id.get('product')
+
+            print(f"POST /customer-favorites/ - raw user/customer: {request.data.get('customer')}, header: {request.headers.get('X-User-Id')}, resolved user_id: {user_id}, product_id: {product_id}")
 
             if not user_id:
                 return Response({"success": False, "message": "Customer ID required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -8571,12 +8660,22 @@ class CustomerFavoritesView(APIView):
                 return Response({"success": False, "message": "Product ID required"}, status=status.HTTP_400_BAD_REQUEST)
 
             # Fetch user
+            user = None
             try:
                 user = User.objects.get(id=user_id)
-                print(f"User found: {user.id}")
+                print(f"User found by id: {user.id}")
             except User.DoesNotExist:
-                print(f"User {user_id} not found")
-                return Response({"success": False, "message": f"User {user_id} not found"}, status=status.HTTP_404_NOT_FOUND)
+                # try fallback lookups
+                try:
+                    user = User.objects.get(username=user_id)
+                    print(f"User found by username fallback: {user.id}")
+                except User.DoesNotExist:
+                    try:
+                        user = User.objects.get(email=user_id)
+                        print(f"User found by email fallback: {user.id}")
+                    except User.DoesNotExist:
+                        print(f"User {user_id} not found")
+                        return Response({"success": False, "message": f"User {user_id} not found"}, status=status.HTTP_404_NOT_FOUND)
 
             # Ensure customer profile exists
             customer, created = Customer.objects.get_or_create(customer=user)
@@ -8621,6 +8720,12 @@ class CustomerFavoritesView(APIView):
             # Get customer ID from request body or header
             user_id = request.data.get("customer") or request.headers.get('X-User-Id') or request.GET.get('userId')
             product_id = pk or request.data.get("product")
+
+            # Normalize if objects were passed
+            if isinstance(user_id, dict):
+                user_id = user_id.get('id') or user_id.get('user_id')
+            if isinstance(product_id, dict):
+                product_id = product_id.get('id') or product_id.get('product')
             
             if not user_id:
                 return Response({"success": False, "message": "Customer ID required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -8628,11 +8733,18 @@ class CustomerFavoritesView(APIView):
             if not product_id:
                 return Response({"success": False, "message": "Product ID required"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Fetch user
+            # Fetch user (try id, username, email)
+            user = None
             try:
                 user = User.objects.get(id=user_id)
             except User.DoesNotExist:
-                return Response({"success": False, "message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+                try:
+                    user = User.objects.get(username=user_id)
+                except User.DoesNotExist:
+                    try:
+                        user = User.objects.get(email=user_id)
+                    except User.DoesNotExist:
+                        return Response({"success": False, "message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
             # Fetch or create customer profile
             try:
