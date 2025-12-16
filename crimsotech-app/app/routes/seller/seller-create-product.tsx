@@ -182,9 +182,9 @@ export async function action({ request }: Route.ActionArgs) {
   // Validate media files
   media_files.forEach((file, index) => {
     if (file.size > 0) {
-      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime'];
+      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4'];
       if (!validTypes.includes(file.type)) {
-        errors[`media_${index}`] = "Please upload valid image or video files (JPEG, PNG, GIF, WebP, MP4)";
+        errors[`media_${index}`] = "Please upload images or MP4 videos only (JPEG, PNG, GIF, WebP, MP4)";
       }
       if (file.size > 50 * 1024 * 1024) {
         errors[`media_${index}`] = "File size should be less than 50MB";
@@ -308,7 +308,7 @@ export async function action({ request }: Route.ActionArgs) {
     // Build from the map of parsed groups/options
     // (ids are kept in the map keys and option.id fields)
 
-    // Add variants to form data as JSON string if they exist
+    // Add variants as structural metadata (no numeric fields; SKUs carry numeric/swap data)
     if (variantGroups.size > 0) {
       // include group and option ids so backend can match uploaded variant images
       const variantsWithIds = Array.from(variantGroups.entries()).map(([groupId, group]) => ({
@@ -317,25 +317,26 @@ export async function action({ request }: Route.ActionArgs) {
         options: group.options.map((option: any) => ({
           id: option.id,
           title: option.title,
-          quantity: parseInt(option.quantity) || 0,
-          price: parseFloat(option.price) || 0,
-          compare_price: option.compare_price ? parseFloat(option.compare_price) : undefined,
-          critical_trigger: option.critical_trigger ? parseInt(option.critical_trigger) : undefined,
-          enable_critical_trigger: option.enable_critical_trigger === 'true',
-          length: option.length ? parseFloat(option.length) : undefined,
-          width: option.width ? parseFloat(option.width) : undefined,
-          height: option.height ? parseFloat(option.height) : undefined,
-          weight: option.weight ? parseFloat(option.weight) : undefined,
-          weight_unit: option.weight_unit || 'g',
         }))
       }));
 
       apiFormData.append('variants', JSON.stringify(variantsWithIds));
     }
 
-    // Handle variant images by forwarding their original keys (variant_image_<groupId>_<optionId>)
+    // Forward SKUs payload from the form if provided (the client sends comprehensive per-SKU fields)
+    const skusRaw = formData.get('skus');
+    if (skusRaw) {
+      apiFormData.append('skus', String(skusRaw));
+    }
+
+    // Always include the open_for_swap indicator (can be 'true', 'false', or 'variant_specific')
+    apiFormData.append('open_for_swap', String(formData.get('open_for_swap') || 'false'));
+
+
+    // Handle variant images and per-SKU images by forwarding their original keys
+    // variant_image_<groupId>_<optionId> and sku_image_<skuId>
     for (const [key, value] of formData.entries()) {
-      if (key.startsWith('variant_image_')) {
+      if (key.startsWith('variant_image_') || key.startsWith('sku_image_')) {
         const file = value as File;
         if (file && (file as any).size > 0) {
           apiFormData.append(key, file);
@@ -388,12 +389,19 @@ export async function action({ request }: Route.ActionArgs) {
     console.log("Category admin ID:", category_admin_id);
     console.log("Variants count:", variantGroups.size);
     console.log("Shipping zones count:", formattedShippingZones.length);
+
+    // Debug: inspect entries in apiFormData before sending to API
+    try {
+      for (const [k, v] of (apiFormData as any).entries()) {
+        const valPreview = (v && typeof v === 'object' && 'name' in v) ? { name: v.name, size: v.size, type: v.type } : String(v).slice(0, 200);
+        console.log('apiFormData entry ->', k, valPreview);
+      }
+    } catch (err) {
+      console.log('Failed to iterate apiFormData entries for debug:', err);
+    }
     
-    const response = await AxiosInstance.post('/seller-products/', apiFormData, {
-      headers: { 
-        'Content-Type': 'multipart/form-data',
-      },
-    });
+    // NOTE: Do NOT manually set Content-Type for multipart FormData here — Axios will set the proper boundary header for us.
+    const response = await AxiosInstance.post('/seller-products/', apiFormData);
     
     if (response.data.success) {
       console.log("Product created successfully:", response.data);
@@ -485,34 +493,13 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
         {/* Single Column Layout - All forms visible */}
         <div className="grid grid-cols-12 gap-8">
           
-          {/* LEFT COLUMN: All Form Content */}
-          <div className="col-span-12 lg:col-span-9 xl:col-span-10"> 
+          {/* LEFT COLUMN: Form (full width) */}
+          <div className="col-span-12">
             <CreateProductForm 
               selectedShop={selectedShop}
               globalCategories={globalCategories}
               errors={errors}
             />
-          </div>
-
-          {/* RIGHT COLUMN: Quick Navigation */}
-          <div className="col-span-12 lg:col-span-3 xl:col-span-2 lg:sticky lg:top-8 h-fit">
-            <div className="space-y-2 p-4 border rounded-lg shadow-md bg-white">
-              <h3 className="text-lg font-semibold mb-3 border-b pb-2 text-gray-700">Quick Navigation</h3>
-              <div className="space-y-1">
-                <a href="#basic-information" className="block py-1.5 px-2 rounded-md hover:bg-gray-50 text-sm text-gray-600 hover:text-gray-900">
-                  1. Basic Information
-                </a>
-                <a href="#variations" className="block py-1.5 px-2 rounded-md hover:bg-gray-50 text-sm text-gray-600 hover:text-gray-900">
-                  2. Variations
-                </a>
-                <a href="#pricing" className="block py-1.5 px-2 rounded-md hover:bg-gray-50 text-sm text-gray-600 hover:text-gray-900">
-                  3. Pricing
-                </a>
-                <a href="#stock" className="block py-1.5 px-2 rounded-md hover:bg-gray-50 text-sm text-gray-600 hover:text-gray-900">
-                  4. Stock
-                </a>
-              </div>
-            </div>
           </div>
           
         </div>

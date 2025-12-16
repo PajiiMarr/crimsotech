@@ -6,7 +6,8 @@ const AxiosInstance = axios.create({
   baseURL: baseUrl,
   timeout: 5000,
   headers: {
-    "Content-Type": "application/json",
+    // Do not set a global Content-Type. Let Axios infer it.
+    // This is critical for multipart/form-data to include correct boundaries.
     accept: "application/json",
   }
 });
