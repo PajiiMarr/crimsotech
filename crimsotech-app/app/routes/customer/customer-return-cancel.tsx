@@ -59,7 +59,9 @@ import {
   ArrowUpDown,
   Plus,
   AlertTriangle,
-  Ban
+  Ban,
+  Loader2,
+  Shield
 } from 'lucide-react';
 
 export function meta(): Route.MetaDescriptors {
@@ -70,25 +72,31 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
+// Update interface to match Django Refund model
 interface RefundRequest {
-  id: string;
+  refund: string;  // Changed from id to refund (UUID primary key)
   order_id: string;
+  order_ref: string; // Reference to Order object
   product_name: string;
   shop_name: string;
   color: string;
   quantity: number;
-  status: 'pending' | 'negotiation' | 'approved' | 'rejected' | 'waiting' | 'to_verify' | 'to_process' | 'dispute' | 'completed' | 'cancelled';
+  status: 'pending' | 'approved' | 'rejected' | 'waiting' | 'to process' | 'completed';
   requested_at: string;
   refund_amount: number;
   reason: string;
   preferred_refund_method: string;
+  final_refund_method?: string; // Added to match Django model
   evidence_count: number;
   image: string;
   last_updated?: string;
   deadline?: string;
-  tracking_number?: string;
-  negotiation_message?: string;
+  tracking_number?: string; // Added to match Django model
+  logistic_service?: string; // Added to match Django model
   seller_response?: string;
+  processed_by?: string;
+  processed_at?: string;
+  requested_by_name?: string;
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -106,16 +114,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   await requireRole(request, context, ["isCustomer"]);
 
-  // Mock refund requests data
+  // Updated refund requests data to match Django model statuses
   const refundRequests: RefundRequest[] = [
     {
-      id: "REF-2024-00123",
+      refund: "REF-2024-00123",
       order_id: "ORD-2024-00123",
+      order_ref: "ORD-2024-00123",
       product_name: "Apple iPhone 13 Pro",
       shop_name: "TechWorld Shop",
       color: "Black",
       quantity: 1,
-      status: "negotiation",
+      status: "pending",
       requested_at: "2024-01-20T10:30:00Z",
       refund_amount: 45000,
       reason: "Product defective - screen has dead pixels upon arrival",
@@ -124,11 +133,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       image: "/phon.jpg",
       last_updated: "2024-01-22T14:30:00Z",
       deadline: "2024-01-25T10:30:00Z",
-      negotiation_message: "Seller offered partial refund to keep item"
+      seller_response: "Under review"
     },
     {
-      id: "REF-2024-00124",
+      refund: "REF-2024-00124",
       order_id: "ORD-2024-00124",
+      order_ref: "ORD-2024-00124",
       product_name: "Samsung Galaxy Watch 4",
       shop_name: "TechWorld Shop",
       color: "White",
@@ -144,8 +154,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       deadline: "2024-01-24T14:20:00Z"
     },
     {
-      id: "REF-2024-00125",
+      refund: "REF-2024-00125",
       order_id: "ORD-2024-00125",
+      order_ref: "ORD-2024-00125",
       product_name: "MacBook Air M1",
       shop_name: "GadgetHub",
       color: "Gray",
@@ -158,11 +169,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       evidence_count: 3,
       image: "/power_supply.jpg",
       last_updated: "2024-01-18T11:15:00Z",
-      tracking_number: "TRK-RET-789012"
+      tracking_number: "TRK-RET-789012",
+      logistic_service: "LBC Express"
     },
     {
-      id: "REF-2024-00126",
+      refund: "REF-2024-00126",
       order_id: "ORD-2024-00126",
+      order_ref: "ORD-2024-00126",
       product_name: "Wireless Headphones",
       shop_name: "GadgetHub",
       color: "Black",
@@ -175,16 +188,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       evidence_count: 2,
       image: "/phon.jpg",
       last_updated: "2024-01-20T09:30:00Z",
-      tracking_number: "TRK-RET-123456"
+      tracking_number: "TRK-RET-123456",
+      logistic_service: "J&T Express"
     },
     {
-      id: "REF-2024-00127",
+      refund: "REF-2024-00127",
       order_id: "ORD-2024-00127",
+      order_ref: "ORD-2024-00127",
       product_name: "USB-C Cable",
       shop_name: "AccessoryStore",
       color: "Silver",
       quantity: 1,
-      status: "to_verify",
+      status: "to process",
       requested_at: "2024-01-22T08:45:00Z",
       refund_amount: 1000,
       reason: "Not working",
@@ -192,16 +207,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       evidence_count: 1,
       image: "/phon.jpg",
       last_updated: "2024-01-23T10:45:00Z",
-      seller_response: "Item received and under verification"
+      seller_response: "Item received and under verification",
+      final_refund_method: "Store Voucher"
     },
     {
-      id: "REF-2024-00128",
+      refund: "REF-2024-00128",
       order_id: "ORD-2024-00128",
+      order_ref: "ORD-2024-00128",
       product_name: "Smartwatch",
       shop_name: "GadgetHub",
       color: "Black",
       quantity: 1,
-      status: "to_process",
+      status: "completed",
       requested_at: "2024-01-23T16:30:00Z",
       refund_amount: 25000,
       reason: "Battery drains too fast",
@@ -209,16 +226,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       evidence_count: 3,
       image: "/phon.jpg",
       last_updated: "2024-01-30T14:30:00Z",
-      seller_response: "Item verified, ready for processing"
+      seller_response: "Refund processed successfully",
+      processed_by: "Admin User",
+      processed_at: "2024-01-30T15:30:00Z",
+      final_refund_method: "Wallet Credit"
     },
     {
-      id: "REF-2024-00129",
+      refund: "REF-2024-00129",
       order_id: "ORD-2024-00129",
+      order_ref: "ORD-2024-00129",
       product_name: "Digital Camera",
       shop_name: "AccessoryStore",
       color: "Black",
       quantity: 1,
-      status: "dispute",
+      status: "rejected",
       requested_at: "2024-01-24T11:15:00Z",
       refund_amount: 15000,
       reason: "Damaged during shipping",
@@ -226,58 +247,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       evidence_count: 2,
       image: "/phon.jpg",
       last_updated: "2024-01-26T10:15:00Z",
-      seller_response: "Escalated to admin for resolution"
-    },
-    {
-      id: "REF-2024-00130",
-      order_id: "ORD-2024-00130",
-      product_name: "Gaming Console",
-      shop_name: "GameZone",
-      color: "Black",
-      quantity: 1,
-      status: "completed",
-      requested_at: "2024-01-25T09:45:00Z",
-      refund_amount: 18000,
-      reason: "Defective controller",
-      preferred_refund_method: "Return Item and Refund to Wallet",
-      evidence_count: 3,
-      image: "/phon.jpg",
-      last_updated: "2024-02-01T14:30:00Z",
-      seller_response: "Refund completed successfully"
-    },
-    {
-      id: "REF-2024-00131",
-      order_id: "ORD-2024-00131",
-      product_name: "Bluetooth Speaker",
-      shop_name: "AudioTech",
-      color: "Blue",
-      quantity: 1,
-      status: "rejected",
-      requested_at: "2024-01-26T14:20:00Z",
-      refund_amount: 5500,
-      reason: "Not as described",
-      preferred_refund_method: "Return Item and Full Refund",
-      evidence_count: 2,
-      image: "/phon.jpg",
-      last_updated: "2024-01-28T10:15:00Z",
-      seller_response: "Request doesn't meet refund policy criteria"
-    },
-    {
-      id: "REF-2024-00132",
-      order_id: "ORD-2024-00132",
-      product_name: "Laptop Stand",
-      shop_name: "OfficeSupplies",
-      color: "Silver",
-      quantity: 1,
-      status: "cancelled",
-      requested_at: "2024-01-27T11:30:00Z",
-      refund_amount: 2500,
-      reason: "Changed my mind",
-      preferred_refund_method: "Return Item and Refund",
-      evidence_count: 0,
-      image: "/phon.jpg",
-      last_updated: "2024-01-28T09:15:00Z",
-      seller_response: "Request cancelled by customer"
+      seller_response: "Request rejected - damage not covered by warranty",
+      processed_by: "Moderator User"
     }
   ];
 
@@ -297,26 +268,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   };
 }
 
-// Main tabs configuration - Only three main tabs as requested
+// Main tabs configuration
 const MAIN_TABS = [
   { id: 'all', label: 'All', icon: List },
-  { id: 'return_refund', label: 'Return & Refund', icon: RotateCcw },
-  { id: 'cancelled', label: 'Cancelled only', icon: Ban }
+  { id: 'active', label: 'Active Requests', icon: RefreshCcw },
+  { id: 'completed', label: 'Completed', icon: CheckSquare }
 ];
 
-// Status badges configuration - updated with all statuses
+// Status badges configuration - updated to match Django model
 const STATUS_CONFIG = {
   pending: { 
     label: 'Pending Review', 
     color: 'bg-yellow-100 text-yellow-800',
     icon: Clock,
     description: 'Awaiting seller review'
-  },
-  negotiation: { 
-    label: 'Negotiation', 
-    color: 'bg-blue-100 text-blue-800',
-    icon: MessageCircle,
-    description: 'Negotiating terms with seller'
   },
   approved: { 
     label: 'Approved', 
@@ -331,65 +296,38 @@ const STATUS_CONFIG = {
     description: 'Request rejected'
   },
   waiting: { 
-    label: 'Waiting For Return', 
+    label: 'Waiting', 
     color: 'bg-indigo-100 text-indigo-800',
     icon: Package,
-    description: 'Waiting for item return'
+    description: 'Waiting for processing'
   },
-  to_verify: { 
-    label: 'To Verify', 
-    color: 'bg-purple-100 text-purple-800',
-    icon: PackageCheck,
-    description: 'Item received, verifying condition'
-  },
-  to_process: { 
+  'to process': { 
     label: 'To Process', 
     color: 'bg-purple-100 text-purple-800',
     icon: RefreshCcw,
     description: 'Ready for refund processing'
-  },
-  dispute: { 
-    label: 'Dispute', 
-    color: 'bg-orange-100 text-orange-800',
-    icon: AlertTriangle,
-    description: 'Under admin review'
   },
   completed: { 
     label: 'Completed', 
     color: 'bg-emerald-100 text-emerald-800',
     icon: CheckSquare,
     description: 'Refund completed'
-  },
-  cancelled: { 
-    label: 'Cancelled', 
-    color: 'bg-gray-100 text-gray-800',
-    icon: Ban,
-    description: 'Request cancelled'
   }
 };
-
-// Sub-tabs for Return & Refund tab - INCLUDING PENDING
-const RETURN_REFUND_SUB_TABS = [
-  { id: 'all', label: 'All', icon: List },
-  { id: 'approved', label: 'Approved', icon: CheckCircle },
-  { id: 'pending', label: 'Pending', icon: Clock }, // ADDED PENDING HERE
-  { id: 'negotiation', label: 'Negotiation', icon: MessageCircle },
-  { id: 'rejected', label: 'Rejected', icon: XCircle },
-  { id: 'waiting', label: 'Waiting for Return', icon: Package },
-  { id: 'dispute', label: 'Dispute', icon: AlertTriangle },
-  { id: 'cancelled_sample', label: 'Cancelled Sample', icon: Ban }
-];
 
 export default function RefundReturn({ loaderData }: Route.ComponentProps) {
   const { user, refundRequests } = loaderData;
   const [activeMainTab, setActiveMainTab] = useState<string>('all');
-  const [activeSubTab, setActiveSubTab] = useState<string>('all');
+  const [activeStatusFilter, setActiveStatusFilter] = useState<string>('all');
   const navigate = useNavigate();
   const [expandedRequests, setExpandedRequests] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [sortBy, setSortBy] = useState<'date' | 'amount' | 'deadline'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
+  // Get available statuses for filtering
+  const availableStatuses = ['all', ...Object.keys(STATUS_CONFIG)];
 
   // Filter refund requests based on active tab
   const getFilteredRequests = () => {
@@ -400,28 +338,29 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
       filtered = filtered.filter(item => 
         item.product_name.toLowerCase().includes(search.toLowerCase()) ||
         item.shop_name.toLowerCase().includes(search.toLowerCase()) ||
-        item.id.toLowerCase().includes(search.toLowerCase()) ||
+        item.refund.toLowerCase().includes(search.toLowerCase()) ||
         item.order_id.toLowerCase().includes(search.toLowerCase())
       );
     }
     
     // Apply main tab filter
-    if (activeMainTab === 'return_refund') {
-      filtered = filtered.filter(item => item.status !== 'cancelled');
-      
-      // Apply sub-tab filter if not 'all'
-      if (activeSubTab !== 'all') {
-        if (activeSubTab === 'cancelled_sample') {
-          filtered = filtered.filter(item => item.status === 'cancelled');
-        } else {
-          filtered = filtered.filter(item => item.status === activeSubTab);
-        }
-      }
-    } else if (activeMainTab === 'cancelled') {
-      // Show only cancelled items for Cancelled only tab
-      filtered = filtered.filter(item => item.status === 'cancelled');
-    } else if (activeMainTab !== 'all') {
-      filtered = filtered.filter(item => item.status === activeMainTab);
+    if (activeMainTab === 'active') {
+      filtered = filtered.filter(item => 
+        item.status === 'pending' || 
+        item.status === 'approved' || 
+        item.status === 'waiting' || 
+        item.status === 'to process'
+      );
+    } else if (activeMainTab === 'completed') {
+      filtered = filtered.filter(item => 
+        item.status === 'completed' || 
+        item.status === 'rejected'
+      );
+    }
+    
+    // Apply status filter
+    if (activeStatusFilter !== 'all') {
+      filtered = filtered.filter(item => item.status === activeStatusFilter);
     }
     
     // Apply sorting
@@ -490,7 +429,7 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
           <Icon className="w-2.5 h-2.5" />
           {config.label}
         </Badge>
-        {deadline && status !== 'completed' && status !== 'rejected' && status !== 'cancelled' && (
+        {deadline && status !== 'completed' && status !== 'rejected' && (
           <Badge 
             variant="outline" 
             className={`text-[10px] h-5 px-1.5 py-0 ${getTimeRemaining(deadline).bg} ${getTimeRemaining(deadline).color}`}
@@ -505,8 +444,15 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
 
   const getTabCount = (tabId: string) => {
     if (tabId === 'all') return refundRequests.length;
-    if (tabId === 'return_refund') return refundRequests.filter(item => item.status !== 'cancelled').length;
-    if (tabId === 'cancelled') return refundRequests.filter(item => item.status === 'cancelled').length;
+    if (tabId === 'active') return refundRequests.filter(item => 
+      item.status === 'pending' || 
+      item.status === 'approved' || 
+      item.status === 'waiting' || 
+      item.status === 'to process'
+    ).length;
+    if (tabId === 'completed') return refundRequests.filter(item => 
+      item.status === 'completed' || item.status === 'rejected'
+    ).length;
     return refundRequests.filter(item => item.status === tabId).length;
   };
 
@@ -531,7 +477,7 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
         variant="ghost"
         className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
         title="View Details"
-        onClick={() => navigate(`/view-customer-return-cancel/${request.id}?status=${request.status}`)}
+        onClick={() => navigate(`/view-customer-return-cancel/${request.refund}?status=${request.status}`)}
       >
         <Eye className="w-3 h-3" />
       </Button>
@@ -539,17 +485,32 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
 
     // Status-specific actions
     switch(request.status) {
-      case 'negotiation':
+      case 'pending':
         actions.push(
           <Button
-            key="negotiate"
+            key="contact"
             size="sm"
             variant="ghost"
             className="h-6 w-6 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
-            title="Respond to Negotiation"
-            onClick={() => navigate(`/customer-return-cancel/view/${request.id}?status=${request.status}`)}
+            title="Contact Seller"
+            onClick={() => navigate(`/chat/seller/${request.shop_name}`)}
           >
             <MessageCircle className="w-3 h-3" />
+          </Button>
+        );
+        break;
+        
+      case 'approved':
+        actions.push(
+          <Button
+            key="process"
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+            title="Start Return Process"
+            onClick={() => navigate(`/start-return/${request.refund}`)}
+          >
+            <Package className="w-3 h-3" />
           </Button>
         );
         break;
@@ -562,24 +523,9 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
             variant="ghost"
             className="h-6 w-6 p-0 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50"
             title="Track Return"
-            onClick={() => navigate(`/track-return/${request.id}`)}
+            onClick={() => navigate(`/track-return/${request.refund}`)}
           >
             <Truck className="w-3 h-3" />
-          </Button>
-        );
-        break;
-        
-      case 'approved':
-        actions.push(
-          <Button
-            key="start"
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
-            title="Start Return Process"
-            onClick={() => navigate(`/start-return/${request.id}`)}
-          >
-            <Package className="w-3 h-3" />
           </Button>
         );
         break;
@@ -592,58 +538,12 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
             variant="ghost"
             className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
             title="Appeal Decision"
-            onClick={() => navigate(`/appeal-refund/${request.id}`)}
+            onClick={() => navigate(`/appeal-refund/${request.refund}`)}
           >
             <AlertCircle className="w-3 h-3" />
           </Button>
         );
         break;
-        
-      case 'dispute':
-        actions.push(
-          <Button
-            key="dispute"
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-            title="View Dispute Details"
-            onClick={() => navigate(`/view-dispute/${request.id}`)}
-          >
-            <AlertTriangle className="w-3 h-3" />
-          </Button>
-        );
-        break;
-        
-      case 'cancelled':
-        actions.push(
-          <Button
-            key="new"
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50"
-            title="Create New Request"
-            onClick={() => navigate(`/request-refund?order=${request.order_id}`)}
-          >
-            <Plus className="w-3 h-3" />
-          </Button>
-        );
-        break;
-    }
-
-    // Contact Seller button for active requests
-    if (request.status !== 'completed' && request.status !== 'rejected' && request.status !== 'cancelled') {
-      actions.push(
-        <Button
-          key="contact"
-          size="sm"
-          variant="ghost"
-          className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50"
-          title="Contact Seller"
-          onClick={() => navigate(`/chat/seller/${request.shop_name}`)}
-        >
-          <MessageCircle className="w-3 h-3" />
-        </Button>
-      );
     }
 
     return actions;
@@ -735,7 +635,7 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
             )}
           </div>
 
-          {/* Main Tabs - Only 3 tabs as requested */}
+          {/* Main Tabs */}
           <div className="flex items-center space-x-1 overflow-x-auto mb-2 pb-2">
             {MAIN_TABS.map((tab) => {
               const Icon = tab.icon;
@@ -747,10 +647,7 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
                   key={tab.id}
                   onClick={() => {
                     setActiveMainTab(tab.id);
-                    // Reset sub-tab when switching main tabs
-                    if (tab.id !== 'return_refund') {
-                      setActiveSubTab('all');
-                    }
+                    setActiveStatusFilter('all');
                   }}
                   className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap ${
                     isActive 
@@ -772,30 +669,31 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
             })}
           </div>
 
-          {/* Return & Refund Sub-Tabs */}
-          {activeMainTab === 'return_refund' && (
-            <div className="flex items-center space-x-1 overflow-x-auto mb-2 pb-2">
-              {RETURN_REFUND_SUB_TABS.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeSubTab === tab.id;
-                
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveSubTab(tab.id)}
-                    className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap ${
-                      isActive 
-                        ? 'bg-blue-50 text-blue-600 border border-blue-200' 
-                        : 'text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    <Icon className="w-3 h-3" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {/* Status Filter Tabs */}
+          <div className="flex items-center space-x-1 overflow-x-auto mb-2 pb-2">
+            {availableStatuses.map((status) => {
+              const config = status === 'all' 
+                ? { label: 'All Status', color: '', icon: List }
+                : STATUS_CONFIG[status as keyof typeof STATUS_CONFIG];
+              const Icon = config?.icon || List;
+              const isActive = activeStatusFilter === status;
+              
+              return (
+                <button
+                  key={status}
+                  onClick={() => setActiveStatusFilter(status)}
+                  className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap ${
+                    isActive 
+                      ? 'bg-gray-100 text-gray-800 border border-gray-300' 
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Icon className="w-3 h-3" />
+                  <span>{config?.label || status}</span>
+                </button>
+              );
+            })}
+          </div>
 
           {/* Requests List */}
           <div className="space-y-3">
@@ -803,19 +701,10 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
               <div className="text-center py-8">
                 <RefreshCcw className="mx-auto h-8 w-8 text-gray-300 mb-3" />
                 <p className="text-gray-500 text-sm mb-2">
-                  {activeMainTab === 'all' ? 'No refund requests found' :
-                   activeMainTab === 'return_refund' ? 
-                    (activeSubTab === 'all' ? 'No return & refund requests found' :
-                     activeSubTab === 'approved' ? 'No approved requests' :
-                     activeSubTab === 'pending' ? 'No pending requests' :
-                     activeSubTab === 'negotiation' ? 'No negotiation requests' :
-                     activeSubTab === 'rejected' ? 'No rejected requests' :
-                     activeSubTab === 'waiting' ? 'No waiting for return requests' :
-                     activeSubTab === 'dispute' ? 'No dispute cases' :
-                     activeSubTab === 'cancelled_sample' ? 'No cancelled requests (sample)' :
-                     'No requests found') :
-                   activeMainTab === 'cancelled' ? 'No cancelled requests found' :
-                   'No requests found'}
+                  {search ? 'No refund requests match your search' :
+                   activeMainTab === 'all' ? 'No refund requests found' :
+                   activeMainTab === 'active' ? 'No active requests' :
+                   'No completed requests'}
                 </p>
                 <Button 
                   variant="outline" 
@@ -829,11 +718,11 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
               </div>
             ) : (
               filteredRequests.map((request) => {
-                const isExpanded = expandedRequests.has(request.id);
+                const isExpanded = expandedRequests.has(request.refund);
                 const timeRemaining = request.deadline ? getTimeRemaining(request.deadline) : null;
                 
                 return (
-                  <Card key={request.id} className="overflow-hidden border hover:border-blue-200 transition-colors">
+                  <Card key={request.refund} className="overflow-hidden border hover:border-blue-200 transition-colors">
                     <CardContent className="p-3">
                       {/* Top Section - Header */}
                       <div className="flex items-center justify-between mb-2">
@@ -843,7 +732,7 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
                             <span className="text-sm font-medium truncate">{request.product_name}</span>
                           </div>
                           <div className="flex items-center gap-2 text-xs text-gray-500">
-                            <span className="truncate">{request.id}</span>
+                            <span className="truncate">REF: {request.refund}</span>
                             <span>•</span>
                             <span>{formatDate(request.requested_at)}</span>
                             {timeRemaining && timeRemaining.text === 'Expired' && (
@@ -857,7 +746,7 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {getStatusBadge(request.status, request.deadline)}
                           <button 
-                            onClick={() => toggleRequestExpansion(request.id)}
+                            onClick={() => toggleRequestExpansion(request.refund)}
                             className="p-1 hover:bg-gray-100 rounded"
                           >
                             {isExpanded ? (
@@ -915,13 +804,25 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
                             <div>
                               <div className="font-medium text-gray-700 mb-1">Refund Details</div>
                               <div className="text-gray-600 space-y-1">
-                                <div>Method: {request.preferred_refund_method}</div>
-                                <div>Status: {STATUS_CONFIG[request.status as keyof typeof STATUS_CONFIG]?.label}</div>
+                                <div>Requested Method: {request.preferred_refund_method}</div>
+                                {request.final_refund_method && (
+                                  <div>Final Method: {request.final_refund_method}</div>
+                                )}
+                                <div>Status: {STATUS_CONFIG[request.status]?.label || request.status}</div>
                                 {request.last_updated && (
                                   <div>Last Updated: {formatDate(request.last_updated)}</div>
                                 )}
                                 {request.tracking_number && (
                                   <div>Tracking: {request.tracking_number}</div>
+                                )}
+                                {request.logistic_service && (
+                                  <div>Courier: {request.logistic_service}</div>
+                                )}
+                                {request.processed_by && (
+                                  <div>Processed By: {request.processed_by}</div>
+                                )}
+                                {request.processed_at && (
+                                  <div>Processed At: {formatDate(request.processed_at)}</div>
                                 )}
                               </div>
                             </div>
@@ -933,19 +834,6 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
                                 {request.reason}
                               </div>
                             </div>
-                            
-                            {/* Negotiation Message */}
-                            {request.negotiation_message && (
-                              <div>
-                                <div className="font-medium text-gray-700 mb-1 flex items-center gap-1">
-                                  <MessageCircle className="w-3 h-3" />
-                                  Latest Negotiation
-                                </div>
-                                <div className="text-gray-600 bg-blue-50 p-2 rounded border border-blue-100">
-                                  {request.negotiation_message}
-                                </div>
-                              </div>
-                            )}
                             
                             {/* Seller Response */}
                             {request.seller_response && (
@@ -961,7 +849,9 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
                             )}
                             
                             {/* Deadline Warning */}
-                            {timeRemaining && timeRemaining.text === 'Expired' && request.status !== 'completed' && request.status !== 'cancelled' && (
+                            {timeRemaining && timeRemaining.text === 'Expired' && 
+                             request.status !== 'completed' && 
+                             request.status !== 'rejected' && (
                               <div className="bg-red-50 border border-red-200 rounded p-2">
                                 <div className="flex items-center gap-1 text-red-700 text-xs">
                                   <AlertCircle className="w-3 h-3" />
@@ -982,7 +872,7 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => navigate(`/view-customer-return-cancel/${request.id}?status=${request.status}`)}
+                          onClick={() => navigate(`/view-customer-return-cancel/${request.refund}?status=${request.status}`)}
                           className="h-6 px-2 text-xs"
                         >
                           <Eye className="w-3 h-3 mr-1" />
@@ -1016,11 +906,12 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
               <div className="flex items-start gap-2">
                 <ShieldAlert className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-xs font-medium text-blue-800 mb-1">Need Help with Refund Process?</p>
+                  <p className="text-xs font-medium text-blue-800 mb-1">Refund Process Information</p>
                   <div className="text-xs text-blue-700 space-y-1">
                     <p>• Check our refund policy for guidelines</p>
-                    <p>• Contact seller directly for negotiations</p>
                     <p>• Submit evidence to support your claim</p>
+                    <p>• Track your return shipment</p>
+                    <p>• Contact seller for status updates</p>
                   </div>
                   <div className="flex gap-2 mt-2">
                     <Button size="sm" variant="link" className="h-6 px-0 text-xs text-blue-700">

@@ -8270,9 +8270,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
         return queryset.order_by('-created_at')
 
-    
-
-
 class AddToCartView(APIView):
 
     def post(self, request):
@@ -8314,8 +8311,6 @@ class AddToCartView(APIView):
 
         serializer = CartItemSerializer(cart_item)
         return Response({"success": True, "cart_item": serializer.data})
-
-
 
 class CartListView(APIView):
     """
@@ -8896,28 +8891,32 @@ class CheckoutOrder(viewsets.ViewSet):
             
             # Prepare response data
             checkout_items = []
+            shop_ids = set()
+            
             for cart_item in cart_items:
+                product = cart_item.product
+                shop = product.shop if product else None
+                
+                if shop:
+                    shop_ids.add(shop.id)
+                
                 item_data = {
                     "id": str(cart_item.id),
-                    "product_id": str(cart_item.product.id) if cart_item.product else None,
-                    "name": cart_item.product.name if cart_item.product else "Unknown Product",
-                    "price": float(cart_item.product.price) if cart_item.product else 0,
+                    "product_id": str(product.id) if product else None,
+                    "name": product.name if product else "Unknown Product",
+                    "price": float(product.price) if product else 0,
                     "quantity": cart_item.quantity,
-                    "shop_name": cart_item.product.shop.name if cart_item.product and cart_item.product.shop else "Unknown Shop",
-                    "shop_id": str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None,
+                    "shop_name": shop.name if shop else "Unknown Shop",
+                    "shop_id": str(shop.id) if shop else None,
                     "added_at": cart_item.added_at.isoformat() if cart_item.added_at else None,
-                    "subtotal": float(cart_item.product.price * cart_item.quantity) if cart_item.product else 0,
+                    "subtotal": float(product.price * cart_item.quantity) if product else 0,
                 }
                 
                 # Get product image if available
-                if cart_item.product and cart_item.product.productmedia_set.exists():
-                    first_media = cart_item.product.productmedia_set.first()
+                if product and product.productmedia_set.exists():
+                    first_media = product.productmedia_set.first()
                     if first_media.file_data:
                         item_data["image"] = request.build_absolute_uri(first_media.file_data.url)
-                    else:
-                        item_data["image"] = None
-                else:
-                    item_data["image"] = None
                 
                 checkout_items.append(item_data)
             
@@ -8926,6 +8925,17 @@ class CheckoutOrder(viewsets.ViewSet):
             tax = subtotal * 0.12  # 12% VAT
             delivery = 50.00  # Base delivery fee
             total = subtotal + tax + delivery
+            
+            # Fetch user's purchase history for personalized voucher recommendations
+            user_purchase_history = self._get_user_purchase_history(user_id)
+            
+            # Get available vouchers (simplified version without problematic fields)
+            available_vouchers = self._get_simple_available_vouchers(
+                list(shop_ids), 
+                user_id, 
+                subtotal,
+                user_purchase_history
+            )
             
             response_data = {
                 "success": True,
@@ -8936,8 +8946,10 @@ class CheckoutOrder(viewsets.ViewSet):
                     "delivery": delivery,
                     "total": total,
                     "item_count": len(checkout_items),
-                    "shop_count": len(set(item["shop_id"] for item in checkout_items if item["shop_id"]))
-                }
+                    "shop_count": len(shop_ids)
+                },
+                "available_vouchers": available_vouchers,
+                "user_purchase_stats": user_purchase_history
             }
             
             return Response(response_data)
@@ -8949,6 +8961,351 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    def _get_user_purchase_history(self, user_id):
+        """
+        Get user's purchase history for personalized voucher recommendations
+        """
+        try:
+            # Calculate total amount spent by user
+            total_spent_result = Order.objects.filter(
+                user_id=user_id,
+                status__in=['completed', 'delivered']
+            ).aggregate(total_spent=Sum('total_amount'))
+            
+            total_spent = total_spent_result['total_spent'] or 0
+            
+            # Get recent purchase count (last 30 days)
+            thirty_days_ago = timezone.now() - timedelta(days=30)
+            recent_orders_count = Order.objects.filter(
+                user_id=user_id,
+                created_at__gte=thirty_days_ago,
+                status__in=['completed', 'delivered']
+            ).count()
+            
+            # Get average order value
+            orders = Order.objects.filter(
+                user_id=user_id,
+                status__in=['completed', 'delivered']
+            )
+            order_count = orders.count()
+            
+            if order_count > 0:
+                avg_order_value = total_spent / order_count
+            else:
+                avg_order_value = 0
+            
+            return {
+                "total_spent": float(total_spent),
+                "recent_orders_count": recent_orders_count,
+                "average_order_value": float(avg_order_value),
+                "customer_tier": self._determine_customer_tier(total_spent, recent_orders_count)
+            }
+        except Exception as e:
+            logger.error(f"Error getting user purchase history: {str(e)}")
+            return {
+                "total_spent": 0,
+                "recent_orders_count": 0,
+                "average_order_value": 0,
+                "customer_tier": "new"
+            }
+    
+    def _determine_customer_tier(self, total_spent, recent_orders_count):
+        """Determine customer tier based on spending and order frequency"""
+        if total_spent >= 10000 or recent_orders_count >= 10:
+            return "platinum"
+        elif total_spent >= 5000 or recent_orders_count >= 5:
+            return "gold"
+        elif total_spent >= 1000 or recent_orders_count >= 2:
+            return "silver"
+        else:
+            return "new"
+    
+    def _get_simple_available_vouchers(self, shop_ids, user_id, current_subtotal, user_purchase_history):
+        """
+        Simplified version without problematic model fields
+        """
+        if not shop_ids:
+            return []
+        
+        # Get current date
+        current_date = timezone.now().date()
+        
+        try:
+            # Base query for active vouchers - using only confirmed existing fields
+            vouchers = Voucher.objects.filter(
+                shop_id__in=shop_ids,
+                is_active=True,
+                valid_until__gte=current_date,
+                minimum_spend__lte=current_subtotal
+            ).select_related('shop').only(
+                'id', 'name', 'code', 'discount_type', 'value', 
+                'minimum_spend', 'maximum_usage', 'shop__name'
+            ).order_by('-value', 'minimum_spend')[:15]
+            
+            # Group vouchers by type
+            percentage_vouchers = []
+            fixed_vouchers = []
+            shop_vouchers = []
+            
+            for voucher in vouchers:
+                # Calculate potential savings
+                potential_savings = self._calculate_discount(voucher, current_subtotal)
+                savings_percentage = (potential_savings / current_subtotal * 100) if current_subtotal > 0 else 0
+                
+                voucher_data = {
+                    "id": str(voucher.id),
+                    "code": voucher.code,
+                    "name": voucher.name,
+                    "discount_type": voucher.discount_type,
+                    "value": float(voucher.value),
+                    "minimum_spend": float(voucher.minimum_spend),
+                    "shop_name": voucher.shop.name if voucher.shop else "Unknown Shop",
+                    "description": self._get_voucher_description(voucher),
+                    "potential_savings": float(potential_savings),
+                    "savings_percentage": round(savings_percentage, 1),
+                    "is_recommended": self._is_voucher_recommended_simple(voucher, user_purchase_history, current_subtotal)
+                }
+                
+                if voucher.discount_type == 'percentage':
+                    percentage_vouchers.append(voucher_data)
+                else:
+                    fixed_vouchers.append(voucher_data)
+                
+                shop_vouchers.append(voucher_data)
+            
+            # Build categorized response
+            result = []
+            
+            # Get recommended vouchers (top 3 by savings)
+            all_vouchers = percentage_vouchers + fixed_vouchers
+            recommended = sorted(all_vouchers, key=lambda x: x['potential_savings'], reverse=True)[:3]
+            if recommended:
+                result.append({
+                    "category": "🔥 Recommended for You",
+                    "vouchers": recommended
+                })
+            
+            if percentage_vouchers:
+                result.append({
+                    "category": "📈 Percentage Discounts",
+                    "vouchers": percentage_vouchers[:5]
+                })
+            
+            if fixed_vouchers:
+                result.append({
+                    "category": "💰 Fixed Amount Discounts",
+                    "vouchers": fixed_vouchers[:5]
+                })
+            
+            # Add shop-specific category if we have multiple shops
+            if len(shop_ids) > 1 and shop_vouchers:
+                result.append({
+                    "category": "🏪 Shop Specific Vouchers",
+                    "vouchers": shop_vouchers[:5]
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error fetching vouchers: {str(e)}")
+            return []
+    
+    def _is_voucher_recommended_simple(self, voucher, user_purchase_history, current_subtotal):
+        """
+        Simple recommendation logic
+        """
+        # Check if minimum spend matches user's average order
+        if abs(voucher.minimum_spend - user_purchase_history['average_order_value']) <= 100:
+            return True
+        
+        # Check for good percentage discounts
+        if voucher.discount_type == 'percentage' and voucher.value >= 15:
+            return True
+        
+        # Check for high savings
+        potential_savings = self._calculate_discount(voucher, current_subtotal)
+        if potential_savings >= current_subtotal * 0.15:  # 15% or more savings
+            return True
+        
+        return False
+    
+    def _get_voucher_description(self, voucher):
+        """Generate a user-friendly description for the voucher"""
+        if voucher.discount_type == 'percentage':
+            desc = f"{voucher.value}% off"
+        else:
+            desc = f"₱{voucher.value} off"
+        
+        if voucher.minimum_spend > 0:
+            desc += f" on orders over ₱{voucher.minimum_spend}"
+        
+        return desc
+    
+    @action(detail=False, methods=['GET'])
+    def get_vouchers_by_amount(self, request):
+        """
+        Get available vouchers based on purchase amount and user history.
+        URL: /api/checkout/get-vouchers-by-amount/?user_id=user_uuid&amount=1500.00
+        """
+        user_id = request.GET.get("user_id")
+        amount = float(request.GET.get("amount", 0))
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get user's shop preferences from cart
+            user_cart_shop_ids = CartItem.objects.filter(
+                user_id=user_id
+            ).values_list('product__shop_id', flat=True).distinct()
+            
+            # Get user purchase history
+            user_purchase_history = self._get_user_purchase_history(user_id)
+            
+            # Get available vouchers
+            available_vouchers = self._get_simple_available_vouchers(
+                list(user_cart_shop_ids), 
+                user_id, 
+                amount,
+                user_purchase_history
+            )
+            
+            # Also get general vouchers (not shop-specific)
+            current_date = timezone.now().date()
+            general_vouchers = Voucher.objects.filter(
+                shop__isnull=True,  # General vouchers
+                is_active=True,
+                valid_until__gte=current_date,
+                minimum_spend__lte=amount
+            ).order_by('-value')[:5]
+            
+            general_voucher_list = []
+            for voucher in general_vouchers:
+                potential_savings = self._calculate_discount(voucher, amount)
+                savings_percentage = (potential_savings / amount * 100) if amount > 0 else 0
+                
+                general_voucher_list.append({
+                    "id": str(voucher.id),
+                    "code": voucher.code,
+                    "name": voucher.name,
+                    "discount_type": voucher.discount_type,
+                    "value": float(voucher.value),
+                    "minimum_spend": float(voucher.minimum_spend),
+                    "shop_name": "All Shops",
+                    "description": self._get_voucher_description(voucher),
+                    "potential_savings": float(potential_savings),
+                    "savings_percentage": round(savings_percentage, 1),
+                    "is_general": True,
+                    "is_recommended": True  # General vouchers are always recommended
+                })
+            
+            if general_voucher_list:
+                available_vouchers.insert(0, {
+                    "category": "General Vouchers",
+                    "vouchers": general_voucher_list
+                })
+            
+            return Response({
+                "success": True,
+                "available_vouchers": available_vouchers,
+                "user_stats": user_purchase_history,
+                "purchase_amount": amount
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in get_vouchers_by_amount: {str(e)}")
+            return Response(
+                {"error": "Failed to fetch vouchers", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['POST'])
+    def validate_voucher(self, request):
+        """
+        Validate a voucher code for checkout.
+        Expected data: {
+            "voucher_code": "SUMMER2024",
+            "user_id": "user_uuid",
+            "subtotal": 1500.00,
+            "shop_id": "shop_uuid" (optional, if specific to shop)
+        }
+        """
+        voucher_code = request.data.get("voucher_code", "").strip().upper()
+        user_id = request.data.get("user_id")
+        subtotal = float(request.data.get("subtotal", 0))
+        shop_id = request.data.get("shop_id")
+        
+        if not voucher_code:
+            return Response({"valid": False, "error": "Voucher code is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not user_id:
+            return Response({"valid": False, "error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get current date
+            current_date = timezone.now().date()
+            
+            # Build query for voucher
+            voucher_query = Voucher.objects.filter(
+                code=voucher_code,
+                is_active=True,
+                valid_until__gte=current_date,
+                minimum_spend__lte=subtotal
+            )
+            
+            # Add shop filter if provided
+            if shop_id:
+                voucher_query = voucher_query.filter(shop_id=shop_id)
+            
+            voucher = voucher_query.first()
+            
+            if not voucher:
+                return Response({
+                    "valid": False, 
+                    "error": "Invalid voucher code or voucher not applicable"
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check maximum usage (if applicable)
+            if hasattr(voucher, 'maximum_usage') and voucher.maximum_usage > 0:
+                usage_count = Checkout.objects.filter(voucher=voucher).count()
+                if usage_count >= voucher.maximum_usage:
+                    return Response({
+                        "valid": False,
+                        "error": "This voucher has reached its usage limit"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Calculate discount amount
+            discount_amount = self._calculate_discount(voucher, subtotal)
+            
+            return Response({
+                "valid": True,
+                "voucher": {
+                    "id": str(voucher.id),
+                    "code": voucher.code,
+                    "name": voucher.name,
+                    "discount_type": voucher.discount_type,
+                    "value": float(voucher.value),
+                    "minimum_spend": float(voucher.minimum_spend),
+                    "shop_name": voucher.shop.name if voucher.shop else None,
+                    "discount_amount": discount_amount
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error validating voucher: {str(e)}")
+            return Response(
+                {"valid": False, "error": "Failed to validate voucher"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _calculate_discount(self, voucher, subtotal):
+        """Calculate discount amount based on voucher type"""
+        if voucher.discount_type == 'percentage':
+            return float(subtotal * float(voucher.value) / 100)
+        elif voucher.discount_type == 'fixed':
+            return float(min(float(voucher.value), subtotal))
+        return 0
+
     @action(detail=False, methods=['POST'])
     def create_order(self, request):
         """
@@ -8958,7 +9315,9 @@ class CheckoutOrder(viewsets.ViewSet):
             "selected_ids": ["cart_item_id1", "cart_item_id2"],
             "shipping_address": {...},
             "payment_method": "cod",
-            "shipping_method": "pickup"
+            "shipping_method": "pickup",
+            "voucher_id": "voucher_uuid" (optional),
+            "remarks": "optional remarks" (optional)
         }
         """
         user_id = request.data.get("user_id")
@@ -8966,6 +9325,8 @@ class CheckoutOrder(viewsets.ViewSet):
         shipping_address = request.data.get("shipping_address", {})
         payment_method = request.data.get("payment_method", "cod")
         shipping_method = request.data.get("shipping_method", "pickup")
+        voucher_id = request.data.get("voucher_id")
+        remarks = request.data.get("remarks")
         
         if not user_id or not selected_ids:
             return Response(
@@ -8990,11 +9351,35 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
             
             # Calculate total
-            total_amount = sum(
+            subtotal = sum(
                 cart_item.product.price * cart_item.quantity 
                 for cart_item in cart_items 
                 if cart_item.product
             )
+            
+            # Apply voucher discount if provided
+            discount_amount = 0
+            voucher = None
+            
+            if voucher_id:
+                try:
+                    voucher = Voucher.objects.get(
+                        id=voucher_id,
+                        is_active=True,
+                        valid_until__gte=timezone.now().date(),
+                        minimum_spend__lte=subtotal
+                    )
+                    discount_amount = self._calculate_discount(voucher, subtotal)
+                except Voucher.DoesNotExist:
+                    return Response(
+                        {"error": "Invalid or expired voucher"}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Calculate final amount
+            delivery_fee = 0 if shipping_method == "Pickup from Store" else 50.00
+            tax = subtotal * 0.12
+            total_amount = subtotal + tax + delivery_fee - discount_amount
             
             # Create Order
             order = Order.objects.create(
@@ -9011,9 +9396,11 @@ class CheckoutOrder(viewsets.ViewSet):
                 Checkout.objects.create(
                     order=order,
                     cart_item=cart_item,
+                    voucher=voucher,
                     quantity=cart_item.quantity,
                     total_amount=cart_item.product.price * cart_item.quantity if cart_item.product else 0,
-                    status='pending'
+                    status='pending',
+                    remarks=remarks[:500] if remarks else None
                 )
             
             # Remove cart items after checkout
@@ -9022,8 +9409,10 @@ class CheckoutOrder(viewsets.ViewSet):
             return Response({
                 "success": True,
                 "message": "Order created successfully",
-                "order_id": str(order.order),
-                "total_amount": float(total_amount)
+                "order_id": str(order.id),  # Changed from order.order to order.id
+                "total_amount": float(total_amount),
+                "discount_applied": float(discount_amount),
+                "voucher_used": voucher.code if voucher else None
             })
             
         except Exception as e:
@@ -9032,3 +9421,149 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+
+class PurchasesBuyer(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def user_purchases(self, request):
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            # Get all orders for this user with efficient prefetching
+            orders = Order.objects.filter(user=user).prefetch_related(
+                Prefetch(
+                    'checkout_set',
+                    queryset=Checkout.objects.select_related(
+                        'cart_item__product__shop',
+                        'cart_item__product__customer__customer',
+                        'voucher'
+                    ).prefetch_related(
+                        Prefetch(
+                            'cart_item__product__productmedia_set',
+                            queryset=ProductMedia.objects.only('id', 'file_data', 'file_type')
+                        )
+                    )
+                )
+            ).order_by('-created_at')
+            
+            # Get related payments and deliveries in bulk
+            order_ids = list(orders.values_list('order', flat=True))
+            payments = Payment.objects.filter(order_id__in=order_ids)
+            deliveries = Delivery.objects.filter(order_id__in=order_ids)
+            
+            # Create lookup dictionaries
+            payment_dict = {str(payment.order_id): payment for payment in payments}
+            delivery_dict = {str(delivery.order_id): delivery for delivery in deliveries}
+            
+            # Prepare response data
+            purchases = []
+            for order in orders:
+                # Get payment and delivery for this order
+                payment = payment_dict.get(str(order.order))
+                delivery = delivery_dict.get(str(order.order))
+                
+                order_data = {
+                    'order_id': str(order.order),
+                    'status': order.status,
+                    'total_amount': str(order.total_amount),
+                    'payment_method': order.payment_method,
+                    'delivery_method': order.delivery_method,
+                    'delivery_address': order.delivery_address,
+                    'created_at': order.created_at,
+                    'payment_status': payment.status if payment else None,
+                    'delivery_status': delivery.status if delivery else None,
+                    'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+                    'items': []
+                }
+                
+                # Get all checkouts for this order
+                for checkout in order.checkout_set.all():
+                    if checkout.cart_item and checkout.cart_item.product:
+                        product = checkout.cart_item.product
+                        
+                        # Get product media (images)
+                        product_images = []
+                        for media in product.productmedia_set.all():
+                            if media.file_data:
+                                product_images.append({
+                                    'id': str(media.id),
+                                    'url': request.build_absolute_uri(media.file_data.url) if request else media.file_data.url,
+                                    'file_type': media.file_type
+                                })
+                        
+                        # Get primary image (first image)
+                        primary_image = product_images[0] if product_images else None
+                        
+                        # Check if user has reviewed this product
+                        has_reviewed = Review.objects.filter(
+                            customer__customer=user,
+                            product=product
+                        ).exists()
+                        
+                        item_data = {
+                            'checkout_id': str(checkout.id),
+                            'cart_item_id': str(checkout.cart_item.id) if checkout.cart_item else None,
+                            'product_id': str(product.id),
+                            'product_name': product.name,
+                            'product_description': product.description,
+                            'product_condition': product.condition,
+                            'product_status': product.status,
+                            'shop_id': str(product.shop.id) if product.shop else None,
+                            'shop_name': product.shop.name if product.shop else None,
+                            'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
+                            'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
+                            'quantity': checkout.quantity,
+                            'price': str(product.price),
+                            'subtotal': str(checkout.total_amount),
+                            'status': checkout.status,
+                            'remarks': checkout.remarks,
+                            'purchased_at': checkout.created_at,
+                            'product_images': product_images,
+                            'primary_image': primary_image,
+                            'voucher_applied': {
+                                'id': str(checkout.voucher.id),
+                                'name': checkout.voucher.name,
+                                'code': checkout.voucher.code
+                            } if checkout.voucher else None,
+                            'can_review': not has_reviewed and order.status == 'completed'
+                        }
+                        order_data['items'].append(item_data)
+                
+                purchases.append(order_data)
+            
+            return Response({
+                'user_id': str(user.id),
+                'username': user.username,
+                'total_purchases': len(purchases),
+                'purchases': purchases
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+
+class ReturnPurchaseBuyer(viewsets.ViewSet):
+    @action(detail=True, methods=['get'])
+    def get_return_products(self, request):
+        user_id = request.headers.get('X-User-Id')
+
+
+        

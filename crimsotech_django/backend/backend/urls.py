@@ -45,6 +45,8 @@ router.register(r'public-products', PublicProducts, basename='public-products')
 router.register(r'checkout', CheckoutView, basename='checkout')
 router.register(r'customer-boost-plans', CustomerBoostPlan, basename='customer-boost-plans')
 router.register(r'seller-order-list', SellerOrderList, basename='seller-order-list')
+router.register(r'checkout-order', CheckoutOrder, basename='checkout-order')
+router.register(r'purchases-buyer', PurchasesBuyer, basename='purchases-buyer')  # Add this line
 
 
 urlpatterns = [
@@ -70,4 +72,3 @@ urlpatterns = [
     path('api/get-role/', GetRole.as_view(), name='get-role'),
     path('api/get-registration/', GetRegistration.as_view(), name='get-registration'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
