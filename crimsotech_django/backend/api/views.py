@@ -8892,6 +8892,7 @@ class CheckoutOrder(viewsets.ViewSet):
             # Prepare response data
             checkout_items = []
             shop_ids = set()
+            shop_addresses = {}  # Store shop addresses by shop_id
             
             for cart_item in cart_items:
                 product = cart_item.product
@@ -8899,6 +8900,18 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 if shop:
                     shop_ids.add(shop.id)
+                    # Store shop address if not already stored
+                    if shop.id not in shop_addresses:
+                        shop_addresses[shop.id] = {
+                            'shop_id': str(shop.id),
+                            'shop_name': shop.name,
+                            'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}",
+                            'shop_street': shop.street,
+                            'shop_barangay': shop.barangay,
+                            'shop_city': shop.city,
+                            'shop_province': shop.province,
+                            'shop_contact_number': shop.contact_number
+                        }
                 
                 item_data = {
                     "id": str(cart_item.id),
@@ -8922,14 +8935,13 @@ class CheckoutOrder(viewsets.ViewSet):
             
             # Calculate totals
             subtotal = sum(item["subtotal"] for item in checkout_items)
-            tax = subtotal * 0.12  # 12% VAT
             delivery = 50.00  # Base delivery fee
-            total = subtotal + tax + delivery
+            total = subtotal + delivery
             
-            # Fetch user's purchase history for personalized voucher recommendations
+            # Fetch user's purchase history (simplified)
             user_purchase_history = self._get_user_purchase_history(user_id)
             
-            # Get available vouchers (simplified version without problematic fields)
+            # Get available vouchers (simplified)
             available_vouchers = self._get_simple_available_vouchers(
                 list(shop_ids), 
                 user_id, 
@@ -8937,19 +8949,55 @@ class CheckoutOrder(viewsets.ViewSet):
                 user_purchase_history
             )
             
+            # Get user's shipping addresses (simple fetch)
+            shipping_addresses = list(
+                ShippingAddress.objects.filter(
+                    user_id=user_id,
+                    is_active=True
+                ).order_by('-is_default', '-created_at').values(
+                    'id',
+                    'recipient_name',
+                    'recipient_phone',
+                    'street',
+                    'barangay',
+                    'city',
+                    'province',
+                    'zip_code',
+                    'country',
+                    'is_default'
+                )[:10]  # Limit to 10 addresses for efficiency
+            )
+            
+            # Format addresses if they exist
+            formatted_addresses = []
+            for addr in shipping_addresses:
+                addr['id'] = str(addr['id'])
+                # Create full address string
+                parts = [addr['street'], addr['barangay'], addr['city'], addr['province']]
+                addr['full_address'] = ', '.join(filter(None, parts))
+                formatted_addresses.append(addr)
+            
+            # Get default address (first one since we ordered by is_default)
+            default_address = formatted_addresses[0] if formatted_addresses else None
+            
+            # Convert shop_addresses dict to list
+            shop_addresses_list = list(shop_addresses.values())
+            
             response_data = {
                 "success": True,
                 "checkout_items": checkout_items,
                 "summary": {
                     "subtotal": subtotal,
-                    "tax": tax,
                     "delivery": delivery,
                     "total": total,
                     "item_count": len(checkout_items),
                     "shop_count": len(shop_ids)
                 },
                 "available_vouchers": available_vouchers,
-                "user_purchase_stats": user_purchase_history
+                "user_purchase_stats": user_purchase_history,
+                "shipping_addresses": formatted_addresses or None,  # Return None if empty
+                "default_shipping_address": default_address,
+                "shop_addresses": shop_addresses_list  # Add shop addresses to response
             }
             
             return Response(response_data)
@@ -8966,33 +9014,27 @@ class CheckoutOrder(viewsets.ViewSet):
         Get user's purchase history for personalized voucher recommendations
         """
         try:
-            # Calculate total amount spent by user
-            total_spent_result = Order.objects.filter(
-                user_id=user_id,
-                status__in=['completed', 'delivered']
-            ).aggregate(total_spent=Sum('total_amount'))
-            
-            total_spent = total_spent_result['total_spent'] or 0
-            
-            # Get recent purchase count (last 30 days)
-            thirty_days_ago = timezone.now() - timedelta(days=30)
-            recent_orders_count = Order.objects.filter(
-                user_id=user_id,
-                created_at__gte=thirty_days_ago,
-                status__in=['completed', 'delivered']
-            ).count()
-            
-            # Get average order value
-            orders = Order.objects.filter(
+            # Simple aggregate queries
+            completed_orders = Order.objects.filter(
                 user_id=user_id,
                 status__in=['completed', 'delivered']
             )
-            order_count = orders.count()
             
-            if order_count > 0:
-                avg_order_value = total_spent / order_count
-            else:
-                avg_order_value = 0
+            # Get total spent
+            total_spent_result = completed_orders.aggregate(
+                total_spent=Sum('total_amount')
+            )
+            total_spent = total_spent_result['total_spent'] or 0
+            
+            # Get recent order count (last 30 days)
+            thirty_days_ago = timezone.now() - timedelta(days=30)
+            recent_orders_count = completed_orders.filter(
+                created_at__gte=thirty_days_ago
+            ).count()
+            
+            # Get average order value
+            order_count = completed_orders.count()
+            avg_order_value = total_spent / order_count if order_count > 0 else 0
             
             return {
                 "total_spent": float(total_spent),
@@ -9031,7 +9073,7 @@ class CheckoutOrder(viewsets.ViewSet):
         current_date = timezone.now().date()
         
         try:
-            # Base query for active vouchers - using only confirmed existing fields
+            # Base query for active vouchers
             vouchers = Voucher.objects.filter(
                 shop_id__in=shop_ids,
                 is_active=True,
@@ -9039,18 +9081,13 @@ class CheckoutOrder(viewsets.ViewSet):
                 minimum_spend__lte=current_subtotal
             ).select_related('shop').only(
                 'id', 'name', 'code', 'discount_type', 'value', 
-                'minimum_spend', 'maximum_usage', 'shop__name'
-            ).order_by('-value', 'minimum_spend')[:15]
+                'minimum_spend', 'shop__name'
+            ).order_by('-value')[:10]  # Limit to 10 for performance
             
-            # Group vouchers by type
-            percentage_vouchers = []
-            fixed_vouchers = []
-            shop_vouchers = []
-            
+            # Build response
+            voucher_list = []
             for voucher in vouchers:
-                # Calculate potential savings
                 potential_savings = self._calculate_discount(voucher, current_subtotal)
-                savings_percentage = (potential_savings / current_subtotal * 100) if current_subtotal > 0 else 0
                 
                 voucher_data = {
                     "id": str(voucher.id),
@@ -9062,72 +9099,20 @@ class CheckoutOrder(viewsets.ViewSet):
                     "shop_name": voucher.shop.name if voucher.shop else "Unknown Shop",
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
-                    "savings_percentage": round(savings_percentage, 1),
-                    "is_recommended": self._is_voucher_recommended_simple(voucher, user_purchase_history, current_subtotal)
                 }
-                
-                if voucher.discount_type == 'percentage':
-                    percentage_vouchers.append(voucher_data)
-                else:
-                    fixed_vouchers.append(voucher_data)
-                
-                shop_vouchers.append(voucher_data)
+                voucher_list.append(voucher_data)
             
-            # Build categorized response
-            result = []
-            
-            # Get recommended vouchers (top 3 by savings)
-            all_vouchers = percentage_vouchers + fixed_vouchers
-            recommended = sorted(all_vouchers, key=lambda x: x['potential_savings'], reverse=True)[:3]
-            if recommended:
-                result.append({
-                    "category": "🔥 Recommended for You",
-                    "vouchers": recommended
-                })
-            
-            if percentage_vouchers:
-                result.append({
-                    "category": "📈 Percentage Discounts",
-                    "vouchers": percentage_vouchers[:5]
-                })
-            
-            if fixed_vouchers:
-                result.append({
-                    "category": "💰 Fixed Amount Discounts",
-                    "vouchers": fixed_vouchers[:5]
-                })
-            
-            # Add shop-specific category if we have multiple shops
-            if len(shop_ids) > 1 and shop_vouchers:
-                result.append({
-                    "category": "🏪 Shop Specific Vouchers",
-                    "vouchers": shop_vouchers[:5]
-                })
-            
-            return result
+            # Simple categorization
+            if voucher_list:
+                return [{
+                    "category": "Available Vouchers",
+                    "vouchers": voucher_list
+                }]
+            return []
             
         except Exception as e:
             logger.error(f"Error fetching vouchers: {str(e)}")
             return []
-    
-    def _is_voucher_recommended_simple(self, voucher, user_purchase_history, current_subtotal):
-        """
-        Simple recommendation logic
-        """
-        # Check if minimum spend matches user's average order
-        if abs(voucher.minimum_spend - user_purchase_history['average_order_value']) <= 100:
-            return True
-        
-        # Check for good percentage discounts
-        if voucher.discount_type == 'percentage' and voucher.value >= 15:
-            return True
-        
-        # Check for high savings
-        potential_savings = self._calculate_discount(voucher, current_subtotal)
-        if potential_savings >= current_subtotal * 0.15:  # 15% or more savings
-            return True
-        
-        return False
     
     def _get_voucher_description(self, voucher):
         """Generate a user-friendly description for the voucher"""
@@ -9142,9 +9127,89 @@ class CheckoutOrder(viewsets.ViewSet):
         return desc
     
     @action(detail=False, methods=['GET'])
+    def get_shipping_addresses(self, request):
+        """
+        Get user's shipping addresses.
+        URL: /api/checkout/get-shipping-addresses/?user_id=user_uuid
+        """
+        user_id = request.GET.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Simple query with values() for efficiency
+            addresses = list(
+                ShippingAddress.objects.filter(
+                    user_id=user_id,
+                    is_active=True
+                ).order_by('-is_default', '-created_at').values(
+                    'id',
+                    'recipient_name',
+                    'recipient_phone',
+                    'street',
+                    'barangay',
+                    'city',
+                    'province',
+                    'zip_code',
+                    'country',
+                    'building_name',
+                    'floor_number',
+                    'unit_number',
+                    'landmark',
+                    'instructions',
+                    'address_type',
+                    'is_default',
+                    'created_at'
+                )[:20]  # Limit to 20 addresses
+            )
+            
+            # Format the addresses
+            formatted_addresses = []
+            for addr in addresses:
+                addr['id'] = str(addr['id'])
+                # Create full address
+                parts = [
+                    addr.get('building_name'),
+                    addr.get('floor_number') and f"Floor {addr['floor_number']}",
+                    addr.get('unit_number') and f"Unit {addr['unit_number']}",
+                    addr.get('street'),
+                    addr.get('barangay'),
+                    addr.get('city'),
+                    addr.get('province'),
+                    addr.get('zip_code'),
+                    addr.get('country')
+                ]
+                addr['full_address'] = ', '.join(filter(None, parts))
+                
+                if addr.get('created_at'):
+                    addr['created_at'] = addr['created_at'].isoformat()
+                
+                formatted_addresses.append(addr)
+            
+            default_address = next(
+                (addr for addr in formatted_addresses if addr['is_default']), 
+                formatted_addresses[0] if formatted_addresses else None
+            )
+            
+            return Response({
+                "success": True,
+                "shipping_addresses": formatted_addresses or None,  # Return None if empty
+                "default_shipping_address": default_address,
+                "count": len(formatted_addresses)
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting shipping addresses: {str(e)}")
+            return Response(
+                {"error": "Failed to fetch shipping addresses", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['GET'])
     def get_vouchers_by_amount(self, request):
         """
-        Get available vouchers based on purchase amount and user history.
+        Get available vouchers based on purchase amount.
         URL: /api/checkout/get-vouchers-by-amount/?user_id=user_uuid&amount=1500.00
         """
         user_id = request.GET.get("user_id")
@@ -9154,7 +9219,7 @@ class CheckoutOrder(viewsets.ViewSet):
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Get user's shop preferences from cart
+            # Get user's cart shop IDs
             user_cart_shop_ids = CartItem.objects.filter(
                 user_id=user_id
             ).values_list('product__shop_id', flat=True).distinct()
@@ -9170,21 +9235,19 @@ class CheckoutOrder(viewsets.ViewSet):
                 user_purchase_history
             )
             
-            # Also get general vouchers (not shop-specific)
+            # Get general vouchers
             current_date = timezone.now().date()
             general_vouchers = Voucher.objects.filter(
-                shop__isnull=True,  # General vouchers
+                shop__isnull=True,
                 is_active=True,
                 valid_until__gte=current_date,
                 minimum_spend__lte=amount
             ).order_by('-value')[:5]
             
-            general_voucher_list = []
+            general_list = []
             for voucher in general_vouchers:
                 potential_savings = self._calculate_discount(voucher, amount)
-                savings_percentage = (potential_savings / amount * 100) if amount > 0 else 0
-                
-                general_voucher_list.append({
+                general_list.append({
                     "id": str(voucher.id),
                     "code": voucher.code,
                     "name": voucher.name,
@@ -9194,15 +9257,13 @@ class CheckoutOrder(viewsets.ViewSet):
                     "shop_name": "All Shops",
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
-                    "savings_percentage": round(savings_percentage, 1),
-                    "is_general": True,
-                    "is_recommended": True  # General vouchers are always recommended
+                    "is_general": True
                 })
             
-            if general_voucher_list:
-                available_vouchers.insert(0, {
+            if general_list:
+                available_vouchers.append({
                     "category": "General Vouchers",
-                    "vouchers": general_voucher_list
+                    "vouchers": general_list
                 })
             
             return Response({
@@ -9227,7 +9288,7 @@ class CheckoutOrder(viewsets.ViewSet):
             "voucher_code": "SUMMER2024",
             "user_id": "user_uuid",
             "subtotal": 1500.00,
-            "shop_id": "shop_uuid" (optional, if specific to shop)
+            "shop_id": "shop_uuid" (optional)
         }
         """
         voucher_code = request.data.get("voucher_code", "").strip().upper()
@@ -9242,10 +9303,8 @@ class CheckoutOrder(viewsets.ViewSet):
             return Response({"valid": False, "error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Get current date
             current_date = timezone.now().date()
             
-            # Build query for voucher
             voucher_query = Voucher.objects.filter(
                 code=voucher_code,
                 is_active=True,
@@ -9253,7 +9312,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 minimum_spend__lte=subtotal
             )
             
-            # Add shop filter if provided
             if shop_id:
                 voucher_query = voucher_query.filter(shop_id=shop_id)
             
@@ -9265,16 +9323,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     "error": "Invalid voucher code or voucher not applicable"
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # Check maximum usage (if applicable)
-            if hasattr(voucher, 'maximum_usage') and voucher.maximum_usage > 0:
-                usage_count = Checkout.objects.filter(voucher=voucher).count()
-                if usage_count >= voucher.maximum_usage:
-                    return Response({
-                        "valid": False,
-                        "error": "This voucher has reached its usage limit"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Calculate discount amount
             discount_amount = self._calculate_discount(voucher, subtotal)
             
             return Response({
@@ -9313,7 +9361,7 @@ class CheckoutOrder(viewsets.ViewSet):
         Expected data: {
             "user_id": "user_uuid",
             "selected_ids": ["cart_item_id1", "cart_item_id2"],
-            "shipping_address": {...},
+            "shipping_address_id": "address_uuid",  # Use address ID instead of object
             "payment_method": "cod",
             "shipping_method": "pickup",
             "voucher_id": "voucher_uuid" (optional),
@@ -9322,7 +9370,7 @@ class CheckoutOrder(viewsets.ViewSet):
         """
         user_id = request.data.get("user_id")
         selected_ids = request.data.get("selected_ids", [])
-        shipping_address = request.data.get("shipping_address", {})
+        shipping_address_id = request.data.get("shipping_address_id")
         payment_method = request.data.get("payment_method", "cod")
         shipping_method = request.data.get("shipping_method", "pickup")
         voucher_id = request.data.get("voucher_id")
@@ -9334,9 +9382,21 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        if not shipping_address_id:
+            return Response(
+                {"error": "shipping_address_id is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         try:
-            # Get user
             user = get_object_or_404(User, id=user_id)
+            
+            # Get shipping address
+            shipping_address = get_object_or_404(
+                ShippingAddress, 
+                id=shipping_address_id, 
+                user=user
+            )
             
             # Get cart items
             cart_items = CartItem.objects.filter(
@@ -9378,20 +9438,20 @@ class CheckoutOrder(viewsets.ViewSet):
             
             # Calculate final amount
             delivery_fee = 0 if shipping_method == "Pickup from Store" else 50.00
-            tax = subtotal * 0.12
-            total_amount = subtotal + tax + delivery_fee - discount_amount
+            total_amount = subtotal + delivery_fee - discount_amount
             
-            # Create Order
+            # Create Order with shipping address
             order = Order.objects.create(
                 user=user,
+                shipping_address=shipping_address,
                 status='pending',
                 total_amount=total_amount,
                 payment_method=payment_method,
                 delivery_method=shipping_method,
-                delivery_address=f"{shipping_address.get('street', '')}, {shipping_address.get('barangay', '')}, {shipping_address.get('city', '')}, {shipping_address.get('province', '')}"
+                delivery_address_text=shipping_address.get_full_address()
             )
             
-            # Create Checkout entries for each cart item
+            # Create Checkout entries
             for cart_item in cart_items:
                 Checkout.objects.create(
                     order=order,
@@ -9403,13 +9463,13 @@ class CheckoutOrder(viewsets.ViewSet):
                     remarks=remarks[:500] if remarks else None
                 )
             
-            # Remove cart items after checkout
+            # Remove cart items
             cart_items.delete()
             
             return Response({
                 "success": True,
                 "message": "Order created successfully",
-                "order_id": str(order.id),  # Changed from order.order to order.id
+                "order_id": str(order.order),
                 "total_amount": float(total_amount),
                 "discount_applied": float(discount_amount),
                 "voucher_used": voucher.code if voucher else None
@@ -9421,8 +9481,385 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
+        
+class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
+    @action(detail=False, methods=['GET'])
+    def get_shipping_addresses(self, request):
+        """
+        Get user's shipping addresses.
+        URL: /api/shipping-address/get_shipping_addresses/?user_id=user_uuid
+        """
+        user_id = request.GET.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Use the actual model, not the viewset class
+            addresses = list(
+                ShippingAddress.objects.filter(
+                    user_id=user_id,
+                    is_active=True
+                ).order_by('-is_default', '-created_at').values(
+                    'id',
+                    'recipient_name',
+                    'recipient_phone',
+                    'street',
+                    'barangay',
+                    'city',
+                    'province',
+                    'zip_code',
+                    'country',
+                    'building_name',
+                    'floor_number',
+                    'unit_number',
+                    'landmark',
+                    'instructions',
+                    'address_type',
+                    'is_default',
+                    'created_at'
+                )[:20]  # Limit to 20 addresses
+            )
+            
+            # Format the addresses
+            formatted_addresses = []
+            for addr in addresses:
+                addr['id'] = str(addr['id'])
+                # Create full address
+                parts = [
+                    addr.get('building_name'),
+                    f"Floor {addr['floor_number']}" if addr.get('floor_number') else None,
+                    f"Unit {addr['unit_number']}" if addr.get('unit_number') else None,
+                    addr.get('street'),
+                    addr.get('barangay'),
+                    addr.get('city'),
+                    addr.get('province'),
+                    addr.get('zip_code'),
+                    addr.get('country')
+                ]
+                addr['full_address'] = ', '.join(filter(None, parts))
+                
+                if addr.get('created_at'):
+                    addr['created_at'] = addr['created_at'].isoformat()
+                
+                formatted_addresses.append(addr)
+            
+            default_address = next(
+                (addr for addr in formatted_addresses if addr['is_default']), 
+                formatted_addresses[0] if formatted_addresses else None
+            )
+            
+            return Response({
+                "success": True,
+                "shipping_addresses": formatted_addresses or None,  # Return None if empty
+                "default_shipping_address": default_address,
+                "count": len(formatted_addresses)
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting shipping addresses: {str(e)}")
+            return Response(
+                {"error": "Failed to fetch shipping addresses", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['POST'])
+    def add_shipping_address(self, request):
+        """
+        Add a new shipping address.
+        Expected data: {
+            "user_id": "user_uuid",
+            "recipient_name": "John Doe",
+            "recipient_phone": "09123456789",
+            "street": "123 Main St",
+            "barangay": "Barangay 1",
+            "city": "Manila",
+            "province": "Metro Manila",
+            "zip_code": "1000",
+            "country": "Philippines",
+            "is_default": false
+        }
+        """
+        user_id = request.data.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        required_fields = [
+            'recipient_name', 'recipient_phone', 'street', 
+            'barangay', 'city', 'province', 'zip_code'
+        ]
+        
+        for field in required_fields:
+            if not request.data.get(field):
+                return Response(
+                    {"error": f"{field} is required"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        try:
+            user = get_object_or_404(User, id=user_id)
+            
+            # Create address
+            address = ShippingAddress.objects.create(
+                user=user,
+                recipient_name=request.data['recipient_name'],
+                recipient_phone=request.data['recipient_phone'],
+                street=request.data['street'],
+                barangay=request.data['barangay'],
+                city=request.data['city'],
+                province=request.data['province'],
+                zip_code=request.data['zip_code'],
+                country=request.data.get('country', 'Philippines'),
+                building_name=request.data.get('building_name', ''),
+                floor_number=request.data.get('floor_number', ''),
+                unit_number=request.data.get('unit_number', ''),
+                landmark=request.data.get('landmark', ''),
+                instructions=request.data.get('instructions', ''),
+                address_type=request.data.get('address_type', 'home'),
+                is_default=request.data.get('is_default', False)
+            )
+            
+            # Create full address string
+            parts = [
+                address.building_name,
+                f"Floor {address.floor_number}" if address.floor_number else None,
+                f"Unit {address.unit_number}" if address.unit_number else None,
+                address.street,
+                address.barangay,
+                address.city,
+                address.province,
+                address.zip_code,
+                address.country
+            ]
+            full_address = ', '.join(filter(None, parts))
+            
+            return Response({
+                "success": True,
+                "message": "Shipping address added successfully",
+                "address": {
+                    "id": str(address.id),
+                    "recipient_name": address.recipient_name,
+                    "recipient_phone": address.recipient_phone,
+                    "full_address": full_address,
+                    "is_default": address.is_default
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error adding shipping address: {str(e)}")
+            return Response(
+                {"error": "Failed to add shipping address", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['DELETE'])
+    def delete_shipping_address(self, request):
+        """
+        Delete a shipping address.
+        Expected data: {
+            "address_id": "address_uuid",
+            "user_id": "user_uuid"
+        }
+        """
+        address_id = request.data.get("address_id")
+        user_id = request.data.get("user_id")
+        
+        if not address_id or not user_id:
+            return Response(
+                {"error": "address_id and user_id are required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            address = get_object_or_404(ShippingAddress, id=address_id, user_id=user_id)
+            address.delete()
+            
+            return Response({
+                "success": True,
+                "message": "Shipping address deleted successfully"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error deleting shipping address: {str(e)}")
+            return Response(
+                {"error": "Failed to delete shipping address", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['POST'])
+    def set_default_address(self, request):
+        """
+        Set a shipping address as default.
+        Expected data: {
+            "address_id": "address_uuid",
+            "user_id": "user_uuid"
+        }
+        """
+        address_id = request.data.get("address_id")
+        user_id = request.data.get("user_id")
+        
+        if not address_id or not user_id:
+            return Response(
+                {"error": "address_id and user_id are required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            address = get_object_or_404(ShippingAddress, id=address_id, user_id=user_id)
+            
+            # Update all addresses to not default
+            ShippingAddress.objects.filter(user_id=user_id).update(is_default=False)
+            
+            # Set this address as default
+            address.is_default = True
+            address.save()
+            
+            return Response({
+                "success": True,
+                "message": "Default address updated successfully"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error setting default address: {str(e)}")
+            return Response(
+                {"error": "Failed to set default address", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['GET'])
+    def get_address_by_id(self, request):
+        """
+        Get a specific shipping address by ID.
+        URL: /api/shipping-address/get_address_by_id/?address_id=address_uuid&user_id=user_uuid
+        """
+        address_id = request.GET.get("address_id")
+        user_id = request.GET.get("user_id")
+        
+        if not address_id or not user_id:
+            return Response(
+                {"error": "address_id and user_id are required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            address = get_object_or_404(ShippingAddress, id=address_id, user_id=user_id)
+            
+            # Format address
+            parts = [
+                address.building_name,
+                f"Floor {address.floor_number}" if address.floor_number else None,
+                f"Unit {address.unit_number}" if address.unit_number else None,
+                address.street,
+                address.barangay,
+                address.city,
+                address.province,
+                address.zip_code,
+                address.country
+            ]
+            full_address = ', '.join(filter(None, parts))
+            
+            address_data = {
+                "id": str(address.id),
+                "recipient_name": address.recipient_name,
+                "recipient_phone": address.recipient_phone,
+                "street": address.street,
+                "barangay": address.barangay,
+                "city": address.city,
+                "province": address.province,
+                "zip_code": address.zip_code,
+                "country": address.country,
+                "building_name": address.building_name,
+                "floor_number": address.floor_number,
+                "unit_number": address.unit_number,
+                "landmark": address.landmark,
+                "instructions": address.instructions,
+                "address_type": address.address_type,
+                "is_default": address.is_default,
+                "full_address": full_address,
+                "created_at": address.created_at.isoformat() if address.created_at else None
+            }
+            
+            return Response({
+                "success": True,
+                "address": address_data
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting address by ID: {str(e)}")
+            return Response(
+                {"error": "Failed to fetch address", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['PUT'])
+    def update_shipping_address(self, request):
+        """
+        Update a shipping address.
+        Expected data: {
+            "address_id": "address_uuid",
+            "user_id": "user_uuid",
+            ... (fields to update)
+        }
+        """
+        address_id = request.data.get("address_id")
+        user_id = request.data.get("user_id")
+        
+        if not address_id or not user_id:
+            return Response(
+                {"error": "address_id and user_id are required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            address = get_object_or_404(ShippingAddress, id=address_id, user_id=user_id)
+            
+            # Update fields if provided
+            update_fields = [
+                'recipient_name', 'recipient_phone', 'street', 'barangay',
+                'city', 'province', 'zip_code', 'country', 'building_name',
+                'floor_number', 'unit_number', 'landmark', 'instructions',
+                'address_type', 'is_default'
+            ]
+            
+            for field in update_fields:
+                if field in request.data:
+                    setattr(address, field, request.data[field])
+            
+            address.save()
+            
+            # Format updated address
+            parts = [
+                address.building_name,
+                f"Floor {address.floor_number}" if address.floor_number else None,
+                f"Unit {address.unit_number}" if address.unit_number else None,
+                address.street,
+                address.barangay,
+                address.city,
+                address.province,
+                address.zip_code,
+                address.country
+            ]
+            full_address = ', '.join(filter(None, parts))
+            
+            return Response({
+                "success": True,
+                "message": "Shipping address updated successfully",
+                "address": {
+                    "id": str(address.id),
+                    "recipient_name": address.recipient_name,
+                    "recipient_phone": address.recipient_phone,
+                    "full_address": full_address,
+                    "is_default": address.is_default
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error updating shipping address: {str(e)}")
+            return Response(
+                {"error": "Failed to update shipping address", "details": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            ) 
 
 class PurchasesBuyer(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

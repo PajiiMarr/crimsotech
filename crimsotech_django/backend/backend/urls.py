@@ -47,6 +47,7 @@ router.register(r'customer-boost-plans', CustomerBoostPlan, basename='customer-b
 router.register(r'seller-order-list', SellerOrderList, basename='seller-order-list')
 router.register(r'checkout-order', CheckoutOrder, basename='checkout-order')
 router.register(r'purchases-buyer', PurchasesBuyer, basename='purchases-buyer')  # Add this line
+router.register(r'shipping-address', ShippingAddressViewSet, basename='shipping-address')  # Add this line
 
 
 urlpatterns = [

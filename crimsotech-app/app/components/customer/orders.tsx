@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useLoaderData } from "react-router";
+import { useLoaderData, Link } from "react-router";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Label } from "~/components/ui/label";
@@ -11,7 +11,7 @@ import {
   Globe, Smartphone, User, Tag, ChevronDown, ChevronUp, 
   CheckCircle, XCircle, Crown, Star, Award, TrendingUp,
   Sparkles, Zap, Gift, Percent, DollarSign, BadgeCheck,
-  PhilippinePeso
+  PhilippinePeso, MapPin, Plus, Edit, Home, Building
 } from "lucide-react";
 import type { Route } from './+types/orders'
 import AxiosInstance from "../axios/Axios";
@@ -115,6 +115,7 @@ const CheckoutPage = () => {
     ewalletNumber: "",
     ewalletEmail: "",
     remarks: "",
+    selectedAddressId: null as string | null,
   });
 
   const [loading, setLoading] = useState(false);
@@ -124,7 +125,6 @@ const CheckoutPage = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [summary, setSummary] = useState({
     subtotal: 0,
-    tax: 0,
     delivery: 0,
     total: 0,
     discount: 0,
@@ -137,6 +137,9 @@ const CheckoutPage = () => {
   const [userPurchaseStats, setUserPurchaseStats] = useState<any>(null);
   const [loadingVouchers, setLoadingVouchers] = useState(false);
   const [activeVoucherCategory, setActiveVoucherCategory] = useState<string>("all");
+  const [shippingAddresses, setShippingAddresses] = useState<any[]>([]);
+  const [defaultShippingAddress, setDefaultShippingAddress] = useState<any>(null);
+  const [shopAddresses, setShopAddresses] = useState<any[]>([]);
 
   useEffect(() => {
     if (checkoutData?.success && checkoutData.checkout_items) {
@@ -155,7 +158,6 @@ const CheckoutPage = () => {
       if (checkoutData.summary) {
         setSummary({
           subtotal: checkoutData.summary.subtotal,
-          tax: checkoutData.summary.tax,
           delivery: checkoutData.summary.delivery,
           total: checkoutData.summary.total,
           discount: 0,
@@ -170,6 +172,23 @@ const CheckoutPage = () => {
       // Set available vouchers from API response
       if (checkoutData.available_vouchers) {
         setAvailableVouchers(checkoutData.available_vouchers);
+      }
+      
+      // Set shipping addresses
+      if (checkoutData.shipping_addresses) {
+        setShippingAddresses(checkoutData.shipping_addresses);
+        if (checkoutData.default_shipping_address) {
+          setDefaultShippingAddress(checkoutData.default_shipping_address);
+          setFormData(prev => ({ ...prev, selectedAddressId: checkoutData.default_shipping_address.id }));
+        } else if (checkoutData.shipping_addresses.length > 0) {
+          setDefaultShippingAddress(checkoutData.shipping_addresses[0]);
+          setFormData(prev => ({ ...prev, selectedAddressId: checkoutData.shipping_addresses[0].id }));
+        }
+      }
+      
+      // Set shop addresses
+      if (checkoutData.shop_addresses) {
+        setShopAddresses(checkoutData.shop_addresses);
       }
     } else if (checkoutData?.error) {
       setError(`Failed to load checkout items: ${checkoutData.error}`);
@@ -204,6 +223,10 @@ const CheckoutPage = () => {
     } finally {
       setLoadingVouchers(false);
     }
+  };
+
+  const handleAddressSelect = (addressId: string) => {
+    setFormData(prev => ({ ...prev, selectedAddressId: addressId }));
   };
 
   const userAddress = {
@@ -243,7 +266,7 @@ const CheckoutPage = () => {
       name: "Cash on Delivery" as typeof PAYMENT_METHOD_CHOICES[number],
       description: "Pay when you receive your order",
       icon: Wallet,
-      iconColor: "text-green-600",
+      iconColor: "text-orange-600",
       requiresDetails: false,
     },
     {
@@ -251,7 +274,7 @@ const CheckoutPage = () => {
       name: "GCash" as typeof PAYMENT_METHOD_CHOICES[number],
       description: "Pay instantly via GCash",
       icon: Smartphone,
-      iconColor: "text-blue-600",
+      iconColor: "text-orange-600",
       requiresDetails: true,
       placeholder: {
         name: "GCash Account Name",
@@ -264,7 +287,7 @@ const CheckoutPage = () => {
       name: "PayMaya" as typeof PAYMENT_METHOD_CHOICES[number],
       description: "Pay using PayMaya wallet",
       icon: CreditCard,
-      iconColor: "text-purple-600",
+      iconColor: "text-orange-600",
       requiresDetails: true,
       placeholder: {
         name: "PayMaya Account Name",
@@ -277,7 +300,7 @@ const CheckoutPage = () => {
       name: "PayPal" as typeof PAYMENT_METHOD_CHOICES[number],
       description: "Pay securely via PayPal",
       icon: Globe,
-      iconColor: "text-blue-500",
+      iconColor: "text-orange-600",
       requiresDetails: true,
       placeholder: {
         name: "PayPal Account Name",
@@ -334,8 +357,7 @@ const CheckoutPage = () => {
         // Update summary with discount
         const newDiscount = voucher.discount_amount;
         const deliveryCost = formData.shippingMethod === "Pickup from Store" ? 0 : 50.00;
-        const tax = summary.subtotal * 0.12;
-        const newTotal = summary.subtotal + tax + deliveryCost - newDiscount;
+        const newTotal = summary.subtotal + deliveryCost - newDiscount;
         
         setSummary(prev => ({
           ...prev,
@@ -360,8 +382,7 @@ const CheckoutPage = () => {
     
     // Recalculate total without discount
     const deliveryCost = formData.shippingMethod === "Pickup from Store" ? 0 : 50.00;
-    const tax = summary.subtotal * 0.12;
-    const newTotal = summary.subtotal + tax + deliveryCost;
+    const newTotal = summary.subtotal + deliveryCost;
     
     setSummary(prev => ({
       ...prev,
@@ -374,20 +395,18 @@ const CheckoutPage = () => {
     setLoading(true);
     setError(null);
 
+    // Check if shipping address is selected
+    if (!formData.selectedAddressId) {
+      setError("Please select a shipping address");
+      setLoading(false);
+      return;
+    }
+
     try {
       const requestBody = {
         user_id: user.userId,
         selected_ids: products.map(p => p.cartItemId),
-        shipping_address: {
-          street: userAddress.street,
-          barangay: userAddress.barangay,
-          city: userAddress.city,
-          province: userAddress.province,
-          zip_code: userAddress.zipCode,
-          country: userAddress.country,
-          phone: userAddress.phone,
-          email: userAddress.email,
-        },
+        shipping_address_id: formData.selectedAddressId, // Use address ID
         payment_method: formData.paymentMethod,
         shipping_method: formData.shippingMethod,
         voucher_id: appliedVoucher?.id || null,
@@ -420,9 +439,8 @@ const CheckoutPage = () => {
 
   const subtotal = summary.subtotal;
   const shippingCost = formData.shippingMethod === "Pickup from Store" ? 0 : 50.00;
-  const tax = subtotal * 0.12;
   const discount = summary.discount;
-  const total = subtotal + shippingCost + tax - discount;
+  const total = subtotal + shippingCost - discount;
 
   const selectedPaymentMethod = paymentMethods.find(method => method.name === formData.paymentMethod);
   const showEwalletFields = selectedPaymentMethod?.requiresDetails;
@@ -435,15 +453,14 @@ const CheckoutPage = () => {
   );
 
   const hasValidProducts = products.length > 0;
-  const canPlaceOrder = formData.agreeTerms && isEwalletFieldsValid && hasValidProducts && !loading;
-
+  const canPlaceOrder = formData.agreeTerms && isEwalletFieldsValid && hasValidProducts && !loading && formData.selectedAddressId;
 
   const getTierBadge = (tier: string) => {
     const tierConfig = {
-      platinum: { icon: Crown, color: "bg-gradient-to-r from-gray-700 to-gray-900 text-white", label: "Platinum" },
-      gold: { icon: Award, color: "bg-gradient-to-r from-yellow-500 to-yellow-300 text-yellow-900", label: "Gold" },
+      platinum: { icon: Crown, color: "bg-gradient-to-r from-orange-700 to-amber-900 text-white", label: "Platinum" },
+      gold: { icon: Award, color: "bg-gradient-to-r from-amber-500 to-orange-300 text-orange-900", label: "Gold" },
       silver: { icon: Star, color: "bg-gradient-to-r from-gray-300 to-gray-100 text-gray-800", label: "Silver" },
-      new: { icon: Sparkles, color: "bg-gradient-to-r from-blue-400 to-blue-200 text-blue-900", label: "New" }
+      new: { icon: Sparkles, color: "bg-gradient-to-r from-orange-400 to-amber-200 text-orange-900", label: "New" }
     };
     
     const config = tierConfig[tier as keyof typeof tierConfig] || tierConfig.new;
@@ -479,11 +496,90 @@ const CheckoutPage = () => {
     return category ? category.vouchers : [];
   };
 
+  const getSelectedAddress = () => {
+    return shippingAddresses.find(addr => addr.id === formData.selectedAddressId);
+  };
+
+  // Get shop addresses for the current products
+  const getShopAddressesForProducts = () => {
+    if (products.length === 0 || shopAddresses.length === 0) return [];
+    
+    const productShopIds = [...new Set(products.map(p => p.shopId))];
+    return shopAddresses.filter(shop => 
+      shop.shop_id && productShopIds.includes(shop.shop_id)
+    );
+  };
+
+  // Get the main shop address (for pickup display)
+  const getMainShopAddress = () => {
+    const shopAddressesForProducts = getShopAddressesForProducts();
+    if (shopAddressesForProducts.length > 0) {
+      return shopAddressesForProducts[0];
+    }
+    return null;
+  };
+
+  // Render the address display based on shipping method
+  const renderAddressDisplay = () => {
+    if (formData.shippingMethod === "Pickup from Store") {
+      const shopAddress = getMainShopAddress();
+      if (shopAddress) {
+        return (
+          <div className="mt-3 p-3 border border-green-200 rounded-md">
+            <p className="text-xs flex items-center gap-1">
+              <span className="font-medium">Pickup Location:</span> {shopAddress.shop_name} • {shopAddress.shop_address}
+            </p>
+            <p className="text-xs mt-1">
+              Contact: {shopAddress.shop_contact_number || 'Not available'}
+            </p>
+          </div>
+        );
+      } else {
+        return (
+          <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+            <p className="text-xs text-yellow-700">
+              Shop address information is not available. Please contact the shop for pickup details.
+            </p>
+          </div>
+        );
+      }
+    } else {
+      // Standard Delivery - show shipping address
+      if (formData.selectedAddressId && getSelectedAddress()) {
+        const selectedAddress = getSelectedAddress();
+        return (
+          <div className="mt-3 p-3 border border-orange-200 rounded-md">
+            <p className="text-xs flex items-center gap-1">
+              <Home className="h-3 w-3" />
+              <span className="font-medium">Delivery Address:</span> {selectedAddress.recipient_name} • {selectedAddress.full_address?.split(',')[0]}
+            </p>
+            <p className="text-xs text-orange-600 mt-1">
+              📱 Contact: {selectedAddress.recipient_phone}
+            </p>
+          </div>
+        );
+      } else {
+        return (
+          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+            <p className="text-xs text-red-700">
+              Please select a shipping address for delivery.
+            </p>
+          </div>
+        );
+      }
+    }
+  };
+
+  // Check if shipping address is required for the current shipping method
+  const isShippingAddressRequired = () => {
+    return formData.shippingMethod === "Standard Delivery";
+  };
+
   if (!checkoutData && !error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center max-w-md">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Loading Checkout...</h2>
           <p className="text-gray-600">Please wait while we load your cart items</p>
         </div>
@@ -493,7 +589,7 @@ const CheckoutPage = () => {
 
   if (checkoutData?.success === false || products.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center max-w-md">
           <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">
@@ -512,10 +608,10 @@ const CheckoutPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-white">
       <div className="border-b bg-white px-4 py-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <Button variant="ghost" size="sm" onClick={() => window.history.back()} className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => window.history.back()} className="flex items-center gap-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50">
             <ArrowLeft className="h-4 w-4" />
             Back to Cart
           </Button>
@@ -540,8 +636,8 @@ const CheckoutPage = () => {
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 bg-blue-50 rounded-lg">
-                  <Package className="h-5 w-5 text-blue-600" />
+                <div className="p-2 bg-orange-50 rounded-lg">
+                  <Package className="h-5 w-5 text-orange-600" />
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold text-gray-900">Order Summary</h2>
@@ -551,7 +647,7 @@ const CheckoutPage = () => {
 
               <div className="space-y-4">
                 {products.map((product) => (
-                  <div key={product.id} className="flex items-center gap-4 p-4 border rounded-lg hover:bg-gray-50">
+                  <div key={product.id} className="flex items-center gap-4 p-4 border rounded-lg hover:bg-orange-50">
                     <div className="flex-shrink-0">
                       {product.img ? (
                         <img src={product.img} alt={product.title} className="h-20 w-20 rounded-lg object-cover border" />
@@ -580,38 +676,186 @@ const CheckoutPage = () => {
                 ))}
               </div>
 
-              <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="p-1.5 bg-green-50 rounded-md">
-                    <Truck className="h-4 w-4 text-green-600" />
-                  </div>
-                  <h3 className="font-semibold text-gray-900">Shipping Address</h3>
+
+            <div className="bg-white rounded-xl shadow-sm border p-6 mt-5">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-2 bg-orange-50 rounded-lg">
+                  <Truck className="h-5 w-5 text-orange-600" />
                 </div>
-                <div className="space-y-2 text-sm">
-                  <p className="font-medium">{userAddress.name}</p>
-                  {userAddress.street && <p>{userAddress.street}</p>}
-                  {userAddress.barangay && userAddress.city && (
-                    <p>{userAddress.barangay}, {userAddress.city}</p>
-                  )}
-                  {userAddress.province && (
-                    <p>{userAddress.province} {userAddress.zipCode}</p>
-                  )}
-                  {userAddress.country && <p>{userAddress.country}</p>}
-                  {(userAddress.phone || userAddress.email) && (
-                    <div className="pt-2 border-t">
-                      {userAddress.phone && <p className="text-gray-600">📱 {userAddress.phone}</p>}
-                      {userAddress.email && <p className="text-gray-600">✉️ {userAddress.email}</p>}
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Shipping Method</h2>
+                  <p className="text-sm text-gray-500">Choose how you want to receive your order</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {shippingMethods.map((method) => {
+                  const Icon = method.icon;
+                  return (
+                    <div key={method.id} className="relative">
+                      <input
+                        className="peer sr-only"
+                        id={`shipping-${method.id}`}
+                        type="radio"
+                        name="shippingMethod"
+                        checked={formData.shippingMethod === method.name}
+                        onChange={() => handleInputChange("shippingMethod", method.name)}
+                      />
+                      <label
+                        htmlFor={`shipping-${method.id}`}
+                        className="flex cursor-pointer items-center justify-between p-4 border-2 rounded-lg peer-checked:border-orange-500 peer-checked:bg-orange-50 hover:bg-orange-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div>
+                            <h3 className="font-medium text-gray-900">{method.name}</h3>
+                            <p className="text-sm text-gray-500">{method.description}</p>
+                            <p className="text-sm text-gray-400 mt-1">Estimated delivery: {method.delivery}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-semibold text-gray-900">
+                            {method.cost === 0 ? 'FREE' : `₱${method.cost.toFixed(2)}`}
+                          </span>
+                          <div className="h-4 w-4 rounded-full border-4 border-gray-300 peer-checked:border-orange-500 absolute right-4 top-1/2 -translate-y-1/2"></div>
+                        </div>
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+              {/* Shipping Address Section - Updated to show/hide based on shipping method */}
+              {isShippingAddressRequired() && (
+                <div className="mt-8 p-4 border rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-900">Delivery Address</h3>
+                    </div>
+                    <Link to="/shipping-address">
+                      <Button variant="ghost" size="sm" className="flex items-center gap-1">
+                        <Edit className="h-3 w-3" />
+                        Manage
+                      </Button>
+                    </Link>
+                  </div>
+
+                  {shippingAddresses && shippingAddresses.length > 0 ? (
+                    <div className="space-y-3">
+                      {/* Address Selection */}
+                      <div className="space-y-2">
+                        {shippingAddresses.map((address) => (
+                          <div
+                            key={address.id}
+                            className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                              formData.selectedAddressId === address.id
+                                ? 'border-orange-500 bg-orange-50'
+                                : 'border-gray-200 hover:bg-orange-50'
+                            }`}
+                            onClick={() => handleAddressSelect(address.id)}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-medium">{address.recipient_name}</span>
+                                  {address.is_default && (
+                                    <span className="px-2 py-0.5 bg-orange-100 text-orange-800 text-xs rounded-full">
+                                      Default
+                                    </span>
+                                  )}
+                                  <span className="text-xs text-gray-500">{address.recipient_phone}</span>
+                                </div>
+                                <p className="text-sm text-gray-600">{address.full_address}</p>
+                                {address.instructions && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    📝 {address.instructions}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="ml-2">
+                                <div className={`h-4 w-4 rounded-full border-2 ${
+                                  formData.selectedAddressId === address.id
+                                    ? 'border-orange-500 bg-orange-500'
+                                    : 'border-gray-300'
+                                }`}></div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      {/* Selected Address Display */}
+                      {formData.selectedAddressId && (
+                        <div className="p-3 bg-white border border-orange-200 rounded-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="font-medium text-orange-700">Selected Address</span>
+                          </div>
+                          <div className="text-sm">
+                            <p className="font-medium">{getSelectedAddress()?.recipient_name}</p>
+                            <p className="text-gray-600">{getSelectedAddress()?.full_address}</p>
+                            <p className="text-gray-500 mt-1">{getSelectedAddress()?.recipient_phone}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6">
+                      <div className="p-3 bg-yellow-50 rounded-full inline-flex mb-3">
+                        <MapPin className="h-6 w-6 text-yellow-600" />
+                      </div>
+                      <h4 className="font-medium text-gray-900 mb-2">No Shipping Addresses</h4>
+                      <p className="text-sm text-gray-600 mb-4">
+                        You need to add a shipping address for delivery orders.
+                      </p>
+                      <Link to="/shipping-address">
+                        <Button className="w-full">
+                          <Plus className="h-4 w-4 mr-2" />
+                          Add Shipping Address
+                        </Button>
+                      </Link>
                     </div>
                   )}
                 </div>
-              </div>
+              )}
+
+              {/* Pickup Location Info - Only show for pickup method */}
+              {formData.shippingMethod === "Pickup from Store" && shopAddresses.length > 0 && (
+                <div className="mt-8 p-4 border rounded-lg">
+                  <div className="flex items-center gap-2 pb-3 border-b">
+                    <h3 className="font-semibold text-gray-900">Pickup Location</h3>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {getShopAddressesForProducts().map((shop, index) => (
+                      <div key={index} className="p-3 bg-white">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="font-medium ">{shop.shop_name}</span>
+                        </div>
+                        <div className="text-sm">
+                          <p className="text-gray-600">{shop.shop_address}</p>
+                          {shop.shop_contact_number && (
+                            <p className="text-gray-500 mt-1">Contact: {shop.shop_contact_number}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="p-3 bg-orange-100 rounded-md">
+                    <p className="text-xs">
+                      <span className="font-medium">Pickup Instructions:</span> Orders are typically ready within 1-2 hours. 
+                            Please bring your order confirmation when picking up. Please check with the shop for exact pickup times. 
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Enhanced Voucher Section */}
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 bg-purple-50 rounded-lg">
-                  <Tag className="h-5 w-5 text-purple-600" />
+                <div className="p-2 bg-orange-50 rounded-lg">
+                  <Tag className="h-5 w-5 text-orange-600" />
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
@@ -619,36 +863,26 @@ const CheckoutPage = () => {
                       <h2 className="text-lg font-semibold text-gray-900">Voucher & Discounts</h2>
                       <p className="text-sm text-gray-500">Apply a voucher code to save on your order</p>
                     </div>
-                    {userPurchaseStats && (
-                      <div className="text-right">
-                        <div className="flex items-center gap-2">
-                          {getTierBadge(userPurchaseStats.customer_tier)}
-                          <span className="text-xs text-gray-500">
-                            Spent: ₱{userPurchaseStats.total_spent?.toFixed(2) || '0.00'}
-                          </span>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
 
               {appliedVoucher ? (
-                <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+                <div className="mb-6 p-4 bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 rounded-lg">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                      <div className="p-2 bg-green-100 rounded-lg">
-                        <CheckCircle className="h-6 w-6 text-green-600" />
+                      <div className="p-2 bg-orange-100 rounded-lg">
+                        <CheckCircle className="h-6 w-6 text-orange-600" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <p className="font-bold text-green-900 text-lg">{appliedVoucher.code}</p>
+                          <p className="font-bold text-orange-900 text-lg">{appliedVoucher.code}</p>
                           {appliedVoucher.customer_tier && appliedVoucher.customer_tier !== "all" && (
                             getTierBadge(appliedVoucher.customer_tier)
                           )}
                         </div>
-                        <p className="text-sm text-green-700">{appliedVoucher.name}</p>
-                        <p className="text-sm text-green-600 font-semibold mt-1">
+                        <p className="text-sm text-orange-700">{appliedVoucher.name}</p>
+                        <p className="text-sm text-orange-600 font-semibold mt-1">
                           -₱{appliedVoucher.discount_amount?.toFixed(2)} discount applied
                         </p>
                       </div>
@@ -717,7 +951,7 @@ const CheckoutPage = () => {
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold text-gray-900">Available Vouchers</h3>
                       {loadingVouchers && (
-                        <div className="animate-spin h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full"></div>
+                        <div className="animate-spin h-4 w-4 border-2 border-orange-600 border-t-transparent rounded-full"></div>
                       )}
                     </div>
                     <div className="text-sm text-gray-500">
@@ -763,7 +997,7 @@ const CheckoutPage = () => {
                           {category.vouchers?.map((voucher: any, idx: number) => (
                             <div
                               key={`${catIndex}-${idx}`}
-                              className="p-4 border rounded-xl hover:border-orange-300 hover:bg-orange-50/50 transition-all cursor-pointer group"
+                              className="p-4 border rounded-xl hover:border-orange-300 hover:bg-orange-50 transition-all cursor-pointer group"
                               onClick={() => {
                                 setVoucherCode(voucher.code);
                                 handleApplyVoucher();
@@ -806,8 +1040,7 @@ const CheckoutPage = () => {
                                     </div>
                                     {voucher.potential_savings > 0 && (
                                       <div className="flex items-center gap-1 ml-auto">
-                                        <BadgeCheck className="h-3 w-3 text-green-500" />
-                                        <span className="font-semibold text-green-600">
+                                        <span className="font-semibold text-orange-600">
                                           Save ₱{voucher.potential_savings?.toFixed(2)}
                                         </span>
                                       </div>
@@ -830,7 +1063,7 @@ const CheckoutPage = () => {
                                       setVoucherCode(voucher.code);
                                       handleApplyVoucher();
                                     }}
-                                    className="group-hover:bg-orange-600 group-hover:text-white"
+                                    className="group-hover:bg-orange-600 group-hover:text-white hover:border-orange-600"
                                   >
                                     Apply
                                   </Button>
@@ -844,7 +1077,7 @@ const CheckoutPage = () => {
                       getFilteredVouchers().map((voucher: any, idx: number) => (
                         <div
                           key={idx}
-                          className="p-4 border rounded-xl hover:border-orange-300 hover:bg-orange-50/50 transition-all cursor-pointer group"
+                          className="p-4 border rounded-xl hover:border-orange-300 hover:bg-orange-50 transition-all cursor-pointer group"
                           onClick={() => {
                             setVoucherCode(voucher.code);
                             handleApplyVoucher();
@@ -911,7 +1144,7 @@ const CheckoutPage = () => {
                                   setVoucherCode(voucher.code);
                                   handleApplyVoucher();
                                 }}
-                                className="group-hover:bg-orange-600 group-hover:text-white"
+                                className="group-hover:bg-orange-600 group-hover:text-white hover:border-orange-600"
                               >
                                 Apply
                               </Button>
@@ -921,61 +1154,10 @@ const CheckoutPage = () => {
                       ))
                     )}
                   </div>
-
                 </div>
               )}
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 bg-purple-50 rounded-lg">
-                  <Truck className="h-5 w-5 text-purple-600" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Shipping Method</h2>
-                  <p className="text-sm text-gray-500">Choose how you want to receive your order</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {shippingMethods.map((method) => {
-                  const Icon = method.icon;
-                  return (
-                    <div key={method.id} className="relative">
-                      <input
-                        className="peer sr-only"
-                        id={`shipping-${method.id}`}
-                        type="radio"
-                        name="shippingMethod"
-                        checked={formData.shippingMethod === method.name}
-                        onChange={() => handleInputChange("shippingMethod", method.name)}
-                      />
-                      <label
-                        htmlFor={`shipping-${method.id}`}
-                        className="flex cursor-pointer items-center justify-between p-4 border-2 rounded-lg peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:bg-gray-50 transition-colors"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className={`p-3 rounded-lg ${method.id === 'pickup' ? 'bg-green-50' : 'bg-blue-50'}`}>
-                            <Icon className={`h-6 w-6 ${method.id === 'pickup' ? 'text-green-600' : 'text-blue-600'}`} />
-                          </div>
-                          <div>
-                            <h3 className="font-medium text-gray-900">{method.name}</h3>
-                            <p className="text-sm text-gray-500">{method.description}</p>
-                            <p className="text-sm text-gray-400 mt-1">Estimated delivery: {method.delivery}</p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <span className="font-semibold text-gray-900">
-                            {method.cost === 0 ? 'FREE' : `₱${method.cost.toFixed(2)}`}
-                          </span>
-                          <div className="h-4 w-4 rounded-full border-4 border-gray-300 peer-checked:border-blue-500 absolute right-4 top-1/2 -translate-y-1/2"></div>
-                        </div>
-                      </label>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
 
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <h3 className="font-semibold text-gray-900 mb-3">Order Remarks (Optional)</h3>
@@ -994,8 +1176,8 @@ const CheckoutPage = () => {
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 bg-green-50 rounded-lg">
-                  <CreditCard className="h-5 w-5 text-green-600" />
+                <div className="p-2 bg-orange-50 rounded-lg">
+                  <CreditCard className="h-5 w-5 text-orange-600" />
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold text-gray-900">Payment Method</h2>
@@ -1018,16 +1200,16 @@ const CheckoutPage = () => {
                       />
                       <label
                         htmlFor={`payment-${method.id}`}
-                        className="flex cursor-pointer items-center gap-4 p-3 border-2 rounded-lg peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:bg-gray-50 transition-colors"
+                        className="flex cursor-pointer items-center gap-4 p-3 border-2 rounded-lg peer-checked:border-orange-500 peer-checked:bg-orange-50 hover:bg-orange-50 transition-colors"
                       >
-                        <div className={`p-2 rounded-md ${method.iconColor.replace('text-', 'bg-')} bg-opacity-10`}>
-                          <Icon className={`h-5 w-5 ${method.iconColor}`} />
+                        <div className={`p-2 rounded-md bg-orange-100`}>
+                          <Icon className={`h-5 w-5 text-orange-600`} />
                         </div>
                         <div className="flex-1">
                           <h3 className="font-medium text-gray-900">{method.name}</h3>
                           <p className="text-xs text-gray-500">{method.description}</p>
                         </div>
-                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 peer-checked:border-blue-500 peer-checked:bg-blue-500 peer-checked:border-4"></div>
+                        <div className="h-4 w-4 rounded-full border-2 border-gray-300 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:border-4"></div>
                       </label>
                     </div>
                   );
@@ -1035,16 +1217,16 @@ const CheckoutPage = () => {
               </div>
 
               {showEwalletFields && selectedPaymentMethod && (
-                <div className="mt-6 p-4 border border-blue-200 rounded-lg bg-blue-50">
+                <div className="mt-6 p-4 border border-orange-200 rounded-lg bg-orange-50">
                   <div className="flex items-center gap-2 mb-4">
                     <div className="p-1.5 bg-white rounded-md">
-                      <Smartphone className="h-4 w-4 text-blue-600" />
+                      <Smartphone className="h-4 w-4 text-orange-600" />
                     </div>
-                    <h3 className="font-semibold text-blue-900">{selectedPaymentMethod.name} Details</h3>
+                    <h3 className="font-semibold text-orange-900">{selectedPaymentMethod?.name} Details</h3>
                   </div>
                   
-                  <p className="text-sm text-blue-700 mb-4">
-                    Please provide your {selectedPaymentMethod.name} account information for payment verification.
+                  <p className="text-sm text-orange-700 mb-4">
+                    Please provide your {selectedPaymentMethod?.name} account information for payment verification.
                   </p>
 
                   <div className="space-y-4">
@@ -1098,8 +1280,8 @@ const CheckoutPage = () => {
                     </div>
                   </div>
 
-                  <div className="mt-4 p-3 bg-blue-100 rounded-md">
-                    <p className="text-xs text-blue-800">
+                  <div className="mt-4 p-3 bg-orange-100 rounded-md">
+                    <p className="text-xs text-orange-800">
                       Your payment information is secure and encrypted.
                     </p>
                   </div>
@@ -1117,7 +1299,7 @@ const CheckoutPage = () => {
                 </div>
                 
                 {appliedVoucher && (
-                  <div className="flex justify-between text-sm text-green-600 bg-green-50 p-2 rounded-lg">
+                  <div className="flex justify-between text-sm text-orange-600 bg-orange-50 p-2 rounded-lg">
                     <span className="flex items-center gap-2">
                       <Tag className="h-3 w-3" />
                       <span>
@@ -1138,10 +1320,6 @@ const CheckoutPage = () => {
                   </span>
                 </div>
                 
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Tax (12%)</span>
-                  <span className="font-medium">₱{tax.toFixed(2)}</span>
-                </div>
                 
                 <div className="border-t pt-4 mt-3">
                   <div className="flex justify-between items-center">
@@ -1149,12 +1327,12 @@ const CheckoutPage = () => {
                     <div className="text-right">
                       <div className="text-2xl font-bold text-gray-900">₱{total.toFixed(2)}</div>
                       {appliedVoucher && (
-                        <p className="text-xs text-green-600 font-semibold mt-1">
+                        <p className="text-xs text-orange-600 font-semibold mt-1">
                           You saved ₱{discount.toFixed(2)} with {appliedVoucher.code}
                         </p>
                       )}
                       {!appliedVoucher && availableVouchers.length > 0 && (
-                        <p className="text-xs text-purple-600 mt-1">
+                        <p className="text-xs text-orange-600 mt-1">
                           💡 Apply a voucher to save up to ₱{Math.max(...getAllVouchers().map((v: any) => v.potential_savings || 0)).toFixed(2)}
                         </p>
                       )}
@@ -1182,7 +1360,7 @@ const CheckoutPage = () => {
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <Button
                 size="lg"
-                className="w-full h-14 text-base font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                className="w-full h-14 text-base font-semibold bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700"
                 disabled={!canPlaceOrder}
                 onClick={handlePlaceOrder}
               >
@@ -1200,23 +1378,35 @@ const CheckoutPage = () => {
 
               <div className="mt-4 text-center">
                 <p className="text-xs text-gray-500 flex items-center justify-center gap-1">
-                  <BadgeCheck className="h-3 w-3" />
+                  <BadgeCheck className="h-3 w-3 text-orange-600" />
                   Secure checkout • Your payment information is encrypted
                 </p>
               </div>
 
               {!formData.agreeTerms && (
-                <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                  <p className="text-xs text-yellow-700">
+                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                  <p className="text-xs text-amber-700">
                     Please agree to the Terms of Service and Privacy Policy to continue.
                   </p>
                 </div>
               )}
 
               {showEwalletFields && !isEwalletFieldsValid && (
-                <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                  <p className="text-xs text-yellow-700">
+                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                  <p className="text-xs text-amber-700">
                     Please fill in all required {selectedPaymentMethod?.name} details to proceed.
+                  </p>
+                </div>
+              )}
+
+              {/* Dynamic address display based on shipping method */}
+              {renderAddressDisplay()}
+
+              {/* Show warning if shipping address is required but not selected */}
+              {isShippingAddressRequired() && !formData.selectedAddressId && shippingAddresses.length > 0 && (
+                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                  <p className="text-xs text-red-700">
+                    Please select a shipping address for delivery.
                   </p>
                 </div>
               )}

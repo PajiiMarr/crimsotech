@@ -188,6 +188,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   await requireRole(request, context, ["isCustomer"]);
 
+  console.log(user?.user_id)
+
   try {
     // Fetch purchases from backend
     const response = await AxiosInstance.get<PurchasesResponse>('/purchases-buyer/user_purchases/', {
