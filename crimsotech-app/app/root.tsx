@@ -85,7 +85,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen text-center px-6">
-      <img className="h-50 w-50" src="../public/crimsonity.png" alt="" />
+      <img className="h-50 w-50" src="/crimsonity.png" alt="" />
 
       <h1 className="text-5xl font-bold text-gray-800 mb-2">{status}</h1>
       <h2 className="text-xl font-semibold text-gray-700 mb-4">{message}</h2>
