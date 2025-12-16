@@ -603,20 +603,125 @@ class CartItem(models.Model):
     def __str__(self):
         return f"{self.quantity} x {self.product.name if self.product else 'Unknown Product'}"
 
+
+class ShippingAddress(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='shipping_addresses'
+    )
+    # Recipient information
+    recipient_name = models.CharField(max_length=200)
+    recipient_phone = models.CharField(max_length=20)
+    
+    # Address information
+    street = models.CharField(max_length=200)
+    barangay = models.CharField(max_length=100)
+    city = models.CharField(max_length=100)
+    province = models.CharField(max_length=100)
+    state = models.CharField(max_length=100, blank=True, default='')
+    zip_code = models.CharField(max_length=20)
+    country = models.CharField(max_length=100, default='Philippines')
+    
+    # Additional details
+    building_name = models.CharField(max_length=200, blank=True, default='')
+    floor_number = models.CharField(max_length=50, blank=True, default='')
+    unit_number = models.CharField(max_length=50, blank=True, default='')
+    landmark = models.CharField(max_length=300, blank=True, default='')
+    instructions = models.TextField(blank=True, default='')
+    
+    # Address type and preferences
+    address_type = models.CharField(max_length=20, choices=[
+        ('home', 'Home'),
+        ('work', 'Work'),
+        ('other', 'Other')
+    ], default='home')
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-is_default', '-created_at']
+        verbose_name_plural = "Shipping Addresses"
+    
+    def __str__(self):
+        return f"{self.recipient_name} - {self.street}, {self.barangay}, {self.city}"
+    
+    def get_full_address(self):
+        """Get the complete formatted address"""
+        address_parts = []
+        if self.building_name:
+            address_parts.append(self.building_name)
+        if self.floor_number:
+            address_parts.append(f"Floor {self.floor_number}")
+        if self.unit_number:
+            address_parts.append(f"Unit {self.unit_number}")
+        if self.street:
+            address_parts.append(self.street)
+        if self.barangay:
+            address_parts.append(self.barangay)
+        if self.city:
+            address_parts.append(self.city)
+        if self.province:
+            address_parts.append(self.province)
+        if self.zip_code:
+            address_parts.append(self.zip_code)
+        if self.country:
+            address_parts.append(self.country)
+        
+        return ", ".join(filter(None, address_parts))
+    
+    def save(self, *args, **kwargs):
+        """Ensure only one default address per user"""
+        if self.is_default:
+            # Remove default status from other addresses of this user
+            ShippingAddress.objects.filter(
+                user=self.user, 
+                is_default=True
+            ).exclude(id=self.id).update(is_default=False)
+        super().save(*args, **kwargs)
+
+
+# Also update the Order model to use ShippingAddress
 class Order(models.Model):
     order = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    status = models.CharField(max_length=20, choices=[('pending','Pending'),('completed','Completed'),('cancelled','Cancelled')])
+    shipping_address = models.ForeignKey(
+        ShippingAddress,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='orders'
+    )
+    status = models.CharField(max_length=20, choices=[
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('shipped', 'Shipped'),
+        ('delivered', 'Delivered'),
+        ('cancelled', 'Cancelled'),
+        ('refunded', 'Refunded')
+    ], default='pending')
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_method = models.CharField(max_length=50)
     delivery_method = models.CharField(max_length=50, null=True, blank=True)
-    delivery_address = models.CharField(max_length=500)
+    # Keep delivery_address as a text field for backup/archival purposes
+    delivery_address_text = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Order {self.order} by {self.user.username}"
     
+    def save(self, *args, **kwargs):
+        # Store the shipping address as text for archival purposes
+        if self.shipping_address and not self.delivery_address_text:
+            self.delivery_address_text = self.shipping_address.get_full_address()
+        super().save(*args, **kwargs)
+
 class Checkout(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     voucher = models.ForeignKey(
@@ -907,4 +1012,4 @@ class ReportComment(models.Model):
     def __str__(self):
         return f"Comment by {self.user.username} on Report {self.report.id}"
     
-
+# Add this after the User model and before the Customer model
