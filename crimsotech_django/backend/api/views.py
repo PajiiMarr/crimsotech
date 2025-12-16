@@ -9460,12 +9460,18 @@ class CheckoutOrder(viewsets.ViewSet):
     
     def _calculate_discount(self, voucher, subtotal):
         """Calculate discount amount based on voucher type"""
+        # Convert subtotal to Decimal if it's a float
+        if isinstance(subtotal, float):
+            subtotal = Decimal(str(subtotal))
+        
         if voucher.discount_type == 'percentage':
-            return float(subtotal * float(voucher.value) / 100)
+            return subtotal * (Decimal(str(voucher.value)) / Decimal('100'))
         elif voucher.discount_type == 'fixed':
-            return float(min(float(voucher.value), subtotal))
-        return 0
-
+            # Ensure both are Decimal
+            voucher_value = Decimal(str(voucher.value))
+            return min(voucher_value, subtotal)
+        return Decimal('0')
+    
     @action(detail=False, methods=['POST'])
     def create_order(self, request):
         """
@@ -9514,7 +9520,7 @@ class CheckoutOrder(viewsets.ViewSet):
             cart_items = CartItem.objects.filter(
                 id__in=selected_ids,
                 user=user
-            ).select_related("product", "product__shop")
+            ).select_related("product", "product__shop", "product__customer__customer")
             
             if not cart_items.exists():
                 return Response(
@@ -9522,15 +9528,14 @@ class CheckoutOrder(viewsets.ViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Calculate total
-            subtotal = sum(
-                cart_item.product.price * cart_item.quantity 
-                for cart_item in cart_items 
-                if cart_item.product
-            )
+            # Calculate total - ensure we use Decimal
+            subtotal = Decimal('0')
+            for cart_item in cart_items:
+                if cart_item.product:
+                    subtotal += cart_item.product.price * cart_item.quantity
             
             # Apply voucher discount if provided
-            discount_amount = 0
+            discount_amount = Decimal('0')
             voucher = None
             
             if voucher_id:
@@ -9548,8 +9553,8 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
             
-            # Calculate final amount
-            delivery_fee = 0 if shipping_method == "Pickup from Store" else 50.00
+            # Calculate final amount - all as Decimal
+            delivery_fee = Decimal('0') if shipping_method == "Pickup from Store" else Decimal('50.00')
             total_amount = subtotal + delivery_fee - discount_amount
             
             # Create Order with shipping address
@@ -9563,37 +9568,64 @@ class CheckoutOrder(viewsets.ViewSet):
                 delivery_address_text=shipping_address.get_full_address()
             )
             
+            # Store cart item IDs and product information
+            cart_item_ids = []
+            
             # Create Checkout entries
             for cart_item in cart_items:
-                Checkout.objects.create(
+                checkout_total = Decimal('0')
+                product_name = "Unknown Product"
+                shop_name = "Unknown Shop"
+                seller_username = None
+                
+                if cart_item.product:
+                    checkout_total = cart_item.product.price * cart_item.quantity
+                    product_name = cart_item.product.name
+                    if cart_item.product.shop:
+                        shop_name = cart_item.product.shop.name
+                    if cart_item.product.customer and cart_item.product.customer.customer:
+                        seller_username = cart_item.product.customer.customer.username
+                
+                checkout = Checkout.objects.create(
                     order=order,
-                    cart_item=cart_item,
+                    cart_item=cart_item,  # ForeignKey to cart item
                     voucher=voucher,
                     quantity=cart_item.quantity,
-                    total_amount=cart_item.product.price * cart_item.quantity if cart_item.product else 0,
+                    total_amount=checkout_total,
                     status='pending',
                     remarks=remarks[:500] if remarks else None
                 )
+                
+                # Store cart item ID for response
+                cart_item_ids.append(str(cart_item.id))
             
-            # Remove cart items
-            cart_items.delete()
+            # IMPORTANT: Don't delete cart items immediately
+            # Instead, mark them as purchased or keep them for reference
+            # Or store the cart_item_id in the checkout like we're doing above
+            
+            # If you really need to delete them, do it later with a cleanup task
+            # cart_items.delete()  # Don't delete here!
             
             return Response({
                 "success": True,
                 "message": "Order created successfully",
                 "order_id": str(order.order),
-                "total_amount": float(total_amount),
+                "cart_item_ids": cart_item_ids,  # Include cart item IDs in response
+                "total_amount": float(total_amount),  # Convert to float for JSON response
                 "discount_applied": float(discount_amount),
                 "voucher_used": voucher.code if voucher else None
             })
             
         except Exception as e:
             logger.error(f"Error creating order: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response(
                 {"error": "Failed to create order", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
+            )        
+
+
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
     def get_shipping_addresses(self, request):
@@ -9993,7 +10025,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             )
         
         try:
-            # Get all orders for this user with efficient prefetching
+            # Get all orders for this user
             orders = Order.objects.filter(user=user).prefetch_related(
                 Prefetch(
                     'checkout_set',
@@ -10006,8 +10038,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'cart_item__product__productmedia_set',
                             queryset=ProductMedia.objects.only('id', 'file_data', 'file_type')
                         )
-                    )
-                )
+                    ).order_by('created_at')
+                ),
+                'shipping_address'
             ).order_by('-created_at')
             
             # Get related payments and deliveries in bulk
@@ -10026,21 +10059,28 @@ class PurchasesBuyer(viewsets.ViewSet):
                 payment = payment_dict.get(str(order.order))
                 delivery = delivery_dict.get(str(order.order))
                 
+                # Get delivery address
+                delivery_address = None
+                if order.shipping_address:
+                    delivery_address = order.shipping_address.get_full_address()
+                elif order.delivery_address_text:
+                    delivery_address = order.delivery_address_text
+                
                 order_data = {
                     'order_id': str(order.order),
                     'status': order.status,
                     'total_amount': str(order.total_amount),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
-                    'delivery_address': order.delivery_address,
-                    'created_at': order.created_at,
+                    'delivery_address': delivery_address,
+                    'created_at': order.created_at.isoformat(),
                     'payment_status': payment.status if payment else None,
                     'delivery_status': delivery.status if delivery else None,
                     'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
                     'items': []
                 }
                 
-                # Get all checkouts for this order
+                # Process all checkouts for this order
                 for checkout in order.checkout_set.all():
                     if checkout.cart_item and checkout.cart_item.product:
                         product = checkout.cart_item.product
@@ -10049,20 +10089,34 @@ class PurchasesBuyer(viewsets.ViewSet):
                         product_images = []
                         for media in product.productmedia_set.all():
                             if media.file_data:
-                                product_images.append({
-                                    'id': str(media.id),
-                                    'url': request.build_absolute_uri(media.file_data.url) if request else media.file_data.url,
-                                    'file_type': media.file_type
-                                })
+                                try:
+                                    url = media.file_data.url
+                                    if request:
+                                        url = request.build_absolute_uri(url)
+                                    product_images.append({
+                                        'id': str(media.id),
+                                        'url': url,
+                                        'file_type': media.file_type
+                                    })
+                                except ValueError:
+                                    # If file doesn't exist, skip it
+                                    continue
                         
                         # Get primary image (first image)
                         primary_image = product_images[0] if product_images else None
                         
                         # Check if user has reviewed this product
-                        has_reviewed = Review.objects.filter(
-                            customer__customer=user,
-                            product=product
-                        ).exists()
+                        has_reviewed = False
+                        try:
+                            # First check if user has a Customer profile
+                            customer_profile = Customer.objects.get(customer=user)
+                            has_reviewed = Review.objects.filter(
+                                customer=customer_profile,
+                                product=product
+                            ).exists()
+                        except Customer.DoesNotExist:
+                            # User doesn't have a customer profile yet
+                            has_reviewed = False
                         
                         item_data = {
                             'checkout_id': str(checkout.id),
@@ -10081,7 +10135,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'subtotal': str(checkout.total_amount),
                             'status': checkout.status,
                             'remarks': checkout.remarks,
-                            'purchased_at': checkout.created_at,
+                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                             'product_images': product_images,
                             'primary_image': primary_image,
                             'voucher_applied': {
@@ -10090,6 +10144,32 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
                             'can_review': not has_reviewed and order.status == 'completed'
+                        }
+                        order_data['items'].append(item_data)
+                    else:
+                        # Handle case where cart_item or product might be null
+                        item_data = {
+                            'checkout_id': str(checkout.id),
+                            'cart_item_id': None,
+                            'product_id': None,
+                            'product_name': 'Item no longer available',
+                            'product_description': '',
+                            'product_condition': '',
+                            'product_status': '',
+                            'shop_id': None,
+                            'shop_name': 'Unknown Shop',
+                            'shop_picture': None,
+                            'seller_username': None,
+                            'quantity': checkout.quantity,
+                            'price': '0.00',
+                            'subtotal': str(checkout.total_amount),
+                            'status': checkout.status,
+                            'remarks': checkout.remarks,
+                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                            'product_images': [],
+                            'primary_image': None,
+                            'voucher_applied': None,
+                            'can_review': False
                         }
                         order_data['items'].append(item_data)
                 
@@ -10103,8 +10183,11 @@ class PurchasesBuyer(viewsets.ViewSet):
             })
             
         except Exception as e:
+            import traceback
+            print(f"Error in user_purchases: {str(e)}")
+            print(traceback.format_exc())
             return Response(
-                {'error': str(e)},
+                {'error': 'Internal server error', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
