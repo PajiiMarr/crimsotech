@@ -585,6 +585,7 @@ class CartItem(models.Model):
         blank=True,
     )
     quantity = models.IntegerField(default=1)
+    is_ordered = models.BooleanField(default=False)
     added_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
