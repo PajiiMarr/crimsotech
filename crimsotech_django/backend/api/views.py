@@ -10897,18 +10897,106 @@ class RefundViewSet(viewsets.ViewSet):
     """
     Refund Management API for buyers and sellers
     """
+
+    def _resolve_seller_shop_for_refund(self, request, user, refund):
+        """Resolve and authorize the seller shop context for a refund.
+
+        Since `Order` does not have a direct `shop` FK in this codebase, we infer shop
+        through `Checkout -> CartItem -> Product -> Shop`.
+
+        Returns: (shop, error_response)
+        """
+        order = getattr(refund, 'order', None)
+        if not order:
+            return None, Response({"error": "Refund has no related order"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Accept shop id from header (preferred) and fall back to query/data
+        shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
+        try:
+            data_shop_id = getattr(request, 'data', {}).get('shop_id')
+        except Exception:
+            data_shop_id = None
+        shop_id = shop_id or data_shop_id
+
+        shop = None
+        if shop_id:
+            try:
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return None, Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            # Infer shop from order items; require unambiguous mapping
+            shop_ids = list(
+                Checkout.objects.filter(
+                    order=order,
+                    cart_item__product__shop__isnull=False,
+                ).values_list('cart_item__product__shop_id', flat=True).distinct()
+            )
+            if len(shop_ids) != 1:
+                return None, Response({"error": "Shop ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                shop = Shop.objects.get(id=shop_ids[0])
+            except Shop.DoesNotExist:
+                return None, Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ownership check: Shop.customer.customer -> User
+        if not shop.customer or not getattr(shop.customer, 'customer', None) or str(shop.customer.customer.id) != str(user.id):
+            return None, Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Ensure the order actually contains items for this shop
+        if not Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists():
+            return None, Response({"error": "This refund does not belong to the provided shop"}, status=status.HTTP_403_FORBIDDEN)
+
+        return shop, None
     
     # ========== BUYER ENDPOINTS ==========
     
     @action(detail=False, methods=['get'])
     def get_my_refunds(self, request):
-        """Get all refunds for current buyer"""
+        """Get refunds for current user.
+
+        - Buyer: returns refunds requested by the user.
+        - Seller (when `X-Shop-Id`/`shop_id` is provided): returns refunds for orders
+          that include products from that shop.
+        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             user = User.objects.get(id=user_id)
+
+            shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
+            if shop_id:
+                try:
+                    shop = Shop.objects.get(id=shop_id)
+                except Shop.DoesNotExist:
+                    return Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+
+                if not shop.customer or not getattr(shop.customer, 'customer', None) or str(shop.customer.customer.id) != str(user.id):
+                    return Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
+
+                refunds = (
+                    Refund.objects.filter(order__checkout__cart_item__product__shop=shop)
+                    .distinct()
+                    .order_by('-requested_at')
+                )
+
+                status_filter = request.query_params.get('status')
+                if status_filter:
+                    refunds = refunds.filter(status=status_filter)
+
+                serializer = RefundSerializer(refunds, many=True)
+                return Response({
+                    'shop': {
+                        'id': str(shop.id),
+                        'name': shop.name,
+                        'is_suspended': shop.is_suspended,
+                    },
+                    'results': serializer.data,
+                })
+
+            # Buyer path
             refunds = Refund.objects.filter(requested_by=user).order_by('-requested_at')
             serializer = RefundSerializer(refunds, many=True)
             return Response(serializer.data)
@@ -10942,7 +11030,7 @@ class RefundViewSet(viewsets.ViewSet):
             
             # Create refund
             refund_data = {
-                'order': order.id,
+                'order': order.order,
                 'requested_by': user.id,
                 'reason': request.data.get('reason'),
                 'preferred_refund_method': request.data.get('preferred_refund_method'),
@@ -10974,7 +11062,12 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
+            # Robust lookup: support both DB primary key and business UUID field
+            refund = Refund.objects.filter(id=pk).first()
+            if not refund:
+                refund = Refund.objects.filter(refund=pk).first()
+            if not refund:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
 
             # Authorize: buyer who requested it, shop owner for the related order, or admin
             authorized = False
@@ -10982,9 +11075,12 @@ class RefundViewSet(viewsets.ViewSet):
                 authorized = True
             if user.is_staff:
                 authorized = True
-            # Check seller ownership
+            # Check seller ownership (via order items -> product.shop)
             try:
-                if refund.order and Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                if refund.order and Checkout.objects.filter(
+                    order=refund.order,
+                    cart_item__product__shop__customer__customer=user,
+                ).exists():
                     authorized = True
             except Exception:
                 pass
@@ -11011,7 +11107,7 @@ class RefundViewSet(viewsets.ViewSet):
             if refund.order:
                 data['order_info'] = {
                     'order_number': refund.order.order,
-                    'order_id': str(refund.order.id),
+                    'order_id': str(refund.order.order),
                     'total_amount': float(refund.order.total_amount) if refund.order.total_amount else None,
                     'payment_method': refund.order.payment_method if hasattr(refund.order, 'payment_method') else None,
                     'delivery_address_text': refund.order.delivery_address_text or None,
@@ -11243,55 +11339,275 @@ class RefundViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_shop_refunds(self, request):
-        """Seller gets all refunds for their shop"""
+        """Seller gets all refunds for their shop. Accepts optional X-Shop-Id header or shop_id query param to restrict to a single shop."""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             user = User.objects.get(id=user_id)
-            
-            # Get all shops owned by this user
-            shops = Shop.objects.filter(owner=user)
-            if not shops:
-                return Response({"error": "No shops found for this user"}, status=status.HTTP_404_NOT_FOUND)
-            
-            # Get all orders from these shops
-            shop_ids = shops.values_list('shop_id', flat=True)
-            orders = Order.objects.filter(shop__in=shop_ids)
-            
-            # Get refunds for these orders
-            refunds = Refund.objects.filter(order__in=orders).order_by('-requested_at')
-            
+
+            # Optional shop selector
+            shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
+            shop = None
+            if shop_id:
+                try:
+                    shop = Shop.objects.get(id=shop_id)
+                except Shop.DoesNotExist:
+                    return Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+
+                # Verify ownership: Shop.customer.customer => User
+                if not shop.customer or not getattr(shop.customer, 'customer', None) or str(shop.customer.customer.id) != str(user.id):
+                    return Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
+
+                refunds = (
+                    Refund.objects.filter(order__checkout__cart_item__product__shop=shop)
+                    .distinct()
+                    .order_by('-requested_at')
+                )
+            else:
+                shops = Shop.objects.filter(customer__customer=user)
+                if not shops.exists():
+                    # Don't 404 — return empty results so frontend can handle gracefully
+                    print(f"get_shop_refunds: user {user.id} has no shops; returning empty results")
+                    return Response({'shop': None, 'results': []})
+                refunds = (
+                    Refund.objects.filter(order__checkout__cart_item__product__shop__in=shops)
+                    .distinct()
+                    .order_by('-requested_at')
+                )
+
             # Filter by status if provided
             status_filter = request.query_params.get('status')
             if status_filter:
                 refunds = refunds.filter(status=status_filter)
-            
+
+            # Debug: log counts for troubleshooting
+            try:
+                refunds_count = refunds.count()
+            except Exception:
+                refunds_count = 'unknown'
+            print(f"get_shop_refunds: user={user.id} shop_id={shop_id or 'none'} refunds_count={refunds_count}")
+
             serializer = RefundSerializer(refunds, many=True)
-            return Response(serializer.data)
-            
+
+            # If shop was specified, return shop summary along with results for convenience
+            if shop:
+                print(f"get_shop_refunds: returning {len(serializer.data)} refunds for shop {shop.id}")
+                return Response({
+                    'shop': {
+                        'id': str(shop.id),
+                        'name': shop.name,
+                        'is_suspended': shop.is_suspended
+                    },
+                    'results': serializer.data
+                })
+
+            return Response({'shop': None, 'results': serializer.data})
+
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
     
     @action(detail=True, methods=['get'])
     def get_refund_details(self, request, pk=None):
-        """Seller gets detailed refund information"""
+        """Seller gets detailed refund information (enriched payload)"""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             user = User.objects.get(id=user_id)
             refund = get_object_or_404(Refund, refund=pk)
-            
-            # Verify seller owns the shop for this order
-            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
-                return Response({"error": "Not authorized to view this refund"}, status=status.HTTP_403_FORBIDDEN)
-            
-            serializer = RefundSerializer(refund)
-            return Response(serializer.data)
-            
+
+            # Verify seller owns the shop for this refund/order
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+
+            # Base refund data
+            data = RefundSerializer(refund).data
+            # include shop summary in response
+            data['shop'] = {
+                'id': str(shop.id) if shop else None,
+                'name': shop.name if shop else None,
+                'is_suspended': shop.is_suspended if shop else False,
+            }
+
+            # Refund medias / evidence
+            medias = RefundMedias.objects.filter(refund=refund)
+            evidence = []
+            for m in medias:
+                evidence.append({
+                    'id': str(m.refund_media),
+                    'url': request.build_absolute_uri(m.file_data.url) if m.file_data else None,
+                    'file_type': m.file_type,
+                })
+            data['evidence'] = evidence
+
+            # Order summary and addresses
+            order = refund.order
+            if order:
+                shipping_address = None
+                if order.shipping_address:
+                    sa = order.shipping_address
+                    shipping_address = {
+                        'id': str(sa.id),
+                        'recipient_name': sa.recipient_name,
+                        'recipient_phone': sa.recipient_phone,
+                        'street': sa.street,
+                        'barangay': sa.barangay,
+                        'city': sa.city,
+                        'province': sa.province,
+                        'zip_code': sa.zip_code,
+                        'country': sa.country,
+                        'full_address': sa.get_full_address(),
+                    }
+
+                delivery_address_text = order.delivery_address_text or None
+
+                data['order_info'] = {
+                    'order_number': str(order.order),
+                    'order_id': str(order.order),
+                    'user_id': str(order.user.id) if order.user else None,
+                    'created_at': order.created_at.isoformat() if order.created_at else None,
+                    'payment_method': order.payment_method,
+                    'total_amount': float(order.total_amount) if order.total_amount is not None else None,
+                    'status': order.status,
+                    'delivery_method': order.delivery_method,
+                    'shipping_address': shipping_address,
+                    'delivery_address_text': delivery_address_text,
+                }
+
+                # Attach checkout / cart item based order items
+                order_items = []
+                checkouts = Checkout.objects.filter(
+                    order=order,
+                    cart_item__product__shop=shop,
+                ).select_related('cart_item__product')
+                for co in checkouts:
+                    cart = co.cart_item
+                    cart_data = None
+                    if cart:
+                        cart_data = {
+                            'id': str(cart.id),
+                            'added_at': cart.added_at.isoformat() if cart.added_at else None,
+                            'quantity': cart.quantity,
+                            'user_id': str(cart.user.id) if cart.user else None,
+                        }
+
+                    prod = None
+                    product_obj = None
+                    if cart and cart.product:
+                        product_obj = cart.product
+                    elif co.cart_item and co.cart_item.product:
+                        product_obj = co.cart_item.product
+
+                    product_data = None
+                    if product_obj:
+                        category = product_obj.category
+                        product_data = {
+                            'id': str(product_obj.id),
+                            'name': product_obj.name,
+                            'description': product_obj.description,
+                            'quantity': product_obj.quantity,
+                            'price': float(product_obj.price) if product_obj.price is not None else None,
+                            'condition': product_obj.condition,
+                            'category_id': str(category.id) if category else None,
+                            'category_name': category.name if category else None,
+                            'shop_id': str(product_obj.shop.id) if product_obj.shop else None,
+                            'shop_name': product_obj.shop.name if product_obj.shop else None,
+                        }
+
+                        # Product SKUs
+                        skus = []
+                        for sku in product_obj.skus.all():
+                            skus.append({
+                                'id': str(sku.id),
+                                'product_id': str(sku.product.id) if sku.product else None,
+                                'image': request.build_absolute_uri(sku.image.url) if getattr(sku, 'image', None) else None,
+                                'sku_code': sku.sku_code,
+                                'price': float(sku.price) if sku.price is not None else None,
+                                'option_ids': sku.option_ids or [],
+                            })
+                        product_data['skus'] = skus
+
+                        # Variants & options
+                        variants_data = []
+                        for v in Variants.objects.filter(product=product_obj):
+                            opts = []
+                            for opt in VariantOptions.objects.filter(variant=v):
+                                opts.append({
+                                    'id': str(opt.id),
+                                    'title': opt.title,
+                                    'variant_id': str(v.id),
+                                })
+                            variants_data.append({
+                                'id': str(v.id),
+                                'title': v.title,
+                                'product_id': str(product_obj.id),
+                                'options': opts
+                            })
+                        product_data['variants'] = variants_data
+
+                    order_items.append({
+                        'checkout_id': str(co.id),
+                        'checkout_status': co.status,
+                        'checkout_total_amount': float(co.total_amount) if co.total_amount is not None else None,
+                        'checkout_quantity': co.quantity,
+                        'cart': cart_data,
+                        'product': product_data,
+                        'remarks': co.remarks,
+                        'created_at': co.created_at.isoformat() if getattr(co, 'created_at', None) else None,
+                    })
+
+                data['order_items'] = order_items
+
+                # Delivery / latest tracking info
+                delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+                if delivery:
+                    data['delivery'] = {
+                        'id': str(delivery.id),
+                        'status': delivery.status,
+                        'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
+                        'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                        'tracking_number': refund.tracking_number or None,
+                        'rider_id': str(delivery.rider.id) if delivery.rider else None,
+                    }
+                else:
+                    data['delivery'] = None
+
+            else:
+                data['order_info'] = None
+                data['order_items'] = []
+                data['delivery'] = None
+
+            # Flags and meta
+            data['is_negotiation_expired'] = refund.is_negotiation_expired
+            data['evidence_count'] = refund.evidence_count if hasattr(refund, 'evidence_count') else len(evidence)
+
+            # Available actions for seller view
+            actions = []
+            st = refund.status
+            if st == 'pending':
+                actions = ['approve', 'reject', 'propose_negotiation']
+            elif st == 'negotiation':
+                actions = ['propose_negotiation', 'contact_customer']
+            elif st == 'approved':
+                actions = ['schedule_pickup']
+            elif st == 'waiting':
+                actions = ['mark_as_received']
+            elif st == 'to_verify':
+                actions = ['verify_item']
+            elif st == 'to_process':
+                actions = ['process_refund']
+            elif st == 'dispute':
+                actions = ['contact_customer', 'resolve_dispute']
+            else:
+                actions = []
+            data['available_actions'] = actions
+
+            return Response(data)
+
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
     
@@ -11306,9 +11622,9 @@ class RefundViewSet(viewsets.ViewSet):
             user = User.objects.get(id=user_id)
             refund = get_object_or_404(Refund, refund=pk)
             
-            # Verify seller owns the shop
-            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
             
             if refund.status != 'pending':
                 return Response({"error": "Can only approve pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
@@ -11338,9 +11654,9 @@ class RefundViewSet(viewsets.ViewSet):
             user = User.objects.get(id=user_id)
             refund = get_object_or_404(Refund, refund=pk)
             
-            # Verify seller owns the shop
-            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
             
             if refund.status != 'pending':
                 return Response({"error": "Can only reject pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
@@ -11370,9 +11686,9 @@ class RefundViewSet(viewsets.ViewSet):
             user = User.objects.get(id=user_id)
             refund = get_object_or_404(Refund, refund=pk)
             
-            # Verify seller owns the shop
-            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
             
             if refund.status != 'pending':
                 return Response({"error": "Can only negotiate pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
@@ -11415,9 +11731,9 @@ class RefundViewSet(viewsets.ViewSet):
             user = User.objects.get(id=user_id)
             refund = get_object_or_404(Refund, refund=pk)
             
-            # Verify seller owns the shop
-            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
             
             if refund.status != 'waiting':
                 return Response({"error": "Can only mark received items that are waiting for return"}, status=status.HTTP_400_BAD_REQUEST)
@@ -11450,9 +11766,9 @@ class RefundViewSet(viewsets.ViewSet):
             user = User.objects.get(id=user_id)
             refund = get_object_or_404(Refund, refund=pk)
             
-            # Verify seller owns the shop
-            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
             
             if refund.status != 'to_verify':
                 return Response({"error": "Can only verify items in 'to_verify' status"}, status=status.HTTP_400_BAD_REQUEST)
@@ -11493,9 +11809,9 @@ class RefundViewSet(viewsets.ViewSet):
             user = User.objects.get(id=user_id)
             refund = get_object_or_404(Refund, refund=pk)
             
-            # Verify seller owns the shop
-            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
             
             if refund.status != 'to_process':
                 return Response({"error": "Can only process refunds in 'to_process' status"}, status=status.HTTP_400_BAD_REQUEST)
@@ -11596,10 +11912,14 @@ class RefundViewSet(viewsets.ViewSet):
             
             if hasattr(user, 'is_seller') and user.is_seller:
                 # Seller stats
-                shops = Shop.objects.filter(owner=user)
-                shop_ids = shops.values_list('shop_id', flat=True)
-                orders = Order.objects.filter(shop__in=shop_ids)
-                refunds = Refund.objects.filter(order__in=orders)
+                shops = Shop.objects.filter(customer__customer=user)
+                if not shops.exists():
+                    refunds = Refund.objects.none()
+                else:
+                    refunds = (
+                        Refund.objects.filter(order__checkout__cart_item__product__shop__in=shops)
+                        .distinct()
+                    )
             elif hasattr(user, 'is_customer') and user.is_customer:
                 # Buyer stats
                 refunds = Refund.objects.filter(requested_by=user)

@@ -16,6 +16,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '~/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert';
 import { Separator } from '~/components/ui/separator';
 import { useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { 
   ShoppingCart,
   Clock,
@@ -47,7 +48,11 @@ import {
   PackageCheck,
   Banknote,
   CheckSquare,
-  MessageSquareReply
+  MessageSquareReply,
+  Handshake as NegotiationIcon,
+  CheckCheck,
+  FileSearch,
+  Ban as CancelledIcon
 } from 'lucide-react';
 
 export function meta(): Route.MetaDescriptors {
@@ -62,6 +67,7 @@ export function meta(): Route.MetaDescriptors {
 interface ReturnItem {
   id: string;
   order_id: string;
+  request_number?: string;
   product: {
     id: string;
     name: string;
@@ -81,6 +87,7 @@ interface ReturnItem {
   created_at: string;
   updated_at: string;
   refund_amount?: number;
+  preferred_refund_method?: string;
   refund_method?: string;
   tracking_number?: string;
   dispute_reason?: string;
@@ -92,7 +99,14 @@ interface ReturnItem {
   pickup_scheduled_date?: string;
   courier?: string;
   notes?: string;
+  seller_response?: string;
   available_actions?: string[];
+  // Detailed payload fields
+  order_items?: any[];
+  evidence?: any[];
+  delivery?: any;
+  seller_offer?: any;
+  detailed?: boolean;
 } 
 
 interface ReturnStats {
@@ -113,7 +127,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     const { registrationMiddleware } = await import('~/middleware/registration.server');
     await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
     const { requireRole } = await import('~/middleware/role-require.server');
-    await requireRole(request, undefined, ['isSeller'] as any);
+    // Only require customer role; customers may own shops
+    await requireRole(request, undefined, ['isCustomer'] as any);
   } catch (err) {
     console.error('Loader middleware error', err);
   }
@@ -128,13 +143,24 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const url = new URL(request.url);
   const statusFilter = url.searchParams.get('status') || undefined;
+  const shopIdFromSession = session.get('shopId');
+  const shopId = url.searchParams.get('shop_id') || (typeof shopIdFromSession === 'string' ? shopIdFromSession : undefined) || undefined;
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/return-refund/get_shop_refunds/${statusFilter ? `?status=${statusFilter}` : ''}`, {
+    // Build query params
+    const params = new URLSearchParams();
+    if (statusFilter) params.set('status', statusFilter);
+    if (shopId) params.set('shop_id', shopId);
+
+    const headers: Record<string,string> = { 'Accept': 'application/json', 'X-User-Id': userId };
+    if (shopId) headers['X-Shop-Id'] = shopId;
+
+    const endpoint = shopId ? 'get_my_refunds' : 'get_shop_refunds';
+    const res = await fetch(`${API_BASE_URL}/return-refund/${endpoint}/${params.toString() ? `?${params.toString()}` : ''}`, {
       method: 'GET',
-      headers: { 'Accept': 'application/json', 'X-User-Id': userId },
+      headers,
       credentials: 'include'
     });
 
@@ -160,11 +186,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         disputed: 0,
         rejected_cancelled: 0,
       };
-      return { user: { id: userId, name: 'Seller', isSeller: true, isCustomer: false, isAdmin: false, isRider: false, isModerator: false }, returnItems: [], stats: defaultStats };
+      return { user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false }, returnItems: [], stats: defaultStats };
     }
 
     const data = await res.json();
+    // API may return { shop, results } when a shop id is supplied
     const serverList = Array.isArray(data) ? data : (data.results || data);
+    const shopInfo = data && data.shop ? data.shop : null;
 
     const returnItems: ReturnItem[] = serverList.map((r: any) => ({
       id: r.refund || r.id,
@@ -234,7 +262,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       rejected_cancelled: returnItems.filter(i => ['rejected','cancelled','pending_cancellation'].includes(i.status)).length,
     };
 
-    return { user: { id: userId, name: 'Seller', isSeller: true, isCustomer: false, isAdmin: false, isRider: false, isModerator: false }, returnItems, stats };
+    const userObj = { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false };
+    return { user: userObj, returnItems, stats, shopId: shopId || (shopInfo ? shopInfo.id : undefined), shop: shopInfo };
 
   } catch (err) {
     console.error('Error fetching shop refunds', err);
@@ -259,7 +288,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       disputed: 0,
       rejected_cancelled: 0,
     };
-    return { user: { id: userId, name: 'Seller', isSeller: true, isCustomer: false, isAdmin: false, isRider: false, isModerator: false }, returnItems: [], stats: defaultStats };
+    const userObj = { id: userId, name: 'Seller', isCustomer: true, isAdmin: false, isRider: false, isModerator: false };
+    return { user: userObj, returnItems: [], stats: defaultStats };
   }
 }
 
@@ -278,22 +308,19 @@ const EmptyTable = ({ message = "No requests found" }: { message?: string }) => 
   </div>
 );
 
-// Main Tabs configuration
-const MAIN_TABS = [
-  { id: 'all', label: 'All', icon: List },
-  { id: 'return_refund', label: 'Return/Refund', icon: RotateCcw },
-  { id: 'cancellation', label: 'Cancellation', icon: X },
-  { id: 'failed_delivery', label: 'Failed Delivery', icon: TruckIcon }
-];
-
-// Return/Refund subtabs configuration
-const RETURN_REFUND_SUBTABS = [
-  { id: 'all_return_refund', label: 'All', icon: RotateCcw },
-  { id: 'under_review', label: 'Under Review', icon: Clock },
-  { id: 'returning', label: 'Returning', icon: Truck },
-  { id: 'refunded', label: 'Refunded', icon: CheckCircle },
-  { id: 'disputed', label: 'Disputed', icon: ShieldAlert },
-  { id: 'rejected_cancelled', label: 'Rejected/Cancelled', icon: XCircle }
+// Status tabs based on Django model statuses
+const STATUS_TABS = [
+  { id: 'all', label: 'All Requests', icon: List },
+  { id: 'pending', label: 'Pending Review', icon: Clock },
+  { id: 'negotiation', label: 'Negotiation', icon: NegotiationIcon },
+  { id: 'approved', label: 'Approved', icon: CheckCircle },
+  { id: 'waiting', label: 'Waiting', icon: Package },
+  { id: 'to_verify', label: 'To Verify', icon: FileSearch },
+  { id: 'to_process', label: 'To Process', icon: RefreshCw },
+  { id: 'dispute', label: 'Dispute', icon: ShieldAlert },
+  { id: 'completed', label: 'Completed', icon: CheckCheck },
+  { id: 'rejected', label: 'Rejected', icon: XCircle },
+  { id: 'cancelled', label: 'Cancelled', icon: CancelledIcon }
 ];
 
 // Status configuration (aligned with Refund model statuses)
@@ -320,10 +347,14 @@ const TYPE_CONFIG = {
 
 export default function SellerReturnRefundCancel({ loaderData }: Route.ComponentProps) {
   const { user, returnItems: initialReturnItems, stats } = loaderData;
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const shopId = searchParams.get('shop_id') || undefined;
+
   const [itemsState, setItemsState] = useState<ReturnItem[]>(initialReturnItems);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<string>('all');
-  const [returnRefundSubTab, setReturnRefundSubTab] = useState<string>('all_return_refund');
+
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
   const { toast } = useToast();
@@ -345,7 +376,7 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
     const endpoint = sellerActionToEndpoint[action] || action;
     setActionLoading(requestId);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/return-refund/${requestId}/${endpoint}/`, {
+      const res = await fetch(`${API_BASE_URL}/return-refund/${requestId}/${endpoint}/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -382,35 +413,9 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
       );
     });
 
-    // Then filter by active tab
+    // Then filter by active tab (status-driven like customer)
     if (activeTab !== 'all') {
-      if (activeTab === 'return_refund') {
-        filtered = filtered.filter(item => 
-          item.type === 'return' || item.type === 'refund'
-        );
-
-        // Further filter by returnRefundSubTab
-        if (returnRefundSubTab === 'under_review') {
-          filtered = filtered.filter(item => 
-            item.status === 'under_review' || item.status === 'pending_review'
-          );
-        } else if (returnRefundSubTab === 'returning') {
-          filtered = filtered.filter(item => item.status === 'returning');
-        } else if (returnRefundSubTab === 'refunded') {
-          filtered = filtered.filter(item => item.status === 'refunded');
-        } else if (returnRefundSubTab === 'disputed') {
-          filtered = filtered.filter(item => item.status === 'disputed');
-        } else if (returnRefundSubTab === 'rejected_cancelled') {
-          filtered = filtered.filter(item => 
-            item.status === 'rejected' || item.status === 'cancelled'
-          );
-        }
-        // 'all_return_refund' shows all items in return_refund tab
-      } else if (activeTab === 'cancellation') {
-        filtered = filtered.filter(item => item.type === 'cancellation');
-      } else if (activeTab === 'failed_delivery') {
-        filtered = filtered.filter(item => item.type === 'failed_delivery');
-      }
+      filtered = filtered.filter(item => item.status === activeTab);
     }
 
     return filtered;
@@ -448,9 +453,35 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
     }
   };
 
+  const getTimeRemaining = (deadline?: string) => {
+    if (!deadline) return { text: 'N/A', color: 'text-gray-600', bg: 'bg-gray-50' };
+    try {
+      const now = new Date();
+      const d = new Date(deadline);
+      const diffMs = d.getTime() - now.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      if (diffMs <= 0) return { text: 'Expired', color: 'text-red-600', bg: 'bg-red-50' };
+      if (diffDays > 0) return { text: `${diffDays}d ${diffHours}h left`, color: 'text-green-600', bg: 'bg-green-50' };
+      return { text: `${diffHours}h left`, color: 'text-yellow-600', bg: 'bg-yellow-50' };
+    } catch (err) {
+      return { text: 'Invalid date', color: 'text-gray-600', bg: 'bg-gray-50' };
+    }
+  };
+
+  const activeTabLabel = STATUS_TABS.find(t => t.id === activeTab)?.label || (activeTab === 'all' ? 'All Requests' : activeTab);
+
   const viewRequestDetails = (requestId: string) => {
-    alert(`Viewing detailed information for request ${requestId}`);
-    // In real app: navigate(`/seller/returns/${requestId}`);
+    if (!requestId) return;
+    const qs = new URLSearchParams();
+    if (shopId) qs.set('shop_id', shopId);
+    // Use relative navigation so it still works with a basename / nested hosting.
+    navigate(
+`/seller/view-refund-details/${encodeURIComponent(requestId)}${
+    qs.toString() ? `?${qs.toString()}` : ''
+  }`
+);
+
   };
 
   const trackReturn = (trackingNumber: string) => {
@@ -478,8 +509,55 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
     // In real app: open pickup scheduling
   };
 
-  const toggleExpand = (itemId: string) => {
-    setExpandedItem(expandedItem === itemId ? null : itemId);
+  const toggleExpand = async (itemId: string) => {
+    // Expand / collapse and fetch detailed info if not present
+    const isCollapsing = expandedItem === itemId;
+    if (isCollapsing) {
+      setExpandedItem(null);
+      return;
+    }
+
+    // If we already have detailed order_items on the item, just expand
+    const existing = itemsState.find(i => i.id === itemId);
+    if (existing && (existing.order_items || existing.detailed)) {
+      setExpandedItem(itemId);
+      return;
+    }
+
+    // Otherwise fetch details from backend
+    try {
+      const res = await fetch(`${API_BASE_URL}/return-refund/${itemId}/get_refund_details/`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json', 'X-User-Id': user?.id },
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Map response to local item shape (merge)
+        setItemsState(prev => prev.map(it => it.id === itemId ? ({
+          ...it,
+          status: data.status || it.status,
+          notes: data.seller_response || data.notes || it.notes,
+          order_id: data.order_info?.order_number || it.order_id,
+          refund_amount: data.total_refund_amount || data.order_info?.total_amount || it.refund_amount,
+          refund_method: data.final_refund_method || data.preferred_refund_method || it.refund_method,
+          order_items: data.order_items || [],
+          delivery: data.delivery || data.delivery,
+          evidence: data.evidence || [],
+          seller_offer: data.seller_offer || null,
+          available_actions: data.available_actions || it.available_actions || [],
+          detailed: true
+        }) : it));
+
+        setExpandedItem(itemId);
+        toast({ title: 'Details loaded', variant: 'default' });
+      } else {
+        toast({ title: 'Could not load details', variant: 'destructive' });
+      }
+    } catch (err) {
+      console.error('Fetch refund details error', err);
+      toast({ title: 'Error loading details', description: String(err), variant: 'destructive' });
+    }
   };
 
   const getStatusConfig = (status: string) => {
@@ -655,203 +733,36 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
             {/* File New Request button removed for seller side */}
           </div>
 
-          {/* Main Tabs Navigation */}
-          <div className="border-b">
-            <div className="flex overflow-x-auto">
-              {MAIN_TABS.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                const count = tab.id === 'all' ? stats.total_requests :
-                            tab.id === 'return_refund' ? stats.return_refund_requests :
-                            tab.id === 'cancellation' ? stats.cancellation_requests :
-                            tab.id === 'failed_delivery' ? stats.failed_delivery_requests : 0;
-
-                return (
-                  <Button
-                    key={tab.id}
-                    variant="ghost"
-                    onClick={() => {
-                      setActiveTab(tab.id);
-                      if (tab.id !== 'return_refund') {
-                        setReturnRefundSubTab('all_return_refund');
-                      }
-                    }}
-                    className={`flex items-center gap-2 rounded-none border-b-2 px-4 py-3 ${isActive ? 'border-blue-600 text-blue-600 bg-blue-50' : 'border-transparent hover:border-gray-300'}`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span>{tab.label}</span>
-                    {count > 0 && (
-                      <Badge variant="secondary" className="ml-1">
-                        {count}
-                      </Badge>
-                    )}
-                  </Button>
-                );
-              })}
-            </div>
+          {/* Status Tabs - match customer UI */}
+          <div className="flex items-center space-x-1 overflow-x-auto mb-2 pb-2 border-b">
+            {STATUS_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const count = tab.id === 'all' ? itemsState.length : itemsState.filter(i => i.status === tab.id).length;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap flex-shrink-0 ${
+                    isActive ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Icon className="w-3 h-3" />
+                  <span>{tab.label}</span>
+                  {count > 0 && (
+                    <span className={`text-[10px] px-1 py-0.5 rounded ${isActive ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* Return/Refund Subtabs (only shown when Return/Refund tab is active) */}
-          {activeTab === 'return_refund' && (
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <div className="flex items-center gap-2 mb-3">
-                <RotateCcw className="w-5 h-5 text-blue-500" />
-                <h3 className="text-lg font-semibold">Return/Refund Requests</h3>
-                <span className="text-sm text-gray-500 ml-2">
-                  Manage customer return and refund requests
-                </span>
-              </div>
-              <div className="flex overflow-x-auto">
-                {RETURN_REFUND_SUBTABS.map((subtab) => {
-                  const Icon = subtab.icon;
-                  const isActive = returnRefundSubTab === subtab.id;
-                  const count = subtab.id === 'all_return_refund' ? stats.return_refund_requests :
-                              subtab.id === 'under_review' ? stats.under_review :
-                              subtab.id === 'returning' ? stats.returning :
-                              subtab.id === 'refunded' ? stats.refunded :
-                              subtab.id === 'disputed' ? stats.disputed :
-                              subtab.id === 'rejected_cancelled' ? stats.rejected_cancelled : 0;
+          
 
-                  return (
-                    <Button
-                      key={subtab.id}
-                      variant="ghost"
-                      onClick={() => setReturnRefundSubTab(subtab.id)}
-                      className={`flex items-center gap-2 rounded-full px-4 py-2 ${isActive ? 'bg-white text-blue-600 shadow-sm border border-blue-200' : 'text-gray-600 hover:bg-white/50'}`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      <span>{subtab.label}</span>
-                      {count > 0 && (
-                        <Badge variant="secondary" className="ml-1">
-                          {count}
-                        </Badge>
-                      )}
-                    </Button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Requests</p>
-                    <p className="text-2xl font-bold mt-1">{stats.total_requests}</p>
-                  </div>
-                  <div className="p-2 bg-blue-100 rounded-full">
-                    <List className="w-5 h-5 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Return/Refund</p>
-                    <p className="text-2xl font-bold mt-1 text-blue-600">{stats.return_refund_requests}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Product returns & refunds</p>
-                  </div>
-                  <div className="p-2 bg-blue-100 rounded-full">
-                    <RotateCcw className="w-5 h-5 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Cancellations</p>
-                    <p className="text-2xl font-bold mt-1 text-red-600">{stats.cancellation_requests}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Order cancellations</p>
-                  </div>
-                  <div className="p-2 bg-red-100 rounded-full">
-                    <X className="w-5 h-5 text-red-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Failed Delivery</p>
-                    <p className="text-2xl font-bold mt-1 text-orange-600">{stats.failed_delivery_requests}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Delivery issues</p>
-                  </div>
-                  <div className="p-2 bg-orange-100 rounded-full">
-                    <TruckIcon className="w-5 h-5 text-orange-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Additional Stats for Return/Refund Tab */}
-          {activeTab === 'return_refund' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Under Review</p>
-                    <p className="text-2xl font-bold mt-1 text-orange-600">{stats.under_review}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Returning</p>
-                    <p className="text-2xl font-bold mt-1 text-blue-600">{stats.returning}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Refunded</p>
-                    <p className="text-2xl font-bold mt-1 text-green-600">{stats.refunded}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Disputed</p>
-                    <p className="text-2xl font-bold mt-1 text-purple-600">{stats.disputed}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Rejected/Cancelled</p>
-                    <p className="text-2xl font-bold mt-1 text-red-600">{stats.rejected_cancelled}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Resolution Rate</p>
-                    <p className="text-2xl font-bold mt-1 text-green-600">
-                      {stats.total_requests > 0 
-                        ? `${Math.round((stats.refunded / stats.total_requests) * 100)}%`
-                        : '0%'}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
 
           {/* Search Bar */}
           {/* <Card>
@@ -875,265 +786,164 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
           {/* Requests Table */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-xl">
-                {activeTab === 'all' && 'All Requests'}
-                {activeTab === 'return_refund' && (
-                  <>
-                    {returnRefundSubTab === 'all_return_refund' && 'All Return/Refund Requests'}
-                    {returnRefundSubTab === 'under_review' && 'Requests Under Review'}
-                    {returnRefundSubTab === 'returning' && 'Returning Items'}
-                    {returnRefundSubTab === 'refunded' && 'Refunded Requests'}
-                    {returnRefundSubTab === 'disputed' && 'Disputed Requests'}
-                    {returnRefundSubTab === 'rejected_cancelled' && 'Rejected/Cancelled Requests'}
-                  </>
-                )}
-                {activeTab === 'cancellation' && 'Cancellation Requests'}
-                {activeTab === 'failed_delivery' && 'Failed Delivery Requests'}
-              </CardTitle>
+              <CardTitle className="text-xl">{STATUS_TABS.find(t => t.id === activeTab)?.label || (activeTab === 'all' ? 'All Requests' : activeTab)}</CardTitle>
               <CardDescription>
                 Showing {filteredReturnItems.length} of {itemsState.length} requests
               </CardDescription>
             </CardHeader>
             <CardContent>
               {filteredReturnItems.length === 0 ? (
-                <EmptyTable 
-                  message={
-                    activeTab === 'return_refund' ? (
-                      returnRefundSubTab === 'under_review' ? 'No requests under review' :
-                      returnRefundSubTab === 'returning' ? 'No items returning' :
-                      returnRefundSubTab === 'refunded' ? 'No refunded requests' :
-                      returnRefundSubTab === 'disputed' ? 'No disputed requests' :
-                      returnRefundSubTab === 'rejected_cancelled' ? 'No rejected/cancelled requests' :
-                      'No return/refund requests'
-                    ) :
-                    activeTab === 'cancellation' ? 'No cancellation requests' :
-                    activeTab === 'failed_delivery' ? 'No failed delivery requests' :
-                    'No requests found'
-                  }
-                />
+                <EmptyTable message={activeTab === 'all' ? 'No requests found' : `No ${activeTabLabel}`} />
               ) : (
-                <div className="rounded-md border">
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Request ID</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Product</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Type</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Status</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Amount</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Created</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Actions</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700"></th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {filteredReturnItems.map((item) => {
-                          const statusConfig = getStatusConfig(item.status);
-                          const typeConfig = getTypeConfig(item.type);
-                          const StatusIcon = statusConfig.icon;
-                          const TypeIcon = typeConfig.icon;
-                          const isExpanded = expandedItem === item.id;
+                <div className="space-y-3">
+                    {filteredReturnItems.map((item) => {
+                      const statusConfig = getStatusConfig(item.status);
+                      const isExpanded = expandedItem === item.id;
 
-                          return (
-                            <>
-                              <tr key={item.id} className="hover:bg-gray-50">
-                                <td className="p-3 text-sm">
-                                  <div className="font-medium">{item.id}</div>
-                                  <div className="text-xs text-muted-foreground">Order: {item.order_id}</div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <div className="flex items-center gap-2">
-                                    <Package className="w-4 h-4 text-muted-foreground" />
-                                    <div>
-                                      <div className="font-medium">{item.product?.name}</div>
-                                      <div className="text-xs text-muted-foreground">
-                                        Qty: {item.quantity}
-                                      </div>
+                      const negotiationInfo = item.seller_offer || null;
+
+                      return (
+                        <Card key={item.id} className="overflow-hidden border hover:border-blue-200 transition-colors">
+                          <CardContent className="p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Package className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                                  <span className="text-sm font-medium truncate">{item.product?.name}</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-xs text-gray-500">
+                                  {item.request_number && (
+                                    <>
+                                      <span className="truncate">{item.request_number}</span>
+                                      <span>•</span>
+                                    </>
+                                  )}
+                                  <span>{formatDateTime(item.created_at)}</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <Badge className={`text-[10px] h-5 px-1.5 py-0 flex items-center gap-1`} style={{ backgroundColor: statusConfig.bgColor, color: statusConfig.color }}>
+                                  <statusConfig.icon className="w-3 h-3" />
+                                  {statusConfig.label}
+                                </Badge>
+
+                                <button onClick={() => toggleExpand(item.id)} className="p-1 hover:bg-gray-100 rounded">
+                                  {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400 transform rotate-180" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="mb-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2 text-xs text-gray-600">
+                                  <Store className="w-3 h-3" />
+                                  <span className="truncate">{item.product?.shop?.name}</span>
+                                </div>
+                                <div className="font-medium text-sm">
+                                  <PhilippinePeso className="inline w-3 h-3 mr-0.5" />
+                                  {formatCurrency(item.amount || item.refund_amount || 0)}
+                                </div>
+                              </div>
+
+                              <div className="text-xs text-gray-500 mb-1 truncate">Order: {item.order_id} • Qty: {item.quantity}</div>
+
+                              <div className="text-xs text-gray-600 mb-2 line-clamp-2">{item.reason}</div>
+
+                              <div className="flex items-center gap-1 text-xs text-gray-500">
+                                <FileText className="w-3 h-3" />
+                                <span>{(item.evidence && item.evidence.length) ? item.evidence.length : 0} evidence file{(item.evidence && item.evidence.length) !== 1 ? 's' : ''}</span>
+                              </div>
+
+                              {/* Negotiation or Dispute Info */}
+                              {item.seller_offer && (
+                                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <MessageCircle className="w-3 h-3 text-blue-600" />
+                                      <span className="text-xs font-medium text-blue-800">Seller Offer</span>
                                     </div>
-                                  </div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <Badge 
-                                    variant="secondary"
-                                    className="text-xs capitalize flex items-center gap-1"
-                                    style={{ backgroundColor: typeConfig.bgColor, color: typeConfig.color }}
-                                  >
-                                    <TypeIcon className="w-3 h-3" />
-                                    {typeConfig.label}
-                                  </Badge>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <Badge 
-                                    variant="secondary"
-                                    className="text-xs capitalize flex items-center gap-1"
-                                    style={{ backgroundColor: statusConfig.bgColor, color: statusConfig.color }}
-                                  >
-                                    <StatusIcon className="w-3 h-3" />
-                                    {statusConfig.label}
-                                  </Badge>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <div className="flex items-center gap-1">
-                                    <PhilippinePeso className="w-4 h-4 text-muted-foreground" />
-                                    {item.amount}
-                                    {item.refund_amount && item.refund_amount !== item.amount && (
-                                      <span className="text-xs text-gray-500 ml-1">
-                                        (Refund: {item.refund_amount})
-                                      </span>
+                                    {item.seller_offer.deadline && (
+                                      <Badge className="text-[10px] h-4 bg-green-50 text-green-600">{getTimeRemaining(item.seller_offer?.deadline).text}</Badge>
                                     )}
                                   </div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <div className="flex items-center gap-2">
-                                    <Calendar className="w-4 h-4 text-muted-foreground" />
-                                    {formatDate(item.created_at)}
-                                  </div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <div className="flex flex-col gap-2 min-w-[140px]">
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => viewRequestDetails(item.id)}
-                                      className="flex items-center justify-center gap-1"
-                                    >
-                                      <Eye className="w-3 h-3" />
-                                      View Details
-                                    </Button>
-                                    
-                                    {/* Seller-specific actions: prefer server-provided available_actions when present */}
-                                    {(item.available_actions?.includes('review') || item.available_actions?.includes('approve') || item.available_actions?.includes('reject')) && (
-                                      <div className="flex items-center gap-2">
-                                        {item.available_actions?.includes('approve') && (
-                                          <Button
-                                            size="sm"
-                                            variant="default"
-                                            onClick={() => performSellerAction(item.id, 'approve')}
-                                            className="flex items-center justify-center gap-1 bg-blue-600 hover:bg-blue-700"
-                                            disabled={actionLoading === item.id}
-                                          >
-                                            <FileText className="w-3 h-3" />
-                                            Approve
-                                          </Button>
-                                        )}
-
-                                        {item.available_actions?.includes('reject') && (
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => performSellerAction(item.id, 'reject')}
-                                            className="flex items-center justify-center gap-1"
-                                            disabled={actionLoading === item.id}
-                                          >
-                                            <XCircle className="w-3 h-3" />
-                                            Reject
-                                          </Button>
-                                        )}
-
-                                        {item.available_actions?.includes('propose_negotiation') && (
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => performSellerAction(item.id, 'propose_negotiation', { message: 'Seller proposed a partial refund' })}
-                                            className="flex items-center justify-center gap-1 bg-yellow-50"
-                                            disabled={actionLoading === item.id}
-                                          >
-                                            <MessageSquare className="w-3 h-3" />
-                                            Propose Offer
-                                          </Button>
-                                        )}
-
-                                      </div>
-                                    )}
-
-                                    {item.available_actions?.includes('schedule_pickup') && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => schedulePickup(item.id)}
-                                        className="flex items-center justify-center gap-1 bg-green-50 text-green-700 hover:bg-green-100"
-                                      >
-                                        <Truck className="w-3 h-3" />
-                                        Schedule Pickup
-                                      </Button>
-                                    )}
-
-                                    {item.available_actions?.includes('process_refund') && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => performSellerAction(item.id, 'process_refund')}
-                                        className="flex items-center justify-center gap-1 bg-purple-50 text-purple-700 hover:bg-purple-100"
-                                        disabled={actionLoading === item.id}
-                                      >
-                                        <PhilippinePeso className="w-3 h-3" />
-                                        Process Refund
-                                      </Button>
-                                    )}
-
-                                    {item.tracking_number && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => trackReturn(item.tracking_number!)}
-                                        className="flex items-center justify-center gap-1 bg-blue-50 text-blue-700 hover:bg-blue-100"
-                                      >
-                                        <Truck className="w-3 h-3" />
-                                        Track
-                                      </Button>
-                                    )}
-
-                                    {(item.available_actions?.includes('contact_customer') || item.status === 'disputed') && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => contactCustomer(item.id)}
-                                        className="flex items-center justify-center gap-1 bg-yellow-50 text-yellow-700 hover:bg-yellow-100"
-                                      >
-                                        <MessageSquare className="w-3 h-3" />
-                                        Contact Customer
-                                      </Button>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => toggleExpand(item.id)}
-                                    className="h-8 w-8 p-0"
-                                  >
-                                    {isExpanded ? (
-                                      <ChevronDown className="h-4 w-4" />
-                                    ) : (
-                                      <ChevronRight className="h-4 w-4" />
-                                    )}
-                                  </Button>
-                                </td>
-                              </tr>
-                              {isExpanded && (
-                                <tr className="bg-gray-50">
-                                  <td colSpan={8} className="p-4">
-                                    <SellerDetailUI
-                                      item={item}
-                                      formatDate={formatDate}
-                                      formatDateTime={formatDateTime}
-                                      formatCurrency={(v:number) => `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
-                                      onAction={performSellerAction}
-                                      actionLoading={actionLoading === item.id}
-                                      toggleExpand={() => toggleExpand(item.id)}
-                                    />
-                                  </td>
-                                </tr>
+                                  <p className="text-xs text-blue-700 mt-1">{item.seller_offer.method} - {formatCurrency(item.seller_offer.amount || 0)}</p>
+                                  {item.seller_offer.reason && <p className="text-xs text-gray-600 mt-0.5">{item.seller_offer.reason}</p>}
+                                </div>
                               )}
 
-                            </>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                              {item.status === 'dispute' && (
+                                <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded">
+                                  <div className="flex items-center gap-2">
+                                    <ShieldAlert className="w-3 h-3 text-red-600" />
+                                    <span className="text-xs font-medium text-red-800">Under Admin Review</span>
+                                  </div>
+                                  {item.dispute_reason && <p className="text-xs text-gray-700 mt-1">Your reason: {item.dispute_reason}</p>}
+                                </div>
+                              )}
+
+                            </div>
+
+                            <div className="my-2">
+                              <img src={item.product?.image || '/phon.jpg'} alt={item.product?.name} className="h-16 w-16 rounded-md object-cover border" onError={(e)=>{(e.target as HTMLImageElement).src='/phon.jpg'}} />
+                            </div>
+
+                            {isExpanded && (
+                              <div className="mt-3 pt-3 border-t text-xs space-y-2">
+                                <div>
+                                  <div className="font-medium text-gray-700 mb-1">Refund Details</div>
+                                  <div className="text-gray-600 space-y-1">
+                                    <div>Requested Method: {item.preferred_refund_method}</div>
+                                    {item.refund_method && <div>Final Method: {item.refund_method}</div>}
+                                    <div>Status: {statusConfig.label}</div>
+                                    {item.updated_at && <div>Last Updated: {formatDateTime(item.updated_at)}</div>}
+                                    {item.tracking_number && <div>Tracking: {item.tracking_number}</div>}
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <div className="font-medium text-gray-700 mb-1">Reason for Refund</div>
+                                  <div className="text-gray-600 bg-gray-50 p-2 rounded border">{item.reason}</div>
+                                </div>
+
+                                {item.notes && (
+                                  <div>
+                                    <div className="font-medium text-gray-700 mb-1 flex items-center gap-1"><MessageCircle className="w-3 h-3" /> Your Note</div>
+                                    <div className="text-gray-600 bg-gray-50 p-2 rounded border">{item.notes}</div>
+                                  </div>
+                                )}
+
+                                {item.seller_response && (
+                                  <div>
+                                    <div className="font-medium text-gray-700 mb-1 flex items-center gap-1"><Store className="w-3 h-3" /> Seller Response</div>
+                                    <div className="text-gray-600 bg-gray-50 p-2 rounded border">{item.seller_response}</div>
+                                  </div>
+                                )}
+
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between pt-2 border-t">
+                              <Button variant="ghost" size="sm" onClick={() => viewRequestDetails(item.id)} className="h-6 px-2 text-xs"><Eye className="w-3 h-3 mr-1"/> View Details</Button>
+
+                              <div className="flex gap-1">
+                                {item.available_actions?.includes('approve') && (
+                                  <Button size="sm" variant="default" onClick={() => performSellerAction(item.id, 'approve')} disabled={actionLoading===item.id} className="h-6 px-2 text-xs bg-blue-600 hover:bg-blue-700"><FileText className="w-3 h-3 mr-1"/>Approve</Button>
+                                )}
+                                {item.available_actions?.includes('reject') && (
+                                  <Button size="sm" variant="outline" onClick={() => performSellerAction(item.id, 'reject')} disabled={actionLoading===item.id} className="h-6 px-2 text-xs"><XCircle className="w-3 h-3 mr-1"/>Reject</Button>
+                                )}
+                                {item.available_actions?.includes('propose_negotiation') && (
+                                  <Button size="sm" variant="outline" onClick={() => performSellerAction(item.id, 'propose_negotiation', { seller_suggested_amount: (item.amount||0)*0.5 })} disabled={actionLoading===item.id} className="h-6 px-2 text-xs"> <MessageSquare className="w-3 h-3 mr-1"/>Propose Offer</Button>
+                                )}
+                                <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50" title="More Actions"><FileText className="w-3 h-3"/></Button>
+                              </div>
+                            </div>
+
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                 </div>
               )}
             </CardContent>

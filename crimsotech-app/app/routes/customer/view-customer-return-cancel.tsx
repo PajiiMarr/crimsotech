@@ -582,7 +582,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     };
 
     return {
-      user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false, isSeller: false, username: 'customer', email: '' },
+      user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false, username: 'customer', email: '' },
       returnDetails,
       action: action || null
     };
@@ -591,7 +591,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     console.error('Error fetching refund detail', err);
     // Fallback to mock if API fails (keeps UX friendly)
     return {
-      user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false, isSeller: false, username: 'customer', email: '' },
+      user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false, username: 'customer', email: '' },
       returnDetails: {
         returnRequest: {
           id: returnId || 'unknown',

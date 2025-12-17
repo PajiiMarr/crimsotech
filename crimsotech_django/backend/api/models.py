@@ -1151,3 +1151,6 @@ class ProductSKU(models.Model):
 
     def __str__(self):
         return f"SKU for {self.product.name} ({self.sku_code or 'no-code'})"
+    
+
+
