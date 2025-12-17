@@ -53,6 +53,7 @@ router.register(r'order-sucessful', OrderSuccessfull, basename='order-successful
 router.register(r'refund-payment', RefundPaymentMethodViewSet, basename='refundpayment')
 router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
 router.register(r'disputes', DisputeViewSet, basename='dispute')
+router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment')
 
 
 urlpatterns = [
