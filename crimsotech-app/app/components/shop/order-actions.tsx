@@ -54,27 +54,42 @@ interface OrderActionsProps {
     status: string;
     delivery_method?: string | null;
     shipping_method?: string | null;
+    delivery_info?: DeliveryInfo; // Add this
   };
   isCancelled: boolean;
   isPickup: boolean;
+  hasPendingOffer?: boolean; // Add this
   availableActions: string[];
   isLoadingActions: boolean;
   onUpdateStatus: (orderId: string, actionType: string) => Promise<void>;
   onCancelOrder: (orderId: string) => Promise<void>;
   onViewDetails: () => void;
+  onArrangeShipment?: () => void; // Add this
   onRefreshActions: () => Promise<void>;
   isMobile?: boolean;
+}
+
+// Add DeliveryInfo interface
+interface DeliveryInfo {
+  delivery_id?: string;
+  rider_name?: string;
+  status?: string;
+  tracking_number?: string;
+  estimated_delivery?: string;
+  submitted_at?: string;
 }
 
 export function OrderActions({ 
   order, 
   isCancelled, 
   isPickup, 
+  hasPendingOffer = false, // Add default value
   availableActions,
   isLoadingActions,
   onUpdateStatus, 
   onCancelOrder, 
   onViewDetails,
+  onArrangeShipment, // Add this
   onRefreshActions,
   isMobile = false 
 }: OrderActionsProps) {
@@ -135,6 +150,14 @@ export function OrderActions({
         variant: 'default' as const,
         description: 'Arrange delivery and shipping for this order'
       },
+      'arrange_shipment_nav': {
+        label: 'Arrange Shipping',
+        icon: <Ship className="w-4 h-4 mr-2" />,
+        color: 'text-blue-600',
+        variant: 'default' as const,
+        description: 'Go to shipment arrangement page'
+      },
+
       'picked_up': {
         label: 'Mark as Picked Up',
         icon: <CheckCircle className="w-4 h-4 mr-2" />,
@@ -393,7 +416,9 @@ export function OrderActions({
                 key={action}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (action === 'arrange_shipment') {
+                  if (action === 'arrange_shipment_nav') {
+                    onArrangeShipment?.(); // Add this prop to OrderActionsProps
+                  } else if (action === 'arrange_shipment') {
                     handleArrangeShipment();
                   } else if (action === 'print') {
                     handlePrint();
