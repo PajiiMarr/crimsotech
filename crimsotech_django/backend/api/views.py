@@ -9526,10 +9526,11 @@ class CheckoutOrder(viewsets.ViewSet):
             # Convert comma-separated string to list of UUIDs
             selected_ids = selected_ids_str.split(',')
             
-            # Get cart items for this user and selected IDs
+            # Get cart items for this user and selected IDs - ADDED is_ordered=False filter
             cart_items = CartItem.objects.filter(
                 id__in=selected_ids,
-                user_id=user_id
+                user_id=user_id,
+                is_ordered=False  # ADDED: Only get items that are not yet ordered
             ).select_related(
                 "product", 
                 "product__shop"
@@ -9539,8 +9540,25 @@ class CheckoutOrder(viewsets.ViewSet):
             
             if not cart_items.exists():
                 return Response(
-                    {"error": "No cart items found for the selected IDs"}, 
+                    {"error": "No cart items found or items already ordered"}, 
                     status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if any selected items are already ordered (not in filtered queryset)
+            # This provides more specific error information
+            total_selected_count = len(selected_ids)
+            found_count = cart_items.count()
+            
+            if found_count != total_selected_count:
+                # Some items are already ordered or don't exist
+                return Response(
+                    {
+                        "error": f"Some items cannot be checked out",
+                        "details": f"Found {found_count} available items out of {total_selected_count} selected",
+                        "available_items": found_count,
+                        "selected_items": total_selected_count
+                    }, 
+                    status=status.HTTP_400_BAD_REQUEST
                 )
             
             # Prepare response data
@@ -9577,6 +9595,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "shop_id": str(shop.id) if shop else None,
                     "added_at": cart_item.added_at.isoformat() if cart_item.added_at else None,
                     "subtotal": float(product.price * cart_item.quantity) if product else 0,
+                    "is_ordered": cart_item.is_ordered  # Include in response for clarity
                 }
                 
                 # Get product image if available
@@ -9662,7 +9681,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Internal server error", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+        
     def _get_user_purchase_history(self, user_id):
         """
         Get user's purchase history for personalized voucher recommendations
@@ -11965,3 +11984,146 @@ class RefundViewSet(viewsets.ViewSet):
                 {'value': 'cancelled', 'label': 'Cancelled'},
             ]
         })
+class OrderSuccessfull(viewsets.ViewSet):
+    @action(detail=True, methods=['get'])
+    def get_order_successful(self, request, pk=None):
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return Response(
+                {"error": "X-User-Id header is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get the order and verify it belongs to the user
+            order = get_object_or_404(
+                Order.objects.select_related(
+                    'user',
+                    'shipping_address'
+                ),
+                order=pk,
+                user_id=user_id
+            )
+            
+            # Get all checkouts for this order with related data
+            checkouts = Checkout.objects.filter(
+                order=order
+            ).select_related(
+                'cart_item__product',
+                'cart_item__product__shop',
+                'voucher'
+            ).prefetch_related(
+                'cart_item__product__productmedia_set'
+            )
+            
+            # Prepare order data
+            order_data = {
+                "order": str(order.order),
+                "status": order.status,
+                "total_amount": str(order.total_amount),
+                "payment_method": order.payment_method,
+                "delivery_method": order.delivery_method,
+                "delivery_address_text": order.delivery_address_text,
+                "created_at": order.created_at.isoformat(),
+                "shipping_address": None,
+                "items": [],
+                "summary": {
+                    "item_count": 0,
+                    "shop_count": 0,
+                    "subtotal": 0
+                }
+            }
+            
+            # Add shipping address if available
+            if order.shipping_address:
+                order_data["shipping_address"] = {
+                    "id": str(order.shipping_address.id),
+                    "recipient_name": order.shipping_address.recipient_name,
+                    "recipient_phone": order.shipping_address.recipient_phone,
+                    "full_address": order.shipping_address.get_full_address(),
+                }
+            
+            # Process checkout items
+            shop_ids = set()
+            subtotal = 0
+            
+            for checkout in checkouts:
+                if checkout.cart_item and checkout.cart_item.product:
+                    product = checkout.cart_item.product
+                    shop = product.shop
+                    
+                    if shop:
+                        shop_ids.add(shop.id)
+                    
+                    # Calculate item subtotal
+                    item_subtotal = float(checkout.total_amount)
+                    subtotal += item_subtotal
+                    
+                    # Get product image
+                    product_image = None
+                    if product.productmedia_set.exists():
+                        first_media = product.productmedia_set.first()
+                        if first_media.file_data:
+                            product_image = request.build_absolute_uri(first_media.file_data.url)
+                    
+                    item_data = {
+                        "checkout_id": str(checkout.id),
+                        "cart_item_id": str(checkout.cart_item.id),
+                        "product_id": str(product.id),
+                        "name": product.name,
+                        "price": float(product.price),
+                        "quantity": checkout.quantity,
+                        "subtotal": item_subtotal,
+                        "shop_name": shop.name if shop else "Unknown Shop",
+                        "shop_id": str(shop.id) if shop else None,
+                        "image": product_image,
+                        "voucher_applied": {
+                            "id": str(checkout.voucher.id),
+                            "name": checkout.voucher.name,
+                            "code": checkout.voucher.code,
+                        } if checkout.voucher else None,
+                        "remarks": checkout.remarks,
+                    }
+                    
+                    order_data["items"].append(item_data)
+            
+            # Update summary
+            order_data["summary"]["item_count"] = len(order_data["items"])
+            order_data["summary"]["shop_count"] = len(shop_ids)
+            order_data["summary"]["subtotal"] = subtotal
+            
+            # Get payment if exists
+            try:
+                payment = Payment.objects.get(order=order)
+                order_data["payment"] = {
+                    "status": payment.status,
+                    "method": payment.method,
+                    "amount": str(payment.amount),
+                    "transaction_date": payment.transaction_date.isoformat(),
+                }
+            except Payment.DoesNotExist:
+                order_data["payment"] = None
+            
+            # Get delivery if exists
+            try:
+                delivery = Delivery.objects.get(order=order)
+                order_data["delivery"] = {
+                    "status": delivery.status,
+                    "rider": delivery.rider.rider.username if delivery.rider else None,
+                    "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
+                    "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                }
+            except Delivery.DoesNotExist:
+                order_data["delivery"] = None
+            
+            return Response(order_data)
+            
+        except Exception as e:
+            # Log error but don't expose internal details
+            logger.error(f"Error fetching order {pk}: {str(e)}")
+            return Response(
+                {"error": "Order not found or access denied"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+

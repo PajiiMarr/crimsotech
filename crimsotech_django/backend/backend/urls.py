@@ -52,6 +52,7 @@ router.register(r'return-refund', RefundViewSet, basename='return-refund')
 
 
 
+router.register(r'order-sucessful', OrderSuccessfull, basename='order-successful')
 
 
 urlpatterns = [
