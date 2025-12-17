@@ -1,6 +1,7 @@
 import type { Route } from './+types/seller-return-refund-cancel';
 import SidebarLayout from '~/components/layouts/seller-sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
+import { useToast } from '~/hooks/use-toast';
 import { 
   Card, 
   CardHeader, 
@@ -12,7 +13,10 @@ import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
 import { Input } from '~/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '~/components/ui/tabs';
+import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert';
+import { Separator } from '~/components/ui/separator';
 import { useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { 
   ShoppingCart,
   Clock,
@@ -29,7 +33,6 @@ import {
   Eye,
   Truck,
   Package2,
-  CheckSquare,
   List,
   RotateCcw,
   X,
@@ -40,7 +43,16 @@ import {
   MessageSquare,
   FileText,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  MessageCircle,
+  PackageCheck,
+  Banknote,
+  CheckSquare,
+  MessageSquareReply,
+  Handshake as NegotiationIcon,
+  CheckCheck,
+  FileSearch,
+  Ban as CancelledIcon
 } from 'lucide-react';
 
 export function meta(): Route.MetaDescriptors {
@@ -55,6 +67,7 @@ export function meta(): Route.MetaDescriptors {
 interface ReturnItem {
   id: string;
   order_id: string;
+  request_number?: string;
   product: {
     id: string;
     name: string;
@@ -68,12 +81,13 @@ interface ReturnItem {
   quantity: number;
   amount: number;
   type: 'return' | 'refund' | 'cancellation' | 'failed_delivery';
-  status: 'pending_review' | 'under_review' | 'returning' | 'refunded' | 'disputed' | 'rejected' | 'cancelled' | 'delivery_failed' | 'pending_cancellation';
+  status: 'pending' | 'negotiation' | 'approved' | 'waiting' | 'to_verify' | 'to_process' | 'dispute' | 'completed' | 'rejected' | 'cancelled' | 'pending_review' | 'under_review' | 'returning' | 'refunded' | 'disputed' | 'delivery_failed' | 'pending_cancellation';
   reason: string;
   description?: string;
   created_at: string;
   updated_at: string;
   refund_amount?: number;
+  preferred_refund_method?: string;
   refund_method?: string;
   tracking_number?: string;
   dispute_reason?: string;
@@ -85,7 +99,15 @@ interface ReturnItem {
   pickup_scheduled_date?: string;
   courier?: string;
   notes?: string;
-}
+  seller_response?: string;
+  available_actions?: string[];
+  // Detailed payload fields
+  order_items?: any[];
+  evidence?: any[];
+  delivery?: any;
+  seller_offer?: any;
+  detailed?: boolean;
+} 
 
 interface ReturnStats {
   total_requests: number;
@@ -99,238 +121,176 @@ interface ReturnStats {
   rejected_cancelled: number;
 }
 
-// Loader function for UI demo
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const returnItems: ReturnItem[] = [
-    {
-      id: "RET-2024-001",
-      order_id: "ORD-2024-00123",
-      product: {
-        id: "prod-001",
-        name: "Apple iPhone 13 Pro",
-        price: 45000,
-        shop: {
-          id: "shop-001",
-          name: "TechGadgets Store"
-        }
-      },
-      quantity: 1,
-      amount: 45000,
-      type: "return",
-      status: "under_review",
-      reason: "Product defective",
-      description: "Phone screen has dead pixels upon arrival",
-      created_at: "2024-01-20T10:30:00Z",
-      updated_at: "2024-01-21T14:25:00Z",
-      refund_amount: 45000,
-      refund_method: "Original Payment Method",
-      reviewed_by: "Support Agent 01",
-      reviewed_at: "2024-01-21T09:30:00Z",
-      estimated_refund_date: "2024-01-28",
-      notes: "Awaiting courier pickup"
-    },
-    {
-      id: "RET-2024-002",
-      order_id: "ORD-2024-00124",
-      product: {
-        id: "prod-002",
-        name: "Samsung Galaxy Watch 4",
-        price: 12000,
-        shop: {
-          id: "shop-001",
-          name: "TechGadgets Store"
-        }
-      },
-      quantity: 1,
-      amount: 12000,
-      type: "refund",
-      status: "returning",
-      reason: "Wrong item received",
-      description: "Received Galaxy Watch 5 instead of Watch 4",
-      created_at: "2024-01-19T14:20:00Z",
-      updated_at: "2024-01-22T11:45:00Z",
-      refund_amount: 12000,
-      refund_method: "Store Credit",
-      tracking_number: "TRK-RET-789012",
-      pickup_scheduled_date: "2024-01-23",
-      courier: "J&T Express",
-      notes: "Package in transit to seller"
-    },
-    {
-      id: "RET-2024-003",
-      order_id: "ORD-2024-00125",
-      product: {
-        id: "prod-003",
-        name: "MacBook Air M1",
-        price: 32000,
-        shop: {
-          id: "shop-002",
-          name: "Apple Premium Reseller"
-        }
-      },
-      quantity: 1,
-      amount: 32000,
-      type: "return",
-      status: "refunded",
-      reason: "Changed mind",
-      description: "Decided to purchase a different model",
-      created_at: "2024-01-15T09:15:00Z",
-      updated_at: "2024-01-19T16:30:00Z",
-      refund_amount: 32000,
-      refund_method: "Bank Transfer",
-      actual_refund_date: "2024-01-18",
-      notes: "Refund completed successfully"
-    },
-    {
-      id: "RET-2024-004",
-      order_id: "ORD-2024-00126",
-      product: {
-        id: "prod-004",
-        name: "Wireless Headphones",
-        price: 8500,
-        shop: {
-          id: "shop-003",
-          name: "Audio Express"
-        }
-      },
-      quantity: 1,
-      amount: 8500,
-      type: "refund",
-      status: "disputed",
-      reason: "Partial refund requested",
-      description: "Headphones working but missing accessories",
-      created_at: "2024-01-18T11:30:00Z",
-      updated_at: "2024-01-22T10:15:00Z",
-      refund_amount: 2000,
-      refund_method: "GCash",
-      dispute_reason: "Seller disagrees with refund amount",
-      resolution: "Under negotiation",
-      notes: "Awaiting customer response"
-    },
-    {
-      id: "RET-2024-005",
-      order_id: "ORD-2024-00127",
-      product: {
-        id: "prod-005",
-        name: "USB-C Cable",
-        price: 500,
-        shop: {
-          id: "shop-003",
-          name: "Audio Express"
-        }
-      },
-      quantity: 2,
-      amount: 1000,
-      type: "cancellation",
-      status: "rejected",
-      reason: "Order cancellation",
-      description: "Changed mind before shipment",
-      created_at: "2024-01-22T08:45:00Z",
-      updated_at: "2024-01-23T14:20:00Z",
-      refund_amount: 1000,
-      refund_method: "Original Payment Method",
-      resolution: "Order already shipped, cannot cancel",
-      notes: "Can initiate return upon receipt"
-    },
-    {
-      id: "RET-2024-006",
-      order_id: "ORD-2024-00128",
-      product: {
-        id: "prod-006",
-        name: "Smartwatch",
-        price: 25000,
-        shop: {
-          id: "shop-004",
-          name: "Wearables Hub"
-        }
-      },
-      quantity: 1,
-      amount: 25000,
-      type: "failed_delivery",
-      status: "pending_review",
-      reason: "Delivery failed multiple times",
-      description: "Courier attempted delivery 3 times, no one available",
-      created_at: "2024-01-23T16:30:00Z",
-      updated_at: "2024-01-23T16:30:00Z",
-      notes: "Awaiting courier review"
-    },
-    {
-      id: "RET-2024-007",
-      order_id: "ORD-2024-00129",
-      product: {
-        id: "prod-007",
-        name: "Tablet",
-        price: 18000,
-        shop: {
-          id: "shop-005",
-          name: "Electronics World"
-        }
-      },
-      quantity: 1,
-      amount: 18000,
-      type: "cancellation",
-      status: "cancelled",
-      reason: "Order cancellation",
-      description: "Found better price elsewhere",
-      created_at: "2024-01-21T10:00:00Z",
-      updated_at: "2024-01-21T15:45:00Z",
-      refund_amount: 18000,
-      refund_method: "Credit Card",
-      actual_refund_date: "2024-01-22",
-      notes: "Cancellation approved before shipment"
-    },
-    {
-      id: "RET-2024-008",
-      order_id: "ORD-2024-00130",
-      product: {
-        id: "prod-008",
-        name: "Gaming Mouse",
-        price: 15000,
-        shop: {
-          id: "shop-006",
-          name: "Gaming Gear"
-        }
-      },
-      quantity: 1,
-      amount: 15000,
-      type: "return",
-      status: "pending_review",
-      reason: "Not as described",
-      description: "Product color different from photos",
-      created_at: "2024-01-24T09:30:00Z",
-      updated_at: "2024-01-24T09:30:00Z",
-      notes: "New request, under review"
+  // Session+role checks
+  try {
+    const { registrationMiddleware } = await import('~/middleware/registration.server');
+    await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
+    const { requireRole } = await import('~/middleware/role-require.server');
+    // Only require customer role; customers may own shops
+    await requireRole(request, undefined, ['isCustomer'] as any);
+  } catch (err) {
+    console.error('Loader middleware error', err);
+  }
+
+  const { getSession } = await import('~/sessions.server');
+  const session = await getSession(request.headers.get('Cookie'));
+  const userId = session.get('userId');
+
+  if (!userId) {
+    throw new Response('Unauthorized', { status: 401 });
+  }
+
+  const url = new URL(request.url);
+  const statusFilter = url.searchParams.get('status') || undefined;
+  const shopIdFromSession = session.get('shopId');
+  const shopId = url.searchParams.get('shop_id') || (typeof shopIdFromSession === 'string' ? shopIdFromSession : undefined) || undefined;
+
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+  try {
+    // Build query params
+    const params = new URLSearchParams();
+    if (statusFilter) params.set('status', statusFilter);
+    if (shopId) params.set('shop_id', shopId);
+
+    const headers: Record<string,string> = { 'Accept': 'application/json', 'X-User-Id': userId };
+    if (shopId) headers['X-Shop-Id'] = shopId;
+
+    const endpoint = shopId ? 'get_my_refunds' : 'get_shop_refunds';
+    const res = await fetch(`${API_BASE_URL}/return-refund/${endpoint}/${params.toString() ? `?${params.toString()}` : ''}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include'
+    });
+
+    if (!res.ok) {
+      const defaultStats = {
+        total_requests: 0,
+        pending: 0,
+        negotiation: 0,
+        approved: 0,
+        waiting: 0,
+        to_verify: 0,
+        to_process: 0,
+        dispute: 0,
+        completed: 0,
+        rejected: 0,
+        cancelled: 0,
+        return_refund_requests: 0,
+        cancellation_requests: 0,
+        failed_delivery_requests: 0,
+        under_review: 0,
+        returning: 0,
+        refunded: 0,
+        disputed: 0,
+        rejected_cancelled: 0,
+      };
+      return { user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false }, returnItems: [], stats: defaultStats };
     }
-  ];
 
-  // Calculate stats
-  const stats: ReturnStats = {
-    total_requests: returnItems.length,
-    return_refund_requests: returnItems.filter(item => item.type === 'return' || item.type === 'refund').length,
-    cancellation_requests: returnItems.filter(item => item.type === 'cancellation').length,
-    failed_delivery_requests: returnItems.filter(item => item.type === 'failed_delivery').length,
-    under_review: returnItems.filter(item => item.status === 'under_review' || item.status === 'pending_review').length,
-    returning: returnItems.filter(item => item.status === 'returning').length,
-    refunded: returnItems.filter(item => item.status === 'refunded').length,
-    disputed: returnItems.filter(item => item.status === 'disputed').length,
-    rejected_cancelled: returnItems.filter(item => item.status === 'rejected' || item.status === 'cancelled').length
-  };
+    const data = await res.json();
+    // API may return { shop, results } when a shop id is supplied
+    const serverList = Array.isArray(data) ? data : (data.results || data);
+    const shopInfo = data && data.shop ? data.shop : null;
 
-  return {
-    user: {
-      id: "demo-seller-123",
-      name: "Jane Seller",
-      email: "seller@example.com",
-      isCustomer: false,
-      isAdmin: false,
-      isRider: false,
-      isModerator: false,
-      isSeller: true,
-      username: "jane_seller",
-    },
-    returnItems,
-    stats
-  };
+    const returnItems: ReturnItem[] = serverList.map((r: any) => ({
+      id: r.refund || r.id,
+      order_id: r.order_info?.order_id || r.order?.order || r.order_id || '',
+      product: {
+        id: r.order_items?.[0]?.product?.id || r.order_items?.[0]?.product_id || 'unknown',
+        name: r.order_items?.[0]?.product?.name || r.order_items?.[0]?.name || r.order?.items?.[0]?.product?.name || 'Product',
+        price: Number(r.total_refund_amount) || 0,
+        shop: { id: r.order?.shop?.id || '', name: r.order?.shop?.name || '' },
+        image: r.order_items?.[0]?.product?.image || ''
+      },
+      quantity: r.order_items?.[0]?.quantity || 1,
+      amount: Number(r.total_refund_amount) || 0,
+      type: r.type || 'refund',
+      status: r.status || 'pending',
+      reason: r.reason || '',
+      description: r.customer_note || r.seller_response || '',
+      created_at: r.requested_at || r.requested_on || '',
+      updated_at: r.last_updated || r.processed_at || r.requested_at || '',
+      refund_amount: r.total_refund_amount ? Number(r.total_refund_amount) : undefined,
+      refund_method: r.final_refund_method || r.preferred_refund_method || undefined,
+      tracking_number: r.tracking_number || undefined,
+      dispute_reason: r.dispute_reason || undefined,
+      resolution: r.admin_response || r.seller_response || undefined,
+      reviewed_by: r.processed_by?.username || r.processed_by || undefined,
+      reviewed_at: r.processed_at || undefined,
+      estimated_refund_date: r.estimated_refund_date || undefined,
+      actual_refund_date: r.processed_at || undefined,
+      pickup_scheduled_date: r.pickup_scheduled_date || undefined,
+      courier: r.logistic_service || undefined,
+      notes: r.seller_response || r.note || '',
+      available_actions: (function(status){
+        switch(status){
+          case 'pending': return ['approve','reject','propose_negotiation'];
+          case 'negotiation': return ['propose_negotiation','contact_customer'];
+          case 'approved': return ['schedule_pickup'];
+          case 'waiting': return ['mark_as_received'];
+          case 'to_verify': return ['verify_item'];
+          case 'to_process': return ['process_refund'];
+          case 'dispute': return ['contact_customer','resolve_dispute'];
+          default: return [];
+        }
+      })(r.status)
+    }));
+
+    const stats = {
+      total_requests: returnItems.length,
+      // status breakdown (new)
+      pending: returnItems.filter(i => i.status === 'pending').length,
+      negotiation: returnItems.filter(i => i.status === 'negotiation').length,
+      approved: returnItems.filter(i => i.status === 'approved').length,
+      waiting: returnItems.filter(i => i.status === 'waiting').length,
+      to_verify: returnItems.filter(i => i.status === 'to_verify').length,
+      to_process: returnItems.filter(i => i.status === 'to_process').length,
+      dispute: returnItems.filter(i => i.status === 'dispute').length,
+      completed: returnItems.filter(i => i.status === 'completed').length,
+      rejected: returnItems.filter(i => i.status === 'rejected').length,
+      cancelled: returnItems.filter(i => i.status === 'cancelled').length,
+      // legacy UI fields expected elsewhere
+      return_refund_requests: returnItems.filter(i => i.type === 'return' || i.type === 'refund').length,
+      cancellation_requests: returnItems.filter(i => i.type === 'cancellation').length,
+      failed_delivery_requests: returnItems.filter(i => i.type === 'failed_delivery').length,
+      under_review: returnItems.filter(i => ['pending','negotiation','pending_review','under_review','waiting'].includes(i.status)).length,
+      returning: returnItems.filter(i => i.status === 'returning').length,
+      refunded: returnItems.filter(i => i.status === 'refunded' || i.status === 'completed').length,
+      disputed: returnItems.filter(i => i.status === 'dispute' || i.status === 'disputed').length,
+      rejected_cancelled: returnItems.filter(i => ['rejected','cancelled','pending_cancellation'].includes(i.status)).length,
+    };
+
+    const userObj = { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false };
+    return { user: userObj, returnItems, stats, shopId: shopId || (shopInfo ? shopInfo.id : undefined), shop: shopInfo };
+
+  } catch (err) {
+    console.error('Error fetching shop refunds', err);
+    const defaultStats = {
+      total_requests: 0,
+      pending: 0,
+      negotiation: 0,
+      approved: 0,
+      waiting: 0,
+      to_verify: 0,
+      to_process: 0,
+      dispute: 0,
+      completed: 0,
+      rejected: 0,
+      cancelled: 0,
+      return_refund_requests: 0,
+      cancellation_requests: 0,
+      failed_delivery_requests: 0,
+      under_review: 0,
+      returning: 0,
+      refunded: 0,
+      disputed: 0,
+      rejected_cancelled: 0,
+    };
+    const userObj = { id: userId, name: 'Seller', isCustomer: true, isAdmin: false, isRider: false, isModerator: false };
+    return { user: userObj, returnItems: [], stats: defaultStats };
+  }
 }
 
 // Empty state components
@@ -348,35 +308,33 @@ const EmptyTable = ({ message = "No requests found" }: { message?: string }) => 
   </div>
 );
 
-// Main Tabs configuration
-const MAIN_TABS = [
-  { id: 'all', label: 'All', icon: List },
-  { id: 'return_refund', label: 'Return/Refund', icon: RotateCcw },
-  { id: 'cancellation', label: 'Cancellation', icon: X },
-  { id: 'failed_delivery', label: 'Failed Delivery', icon: TruckIcon }
+// Status tabs based on Django model statuses
+const STATUS_TABS = [
+  { id: 'all', label: 'All Requests', icon: List },
+  { id: 'pending', label: 'Pending Review', icon: Clock },
+  { id: 'negotiation', label: 'Negotiation', icon: NegotiationIcon },
+  { id: 'approved', label: 'Approved', icon: CheckCircle },
+  { id: 'waiting', label: 'Waiting', icon: Package },
+  { id: 'to_verify', label: 'To Verify', icon: FileSearch },
+  { id: 'to_process', label: 'To Process', icon: RefreshCw },
+  { id: 'dispute', label: 'Dispute', icon: ShieldAlert },
+  { id: 'completed', label: 'Completed', icon: CheckCheck },
+  { id: 'rejected', label: 'Rejected', icon: XCircle },
+  { id: 'cancelled', label: 'Cancelled', icon: CancelledIcon }
 ];
 
-// Return/Refund subtabs configuration
-const RETURN_REFUND_SUBTABS = [
-  { id: 'all_return_refund', label: 'All', icon: RotateCcw },
-  { id: 'under_review', label: 'Under Review', icon: Clock },
-  { id: 'returning', label: 'Returning', icon: Truck },
-  { id: 'refunded', label: 'Refunded', icon: CheckCircle },
-  { id: 'disputed', label: 'Disputed', icon: ShieldAlert },
-  { id: 'rejected_cancelled', label: 'Rejected/Cancelled', icon: XCircle }
-];
-
-// Status configuration with colors and icons
+// Status configuration (aligned with Refund model statuses)
 const STATUS_CONFIG = {
-  pending_review: { label: 'Pending Review', color: '#f59e0b', icon: Clock, bgColor: '#fffbeb' },
-  under_review: { label: 'Under Review', color: '#f97316', icon: FileText, bgColor: '#fff7ed' },
-  returning: { label: 'Returning', color: '#3b82f6', icon: Truck, bgColor: '#eff6ff' },
-  refunded: { label: 'Refunded', color: '#10b981', icon: CheckCircle, bgColor: '#ecfdf5' },
-  disputed: { label: 'Disputed', color: '#8b5cf6', icon: ShieldAlert, bgColor: '#f5f3ff' },
+  pending: { label: 'Pending Review', color: '#f59e0b', icon: Clock, bgColor: '#fffbeb' },
+  negotiation: { label: 'Negotiation', color: '#3b82f6', icon: MessageCircle, bgColor: '#eff6ff' },
+  approved: { label: 'Approved', color: '#10b981', icon: CheckCircle, bgColor: '#ecfdf5' },
+  waiting: { label: 'Waiting For Return', color: '#6366f1', icon: Package, bgColor: '#eef2ff' },
+  to_verify: { label: 'To Verify', color: '#8b5cf6', icon: PackageCheck, bgColor: '#f5f3ff' },
+  to_process: { label: 'To Process', color: '#3b82f6', icon: Banknote, bgColor: '#eff6ff' },
+  dispute: { label: 'Dispute', color: '#8b5cf6', icon: ShieldAlert, bgColor: '#f5f3ff' },
+  completed: { label: 'Completed', color: '#10b981', icon: CheckSquare, bgColor: '#ecfdf5' },
   rejected: { label: 'Rejected', color: '#ef4444', icon: XCircle, bgColor: '#fef2f2' },
-  cancelled: { label: 'Cancelled', color: '#6b7280', icon: X, bgColor: '#f9fafb' },
-  delivery_failed: { label: 'Delivery Failed', color: '#dc2626', icon: AlertTriangle, bgColor: '#fef2f2' },
-  pending_cancellation: { label: 'Pending Cancellation', color: '#f59e0b', icon: Clock, bgColor: '#fffbeb' }
+  cancelled: { label: 'Cancelled', color: '#6b7280', icon: X, bgColor: '#f9fafb' }
 };
 
 // Type configuration with colors and icons
@@ -388,16 +346,64 @@ const TYPE_CONFIG = {
 };
 
 export default function SellerReturnRefundCancel({ loaderData }: Route.ComponentProps) {
-  const { user, returnItems, stats } = loaderData;
+  const { user, returnItems: initialReturnItems, stats } = loaderData;
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const shopId = searchParams.get('shop_id') || undefined;
+
+  const [itemsState, setItemsState] = useState<ReturnItem[]>(initialReturnItems);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<string>('all');
-  const [returnRefundSubTab, setReturnRefundSubTab] = useState<string>('all_return_refund');
+
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
+
+  const { toast } = useToast();
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+  // Helper to call seller endpoints and update UI optimistically
+  const sellerActionToEndpoint: Record<string, string> = {
+    approve: 'approve_refund',
+    reject: 'reject_refund',
+    propose_negotiation: 'propose_negotiation',
+    mark_as_received: 'mark_as_received',
+    verify_item: 'verify_item',
+    process_refund: 'process_refund'
+  };
+
+  async function performSellerAction(requestId: string, action: string, body: any = {}) {
+    if (!requestId) return;
+    const endpoint = sellerActionToEndpoint[action] || action;
+    setActionLoading(requestId);
+    try {
+      const res = await fetch(`${API_BASE_URL}/return-refund/${requestId}/${endpoint}/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': user?.id,
+          'Accept': 'application/json'
+        },
+        credentials: 'include',
+        body: Object.keys(body).length ? JSON.stringify(body) : undefined
+      });
+
+      if (!res.ok) throw new Error(`Action ${action} failed (${res.status})`);
+      const data = await res.json();
+
+      // Update item in state based on response if possible
+      setItemsState(prev => prev.map(it => it.id === requestId ? ({ ...it, status: data.status || it.status, notes: data.message || it.notes }) : it));
+      toast({ title: 'Action successful', description: data.message || `${action} succeeded`, variant: 'success' });
+    } catch (err) {
+      toast({ title: 'Action failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
   // Filter return items based on active tab and subtab
   const getFilteredReturnItems = () => {
     // First filter by search term
-    let filtered = returnItems.filter(item => {
+    let filtered = itemsState.filter(item => {
       const searchLower = searchTerm.toLowerCase();
       return (
         item.product?.name?.toLowerCase().includes(searchLower) ||
@@ -407,35 +413,9 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
       );
     });
 
-    // Then filter by active tab
+    // Then filter by active tab (status-driven like customer)
     if (activeTab !== 'all') {
-      if (activeTab === 'return_refund') {
-        filtered = filtered.filter(item => 
-          item.type === 'return' || item.type === 'refund'
-        );
-
-        // Further filter by returnRefundSubTab
-        if (returnRefundSubTab === 'under_review') {
-          filtered = filtered.filter(item => 
-            item.status === 'under_review' || item.status === 'pending_review'
-          );
-        } else if (returnRefundSubTab === 'returning') {
-          filtered = filtered.filter(item => item.status === 'returning');
-        } else if (returnRefundSubTab === 'refunded') {
-          filtered = filtered.filter(item => item.status === 'refunded');
-        } else if (returnRefundSubTab === 'disputed') {
-          filtered = filtered.filter(item => item.status === 'disputed');
-        } else if (returnRefundSubTab === 'rejected_cancelled') {
-          filtered = filtered.filter(item => 
-            item.status === 'rejected' || item.status === 'cancelled'
-          );
-        }
-        // 'all_return_refund' shows all items in return_refund tab
-      } else if (activeTab === 'cancellation') {
-        filtered = filtered.filter(item => item.type === 'cancellation');
-      } else if (activeTab === 'failed_delivery') {
-        filtered = filtered.filter(item => item.type === 'failed_delivery');
-      }
+      filtered = filtered.filter(item => item.status === activeTab);
     }
 
     return filtered;
@@ -473,9 +453,35 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
     }
   };
 
+  const getTimeRemaining = (deadline?: string) => {
+    if (!deadline) return { text: 'N/A', color: 'text-gray-600', bg: 'bg-gray-50' };
+    try {
+      const now = new Date();
+      const d = new Date(deadline);
+      const diffMs = d.getTime() - now.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      if (diffMs <= 0) return { text: 'Expired', color: 'text-red-600', bg: 'bg-red-50' };
+      if (diffDays > 0) return { text: `${diffDays}d ${diffHours}h left`, color: 'text-green-600', bg: 'bg-green-50' };
+      return { text: `${diffHours}h left`, color: 'text-yellow-600', bg: 'bg-yellow-50' };
+    } catch (err) {
+      return { text: 'Invalid date', color: 'text-gray-600', bg: 'bg-gray-50' };
+    }
+  };
+
+  const activeTabLabel = STATUS_TABS.find(t => t.id === activeTab)?.label || (activeTab === 'all' ? 'All Requests' : activeTab);
+
   const viewRequestDetails = (requestId: string) => {
-    alert(`Viewing detailed information for request ${requestId}`);
-    // In real app: navigate(`/seller/returns/${requestId}`);
+    if (!requestId) return;
+    const qs = new URLSearchParams();
+    if (shopId) qs.set('shop_id', shopId);
+    // Use relative navigation so it still works with a basename / nested hosting.
+    navigate(
+`/seller/view-refund-details/${encodeURIComponent(requestId)}${
+    qs.toString() ? `?${qs.toString()}` : ''
+  }`
+);
+
   };
 
   const trackReturn = (trackingNumber: string) => {
@@ -503,8 +509,55 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
     // In real app: open pickup scheduling
   };
 
-  const toggleExpand = (itemId: string) => {
-    setExpandedItem(expandedItem === itemId ? null : itemId);
+  const toggleExpand = async (itemId: string) => {
+    // Expand / collapse and fetch detailed info if not present
+    const isCollapsing = expandedItem === itemId;
+    if (isCollapsing) {
+      setExpandedItem(null);
+      return;
+    }
+
+    // If we already have detailed order_items on the item, just expand
+    const existing = itemsState.find(i => i.id === itemId);
+    if (existing && (existing.order_items || existing.detailed)) {
+      setExpandedItem(itemId);
+      return;
+    }
+
+    // Otherwise fetch details from backend
+    try {
+      const res = await fetch(`${API_BASE_URL}/return-refund/${itemId}/get_refund_details/`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json', 'X-User-Id': user?.id },
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Map response to local item shape (merge)
+        setItemsState(prev => prev.map(it => it.id === itemId ? ({
+          ...it,
+          status: data.status || it.status,
+          notes: data.seller_response || data.notes || it.notes,
+          order_id: data.order_info?.order_number || it.order_id,
+          refund_amount: data.total_refund_amount || data.order_info?.total_amount || it.refund_amount,
+          refund_method: data.final_refund_method || data.preferred_refund_method || it.refund_method,
+          order_items: data.order_items || [],
+          delivery: data.delivery || data.delivery,
+          evidence: data.evidence || [],
+          seller_offer: data.seller_offer || null,
+          available_actions: data.available_actions || it.available_actions || [],
+          detailed: true
+        }) : it));
+
+        setExpandedItem(itemId);
+        toast({ title: 'Details loaded', variant: 'default' });
+      } else {
+        toast({ title: 'Could not load details', variant: 'destructive' });
+      }
+    } catch (err) {
+      console.error('Fetch refund details error', err);
+      toast({ title: 'Error loading details', description: String(err), variant: 'destructive' });
+    }
   };
 
   const getStatusConfig = (status: string) => {
@@ -516,6 +569,156 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
     return TYPE_CONFIG[type as keyof typeof TYPE_CONFIG] || 
            { label: type, color: '#6b7280', icon: AlertCircle, bgColor: '#f9fafb' };
   };
+
+  // Format currency helper
+  const formatCurrency = (amount?: number) => {
+    if (typeof amount !== 'number') return '₱0.00';
+    return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  };
+
+  // Seller detail view (mirrors customer layout)
+  const SellerDetailUI = ({ item, formatDate, formatDateTime, formatCurrency, onAction, actionLoading, toggleExpand }: any) => {
+    const statusCfg = getStatusConfig(item.status);
+    const StatusIcon = statusCfg.icon;
+
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Left Column */}
+        <div className="lg:col-span-2 space-y-4">
+          <Card className="border">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <RotateCcw className="h-4 w-4" />
+                  Return Request #{item.id}
+                </CardTitle>
+                <Badge variant="outline" className="text-xs" style={{ backgroundColor: statusCfg.bgColor, color: statusCfg.color }}>
+                  <StatusIcon className="h-3 w-3 mr-1" />
+                  {statusCfg.label}
+                </Badge>
+              </div>
+              <CardDescription className="text-xs">Order: {item.order_id} • Requested on {formatDate(item.created_at)}</CardDescription>
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <Alert className="bg-yellow-50 border-yellow-200">
+                <Clock className="h-4 w-4 text-yellow-600" />
+                <div className="ml-2">
+                  <div className="font-medium text-yellow-800">Status: {statusCfg.label}</div>
+                  <div className="text-xs text-yellow-700">{item.notes || 'Seller view of the request'}</div>
+                </div>
+              </Alert>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-0.5">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1"><Calendar className="h-3 w-3" />Request Date</p>
+                  <p className="font-medium text-sm">{formatDateTime(item.created_at)}</p>
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1"><Package className="h-3 w-3" />Items</p>
+                  <p className="font-medium text-sm">{item.quantity} item(s)</p>
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1"><PhilippinePeso className="h-3 w-3" />Refund Amount</p>
+                  <p className="font-medium text-sm">{formatCurrency(item.refund_amount || item.amount)}</p>
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3" />Last Updated</p>
+                  <p className="font-medium text-sm">{formatDateTime(item.updated_at)}</p>
+                </div>
+              </div>
+
+              {/* Item List */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Items to Return</p>
+                <div className="space-y-2">
+                  <div className="p-3 border rounded space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 flex-shrink-0 bg-gray-100 rounded" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{item.product?.name}</p>
+                        <div className="flex items-center gap-2 text-xs text-gray-500"><span>Qty: {item.quantity}</span></div>
+                      </div>
+                      <div className="font-medium text-sm">{formatCurrency(item.amount)}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Right Column */}
+        <div className="space-y-4">
+          <Card className="border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Refund Summary</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs">
+              <div className="flex justify-between"><span className="text-muted-foreground">Item Price:</span><span>{formatCurrency(item.amount)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Quantity:</span><span>{item.quantity}</span></div>
+              <Separator className="my-2" />
+              <div className="flex justify-between font-bold text-sm"><span>Total Refund:</span><span className="text-green-600">{formatCurrency(item.refund_amount || item.amount)}</span></div>
+              <div className="pt-2 mt-2 border-t">
+                <p className="text-muted-foreground">Refund Method:</p>
+                <div className="flex items-center gap-2 mt-1 text-sm">
+                  <span className="font-medium">{item.refund_method || 'N/A'}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Order Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {/* Action Buttons driven by available_actions */}
+              {item.available_actions?.includes('approve') && (
+                <Button size="sm" className="w-full bg-green-600 hover:bg-green-700 h-8 text-xs" onClick={() => onAction(item.id, 'approve')} disabled={actionLoading}>
+                  <CheckCircle className="h-3 w-3 mr-1.5" />
+                  Approve
+                </Button>
+              )}
+
+              {item.available_actions?.includes('reject') && (
+                <Button variant="ghost" size="sm" className="w-full justify-start h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => onAction(item.id, 'reject')} disabled={actionLoading}>
+                  <XCircle className="h-3 w-3 mr-1.5" />
+                  Reject
+                </Button>
+              )}
+
+              {item.available_actions?.includes('propose_negotiation') && (
+                <Button variant="ghost" size="sm" className="w-full justify-start h-8 text-xs" onClick={() => onAction(item.id, 'propose_negotiation', { seller_suggested_amount: item.amount * 0.5, seller_suggested_method: 'partial_refund', seller_suggested_reason: 'Partial refund offer' })} disabled={actionLoading}>
+                  <MessageSquare className="h-3 w-3 mr-1.5" />
+                  Propose Offer
+                </Button>
+              )}
+
+              {item.available_actions?.includes('schedule_pickup') && (
+                <Button variant="ghost" size="sm" className="w-full justify-start h-8 text-xs" onClick={() => schedulePickup(item.id)}>
+                  <Truck className="h-3 w-3 mr-1.5" />
+                  Schedule Pickup
+                </Button>
+              )}
+
+              {item.available_actions?.includes('process_refund') && (
+                <Button size="sm" className="w-full bg-purple-600 hover:bg-purple-700 h-8 text-xs" onClick={() => onAction(item.id, 'process_refund')} disabled={actionLoading}>
+                  <PhilippinePeso className="h-3 w-3 mr-1.5" />
+                  Process Refund
+                </Button>
+              )}
+
+              <Button variant="link" className="h-6 px-0 text-xs text-gray-700 mt-1" onClick={() => toggleExpand()}>
+                Close
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <UserProvider user={user}>
@@ -530,203 +733,36 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
             {/* File New Request button removed for seller side */}
           </div>
 
-          {/* Main Tabs Navigation */}
-          <div className="border-b">
-            <div className="flex overflow-x-auto">
-              {MAIN_TABS.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                const count = tab.id === 'all' ? stats.total_requests :
-                            tab.id === 'return_refund' ? stats.return_refund_requests :
-                            tab.id === 'cancellation' ? stats.cancellation_requests :
-                            tab.id === 'failed_delivery' ? stats.failed_delivery_requests : 0;
-
-                return (
-                  <Button
-                    key={tab.id}
-                    variant="ghost"
-                    onClick={() => {
-                      setActiveTab(tab.id);
-                      if (tab.id !== 'return_refund') {
-                        setReturnRefundSubTab('all_return_refund');
-                      }
-                    }}
-                    className={`flex items-center gap-2 rounded-none border-b-2 px-4 py-3 ${isActive ? 'border-blue-600 text-blue-600 bg-blue-50' : 'border-transparent hover:border-gray-300'}`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span>{tab.label}</span>
-                    {count > 0 && (
-                      <Badge variant="secondary" className="ml-1">
-                        {count}
-                      </Badge>
-                    )}
-                  </Button>
-                );
-              })}
-            </div>
+          {/* Status Tabs - match customer UI */}
+          <div className="flex items-center space-x-1 overflow-x-auto mb-2 pb-2 border-b">
+            {STATUS_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const count = tab.id === 'all' ? itemsState.length : itemsState.filter(i => i.status === tab.id).length;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap flex-shrink-0 ${
+                    isActive ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Icon className="w-3 h-3" />
+                  <span>{tab.label}</span>
+                  {count > 0 && (
+                    <span className={`text-[10px] px-1 py-0.5 rounded ${isActive ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* Return/Refund Subtabs (only shown when Return/Refund tab is active) */}
-          {activeTab === 'return_refund' && (
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <div className="flex items-center gap-2 mb-3">
-                <RotateCcw className="w-5 h-5 text-blue-500" />
-                <h3 className="text-lg font-semibold">Return/Refund Requests</h3>
-                <span className="text-sm text-gray-500 ml-2">
-                  Manage customer return and refund requests
-                </span>
-              </div>
-              <div className="flex overflow-x-auto">
-                {RETURN_REFUND_SUBTABS.map((subtab) => {
-                  const Icon = subtab.icon;
-                  const isActive = returnRefundSubTab === subtab.id;
-                  const count = subtab.id === 'all_return_refund' ? stats.return_refund_requests :
-                              subtab.id === 'under_review' ? stats.under_review :
-                              subtab.id === 'returning' ? stats.returning :
-                              subtab.id === 'refunded' ? stats.refunded :
-                              subtab.id === 'disputed' ? stats.disputed :
-                              subtab.id === 'rejected_cancelled' ? stats.rejected_cancelled : 0;
+          
 
-                  return (
-                    <Button
-                      key={subtab.id}
-                      variant="ghost"
-                      onClick={() => setReturnRefundSubTab(subtab.id)}
-                      className={`flex items-center gap-2 rounded-full px-4 py-2 ${isActive ? 'bg-white text-blue-600 shadow-sm border border-blue-200' : 'text-gray-600 hover:bg-white/50'}`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      <span>{subtab.label}</span>
-                      {count > 0 && (
-                        <Badge variant="secondary" className="ml-1">
-                          {count}
-                        </Badge>
-                      )}
-                    </Button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Requests</p>
-                    <p className="text-2xl font-bold mt-1">{stats.total_requests}</p>
-                  </div>
-                  <div className="p-2 bg-blue-100 rounded-full">
-                    <List className="w-5 h-5 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Return/Refund</p>
-                    <p className="text-2xl font-bold mt-1 text-blue-600">{stats.return_refund_requests}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Product returns & refunds</p>
-                  </div>
-                  <div className="p-2 bg-blue-100 rounded-full">
-                    <RotateCcw className="w-5 h-5 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Cancellations</p>
-                    <p className="text-2xl font-bold mt-1 text-red-600">{stats.cancellation_requests}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Order cancellations</p>
-                  </div>
-                  <div className="p-2 bg-red-100 rounded-full">
-                    <X className="w-5 h-5 text-red-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Failed Delivery</p>
-                    <p className="text-2xl font-bold mt-1 text-orange-600">{stats.failed_delivery_requests}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Delivery issues</p>
-                  </div>
-                  <div className="p-2 bg-orange-100 rounded-full">
-                    <TruckIcon className="w-5 h-5 text-orange-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Additional Stats for Return/Refund Tab */}
-          {activeTab === 'return_refund' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Under Review</p>
-                    <p className="text-2xl font-bold mt-1 text-orange-600">{stats.under_review}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Returning</p>
-                    <p className="text-2xl font-bold mt-1 text-blue-600">{stats.returning}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Refunded</p>
-                    <p className="text-2xl font-bold mt-1 text-green-600">{stats.refunded}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Disputed</p>
-                    <p className="text-2xl font-bold mt-1 text-purple-600">{stats.disputed}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Rejected/Cancelled</p>
-                    <p className="text-2xl font-bold mt-1 text-red-600">{stats.rejected_cancelled}</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="text-center">
-                    <p className="text-sm text-muted-foreground">Resolution Rate</p>
-                    <p className="text-2xl font-bold mt-1 text-green-600">
-                      {stats.total_requests > 0 
-                        ? `${Math.round((stats.refunded / stats.total_requests) * 100)}%`
-                        : '0%'}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
 
           {/* Search Bar */}
           {/* <Card>
@@ -750,396 +786,164 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
           {/* Requests Table */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-xl">
-                {activeTab === 'all' && 'All Requests'}
-                {activeTab === 'return_refund' && (
-                  <>
-                    {returnRefundSubTab === 'all_return_refund' && 'All Return/Refund Requests'}
-                    {returnRefundSubTab === 'under_review' && 'Requests Under Review'}
-                    {returnRefundSubTab === 'returning' && 'Returning Items'}
-                    {returnRefundSubTab === 'refunded' && 'Refunded Requests'}
-                    {returnRefundSubTab === 'disputed' && 'Disputed Requests'}
-                    {returnRefundSubTab === 'rejected_cancelled' && 'Rejected/Cancelled Requests'}
-                  </>
-                )}
-                {activeTab === 'cancellation' && 'Cancellation Requests'}
-                {activeTab === 'failed_delivery' && 'Failed Delivery Requests'}
-              </CardTitle>
+              <CardTitle className="text-xl">{STATUS_TABS.find(t => t.id === activeTab)?.label || (activeTab === 'all' ? 'All Requests' : activeTab)}</CardTitle>
               <CardDescription>
-                Showing {filteredReturnItems.length} of {returnItems.length} requests
+                Showing {filteredReturnItems.length} of {itemsState.length} requests
               </CardDescription>
             </CardHeader>
             <CardContent>
               {filteredReturnItems.length === 0 ? (
-                <EmptyTable 
-                  message={
-                    activeTab === 'return_refund' ? (
-                      returnRefundSubTab === 'under_review' ? 'No requests under review' :
-                      returnRefundSubTab === 'returning' ? 'No items returning' :
-                      returnRefundSubTab === 'refunded' ? 'No refunded requests' :
-                      returnRefundSubTab === 'disputed' ? 'No disputed requests' :
-                      returnRefundSubTab === 'rejected_cancelled' ? 'No rejected/cancelled requests' :
-                      'No return/refund requests'
-                    ) :
-                    activeTab === 'cancellation' ? 'No cancellation requests' :
-                    activeTab === 'failed_delivery' ? 'No failed delivery requests' :
-                    'No requests found'
-                  }
-                />
+                <EmptyTable message={activeTab === 'all' ? 'No requests found' : `No ${activeTabLabel}`} />
               ) : (
-                <div className="rounded-md border">
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Request ID</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Product</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Type</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Status</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Amount</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Created</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700">Actions</th>
-                          <th className="text-left p-3 text-sm font-medium text-gray-700"></th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {filteredReturnItems.map((item) => {
-                          const statusConfig = getStatusConfig(item.status);
-                          const typeConfig = getTypeConfig(item.type);
-                          const StatusIcon = statusConfig.icon;
-                          const TypeIcon = typeConfig.icon;
-                          const isExpanded = expandedItem === item.id;
+                <div className="space-y-3">
+                    {filteredReturnItems.map((item) => {
+                      const statusConfig = getStatusConfig(item.status);
+                      const isExpanded = expandedItem === item.id;
 
-                          return (
-                            <>
-                              <tr key={item.id} className="hover:bg-gray-50">
-                                <td className="p-3 text-sm">
-                                  <div className="font-medium">{item.id}</div>
-                                  <div className="text-xs text-muted-foreground">Order: {item.order_id}</div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <div className="flex items-center gap-2">
-                                    <Package className="w-4 h-4 text-muted-foreground" />
-                                    <div>
-                                      <div className="font-medium">{item.product?.name}</div>
-                                      <div className="text-xs text-muted-foreground">
-                                        Qty: {item.quantity}
-                                      </div>
+                      const negotiationInfo = item.seller_offer || null;
+
+                      return (
+                        <Card key={item.id} className="overflow-hidden border hover:border-blue-200 transition-colors">
+                          <CardContent className="p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Package className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                                  <span className="text-sm font-medium truncate">{item.product?.name}</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-xs text-gray-500">
+                                  {item.request_number && (
+                                    <>
+                                      <span className="truncate">{item.request_number}</span>
+                                      <span>•</span>
+                                    </>
+                                  )}
+                                  <span>{formatDateTime(item.created_at)}</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <Badge className={`text-[10px] h-5 px-1.5 py-0 flex items-center gap-1`} style={{ backgroundColor: statusConfig.bgColor, color: statusConfig.color }}>
+                                  <statusConfig.icon className="w-3 h-3" />
+                                  {statusConfig.label}
+                                </Badge>
+
+                                <button onClick={() => toggleExpand(item.id)} className="p-1 hover:bg-gray-100 rounded">
+                                  {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400 transform rotate-180" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="mb-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2 text-xs text-gray-600">
+                                  <Store className="w-3 h-3" />
+                                  <span className="truncate">{item.product?.shop?.name}</span>
+                                </div>
+                                <div className="font-medium text-sm">
+                                  <PhilippinePeso className="inline w-3 h-3 mr-0.5" />
+                                  {formatCurrency(item.amount || item.refund_amount || 0)}
+                                </div>
+                              </div>
+
+                              <div className="text-xs text-gray-500 mb-1 truncate">Order: {item.order_id} • Qty: {item.quantity}</div>
+
+                              <div className="text-xs text-gray-600 mb-2 line-clamp-2">{item.reason}</div>
+
+                              <div className="flex items-center gap-1 text-xs text-gray-500">
+                                <FileText className="w-3 h-3" />
+                                <span>{(item.evidence && item.evidence.length) ? item.evidence.length : 0} evidence file{(item.evidence && item.evidence.length) !== 1 ? 's' : ''}</span>
+                              </div>
+
+                              {/* Negotiation or Dispute Info */}
+                              {item.seller_offer && (
+                                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <MessageCircle className="w-3 h-3 text-blue-600" />
+                                      <span className="text-xs font-medium text-blue-800">Seller Offer</span>
                                     </div>
-                                  </div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <Badge 
-                                    variant="secondary"
-                                    className="text-xs capitalize flex items-center gap-1"
-                                    style={{ backgroundColor: typeConfig.bgColor, color: typeConfig.color }}
-                                  >
-                                    <TypeIcon className="w-3 h-3" />
-                                    {typeConfig.label}
-                                  </Badge>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <Badge 
-                                    variant="secondary"
-                                    className="text-xs capitalize flex items-center gap-1"
-                                    style={{ backgroundColor: statusConfig.bgColor, color: statusConfig.color }}
-                                  >
-                                    <StatusIcon className="w-3 h-3" />
-                                    {statusConfig.label}
-                                  </Badge>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <div className="flex items-center gap-1">
-                                    <PhilippinePeso className="w-4 h-4 text-muted-foreground" />
-                                    {item.amount}
-                                    {item.refund_amount && item.refund_amount !== item.amount && (
-                                      <span className="text-xs text-gray-500 ml-1">
-                                        (Refund: {item.refund_amount})
-                                      </span>
+                                    {item.seller_offer.deadline && (
+                                      <Badge className="text-[10px] h-4 bg-green-50 text-green-600">{getTimeRemaining(item.seller_offer?.deadline).text}</Badge>
                                     )}
                                   </div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <div className="flex items-center gap-2">
-                                    <Calendar className="w-4 h-4 text-muted-foreground" />
-                                    {formatDate(item.created_at)}
-                                  </div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <div className="flex flex-col gap-2 min-w-[140px]">
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => viewRequestDetails(item.id)}
-                                      className="flex items-center justify-center gap-1"
-                                    >
-                                      <Eye className="w-3 h-3" />
-                                      View Details
-                                    </Button>
-                                    
-                                    {/* Seller-specific actions based on status */}
-                                    {(item.status === 'pending_review' || item.status === 'under_review') && (
-                                      <Button
-                                        size="sm"
-                                        variant="default"
-                                        onClick={() => reviewRequest(item.id)}
-                                        className="flex items-center justify-center gap-1 bg-blue-600 hover:bg-blue-700"
-                                      >
-                                        <FileText className="w-3 h-3" />
-                                        Review
-                                      </Button>
-                                    )}
-
-                                    {item.status === 'under_review' && item.type === 'return' && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => schedulePickup(item.id)}
-                                        className="flex items-center justify-center gap-1 bg-green-50 text-green-700 hover:bg-green-100"
-                                      >
-                                        <Truck className="w-3 h-3" />
-                                        Schedule Pickup
-                                      </Button>
-                                    )}
-
-                                    {item.status === 'under_review' && item.type === 'refund' && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => processRefund(item.id)}
-                                        className="flex items-center justify-center gap-1 bg-purple-50 text-purple-700 hover:bg-purple-100"
-                                      >
-                                        <PhilippinePeso className="w-3 h-3" />
-                                        Process Refund
-                                      </Button>
-                                    )}
-
-                                    {item.tracking_number && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => trackReturn(item.tracking_number!)}
-                                        className="flex items-center justify-center gap-1 bg-blue-50 text-blue-700 hover:bg-blue-100"
-                                      >
-                                        <Truck className="w-3 h-3" />
-                                        Track
-                                      </Button>
-                                    )}
-
-                                    {(item.status === 'disputed' || item.status === 'under_review') && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => contactCustomer(item.id)}
-                                        className="flex items-center justify-center gap-1 bg-yellow-50 text-yellow-700 hover:bg-yellow-100"
-                                      >
-                                        <MessageSquare className="w-3 h-3" />
-                                        Contact Customer
-                                      </Button>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="p-3 text-sm">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => toggleExpand(item.id)}
-                                    className="h-8 w-8 p-0"
-                                  >
-                                    {isExpanded ? (
-                                      <ChevronDown className="h-4 w-4" />
-                                    ) : (
-                                      <ChevronRight className="h-4 w-4" />
-                                    )}
-                                  </Button>
-                                </td>
-                              </tr>
-                              {isExpanded && (
-                                <tr className="bg-gray-50">
-                                  <td colSpan={8} className="p-4">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                      {/* Left Column - Request Details */}
-                                      <div className="space-y-4">
-                                        <div>
-                                          <h4 className="font-semibold text-sm text-gray-700 mb-2">Request Details</h4>
-                                          <div className="space-y-2 text-sm">
-                                            <div className="flex justify-between">
-                                              <span className="text-gray-600">Reason:</span>
-                                              <span className="font-medium">{item.reason}</span>
-                                            </div>
-                                            {item.description && (
-                                              <div className="flex justify-between">
-                                                <span className="text-gray-600">Description:</span>
-                                                <span className="font-medium text-right">{item.description}</span>
-                                              </div>
-                                            )}
-                                            <div className="flex justify-between">
-                                              <span className="text-gray-600">Customer:</span>
-                                              <span>Customer Name (from order)</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                              <span className="text-gray-600">Created:</span>
-                                              <span>{formatDateTime(item.created_at)}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                              <span className="text-gray-600">Last Updated:</span>
-                                              <span>{formatDateTime(item.updated_at)}</span>
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        {/* Refund Details */}
-                                        {item.refund_amount && (
-                                          <div>
-                                            <h4 className="font-semibold text-sm text-gray-700 mb-2">Refund Details</h4>
-                                            <div className="space-y-2 text-sm">
-                                              <div className="flex justify-between">
-                                                <span className="text-gray-600">Refund Amount:</span>
-                                                <span className="font-medium flex items-center gap-1">
-                                                  <PhilippinePeso className="w-3 h-3" />
-                                                  {item.refund_amount}
-                                                </span>
-                                              </div>
-                                              {item.refund_method && (
-                                                <div className="flex justify-between">
-                                                  <span className="text-gray-600">Refund Method:</span>
-                                                  <span>{item.refund_method}</span>
-                                                </div>
-                                              )}
-                                              {item.estimated_refund_date && (
-                                                <div className="flex justify-between">
-                                                  <span className="text-gray-600">Est. Refund Date:</span>
-                                                  <span>{formatDate(item.estimated_refund_date)}</span>
-                                                </div>
-                                              )}
-                                              {item.actual_refund_date && (
-                                                <div className="flex justify-between">
-                                                  <span className="text-gray-600">Actual Refund Date:</span>
-                                                  <span className="text-green-600 font-medium">{formatDate(item.actual_refund_date)}</span>
-                                                </div>
-                                              )}
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-
-                                      {/* Right Column - Shipping & Status Details */}
-                                      <div className="space-y-4">
-                                        {/* Shipping Details */}
-                                        {(item.tracking_number || item.courier || item.pickup_scheduled_date) && (
-                                          <div>
-                                            <h4 className="font-semibold text-sm text-gray-700 mb-2">Shipping Details</h4>
-                                            <div className="space-y-2 text-sm">
-                                              {item.tracking_number && (
-                                                <div className="flex justify-between">
-                                                  <span className="text-gray-600">Tracking Number:</span>
-                                                  <span className="font-medium">{item.tracking_number}</span>
-                                                </div>
-                                              )}
-                                              {item.courier && (
-                                                <div className="flex justify-between">
-                                                  <span className="text-gray-600">Courier:</span>
-                                                  <span>{item.courier}</span>
-                                                </div>
-                                              )}
-                                              {item.pickup_scheduled_date && (
-                                                <div className="flex justify-between">
-                                                  <span className="text-gray-600">Pickup Scheduled:</span>
-                                                  <span>{formatDate(item.pickup_scheduled_date)}</span>
-                                                </div>
-                                              )}
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        {/* Review & Resolution Details */}
-                                        <div>
-                                          <h4 className="font-semibold text-sm text-gray-700 mb-2">Status Details</h4>
-                                          <div className="space-y-2 text-sm">
-                                            {item.reviewed_by && (
-                                              <div className="flex justify-between">
-                                                <span className="text-gray-600">Reviewed By:</span>
-                                                <span>{item.reviewed_by}</span>
-                                              </div>
-                                            )}
-                                            {item.reviewed_at && (
-                                              <div className="flex justify-between">
-                                                <span className="text-gray-600">Reviewed At:</span>
-                                                <span>{formatDateTime(item.reviewed_at)}</span>
-                                              </div>
-                                            )}
-                                            {item.dispute_reason && (
-                                              <div className="flex justify-between">
-                                                <span className="text-gray-600">Dispute Reason:</span>
-                                                <span className="text-red-600">{item.dispute_reason}</span>
-                                              </div>
-                                            )}
-                                            {item.resolution && (
-                                              <div className="flex justify-between">
-                                                <span className="text-gray-600">Resolution:</span>
-                                                <span>{item.resolution}</span>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-
-                                        {/* Notes */}
-                                        {item.notes && (
-                                          <div>
-                                            <h4 className="font-semibold text-sm text-gray-700 mb-2">Notes</h4>
-                                            <p className="text-sm text-gray-600 bg-white p-3 rounded border">
-                                              {item.notes}
-                                            </p>
-                                          </div>
-                                        )}
-
-                                        {/* Additional Seller Actions */}
-                                        <div className="pt-2">
-                                          <div className="flex gap-2">
-                                            {(item.status === 'pending_review' || item.status === 'under_review') && (
-                                              <>
-                                                <Button
-                                                  size="sm"
-                                                  variant="default"
-                                                  onClick={() => reviewRequest(item.id)}
-                                                  className="flex items-center gap-1"
-                                                >
-                                                  <CheckCircle className="w-3 h-3" />
-                                                  Approve
-                                                </Button>
-                                                <Button
-                                                  size="sm"
-                                                  variant="outline"
-                                                  onClick={() => alert(`Rejecting request ${item.id}`)}
-                                                  className="flex items-center gap-1"
-                                                >
-                                                  <XCircle className="w-3 h-3" />
-                                                  Reject
-                                                </Button>
-                                              </>
-                                            )}
-                                            <Button
-                                              size="sm"
-                                              variant="outline"
-                                              onClick={() => contactCustomer(item.id)}
-                                              className="flex items-center gap-1"
-                                            >
-                                              <MessageSquare className="w-3 h-3" />
-                                              Contact Customer
-                                            </Button>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>
+                                  <p className="text-xs text-blue-700 mt-1">{item.seller_offer.method} - {formatCurrency(item.seller_offer.amount || 0)}</p>
+                                  {item.seller_offer.reason && <p className="text-xs text-gray-600 mt-0.5">{item.seller_offer.reason}</p>}
+                                </div>
                               )}
-                            </>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+
+                              {item.status === 'dispute' && (
+                                <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded">
+                                  <div className="flex items-center gap-2">
+                                    <ShieldAlert className="w-3 h-3 text-red-600" />
+                                    <span className="text-xs font-medium text-red-800">Under Admin Review</span>
+                                  </div>
+                                  {item.dispute_reason && <p className="text-xs text-gray-700 mt-1">Your reason: {item.dispute_reason}</p>}
+                                </div>
+                              )}
+
+                            </div>
+
+                            <div className="my-2">
+                              <img src={item.product?.image || '/phon.jpg'} alt={item.product?.name} className="h-16 w-16 rounded-md object-cover border" onError={(e)=>{(e.target as HTMLImageElement).src='/phon.jpg'}} />
+                            </div>
+
+                            {isExpanded && (
+                              <div className="mt-3 pt-3 border-t text-xs space-y-2">
+                                <div>
+                                  <div className="font-medium text-gray-700 mb-1">Refund Details</div>
+                                  <div className="text-gray-600 space-y-1">
+                                    <div>Requested Method: {item.preferred_refund_method}</div>
+                                    {item.refund_method && <div>Final Method: {item.refund_method}</div>}
+                                    <div>Status: {statusConfig.label}</div>
+                                    {item.updated_at && <div>Last Updated: {formatDateTime(item.updated_at)}</div>}
+                                    {item.tracking_number && <div>Tracking: {item.tracking_number}</div>}
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <div className="font-medium text-gray-700 mb-1">Reason for Refund</div>
+                                  <div className="text-gray-600 bg-gray-50 p-2 rounded border">{item.reason}</div>
+                                </div>
+
+                                {item.notes && (
+                                  <div>
+                                    <div className="font-medium text-gray-700 mb-1 flex items-center gap-1"><MessageCircle className="w-3 h-3" /> Your Note</div>
+                                    <div className="text-gray-600 bg-gray-50 p-2 rounded border">{item.notes}</div>
+                                  </div>
+                                )}
+
+                                {item.seller_response && (
+                                  <div>
+                                    <div className="font-medium text-gray-700 mb-1 flex items-center gap-1"><Store className="w-3 h-3" /> Seller Response</div>
+                                    <div className="text-gray-600 bg-gray-50 p-2 rounded border">{item.seller_response}</div>
+                                  </div>
+                                )}
+
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between pt-2 border-t">
+                              <Button variant="ghost" size="sm" onClick={() => viewRequestDetails(item.id)} className="h-6 px-2 text-xs"><Eye className="w-3 h-3 mr-1"/> View Details</Button>
+
+                              <div className="flex gap-1">
+                                {item.available_actions?.includes('approve') && (
+                                  <Button size="sm" variant="default" onClick={() => performSellerAction(item.id, 'approve')} disabled={actionLoading===item.id} className="h-6 px-2 text-xs bg-blue-600 hover:bg-blue-700"><FileText className="w-3 h-3 mr-1"/>Approve</Button>
+                                )}
+                                {item.available_actions?.includes('reject') && (
+                                  <Button size="sm" variant="outline" onClick={() => performSellerAction(item.id, 'reject')} disabled={actionLoading===item.id} className="h-6 px-2 text-xs"><XCircle className="w-3 h-3 mr-1"/>Reject</Button>
+                                )}
+                                {item.available_actions?.includes('propose_negotiation') && (
+                                  <Button size="sm" variant="outline" onClick={() => performSellerAction(item.id, 'propose_negotiation', { seller_suggested_amount: (item.amount||0)*0.5 })} disabled={actionLoading===item.id} className="h-6 px-2 text-xs"> <MessageSquare className="w-3 h-3 mr-1"/>Propose Offer</Button>
+                                )}
+                                <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50" title="More Actions"><FileText className="w-3 h-3"/></Button>
+                              </div>
+                            </div>
+
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                 </div>
               )}
             </CardContent>

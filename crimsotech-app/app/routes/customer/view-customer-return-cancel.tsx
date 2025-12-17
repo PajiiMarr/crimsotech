@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import type { Route } from './+types/view-customer-return-cancel';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { UserProvider } from '~/components/providers/user-role-provider';
+import { useToast } from '~/hooks/use-toast';
 import { Button } from '~/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '~/components/ui/card';
 import { Badge } from '~/components/ui/badge';
@@ -459,6 +460,7 @@ interface ReturnRequest {
   seller_response?: string;
   admin_response?: string;
   negotiation_messages?: NegotiationMessage[];
+  available_actions?: string[];
   evidence_count: number;
   deadline?: string;
 }
@@ -483,122 +485,141 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const status = url.searchParams.get('status');
   const action = url.searchParams.get('action');
 
-  // Mock data for return request
-  const returnDetails: ReturnDetails = {
-    returnRequest: {
-      id: returnId || "REF-2024-00123",
-      request_number: `RR-${Date.now().toString().slice(-6)}`,
-      order_id: "ORD-2024-00123",
-      order_number: "ORD-789456",
-      user_id: 'user-123',
-      shop_id: 'shop-001',
-      shop_name: 'TechWorld Shop',
-      created_at: '2024-01-20T10:30:00Z',
-      updated_at: '2024-01-22T14:30:00Z',
-      status: (status as any) || 'negotiation',
-      total_refund_amount: 45000,
-      reason: 'Product defective - screen has dead pixels upon arrival',
-      customer_note: 'Please process refund as soon as possible',
-      seller_response: 'We can offer 50% refund for you to keep the item, or full refund upon return.',
-      evidence_count: 4,
-      deadline: '2024-01-25T10:30:00Z',
-      items: [
-        {
-          id: 'item-001',
-          product_id: 'prod-001',
-          name: 'Apple iPhone 13 Pro 256GB',
-          price: 45000,
-          quantity: 1,
-          color: 'Black',
-          image_url: 'https://images.unsplash.com/photo-1605236453806-6ff36851218e?w=400&h=400&fit=crop',
-          reason: 'Screen has multiple dead pixels visible on dark backgrounds',
-          condition: 'defective',
-          return_type: 'refund',
-          evidence_photos: [
-            'https://images.unsplash.com/photo-1592899677977-9c10ca588bbd?w=400&h=300&fit=crop',
-            'https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?w=400&h=300&fit=crop'
-          ]
-        }
-      ],
-      shipping: {
-        method: 'pickup',
-        pickup_address: {
-          street: '123 Main Street, Unit 4B',
-          city: 'Manila',
-          province: 'Metro Manila',
-          zip_code: '1000',
-          contact_person: 'Juan Dela Cruz',
-          contact_phone: '+63 912 345 6789',
-        },
-        dropoff_point: 'J&T Express Branch - SM Manila',
-        tracking_number: 'TRK-RET-789012',
-        courier: 'J&T Express',
-        estimated_delivery: '2024-01-23',
-      },
-      payment: {
-        method: 'wallet',
-        status: 'pending',
-        amount: 45000,
-        transaction_id: 'REF-789456123',
-      },
-      negotiation_messages: [
-        {
-          id: 'msg-1',
-          sender: 'customer',
-          message: 'I received the phone yesterday and noticed several dead pixels on the screen. This is clearly a manufacturing defect.',
-          timestamp: '2024-01-20T10:30:00Z',
-          attachments: ['dead_pixel_1.jpg', 'dead_pixel_2.jpg']
-        },
-        {
-          id: 'msg-2',
-          sender: 'seller',
-          message: 'We apologize for the inconvenience. Can you send more clear photos of the issue? We can offer a partial refund if you choose to keep the item.',
-          timestamp: '2024-01-20T14:30:00Z'
-        },
-        {
-          id: 'msg-3',
-          sender: 'customer',
-          message: 'Here are more photos showing the dead pixels clearly. I prefer a full refund as the phone is defective.',
-          timestamp: '2024-01-21T09:15:00Z',
-          attachments: ['pixel_issue_1.jpg', 'pixel_issue_2.jpg']
-        },
-        {
-          id: 'msg-4',
-          sender: 'seller',
-          message: 'We can offer 50% refund for you to keep the item, or full refund upon return. Please let us know your decision.',
-          timestamp: '2024-01-22T10:30:00Z'
-        }
-      ]
-    },
-    customer: {
-      id: 'user-123',
-      name: 'Juan Dela Cruz',
-      email: 'juan.delacruz@example.com',
-      phone: '+63 912 345 6789',
-      avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&h=400&fit=crop',
-    }
-  };
+  // Use same session / role checks as other customer pages
+  try {
+    const { registrationMiddleware } = await import('~/middleware/registration.server');
+    await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
+    const { requireRole } = await import('~/middleware/role-require.server');
+    await requireRole(request, undefined, ['isCustomer'] as any);
+  } catch (err) {
+    console.error('Loader middleware error', err);
+  }
 
-  return {
-    user: {
-      id: "demo-customer-123",
-      name: "Juan Dela Cruz",
-      email: "customer@example.com",
-      isCustomer: true,
-      isAdmin: false,
-      isRider: false,
-      isModerator: false,
-      isSeller: false,
-      username: "juan_customer",
-    },
-    returnDetails,
-    action: action || null
-  };
-}
+  // Resolve session and user ID
+  const { getSession } = await import('~/sessions.server');
+  const session = await getSession(request.headers.get('Cookie'));
+  const userId = session.get('userId');
+
+  if (!userId) {
+    console.warn('No userId in session for return detail loader');
+    throw new Response('Unauthorized', { status: 401 });
+  }
+
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const endpoint = `${API_BASE_URL}/return-refund/${returnId}/get_my_refund/`;
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'X-User-Id': userId,
+      },
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      console.warn('Failed to fetch refund detail', res.status);
+      throw new Response('Failed to fetch refund detail', { status: res.status });
+    }
+
+    const refund = await res.json();
+
+    // Map backend refund shape to ReturnDetails used by UI
+    const returnDetails: ReturnDetails = {
+      returnRequest: {
+        id: refund.refund || returnId,
+        request_number: refund.request_number || '',
+        order_id: refund.order_info?.order_id || refund.order?.id || '',
+        order_number: refund.order_info?.order_number || refund.order?.order || '',
+        user_id: refund.requested_by || userId,
+        shop_id: refund.order?.shop?.id || null,
+        shop_name: refund.order?.shop?.name || refund.shop_name || '',
+        created_at: refund.requested_at || refund.requested_on || new Date().toISOString(),
+        updated_at: refund.last_updated || refund.processed_at || refund.requested_at,
+        status: (status as any) || refund.status || 'pending',
+        total_refund_amount: Number(refund.total_refund_amount) || 0,
+        reason: refund.reason || '',
+        customer_note: refund.customer_note || '',
+        seller_response: refund.seller_response || refund.seller_offer?.message || '',
+        available_actions: Array.isArray(refund.available_actions) ? refund.available_actions : [],
+        evidence_count: refund.evidence_count || 0,
+        deadline: refund.negotiation_deadline || null,
+        items: Array.isArray(refund.order_items) ? refund.order_items.map((it: any) => ({
+          id: it.id || it.order_item_id || `${it.product?.id}-${it.sku || ''}`,
+          product_id: it.product?.id || it.product_id || '',
+          name: it.product?.name || it.name || 'Product',
+          price: Number(it.price) || Number(it.unit_price) || 0,
+          quantity: Number(it.quantity) || 1,
+          color: it.color || null,
+          image_url: it.product?.image || it.image_url || '',
+          reason: it.reason || '',
+          condition: it.condition || 'unknown',
+          return_type: it.return_type || 'refund',
+          evidence_photos: Array.isArray(it.evidence_photos) ? it.evidence_photos.map((e:any)=> e.url || e) : []
+        })) : (refund.items || []),
+        shipping: refund.delivery || refund.order?.delivery_address || {
+          method: 'pickup',
+          pickup_address: null,
+          dropoff_point: null,
+          tracking_number: refund.tracking_number || null,
+          courier: refund.logistic_service || null,
+        },
+        payment: {
+          method: refund.preferred_refund_method || refund.final_refund_method || 'N/A',
+          status: refund.payment_status || 'pending',
+          amount: Number(refund.total_refund_amount) || 0,
+          transaction_id: refund.transaction_id || null
+        },
+      },
+      customer: {
+        id: refund.requested_by || userId,
+        name: refund.requested_by_name || refund.customer_name || 'Customer',
+        email: refund.requested_by_email || '',
+        phone: refund.requested_by_phone || '',
+        avatar_url: ''
+      }
+    };
+
+    return {
+      user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false, username: 'customer', email: '' },
+      returnDetails,
+      action: action || null
+    };
+
+  } catch (err) {
+    console.error('Error fetching refund detail', err);
+    // Fallback to mock if API fails (keeps UX friendly)
+    return {
+      user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false, username: 'customer', email: '' },
+      returnDetails: {
+        returnRequest: {
+          id: returnId || 'unknown',
+          request_number: `RR-${Date.now().toString().slice(-6)}`,
+          order_id: 'unknown',
+          order_number: 'unknown',
+          user_id: userId,
+          shop_id: 'unknown',
+          shop_name: 'Unknown Shop',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          status: (status as any) || 'pending',
+          total_refund_amount: 0,
+          reason: '',
+          evidence_count: 0,
+          items: [],
+          shipping: { method: 'pickup' },
+          payment: { method: 'wallet', status: 'pending', amount: 0 }
+        }
+      },
+      action: action || null
+    };
+  }
+}        
 
 // --- Status-Specific UI Components ---
 
-function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
+function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, onCancel, actionLoading }: any) {
   const returnRequest = returnDetails.returnRequest;
   const statusConfig = STATUS_CONFIG.pending;
 
@@ -866,15 +887,18 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate }
               <Edit className="h-3 w-3 mr-1.5" />
               Edit Request
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-              onClick={() => navigate(`/request-refund/cancel/${returnRequest.id}`)}
-            >
-              <XCircle className="h-3 w-3 mr-1.5" />
-              Cancel Request
-            </Button>
+            {(returnRequest.available_actions?.includes('cancel_request') ?? returnRequest.status === 'pending') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                onClick={() => onCancel(returnRequest.id)}
+                disabled={actionLoading}
+              >
+                <XCircle className="h-3 w-3 mr-1.5" />
+                Cancel Request
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -912,7 +936,7 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate }
   );
 }
 
-function NegotiationStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
+function NegotiationStatusUI({ returnDetails, formatDate, formatCurrency, navigate, onRespond, actionLoading }: any) {
   const returnRequest = returnDetails.returnRequest;
   const statusConfig = STATUS_CONFIG.negotiation;
 
@@ -1170,14 +1194,17 @@ function NegotiationStatusUI({ returnDetails, formatDate, formatCurrency, naviga
             <CardTitle className="text-sm">Order Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            <Button
-              size="sm"
-              className="w-full bg-green-600 hover:bg-green-700 h-8 text-xs"
-              onClick={() => navigate(`/negotiation/accept/${returnRequest.id}`)}
-            >
-              <CheckCircle className="h-3 w-3 mr-1.5" />
-              Accept Seller's Offer
-            </Button>
+            {(returnRequest.available_actions?.includes('accept_offer') ?? true) && (
+              <Button
+                size="sm"
+                className="w-full bg-green-600 hover:bg-green-700 h-8 text-xs"
+                onClick={() => onRespond(returnRequest.id, 'accept')}
+                disabled={actionLoading}
+              >
+                <CheckCircle className="h-3 w-3 mr-1.5" />
+                Accept Seller's Offer
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -1187,15 +1214,18 @@ function NegotiationStatusUI({ returnDetails, formatDate, formatCurrency, naviga
               <MessageSquareReply className="h-3 w-3 mr-1.5" />
               Make Counter Offer
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-              onClick={() => navigate(`/negotiation/reject/${returnRequest.id}`)}
-            >
-              <XCircle className="h-3 w-3 mr-1.5" />
-              Reject & Escalate
-            </Button>
+            {(returnRequest.available_actions?.includes('reject_offer') ?? true) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                onClick={() => onRespond(returnRequest.id, 'reject')}
+                disabled={actionLoading}
+              >
+                <XCircle className="h-3 w-3 mr-1.5" />
+                Reject & Escalate
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -3468,25 +3498,9 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
   // Use the status from the query parameter if available, otherwise use loader data's status
   const currentStatus = (queryStatus || returnDetails.returnRequest.status) as keyof typeof STATUS_CONFIG;
 
-  // Update return status based on URL
-  const returnRequest = {
-    ...returnDetails.returnRequest,
-    status: currentStatus,
-    id: params.returnId || returnDetails.returnRequest.id
-  };
 
-  const returnId = returnRequest.id;
-  const statusConfig = STATUS_CONFIG[currentStatus];
-  const StatusIcon = statusConfig?.icon || Clock;
 
-  // Get the status-specific UI component
-  const StatusSpecificUI = STATUS_UI_COMPONENTS[currentStatus] || (() => 
-    <Alert variant="destructive">
-      <XCircle className="h-4 w-4" />
-      <AlertTitle>Error</AlertTitle>
-      <AlertDescription>Unknown status: {currentStatus}</AlertDescription>
-    </Alert>
-  );
+
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -3497,6 +3511,69 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
       minute: '2-digit'
     });
   };
+
+  // Local state so we can optimistically update UI after actions
+  const [returnDetailsState, setReturnDetails] = useState(returnDetails);
+  const { toast } = useToast();
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+  async function handleCancel(refundId: string) {
+    if (!refundId) return;
+    try {
+      setActionLoading(true);
+      const res = await fetch(`${API_BASE_URL}/return-refund/${refundId}/cancel_refund/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': user?.id,
+          'Accept': 'application/json'
+        },
+        credentials: 'include'
+      });
+      if (!res.ok) throw new Error('Failed to cancel request');
+      const data = await res.json();
+      setReturnDetails(prev => ({
+        ...(prev as any),
+        returnRequest: { ...prev.returnRequest, status: data.status || 'cancelled' }
+      }));
+      toast({ title: 'Refund cancelled', variant: 'success' });
+    } catch (err) {
+      toast({ title: 'Cancel failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function respondToNegotiation(refundId: string, action: 'accept' | 'reject', reason = '') {
+    if (!refundId) return;
+    try {
+      setActionLoading(true);
+      const res = await fetch(`${API_BASE_URL}/return-refund/${refundId}/respond_to_negotiation/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': user?.id,
+          'Accept': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({ action, reason })
+      });
+      if (!res.ok) throw new Error('Failed to respond to offer');
+      const data = await res.json();
+      // Update UI from returned status/amount
+      setReturnDetails(prev => ({
+        ...(prev as any),
+        returnRequest: { ...(prev as any).returnRequest, status: data.status || (prev as any).returnRequest.status, seller_response: data.message || (prev as any).returnRequest.seller_response }
+      }));
+      toast({ title: 'Response submitted', variant: 'success' });
+    } catch (err) {
+      toast({ title: 'Action failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
   const formatCurrency = (amount: number) => {
     return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -3510,6 +3587,36 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
     navigator.clipboard.writeText(returnRequest.request_number);
     alert('Request number copied to clipboard!');
   };
+
+  // Props passed into each status-specific UI so they can trigger actions
+  const statusProps = {
+    returnDetails: returnDetailsState,
+    formatDate,
+    formatCurrency,
+    navigate,
+    onCancel: handleCancel,
+    onRespond: respondToNegotiation,
+    actionLoading,
+  };
+
+  // Compute current request and status-aware UI helpers after state/handlers are declared
+  const returnRequest = {
+    ...returnDetailsState.returnRequest,
+    status: currentStatus,
+    id: params.returnId || returnDetailsState.returnRequest.id
+  };
+
+  const returnId = returnRequest.id;
+  const statusConfig = STATUS_CONFIG[currentStatus];
+  const StatusIcon = statusConfig?.icon || Clock;
+
+  const StatusSpecificUI = STATUS_UI_COMPONENTS[currentStatus] || (() => 
+    <Alert variant="destructive">
+      <XCircle className="h-4 w-4" />
+      <AlertTitle>Error</AlertTitle>
+      <AlertDescription>Unknown status: {currentStatus}</AlertDescription>
+    </Alert>
+  );
 
   return (
     <UserProvider user={user}>
@@ -3581,10 +3688,8 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
 
         {/* Status-Specific UI Section */}
         <StatusSpecificUI
-          returnDetails={{ ...returnDetails, returnRequest }}
-          formatDate={formatDate}
-          formatCurrency={formatCurrency}
-          navigate={navigate}
+          {...statusProps}
+          returnDetails={{ ...returnDetailsState, returnRequest }}
         />
       </div>
     </UserProvider>

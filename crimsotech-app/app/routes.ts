@@ -63,6 +63,8 @@ export default [
         route("seller-create-product", "routes/seller/seller-create-product.tsx"), 
         route("seller-order-list", "routes/seller/seller-order-list.tsx"), 
         route("seller-return-refund-cancel", "routes/seller/seller-return-refund-cancel.tsx"), 
+        // Single route supports both param and query-based navigation in the loader
+        route("view-refund-details/:refundId", "routes/seller/view-refund-details.tsx"),
         route("seller-earnings", "routes/seller/seller-earnings.tsx"), 
         route("seller-vouchers", "routes/seller/seller-vouchers.tsx"), 
         route("seller-notifications", "routes/seller/seller-notifications.tsx"), 

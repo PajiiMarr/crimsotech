@@ -72,7 +72,7 @@ interface Product {
 // ----------------------------
 const getImageUrl = (url: string | null | undefined): string => {
   const baseUrl = import.meta.env.VITE_MEDIA_URL;
-  if (!url) return '/default-product.jpg';
+    if (!url) return '/appliances.jpg';
   if (url.startsWith('http')) return url;
   if (url.startsWith('/')) return `${baseUrl}${url}`;
   return `${baseUrl}/media/${url}`;
