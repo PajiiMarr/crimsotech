@@ -22,7 +22,7 @@ from twilio.base.exceptions import TwilioRestException
 from django.contrib.auth.hashers import check_password
 import hashlib
 import os
-from django.db.models import Count, Avg, Sum, Q, F, Case, When, Value
+from django.db.models import Count, Avg, Sum, Q, F, Case, When, Value, Exists, OuterRef
 from datetime import datetime, time, timedelta
 
 
@@ -7758,7 +7758,11 @@ class SellerProducts(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         # Prepare data with the seller from session user_id
-        product_data = request.data.copy()
+        # Create a shallow copy excluding file fields
+        product_data = {}
+        for key, value in request.data.items():
+            if not hasattr(value, 'file'):  # Skip file objects
+                product_data[key] = value
         product_data['customer'] = seller.customer_id
         
         # Handle category_admin_id for global categories
@@ -8690,9 +8694,19 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user_id = self.request.headers.get('X-User-Id')
         
+        # Subquery to check if product has any order through CartItem
+        has_order_subquery = CartItem.objects.filter(
+            product_id=OuterRef('id'),
+            is_ordered=True
+        )
+        
+        # Start with base queryset
         queryset = Product.objects.filter(
             upload_status='published',
             is_removed=False
+        ).exclude(
+            # Exclude products that have any orders
+            Exists(has_order_subquery)
         ).select_related(
             'shop',
             'customer',
@@ -8714,15 +8728,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         )
 
         if user_id:
-            # Get product IDs that are in the user's cart and already ordered
-            ordered_product_ids = CartItem.objects.filter(
-                user_id=user_id,
-                is_ordered=True
-            ).values_list('product_id', flat=True)
-            
-            # Exclude products that are already ordered by this user
+            # Still exclude user's own products and shops
             queryset = queryset.exclude(
-                Q(id__in=ordered_product_ids) | 
                 Q(customer__customer__id=user_id) | 
                 Q(shop__customer__customer__id=user_id)
             )
@@ -9307,6 +9314,7 @@ class CustomerFavoritesView(APIView):
 
             
 class SellerOrderList(viewsets.ViewSet):
+    # Import models at class level for better performance
     @action(detail=False, methods=['get'])
     def order_list(self, request):
         """
@@ -9323,8 +9331,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "data": []
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get seller's shop
-            from .models import Shop
+            # Get seller's shop - O(1)
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
@@ -9334,62 +9341,40 @@ class SellerOrderList(viewsets.ViewSet):
                     "data": []
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # Get all orders for this shop
-            from .models import Order, Delivery, Checkout, CartItem, Product
-            
-            # Prefetch related data efficiently
-            deliveries_prefetch = Prefetch(
-                'delivery_set',
-                queryset=Delivery.objects.select_related('rider__rider')
-            )
-            
-            product_prefetch = Prefetch(
-                'product',
-                queryset=Product.objects.select_related('shop')
-            )
-            
-            cart_item_prefetch = Prefetch(
-                'cart_item',
-                queryset=CartItem.objects.select_related('product').prefetch_related(product_prefetch)
-            )
-            
-            checkouts_prefetch = Prefetch(
-                'checkout_set',
-                queryset=Checkout.objects.select_related(
-                    'cart_item',
-                    'cart_item__product',
-                    'voucher'
-                ).prefetch_related(cart_item_prefetch)
-            )
-            
-            # Get all orders with prefetched data
+            # Get all orders for this shop - Optimized query
+            # Use select_related and prefetch_related efficiently
             orders = Order.objects.filter(
                 checkout__cart_item__product__shop=shop
             ).select_related(
-                'user'
+                'user',
+                'shipping_address'
             ).prefetch_related(
-                deliveries_prefetch,
-                checkouts_prefetch
+                'delivery_set',
+                Prefetch(
+                    'checkout_set',
+                    queryset=Checkout.objects.filter(
+                        cart_item__product__shop=shop
+                    ).select_related(
+                        'cart_item__product__shop'
+                    )
+                )
             ).distinct().order_by('-created_at')
             
             # Prepare response data
             orders_data = []
             
             for order in orders:
-                # Get delivery status
+                # Get delivery status - O(1) average
                 delivery_status = None
                 delivery = order.delivery_set.first()
                 if delivery:
                     delivery_status = delivery.status
                 
-                # Calculate shipping status
+                # Get shipping status - O(1)
                 shipping_status = self._get_shipping_status(order.status, delivery_status)
                 
-                # Get checkouts for this shop only
-                shop_checkouts = []
-                for checkout in order.checkout_set.all():
-                    if checkout.cart_item and checkout.cart_item.product.shop == shop:
-                        shop_checkouts.append(checkout)
+                # Get shop checkouts - already filtered
+                shop_checkouts = list(order.checkout_set.all())
                 
                 if not shop_checkouts:
                     continue
@@ -9405,7 +9390,7 @@ class SellerOrderList(viewsets.ViewSet):
                     
                     product = cart_item.product
                     
-                    # Get delivery info for this order
+                    # Get delivery info - O(1)
                     tracking_number = None
                     shipping_method = None
                     estimated_delivery = None
@@ -9426,7 +9411,7 @@ class SellerOrderList(viewsets.ViewSet):
                                 "id": str(product.id),
                                 "name": product.name,
                                 "price": float(product.price),
-                                "variant": product.condition,  # Using condition as variant placeholder
+                                "variant": product.condition,
                                 "shop": {
                                     "id": str(shop.id),
                                     "name": shop.name
@@ -9448,10 +9433,12 @@ class SellerOrderList(viewsets.ViewSet):
                     
                     total_amount += float(checkout.total_amount)
                 
-                # Format customer name
-                customer_name = f"{order.user.first_name} {order.user.last_name}"
-                if not customer_name.strip():
-                    customer_name = order.user.username
+                # Get delivery address - O(1)
+                delivery_address = None
+                if order.shipping_address:
+                    delivery_address = order.shipping_address.get_full_address()
+                elif order.delivery_address_text:
+                    delivery_address = order.delivery_address_text
                 
                 orders_data.append({
                     "order_id": str(order.order),
@@ -9466,7 +9453,8 @@ class SellerOrderList(viewsets.ViewSet):
                     "status": shipping_status,
                     "total_amount": total_amount,
                     "payment_method": order.payment_method,
-                    "delivery_address": order.delivery_address,
+                    "delivery_method": order.delivery_method,  # Add this field
+                    "delivery_address": delivery_address,
                     "created_at": order.created_at.isoformat(),
                     "updated_at": order.updated_at.isoformat(),
                     "items": order_items
@@ -9487,23 +9475,260 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_shipping_status(self, order_status, delivery_status):
-        """Map order and delivery status to shipping status for UI"""
-        if order_status == 'cancelled':
-            return 'cancelled'
-        elif order_status == 'completed':
-            return 'completed'
-        elif delivery_status:
-            # Map delivery status to UI status
-            status_map = {
+        """
+        Map order status to UI status - O(1)
+        """
+        # Status mapping for UI
+        status_mapping = {
+            'pending': 'pending_shipment',
+            'processing': 'to_ship',
+            'ready_for_pickup': 'ready_for_pickup',
+            'shipped': 'shipped',
+            'out_for_delivery': 'out_for_delivery',
+            'completed': 'completed',
+            'cancelled': 'cancelled',
+            'picked_up': 'completed',  # For pickup orders
+            'arrange_shipment': 'to_ship'
+        }
+        
+        # Handle delivery-specific statuses
+        if delivery_status:
+            delivery_map = {
                 'pending': 'pending_shipment',
                 'picked_up': 'in_transit',
                 'delivered': 'completed'
             }
-            return status_map.get(delivery_status, 'pending_shipment')
-        else:
-            return 'pending_shipment'
+            return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
+        
+        return status_mapping.get(order_status, 'pending_shipment')
 
+    @action(detail=True, methods=['patch'])
+    def update_status(self, request, pk=None):
+        """
+        Update order status with O(1) complexity
+        Path: /seller-order-list/{order_id}/update_status/
+        """
+        try:
+            # Get action type from request
+            action_type = request.data.get('action_type')
+            if not action_type:
+                return Response({
+                    "success": False,
+                    "message": "action_type is required"
+                }, status=400)
 
+            # Validate order exists - O(1)
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=404)
+
+            # Verify shop ownership - O(1)
+            shop_id = request.GET.get('shop_id')
+            if not shop_id:
+                return Response({
+                    "success": False,
+                    "message": "Shop ID is required"
+                }, status=400)
+
+            # Check if order has items from this shop - O(1)
+            has_shop_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__shop_id=shop_id
+            ).exists()
+            
+            if not has_shop_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain items from your shop"
+                }, status=403)
+
+            # Map action types to database status - O(1)
+            action_to_status = {
+                'confirm': 'processing',
+                'ready_for_pickup': 'ready_for_pickup',
+                'picked_up': 'picked_up',
+                'arrange_shipment': 'arrange_shipment',
+                'shipped': 'shipped',
+                'complete': 'completed',
+                'cancel': 'cancelled',
+                'out_for_delivery': 'out_for_delivery'
+            }
+
+            # Validate action type
+            if action_type not in action_to_status:
+                return Response({
+                    "success": False,
+                    "message": f"Invalid action_type: {action_type}"
+                }, status=400)
+
+            new_status = action_to_status[action_type]
+            current_status = order.status
+
+            # Validate status transition - O(1)
+            allowed_transitions = {
+                'pending': ['processing', 'cancelled'],
+                'processing': ['ready_for_pickup', 'arrange_shipment', 'cancelled'],
+                'ready_for_pickup': ['picked_up', 'cancelled'],
+                'arrange_shipment': ['shipped', 'cancelled'],
+                'shipped': ['out_for_delivery', 'completed', 'cancelled'],
+                'out_for_delivery': ['completed', 'cancelled'],
+                'picked_up': ['completed', 'cancelled'],
+                'completed': [],
+                'cancelled': []
+            }
+
+            if new_status not in allowed_transitions.get(current_status, []):
+                return Response({
+                    "success": False,
+                    "message": f"Cannot transition from {current_status} to {new_status}"
+                }, status=400)
+
+            # Update order - O(1)
+            order.status = new_status
+            order.updated_at = timezone.now()
+            order.save(update_fields=['status', 'updated_at'])
+
+            # Handle delivery updates if needed - O(1)
+            if new_status in ['shipped', 'out_for_delivery', 'completed', 'picked_up']:
+                delivery_status_map = {
+                    'shipped': 'pending',
+                    'out_for_delivery': 'picked_up',
+                    'completed': 'delivered',
+                    'picked_up': 'delivered'
+                }
+                
+                delivery, created = Delivery.objects.update_or_create(
+                    order=order,
+                    defaults={
+                        'status': delivery_status_map[new_status],
+                        'updated_at': timezone.now()
+                    }
+                )
+                
+                if new_status in ['completed', 'picked_up']:
+                    delivery.delivered_at = timezone.now()
+                    delivery.save(update_fields=['delivered_at'])
+
+            return Response({
+                "success": True,
+                "message": f"Order status updated to {new_status}",
+                "data": {
+                    "order_id": str(order.order),
+                    "status": new_status,
+                    "updated_at": order.updated_at.isoformat()
+                }
+            }, status=200)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": f"Error updating order: {str(e)}"
+            }, status=500)
+
+    @action(detail=True, methods=['get'])
+    def available_actions(self, request, pk=None):
+        """
+        Get available actions for an order - O(1) complexity
+        """
+        try:
+            # Get order - O(1)
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=404)
+
+            # Verify shop ownership - O(1)
+            shop_id = request.GET.get('shop_id')
+            if not shop_id:
+                return Response({
+                    "success": False,
+                    "message": "Shop ID is required"
+                }, status=400)
+
+            has_shop_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__shop_id=shop_id
+            ).exists()
+            
+            if not has_shop_items:
+                return Response({
+                    "success": False,
+                    "message": "Order not found or doesn't belong to your shop"
+                }, status=403)
+
+            # Determine if it's a pickup order
+            is_pickup = order.delivery_method and 'pickup' in order.delivery_method.lower()
+            
+            # Get available actions based on current status - O(1)
+            action_maps = {
+                'pending': {
+                    'actions': ['confirm', 'cancel'],
+                    'pickup_filter': []
+                },
+                'processing': {
+                    'actions': ['ready_for_pickup', 'arrange_shipment', 'cancel'],
+                    'pickup_filter': ['arrange_shipment']  # Remove for pickup
+                },
+                'ready_for_pickup': {
+                    'actions': ['picked_up', 'cancel'],
+                    'pickup_filter': []
+                },
+                'arrange_shipment': {
+                    'actions': ['shipped', 'cancel'],
+                    'pickup_filter': []
+                },
+                'shipped': {
+                    'actions': ['out_for_delivery', 'complete', 'cancel'],
+                    'pickup_filter': []
+                },
+                'out_for_delivery': {
+                    'actions': ['complete', 'cancel'],
+                    'pickup_filter': []
+                },
+                'picked_up': {
+                    'actions': ['complete', 'cancel'],
+                    'pickup_filter': []
+                },
+                'completed': {
+                    'actions': [],
+                    'pickup_filter': []
+                },
+                'cancelled': {
+                    'actions': [],
+                    'pickup_filter': []
+                }
+            }
+
+            current_map = action_maps.get(order.status, {'actions': [], 'pickup_filter': []})
+            available_actions = current_map['actions']
+            
+            # Filter actions based on pickup status
+            if is_pickup:
+                available_actions = [a for a in available_actions if a not in current_map['pickup_filter']]
+
+            return Response({
+                "success": True,
+                "data": {
+                    "order_id": str(order.order),
+                    "current_status": order.status,
+                    "is_pickup": is_pickup,
+                    "available_actions": available_actions
+                }
+            }, status=200)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": str(e)
+            }, status=500)
+        
 from django.shortcuts import get_object_or_404
 
 class CheckoutOrder(viewsets.ViewSet):

@@ -38,7 +38,11 @@ import {
   Phone,
   MoreHorizontal,
   Edit,
-  Trash2
+  Trash2,
+  Store,
+  Home,
+  MapPin as MapPinIcon,
+  Ban
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
 import { DataTable } from '~/components/ui/data-table';
@@ -46,6 +50,9 @@ import { type ColumnDef } from '@tanstack/react-table';
 import AxiosInstance from '~/components/axios/Axios';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '~/components/ui/dropdown-menu';
 import { DropdownMenuTrigger } from '@radix-ui/react-dropdown-menu';
+import { OrderActions } from '~/components/shop/order-actions';
+import { useIsMobile } from '~/hooks/use-mobile';
+import { Sheet, SheetContent, SheetTrigger } from '~/components/ui/sheet';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -97,7 +104,9 @@ interface Order {
   status: string;
   total_amount: number;
   payment_method: string | null;
-  delivery_address: string;
+  delivery_method?: string | null;
+  shipping_method?: string | null;
+  delivery_address: string | null;
   created_at: string;
   updated_at: string;
   items: OrderItem[];
@@ -108,6 +117,16 @@ interface ApiResponse {
   message: string;
   data: Order[];
   data_source: string;
+}
+
+interface AvailableActionsResponse {
+  success: boolean;
+  data: {
+    order_id: string;
+    current_status: string;
+    is_pickup: boolean;
+    available_actions: string[];
+  };
 }
 
 // Add loader function to get session data and fetch orders
@@ -168,6 +187,8 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<string>('all');
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  const [availableActions, setAvailableActions] = useState<Record<string, string[]>>({});
+  const [loadingActions, setLoadingActions] = useState<Record<string, boolean>>({});
 
   // Refresh orders function
   const refreshOrders = async () => {
@@ -183,6 +204,8 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       
       if (response.data.success) {
         setOrders(response.data.data || []);
+        // Clear cached actions when orders refresh
+        setAvailableActions({});
       }
     } catch (error: any) {
       console.error('Error fetching orders:', error);
@@ -190,6 +213,51 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       setLoading(false);
     }
   };
+
+  // Load available actions for an order
+  const loadAvailableActions = async (orderId: string) => {
+    if (!shopId || loadingActions[orderId]) return;
+    
+    setLoadingActions(prev => ({ ...prev, [orderId]: true }));
+    
+    try {
+      const response = await AxiosInstance.get<AvailableActionsResponse>(
+        `/seller-order-list/${orderId}/available_actions/`,
+        {
+          params: { shop_id: shopId }
+        }
+      );
+      
+      if (response.data.success) {
+        setAvailableActions(prev => ({
+          ...prev,
+          [orderId]: response.data.data.available_actions
+        }));
+      }
+    } catch (error: any) {
+      console.error('Error loading available actions:', error);
+      // Fallback to empty array if API fails
+      setAvailableActions(prev => ({
+        ...prev,
+        [orderId]: []
+      }));
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  // Load actions when component mounts or orders change
+  useEffect(() => {
+    if (shopId && orders.length > 0) {
+      // Load actions for first few orders to start
+      const ordersToLoad = orders.slice(0, 10); // Load for first 10 orders
+      ordersToLoad.forEach(order => {
+        if (!availableActions[order.order_id]) {
+          loadAvailableActions(order.order_id);
+        }
+      });
+    }
+  }, [shopId, orders]);
 
   const formatCustomerName = (user: { first_name: string; last_name: string }) => {
     return `${user.first_name} ${user.last_name}`;
@@ -205,15 +273,29 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     setExpandedOrders(newExpanded);
   };
 
+  // Check if order is cancelled
+  const isCancelledOrder = (order: Order) => {
+    return order.status?.toLowerCase() === 'cancelled';
+  };
+
+  // Check if order is for pickup
+  const isPickupOrder = (order: Order) => {
+    const method = order.delivery_method || order.shipping_method || '';
+    return method.toLowerCase().includes('pickup') || method.toLowerCase().includes('store');
+  };
+
   const getStatusColor = (status: string) => {
     switch(status?.toLowerCase()) {
       case 'completed': return '#10b981';
       case 'pending_shipment': return '#f59e0b';
       case 'to_ship': return '#f97316';
+      case 'ready_for_pickup': return '#3b82f6';
+      case 'awaiting_pickup': return '#8b5cf6';
+      case 'picked_up': return '#10b981';
       case 'shipped': return '#3b82f6';
       case 'in_transit': return '#3b82f6';
       case 'out_for_delivery': return '#8b5cf6';
-      case 'cancelled': return '#6b7280';
+      case 'cancelled': return '#ef4444';
       default: return '#6b7280';
     }
   };
@@ -223,23 +305,44 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       case 'completed': return <CheckCircle className="w-3 h-3" />;
       case 'pending_shipment': return <Clock className="w-3 h-3" />;
       case 'to_ship': return <Package2 className="w-3 h-3" />;
+      case 'ready_for_pickup': return <Store className="w-3 h-3" />;
+      case 'awaiting_pickup': return <Clock className="w-3 h-3" />;
+      case 'picked_up': return <CheckCircle className="w-3 h-3" />;
       case 'shipped': return <Ship className="w-3 h-3" />;
       case 'in_transit': return <Truck className="w-3 h-3" />;
       case 'out_for_delivery': return <Truck className="w-3 h-3" />;
-      case 'cancelled': return <XCircle className="w-3 h-3" />;
+      case 'cancelled': return <Ban className="w-3 h-3" />;
       default: return <Clock className="w-3 h-3" />;
     }
   };
 
-  const getStatusLabel = (status: string) => {
+  const getStatusLabel = (status: string, order: Order) => {
+    const isPickup = isPickupOrder(order);
+    const isCancelled = isCancelledOrder(order);
+    
+    if (isCancelled) return 'Cancelled';
+    
     switch(status?.toLowerCase()) {
-      case 'pending_shipment': return 'Pending Shipment';
-      case 'to_ship': return 'To Ship';
-      case 'shipped': return 'Shipped';
-      case 'in_transit': return 'In Transit';
-      case 'out_for_delivery': return 'Out for Delivery';
-      case 'completed': return 'Completed';
-      case 'cancelled': return 'Cancelled';
+      case 'pending_shipment': 
+        return isPickup ? 'To Prepare' : 'Pending Shipment';
+      case 'to_ship': 
+        return isPickup ? 'Ready for Pickup' : 'To Ship';
+      case 'ready_for_pickup': 
+        return 'Ready for Pickup';
+      case 'awaiting_pickup': 
+        return 'Awaiting Pickup';
+      case 'picked_up': 
+        return 'Picked Up';
+      case 'shipped': 
+        return 'Shipped';
+      case 'in_transit': 
+        return 'In Transit';
+      case 'out_for_delivery': 
+        return 'Out for Delivery';
+      case 'completed': 
+        return isPickup ? 'Picked Up' : 'Completed';
+      case 'cancelled': 
+        return 'Cancelled';
       default: return status?.replace(/_/g, ' ') || 'Unknown';
     }
   };
@@ -303,6 +406,8 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     all: orders.length,
     pending_shipment: orders.filter(o => o.status === 'pending_shipment').length,
     to_ship: orders.filter(o => o.status === 'to_ship').length,
+    ready_for_pickup: orders.filter(o => o.status === 'ready_for_pickup').length,
+    awaiting_pickup: orders.filter(o => o.status === 'awaiting_pickup').length,
     shipped: orders.filter(o => o.status === 'shipped').length,
     in_transit: orders.filter(o => o.status === 'in_transit').length,
     out_for_delivery: orders.filter(o => o.status === 'out_for_delivery').length,
@@ -320,6 +425,8 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         return <Phone className="w-3 h-3" />;
       case 'bank transfer':
         return <CreditCard className="w-3 h-3" />;
+      case 'cash':
+        return <CreditCard className="w-3 h-3" />;
       default:
         return <CreditCard className="w-3 h-3" />;
     }
@@ -329,11 +436,15 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     try {
       const response = await AxiosInstance.patch(`/seller-order-list/${orderId}/update_status/`, {
         action_type: actionType
+      }, {
+        params: { shop_id: shopId }
       });
       
       if (response.data.success) {
         // Refresh orders to get updated data
         await refreshOrders();
+        // Refresh available actions for this order
+        await loadAvailableActions(orderId);
         alert(`Order ${actionType} successfully`);
       }
     } catch (error) {
@@ -342,48 +453,25 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     }
   };
 
-  const getActionButton = (order: Order) => {
-    const status = order.status;
-    const orderId = order.order_id;
+  const handleCancelOrder = async (orderId: string) => {
+    if (!confirm('Are you sure you want to cancel this order?')) return;
     
-    switch(status) {
-      case 'pending_shipment':
-        return (
-          <Button
-            size="sm"
-            onClick={() => handleUpdateStatus(orderId, 'confirm')}
-            className="h-7 px-2 text-xs bg-blue-600 hover:bg-blue-700"
-          >
-            <CheckCircle className="w-3 h-3 mr-1" />
-            Confirm Order
-          </Button>
-        );
-      case 'to_ship':
-        return (
-          <Link to={`/arrange-shipment?orderId=${orderId}`}>
-            <Button
-              size="sm"
-              className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700"
-            >
-              <Ship className="w-3 h-3 mr-1" />
-              Arrange Shipment
-            </Button>
-          </Link>
-        );
-      case 'shipped':
-        return (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleUpdateStatus(orderId, 'complete')}
-            className="h-7 px-2 text-xs"
-          >
-            <CheckCircle className="w-3 h-3 mr-1" />
-            Mark as Delivered
-          </Button>
-        );
-      default:
-        return null;
+    try {
+      const response = await AxiosInstance.patch(`/seller-order-list/${orderId}/update_status/`, {
+        action_type: 'cancel'
+      }, {
+        params: { shop_id: shopId }
+      });
+      
+      if (response.data.success) {
+        await refreshOrders();
+        // Refresh available actions for this order
+        await loadAvailableActions(orderId);
+        alert('Order cancelled successfully');
+      }
+    } catch (error) {
+      console.error('Error cancelling order:', error);
+      alert('Failed to cancel order');
     }
   };
 
@@ -410,6 +498,46 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
             <User className="w-3.5 h-3.5 text-gray-500" />
             <span className="text-sm">{customerName}</span>
           </div>
+        );
+      },
+    },
+    {
+      accessorKey: "type",
+      header: "Type",
+      cell: ({ row }) => {
+        const order = row.original;
+        const isPickup = isPickupOrder(order);
+        const isCancelled = isCancelledOrder(order);
+        
+        if (isCancelled) {
+          return (
+            <Badge 
+              variant="outline" 
+              className="text-xs h-5 px-2 py-0 flex items-center gap-1 border-red-200 text-red-600"
+            >
+              <Ban className="w-3 h-3" />
+              Cancelled
+            </Badge>
+          );
+        }
+        
+        return (
+          <Badge 
+            variant="outline" 
+            className="text-xs h-5 px-2 py-0 flex items-center gap-1"
+          >
+            {isPickup ? (
+              <>
+                <Store className="w-3 h-3" />
+                Pickup
+              </>
+            ) : (
+              <>
+                <Truck className="w-3 h-3" />
+                Delivery
+              </>
+            )}
+          </Badge>
         );
       },
     },
@@ -457,7 +585,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
             }}
           >
             {getStatusIcon(order.status)}
-            {getStatusLabel(order.status)}
+            {getStatusLabel(order.status, order)}
           </Badge>
         );
       },
@@ -474,52 +602,57 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       header: "Actions",
       cell: ({ row }) => {
         const order = row.original;
+        const isCancelled = isCancelledOrder(order);
+        const isPickup = isPickupOrder(order);
+        const isMobile = useIsMobile();
+        const actions = availableActions[order.order_id] || [];
+        const isLoading = loadingActions[order.order_id];
+        
         return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => toggleOrderExpansion(order.order_id)}>
-                <Eye className="h-4 w-4 mr-2" />
-                View Details
-              </DropdownMenuItem>
-              {getActionButton(order) && (
-                <DropdownMenuItem 
-                  onClick={() => {
-                    const action = order.status === 'pending_shipment' ? 'confirm' : 
-                                  order.status === 'shipped' ? 'complete' : '';
-                    if (action) {
-                      handleUpdateStatus(order.order_id, action);
-                    }
-                  }}
-                >
-                  {order.status === 'pending_shipment' ? (
-                    <>
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      Confirm Order
-                    </>
-                  ) : order.status === 'shipped' ? (
-                    <>
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      Mark as Delivered
-                    </>
-                  ) : null}
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-red-600 focus:text-red-600">
-                <Trash2 className="h-4 w-4 mr-2" />
-                Cancel Order
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <>
+            {isMobile ? (
+              <Sheet>
+                <SheetTrigger asChild>
+                  <Button variant="ghost" className="h-8 w-8 p-0">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="bottom" className="h-auto max-h-[80vh] overflow-y-auto">
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">Order Actions</h3>
+                    <OrderActions
+                      order={order}
+                      isCancelled={isCancelled}
+                      isPickup={isPickup}
+                      availableActions={actions}
+                      isLoadingActions={isLoading}
+                      onUpdateStatus={handleUpdateStatus}
+                      onCancelOrder={handleCancelOrder}
+                      onViewDetails={() => toggleOrderExpansion(order.order_id)}
+                      onRefreshActions={() => loadAvailableActions(order.order_id)}
+                      isMobile={true}
+                    />
+                  </div>
+                </SheetContent>
+              </Sheet>
+            ) : (
+              <OrderActions
+                order={order}
+                isCancelled={isCancelled}
+                isPickup={isPickup}
+                availableActions={actions}
+                isLoadingActions={isLoading}
+                onUpdateStatus={handleUpdateStatus}
+                onCancelOrder={handleCancelOrder}
+                onViewDetails={() => toggleOrderExpansion(order.order_id)}
+                onRefreshActions={() => loadAvailableActions(order.order_id)}
+                isMobile={false}
+              />
+            )}
+          </>
         );
       },
-    },
+    }
   ];
 
   return (
@@ -533,22 +666,18 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
               Manage customer orders and shipments
             </p>
           </div>
-          <Button 
-            onClick={refreshOrders} 
-            variant="outline"
+          <Button
+            onClick={refreshOrders}
             disabled={loading}
+            variant="outline"
+            size="sm"
           >
             {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Refreshing...
-              </>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             ) : (
-              <>
-                <RotateCcw className="w-4 h-4 mr-2" />
-                Refresh
-              </>
+              <RotateCcw className="h-4 w-4 mr-2" />
             )}
+            Refresh
           </Button>
         </div>
 
@@ -571,17 +700,18 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold text-blue-600">
-                {counts.shipped + counts.in_transit + counts.out_for_delivery}
+                {counts.shipped + counts.in_transit + counts.out_for_delivery + 
+                 counts.ready_for_pickup + counts.awaiting_pickup}
               </div>
-              <div className="text-sm text-muted-foreground">In Transit</div>
+              <div className="text-sm text-muted-foreground">In Progress</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-green-600">
-                {counts.completed}
+              <div className="text-2xl font-bold text-red-600">
+                {counts.cancelled}
               </div>
-              <div className="text-sm text-muted-foreground">Completed</div>
+              <div className="text-sm text-muted-foreground">Cancelled</div>
             </CardContent>
           </Card>
         </div>
@@ -624,7 +754,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
 
                 {/* Tabs */}
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                  <TabsList className="grid grid-cols-4 md:grid-cols-7 lg:w-auto">
+                  <TabsList className="grid grid-cols-4 md:grid-cols-8 lg:w-auto">
                     <TabsTrigger value="all" className="flex items-center gap-2">
                       <List className="w-3 h-3" />
                       All
@@ -645,10 +775,19 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     </TabsTrigger>
                     <TabsTrigger value="to_ship" className="flex items-center gap-2">
                       <Package2 className="w-3 h-3" />
-                      To Ship
+                      To Process
                       {counts.to_ship > 0 && (
                         <Badge variant="secondary" className="ml-1 h-4 px-1 text-xs">
                           {counts.to_ship}
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                    <TabsTrigger value="ready_for_pickup" className="flex items-center gap-2">
+                      <Store className="w-3 h-3" />
+                      Ready
+                      {counts.ready_for_pickup > 0 && (
+                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-xs">
+                          {counts.ready_for_pickup}
                         </Badge>
                       )}
                     </TabsTrigger>
@@ -670,21 +809,21 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                         </Badge>
                       )}
                     </TabsTrigger>
-                    <TabsTrigger value="out_for_delivery" className="flex items-center gap-2">
-                      <Truck className="w-3 h-3" />
-                      Delivery
-                      {counts.out_for_delivery > 0 && (
-                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-xs">
-                          {counts.out_for_delivery}
-                        </Badge>
-                      )}
-                    </TabsTrigger>
                     <TabsTrigger value="completed" className="flex items-center gap-2">
                       <CheckCircle className="w-3 h-3" />
                       Completed
                       {counts.completed > 0 && (
                         <Badge variant="secondary" className="ml-1 h-4 px-1 text-xs">
                           {counts.completed}
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                    <TabsTrigger value="cancelled" className="flex items-center gap-2">
+                      <Ban className="w-3 h-3" />
+                      Cancelled
+                      {counts.cancelled > 0 && (
+                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-xs">
+                          {counts.cancelled}
                         </Badge>
                       )}
                     </TabsTrigger>
@@ -701,7 +840,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       }}
                       filterConfig={{
                         status: {
-                          options: ["pending_shipment", "to_ship", "shipped", "in_transit", "out_for_delivery", "completed", "cancelled"],
+                          options: ["pending_shipment", "to_ship", "ready_for_pickup", "shipped", "in_transit", "out_for_delivery", "completed", "cancelled"],
                           placeholder: "Filter by status"
                         }
                       }}
@@ -722,6 +861,8 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     
                     const customerName = formatCustomerName(order.user);
                     const statusColor = getStatusColor(order.status);
+                    const isPickup = isPickupOrder(order);
+                    const isCancelled = isCancelledOrder(order);
                     
                     return (
                       <Card key={order.order_id} className="overflow-hidden border">
@@ -740,6 +881,31 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                             </Button>
                           </div>
 
+                          {/* Order Type Badge */}
+                          <div className="mb-4">
+                            <Badge 
+                              variant={isCancelled ? "destructive" : (isPickup ? "default" : "secondary")}
+                              className="flex items-center gap-1 w-fit"
+                            >
+                              {isCancelled ? (
+                                <>
+                                  <Ban className="w-3 h-3" />
+                                  Cancelled Order
+                                </>
+                              ) : isPickup ? (
+                                <>
+                                  <Store className="w-3 h-3" />
+                                  Pickup Order
+                                </>
+                              ) : (
+                                <>
+                                  <Truck className="w-3 h-3" />
+                                  Delivery Order
+                                </>
+                              )}
+                            </Badge>
+                          </div>
+
                           {/* Customer Information */}
                           <div className="mb-4">
                             <h4 className="text-sm font-medium mb-2">Customer Information</h4>
@@ -752,8 +918,26 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                                 )}
                               </div>
                               <div>
-                                <p className="font-medium">Delivery Address</p>
-                                <p className="text-muted-foreground">{order.delivery_address}</p>
+                                {!isCancelled && (
+                                  <>
+                                    <p className="font-medium">{isPickup ? 'Pickup Location' : 'Delivery Address'}</p>
+                                    <div className="flex items-start gap-2">
+                                      {isPickup ? (
+                                        <Store className="w-4 h-4 text-gray-500 mt-0.5" />
+                                      ) : (
+                                        <MapPinIcon className="w-4 h-4 text-gray-500 mt-0.5" />
+                                      )}
+                                      <p className="text-muted-foreground">
+                                        {order.delivery_address || 'No address provided'}
+                                      </p>
+                                    </div>
+                                    {order.delivery_method && (
+                                      <p className="text-sm text-muted-foreground mt-1">
+                                        Method: {order.delivery_method}
+                                      </p>
+                                    )}
+                                  </>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -798,6 +982,11 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                                 <p className="text-sm text-muted-foreground">
                                   Payment Method: {order.payment_method || 'Not specified'}
                                 </p>
+                                {!isCancelled && (
+                                  <p className="text-sm text-muted-foreground">
+                                    Order Type: {isPickup ? 'Pickup' : 'Delivery'}
+                                  </p>
+                                )}
                               </div>
                               <div className="text-right">
                                 <p className="text-sm text-muted-foreground">Total Amount</p>

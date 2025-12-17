@@ -1222,15 +1222,18 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                               )}
                             </div>
                           ))}
-                          
                           <input
                             type="text"
                             className="flex-1 min-w-[100px] text-sm border-0 focus:outline-none focus:ring-0 px-2 py-1"
                             placeholder="Type and press Enter..."
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                                addOption(group.id, e.currentTarget.value.trim());
-                                e.currentTarget.value = '';
+                              if (e.key === 'Enter') {
+                                // Prevent form submission when pressing Enter
+                                e.preventDefault();
+                                if (e.currentTarget.value.trim()) {
+                                  addOption(group.id, e.currentTarget.value.trim());
+                                  e.currentTarget.value = '';
+                                }
                               } else if (e.key === 'Backspace' && e.currentTarget.value === '' && group.options.length > 0) {
                                 const lastOption = group.options[group.options.length - 1];
                                 removeOption(group.id, lastOption.id);
