@@ -15,7 +15,7 @@ import {
   Handshake
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '~/components/ui/tabs';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router';
 import { Button } from '~/components/ui/button';
 import { Input } from '~/components/ui/input';
 import { Card, CardContent } from '~/components/ui/card';

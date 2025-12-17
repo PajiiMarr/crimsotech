@@ -7,6 +7,7 @@ import { Search, X, Heart, Handshake } from 'lucide-react'
 import { Input } from '~/components/ui/input'
 import { useNavigate } from 'react-router'
 import AxiosInstance from '~/components/axios/Axios'
+
 // ----------------------------
 // Meta
 // ----------------------------
@@ -110,7 +111,7 @@ const getImageUrl = (url: string | null | undefined): string => {
   const baseUrl = import.meta.env.VITE_MEDIA_URL || 'http://127.0.0.1:8000';
   
   if (!url) {
-    return '../../../public/phon.jpg';
+    return '/phon.jpg';
   }
   
   if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -148,14 +149,26 @@ const getProductImage = (product: Product): string => {
 }
 
 // ----------------------------
-// Compact Product Card (with favorite)
+// Compact Product Card
 // ----------------------------
-const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite }: { product: Product, user?: any, favoriteIds?: string[], onToggleFavorite?: (productId: string, nowFavorite: boolean) => void }) => {
+const CompactProductCard = ({ 
+  product, 
+  user, 
+  favoriteIds = [], 
+  onToggleFavorite 
+}: { 
+  product: Product, 
+  user?: any, 
+  favoriteIds?: string[], 
+  onToggleFavorite?: (productId: string, nowFavorite: boolean) => void 
+}) => {
   const navigate = useNavigate();
   const [isFavorite, setIsFavorite] = useState(favoriteIds.includes(product.id));
   const [loadingFav, setLoadingFav] = useState(false);
 
-  useEffect(() => setIsFavorite(favoriteIds.includes(product.id)), [favoriteIds, product.id]);
+  useEffect(() => {
+    setIsFavorite(favoriteIds.includes(product.id));
+  }, [favoriteIds, product.id]);
 
   const handleClick = () => {
     navigate(`/product/${product.id}`);
@@ -171,31 +184,19 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
     setLoadingFav(true);
     try {
       if (!isFavorite) {
-        await AxiosInstance.post('/customer-favorites/', { product: product.id, customer: user.user_id }, { headers: { 'X-User-Id': user.user_id } });
-        // optimistic add
-        try {
-          const raw = localStorage.getItem('optimistic_favorites');
-          const existing = raw ? JSON.parse(raw) : [];
-          existing.push({ id: product.id, name: product.name, description: product.description, price: product.price, discount: product.discount || 0, primary_image: (product as any).primary_image || null, media_files: product.media_files || [], shop: product.shop || null });
-          localStorage.setItem('optimistic_favorites', JSON.stringify(existing));
-        } catch (e) {
-          console.warn('Failed to set optimistic favorites', e);
-        }
+        await AxiosInstance.post('/customer-favorites/', { 
+          product: product.id, 
+          customer: user.user_id 
+        }, { 
+          headers: { 'X-User-Id': user.user_id } 
+        });
         setIsFavorite(true);
         onToggleFavorite && onToggleFavorite(product.id, true);
       } else {
-        await AxiosInstance.delete('/customer-favorites/', { data: { product: product.id, customer: user.user_id }, headers: { 'X-User-Id': user.user_id } });
-        // optimistic remove
-        try {
-          const raw = localStorage.getItem('optimistic_favorites');
-          if (raw) {
-            const existing = JSON.parse(raw).filter((p: any) => p.id !== product.id);
-            if (existing.length) localStorage.setItem('optimistic_favorites', JSON.stringify(existing));
-            else localStorage.removeItem('optimistic_favorites');
-          }
-        } catch (e) {
-          console.warn('Failed to remove optimistic favorite', e);
-        }
+        await AxiosInstance.delete('/customer-favorites/', { 
+          data: { product: product.id, customer: user.user_id }, 
+          headers: { 'X-User-Id': user.user_id } 
+        });
         setIsFavorite(false);
         onToggleFavorite && onToggleFavorite(product.id, false);
       }
@@ -211,8 +212,6 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
       onClick={handleClick}
       className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col relative"
     >
-
-      {/* Open for Swap tag (left) */}
       {product.open_for_swap && (
         <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-indigo-50 border border-indigo-100 rounded-full flex items-center gap-2">
           <Handshake className="h-4 w-4 text-indigo-600" />
@@ -220,7 +219,6 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
         </div>
       )}
 
-      {/* Heart Button (right) */}
       <button
         onClick={handleFavoriteClick}
         disabled={loadingFav}
@@ -234,8 +232,12 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
         <img
           src={getProductImage(product)}
           alt={product.name}
-          onError={(e) => { const el = e.currentTarget as HTMLImageElement; el.onerror = null; el.src = '/images/placeholder-product.jpg'; }}
           className="w-full h-full object-cover"
+          onError={(e) => {
+            const el = e.currentTarget as HTMLImageElement;
+            el.onerror = null;
+            el.src = '/images/placeholder-product.jpg';
+          }}
         />
       </div>
       
@@ -245,7 +247,9 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
         </h3>
         
         {(() => {
-          const categoryName = typeof product.category === 'string' ? product.category : product.category?.name || product.category_admin?.name;
+          const categoryName = typeof product.category === 'string' 
+            ? product.category 
+            : product.category?.name || product.category_admin?.name;
           return categoryName ? (
             <p className="text-[10px] text-blue-600 font-medium truncate mb-1">
               {categoryName}
@@ -272,7 +276,7 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
 };
 
 // ----------------------------
-// Loader - ALL REQUESTS HERE
+// Loader
 // ----------------------------
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { fetchUserRole } = await import("~/middleware/role.server")
@@ -290,67 +294,106 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
+  const userId = session.get('userId');
 
-  const userId = session.get('userId')
+  console.log('User ID:', userId);
 
-  console.log(userId)
+  try {
+    // Fetch products
+    const productsResponse = await AxiosInstance.get('/public-products/', {
+      headers: {
+        'X-User-Id': userId,
+        'Content-Type': 'application/json',
+      },
+    });
 
+    let products: Product[] = [];
+    if (productsResponse.status === 200) {
+      const productsData = productsResponse.data;
+      
+      // FIX: Check if the response is an array or has a different structure
+      if (Array.isArray(productsData)) {
+        products = productsData.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          price: parseFloat(p.price),
+          media_files: p.media_files,
+          primary_image: p.primary_image,
+          shop: p.shop,
+          condition: p.condition,
+          created_at: p.created_at,
+          updated_at: p.updated_at,
+          quantity: p.quantity,
+          used_for: p.used_for,
+          status: p.status,
+          upload_status: p.upload_status,
+          customer: p.customer,
+          category_admin: p.category_admin,
+          category: p.category,
+          variants: p.variants,
+          discount: 0,
+          compare_price: p.compare_price ? parseFloat(p.compare_price) : undefined,
+          open_for_swap: p.open_for_swap || false,
+        }));
+      } else if (productsData.products && Array.isArray(productsData.products)) {
+        // If response has a 'products' field
+        products = productsData.products.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          price: parseFloat(p.price),
+          media_files: p.media_files,
+          primary_image: p.primary_image,
+          shop: p.shop,
+          condition: p.condition,
+          created_at: p.created_at,
+          updated_at: p.updated_at,
+          quantity: p.quantity,
+          used_for: p.used_for,
+          status: p.status,
+          upload_status: p.upload_status,
+          customer: p.customer,
+          category_admin: p.category_admin,
+          category: p.category,
+          variants: p.variants,
+          discount: 0,
+          compare_price: p.compare_price ? parseFloat(p.compare_price) : undefined,
+          open_for_swap: p.open_for_swap || false,
+        }));
+      }
+      
+      console.log(`Loaded ${products.length} products`);
+      console.log('Products with open_for_swap:', products.filter(p => p.open_for_swap).length);
+    }
 
-  console.log(userId)
+    // Fetch categories
+    const categoriesResponse = await AxiosInstance.get('/customer-products/global-categories/');
+    let categories: Category[] = [];
+    
+    if (categoriesResponse.status === 200) {
+      const categoriesData = categoriesResponse.data;
+      categories = categoriesData.categories || [];
+      console.log(`Loaded ${categories.length} categories`);
+    }
 
-  const productsResponse = await AxiosInstance(`/public-products/`, {
-    headers: {
-      'X-User-Id': userId,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  let products: Product[] = [];
-  if (productsResponse.status === 200) {
-    const productsData = productsResponse.data;
-    products = productsData.map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      description: p.description,
-      price: parseFloat(p.price),
-      media_files: p.media_files,
-      primary_image: p.primary_image,
-      shop: p.shop,
-      condition: p.condition,
-      created_at: p.created_at,
-      updated_at: p.updated_at,
-      quantity: p.quantity,
-      used_for: p.used_for,
-      status: p.status,
-      upload_status: p.upload_status,
-      customer: p.customer,
-      category_admin: p.category_admin,
-      category: p.category,
-      variants: p.variants,
-      discount: 0,
-      compare_price: p.compare_price ? parseFloat(p.compare_price) : undefined,
-      open_for_swap: p.open_for_swap || false,
-    }));
-
-    // Debug: log how many swap-enabled products we received
-    console.log('Loaded products, open_for_swap count:', products.filter(p => p.open_for_swap).length);
+    return {
+      user,
+      products,
+      categories,
+    };
+  } catch (error) {
+    console.error('Error in loader:', error);
+    return {
+      user,
+      products: [],
+      categories: [],
+    };
   }
-
-  // Fetch categories
-  const categoriesResponse = await AxiosInstance(`/customer-products/global-categories/`);
-  let categories: Category[] = [];
-  const categoriesData = await categoriesResponse.data;
-  categories = categoriesData.categories || [];
-
-  return {
-    user,
-    products,
-    categories,
-  };
 }
 
 // ----------------------------
-// Home Component - NO API CALLS
+// Home Component
 // ----------------------------
 export default function Home({ loaderData }: any) {
   const { user, products, categories } = loaderData;
@@ -360,16 +403,17 @@ export default function Home({ loaderData }: any) {
   const [maxPrice, setMaxPrice] = useState<string>('');
   const [selectedCondition, setSelectedCondition] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
-  const navigate = useNavigate();
 
-  // Fetch favorites for heart states
+  // Fetch favorites
   const fetchFavorites = async () => {
     if (!user?.user_id) return;
     try {
       const res = await AxiosInstance.get('/customer-favorites/', {
         headers: { 'X-User-Id': user.user_id }
       });
-      const favIds = (res.data.favorites || []).map((f: any) => typeof f.product === 'string' ? f.product : f.product?.id).filter(Boolean);
+      const favIds = (res.data.favorites || []).map((f: any) => 
+        typeof f.product === 'string' ? f.product : f.product?.id
+      ).filter(Boolean);
       setFavoriteIds(favIds);
     } catch (err) {
       console.error('Failed to fetch favorites:', err);
@@ -380,13 +424,17 @@ export default function Home({ loaderData }: any) {
     fetchFavorites();
   }, [user?.user_id]);
 
-  // Available condition options derived from products
-  const conditionOptions = Array.from(new Set(products.map((p: Product) => p.condition).filter(Boolean))) as string[];
+  // Condition options
+  const conditionOptions = Array.from(
+    new Set(products.map((p: Product) => p.condition).filter(Boolean))
+  ) as string[];
 
-  // Filter products locally (search + filters)
+  // Filter products
   const filteredProducts: Product[] = products.filter((product: Product) => {
     const q = searchTerm.trim().toLowerCase();
-    const matchesSearch = q === '' || product.name.toLowerCase().includes(q) || product.description.toLowerCase().includes(q);
+    const matchesSearch = q === '' || 
+      product.name.toLowerCase().includes(q) || 
+      product.description.toLowerCase().includes(q);
 
     // Price filter
     const p = Number(product.price || 0);
@@ -397,15 +445,24 @@ export default function Home({ loaderData }: any) {
     const matchesMax = max === null || (!isNaN(max) && p <= max);
 
     // Condition filter
-    const matchesCondition = selectedCondition === '' || (product.condition && product.condition === selectedCondition);
+    const matchesCondition = selectedCondition === '' || 
+      (product.condition && product.condition === selectedCondition);
 
-    // Category filter (product.category may be an object or string)
-    const prodCatId = (typeof product.category === 'string') ? product.category : (product.category && (product.category as any).id);
-    const matchesCategory = selectedCategory === '' || (prodCatId && prodCatId === selectedCategory);
+    // Category filter
+    let prodCatId;
+    if (typeof product.category === 'string') {
+      prodCatId = product.category;
+    } else if (product.category && typeof product.category === 'object') {
+      prodCatId = (product.category as any).id;
+    } else {
+      prodCatId = product.category_admin?.id;
+    }
+    
+    const matchesCategory = selectedCategory === '' || 
+      (prodCatId && prodCatId === selectedCategory);
 
     return matchesSearch && matchesMin && matchesMax && matchesCondition && matchesCategory;
   });
-
 
   return (
     <UserProvider user={user}>
@@ -416,7 +473,7 @@ export default function Home({ loaderData }: any) {
               <CompactSearchBar searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
             </div>
 
-            <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="flex items-center gap-3 w-full md:w-auto flex-wrap">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-gray-600">Price</label>
                 <input
@@ -452,20 +509,23 @@ export default function Home({ loaderData }: any) {
                 </select>
               </div>
 
-              <div>
-                <button
-                  onClick={() => { setMinPrice(''); setMaxPrice(''); setSelectedCondition(''); }}
-                  className="px-3 py-1 text-xs text-gray-600 border rounded hover:bg-gray-50"
-                >
-                  Clear filters
-                </button>
-              </div>
+              <button
+                onClick={() => { 
+                  setMinPrice(''); 
+                  setMaxPrice(''); 
+                  setSelectedCondition('');
+                  setSelectedCategory('');
+                  setSearchTerm('');
+                }}
+                className="px-3 py-1 text-xs text-gray-600 border rounded hover:bg-gray-50"
+              >
+                Clear all
+              </button>
             </div>
           </div>
 
           <h2 className="mb-2 text-sm font-semibold text-gray-700">Categories</h2>
           <div className="flex gap-2 overflow-x-auto py-1 mb-4">
-            {/* "All" category */}
             <div
               key="all"
               onClick={() => setSelectedCategory('')}
@@ -483,7 +543,8 @@ export default function Home({ loaderData }: any) {
                 <div 
                   key={cat.id}
                   onClick={() => setSelectedCategory(active ? '' : cat.id)}
-                  className={`flex-shrink-0 w-16 text-center cursor-pointer`}>
+                  className="flex-shrink-0 w-16 text-center cursor-pointer"
+                >
                   <div className={`w-12 h-12 mx-auto rounded-full flex items-center justify-center mb-1 ${active ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-700'}`}>
                     <span className="text-xs font-medium">
                       {cat.name.charAt(0)}

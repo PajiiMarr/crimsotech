@@ -150,6 +150,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   const session = await getSession(request.headers.get("Cookie"));
   const userId = session.get("userId");
 
+  console.log(userId)
+
   return {
     user: { 
       id: userId,

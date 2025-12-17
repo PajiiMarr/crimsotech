@@ -8714,13 +8714,21 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         )
 
         if user_id:
+            # Get product IDs that are in the user's cart and already ordered
+            ordered_product_ids = CartItem.objects.filter(
+                user_id=user_id,
+                is_ordered=True
+            ).values_list('product_id', flat=True)
+            
+            # Exclude products that are already ordered by this user
             queryset = queryset.exclude(
+                Q(id__in=ordered_product_ids) | 
                 Q(customer__customer__id=user_id) | 
                 Q(shop__customer__customer__id=user_id)
             )
 
         return queryset.order_by('-created_at')
-
+    
     def retrieve(self, request, pk=None):
         """Return a single product with SKU images mapped to variant options"""
         try:
@@ -8784,7 +8792,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
         return Response(data)
 
-    @action(detail=False, methods=['get'])
     @action(detail=False, methods=['get'])
     def get_sku_for_options(self, request):
         """Get SKU details for specific selected options"""
@@ -8946,7 +8953,7 @@ class CartListView(APIView):
             return Response({"error": "User not found"}, status=404)
         
         # Optimized query with prefetch for media files
-        cart_items = CartItem.objects.filter(user=user)\
+        cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
             .select_related("product", "product__shop")\
             .prefetch_related('product__productmedia_set')\
             .order_by('-added_at')
@@ -10134,6 +10141,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 # Store cart item ID for response
                 cart_item.is_ordered = True
                 cart_item_ids.append(str(cart_item.id))
+
+                cart_item.save()
             
             # IMPORTANT: Don't delete cart items immediately
             # Instead, mark them as purchased or keep them for reference
