@@ -10123,7 +10123,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 checkout = Checkout.objects.create(
                     order=order,
-                    cart_item=cart_item,  # ForeignKey to cart item
+                cart_item=cart_item,  # ForeignKey to cart item
                     voucher=voucher,
                     quantity=cart_item.quantity,
                     total_amount=checkout_total,
@@ -10132,6 +10132,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
                 
                 # Store cart item ID for response
+                cart_item.is_ordered = True
                 cart_item_ids.append(str(cart_item.id))
             
             # IMPORTANT: Don't delete cart items immediately
@@ -10539,7 +10540,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
                 {"error": "Failed to update shipping address", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             ) 
-
 class PurchasesBuyer(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def user_purchases(self, request):
@@ -10603,7 +10603,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 
                 order_data = {
                     'order_id': str(order.order),
-                    'status': order.status,
+                    'status': order.status,  # From Order table
                     'total_amount': str(order.total_amount),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
@@ -10668,7 +10668,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'quantity': checkout.quantity,
                             'price': str(product.price),
                             'subtotal': str(checkout.total_amount),
-                            'status': checkout.status,
+                            'status': order.status,  # CHANGED: Use order.status instead of checkout.status
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                             'product_images': product_images,
@@ -10678,7 +10678,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'name': checkout.voucher.name,
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
-                            'can_review': not has_reviewed and order.status == 'completed'
+                            'can_review': not has_reviewed and order.status == 'completed'  # Using order.status here
                         }
                         order_data['items'].append(item_data)
                     else:
@@ -10698,7 +10698,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'quantity': checkout.quantity,
                             'price': '0.00',
                             'subtotal': str(checkout.total_amount),
-                            'status': checkout.status,
+                            'status': order.status,  # CHANGED: Use order.status instead of checkout.status
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                             'product_images': [],
@@ -10725,7 +10725,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 {'error': 'Internal server error', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
