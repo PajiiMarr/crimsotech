@@ -100,8 +100,22 @@ export async function loader({ request, context}: Route.LoaderArgs) {
     };
 }
 
-const PAYMENT_METHOD_CHOICES = ['Cash on Delivery', 'GCash', 'PayMaya', 'PayPal'] as const;
 const DELIVERY_METHOD_CHOICES = ['Pickup from Store', 'Standard Delivery'] as const;
+
+// Payment method interface
+interface PaymentMethod {
+  id: string;
+  name: string | ((shippingMethod: string) => string);
+  description: string | ((shippingMethod: string) => string);
+  icon: React.ComponentType<any>;
+  iconColor: string;
+  requiresDetails: boolean;
+  placeholder?: {
+    name: string;
+    number: string;
+    email: string;
+  };
+}
 
 const CheckoutPage = () => {
   const loaderData = useLoaderData<typeof loader>();
@@ -110,7 +124,7 @@ const CheckoutPage = () => {
   const [formData, setFormData] = useState({
     agreeTerms: false,
     shippingMethod: "Pickup from Store" as typeof DELIVERY_METHOD_CHOICES[number],
-    paymentMethod: "Cash on Delivery" as typeof PAYMENT_METHOD_CHOICES[number],
+    paymentMethod: "Cash on Pickup",
     ewalletName: "",
     ewalletNumber: "",
     ewalletEmail: "",
@@ -141,8 +155,102 @@ const CheckoutPage = () => {
   const [defaultShippingAddress, setDefaultShippingAddress] = useState<any>(null);
   const [shopAddresses, setShopAddresses] = useState<any[]>([]);
 
+  const shippingMethods = [
+    {
+      id: "pickup",
+      name: "Pickup from Store" as typeof DELIVERY_METHOD_CHOICES[number],
+      description: "Collect your order directly from the seller's shop",
+      icon: Store,
+      delivery: "Ready in 1-2 hours",
+      cost: 0,
+    },
+    {
+      id: "standard",
+      name: "Standard Delivery" as typeof DELIVERY_METHOD_CHOICES[number],
+      description: "Door-to-door delivery service",
+      icon: Truck,
+      delivery: "2-4 business days",
+      cost: 50.00,
+    },
+  ];
+
+  const paymentMethods: PaymentMethod[] = [
+    {
+      id: "cod",
+      name: (shippingMethod: string) => shippingMethod === "Pickup from Store" ? "Cash on Pickup" : "Cash on Delivery",
+      description: (shippingMethod: string) => shippingMethod === "Pickup from Store" 
+        ? "Pay when you pick up your order" 
+        : "Pay when you receive your order",
+      icon: Wallet,
+      iconColor: "text-orange-600",
+      requiresDetails: false,
+    },
+    {
+      id: "gcash",
+      name: "GCash",
+      description: "Pay instantly via GCash",
+      icon: Smartphone,
+      iconColor: "text-orange-600",
+      requiresDetails: true,
+      placeholder: {
+        name: "GCash Account Name",
+        number: "GCash Mobile Number",
+        email: "GCash Registered Email",
+      }
+    },
+    {
+      id: "paymaya",
+      name: "PayMaya",
+      description: "Pay using PayMaya wallet",
+      icon: CreditCard,
+      iconColor: "text-orange-600",
+      requiresDetails: true,
+      placeholder: {
+        name: "PayMaya Account Name",
+        number: "PayMaya Mobile Number",
+        email: "PayMaya Registered Email",
+      }
+    },
+    {
+      id: "paypal",
+      name: "PayPal",
+      description: "Pay securely via PayPal",
+      icon: Globe,
+      iconColor: "text-orange-600",
+      requiresDetails: true,
+      placeholder: {
+        name: "PayPal Account Name",
+        number: "PayPal Phone Number",
+        email: "PayPal Email Address",
+      }
+    },
+  ];
+
+  // Helper functions for payment methods
+  const getPaymentMethodName = (method: PaymentMethod): string => {
+    if (typeof method.name === 'function') {
+      return method.name(formData.shippingMethod);
+    }
+    return method.name;
+  };
+
+  const getPaymentMethodDescription = (method: PaymentMethod): string => {
+    if (typeof method.description === 'function') {
+      return method.description(formData.shippingMethod);
+    }
+    return method.description;
+  };
+
   useEffect(() => {
     if (checkoutData?.success && checkoutData.checkout_items) {
+      const hasOrderedItems = checkoutData.checkout_items.some((item: any) => item.is_ordered === true);
+    
+      if (hasOrderedItems) {
+        setError("Some items in your cart have already been ordered. Please refresh your cart.");
+        setProducts([]);
+        return;
+      }
+      
       setProducts(checkoutData.checkout_items.map((item: any) => ({
         id: item.id,
         cartItemId: item.id,
@@ -153,6 +261,7 @@ const CheckoutPage = () => {
         shop: item.shop_name,
         shopId: item.shop_id,
         quantity: item.quantity,
+        is_ordered: item.is_ordered,
       })));
       
       if (checkoutData.summary) {
@@ -164,17 +273,14 @@ const CheckoutPage = () => {
         });
       }
       
-      // Set user purchase stats
       if (checkoutData.user_purchase_stats) {
         setUserPurchaseStats(checkoutData.user_purchase_stats);
       }
       
-      // Set available vouchers from API response
       if (checkoutData.available_vouchers) {
         setAvailableVouchers(checkoutData.available_vouchers);
       }
       
-      // Set shipping addresses
       if (checkoutData.shipping_addresses) {
         setShippingAddresses(checkoutData.shipping_addresses);
         if (checkoutData.default_shipping_address) {
@@ -186,7 +292,6 @@ const CheckoutPage = () => {
         }
       }
       
-      // Set shop addresses
       if (checkoutData.shop_addresses) {
         setShopAddresses(checkoutData.shop_addresses);
       }
@@ -195,7 +300,6 @@ const CheckoutPage = () => {
     }
   }, [checkoutData]);
 
-  // Fetch vouchers by amount when subtotal changes
   useEffect(() => {
     if (summary.subtotal > 0 && user?.userId) {
       fetchVouchersByAmount(summary.subtotal);
@@ -229,95 +333,28 @@ const CheckoutPage = () => {
     setFormData(prev => ({ ...prev, selectedAddressId: addressId }));
   };
 
-  const userAddress = {
-    name: [user?.firstName, user?.middleName, user?.lastName].filter(Boolean).join(' ') || user?.username,
-    street: user?.street,
-    barangay: user?.barangay,
-    city: user?.city,
-    province: user?.province,
-    zipCode: user?.zipCode,
-    country: user?.country,
-    phone: user?.contactNumber,
-    email: user?.email
-  };
-
-  const shippingMethods = [
-    {
-      id: "pickup",
-      name: "Pickup from Store" as typeof DELIVERY_METHOD_CHOICES[number],
-      description: "Collect your order directly from the seller's shop",
-      icon: Store,
-      delivery: "Ready in 1-2 hours",
-      cost: 0,
-    },
-    {
-      id: "standard",
-      name: "Standard Delivery" as typeof DELIVERY_METHOD_CHOICES[number],
-      description: "Door-to-door delivery service",
-      icon: Truck,
-      delivery: "2-4 business days",
-      cost: 50.00,
-    },
-  ];
-
-  const paymentMethods = [
-    {
-      id: "cod",
-      name: "Cash on Delivery" as typeof PAYMENT_METHOD_CHOICES[number],
-      description: "Pay when you receive your order",
-      icon: Wallet,
-      iconColor: "text-orange-600",
-      requiresDetails: false,
-    },
-    {
-      id: "gcash",
-      name: "GCash" as typeof PAYMENT_METHOD_CHOICES[number],
-      description: "Pay instantly via GCash",
-      icon: Smartphone,
-      iconColor: "text-orange-600",
-      requiresDetails: true,
-      placeholder: {
-        name: "GCash Account Name",
-        number: "GCash Mobile Number",
-        email: "GCash Registered Email",
-      }
-    },
-    {
-      id: "paymaya",
-      name: "PayMaya" as typeof PAYMENT_METHOD_CHOICES[number],
-      description: "Pay using PayMaya wallet",
-      icon: CreditCard,
-      iconColor: "text-orange-600",
-      requiresDetails: true,
-      placeholder: {
-        name: "PayMaya Account Name",
-        number: "PayMaya Mobile Number",
-        email: "PayMaya Registered Email",
-      }
-    },
-    {
-      id: "paypal",
-      name: "PayPal" as typeof PAYMENT_METHOD_CHOICES[number],
-      description: "Pay securely via PayPal",
-      icon: Globe,
-      iconColor: "text-orange-600",
-      requiresDetails: true,
-      placeholder: {
-        name: "PayPal Account Name",
-        number: "PayPal Phone Number",
-        email: "PayPal Email Address",
-      }
-    },
-  ];
-
   const handleInputChange = (field: string, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleShippingMethodChange = (methodName: string) => {
+    handleInputChange("shippingMethod", methodName);
+    
+    // Update payment method if it's Cash on Delivery/Pickup
+    if (formData.paymentMethod === "Cash on Delivery" || formData.paymentMethod === "Cash on Pickup") {
+      const codMethod = paymentMethods.find(m => m.id === "cod");
+      if (codMethod) {
+        const newPaymentMethod = getPaymentMethodName(codMethod);
+        handleInputChange("paymentMethod", newPaymentMethod);
+      }
+    }
   };
 
   const handlePaymentMethodChange = (methodId: string) => {
     const method = paymentMethods.find(m => m.id === methodId);
     if (method) {
-      handleInputChange("paymentMethod", method.name);
+      const methodName = getPaymentMethodName(method);
+      handleInputChange("paymentMethod", methodName);
       
       if (methodId === "cod") {
         setFormData(prev => ({
@@ -330,7 +367,6 @@ const CheckoutPage = () => {
     }
   };
 
-  // Voucher-related functions
   const handleApplyVoucher = async () => {
     if (!voucherCode.trim()) {
       setVoucherError("Please enter a voucher code");
@@ -354,7 +390,6 @@ const CheckoutPage = () => {
         setVoucherCode("");
         setShowVoucherInput(false);
         
-        // Update summary with discount
         const newDiscount = voucher.discount_amount;
         const deliveryCost = formData.shippingMethod === "Pickup from Store" ? 0 : 50.00;
         const newTotal = summary.subtotal + deliveryCost - newDiscount;
@@ -380,7 +415,6 @@ const CheckoutPage = () => {
     setVoucherCode("");
     setVoucherError(null);
     
-    // Recalculate total without discount
     const deliveryCost = formData.shippingMethod === "Pickup from Store" ? 0 : 50.00;
     const newTotal = summary.subtotal + deliveryCost;
     
@@ -395,7 +429,6 @@ const CheckoutPage = () => {
     setLoading(true);
     setError(null);
 
-    // Check if shipping address is selected
     if (!formData.selectedAddressId) {
       setError("Please select a shipping address");
       setLoading(false);
@@ -406,12 +439,12 @@ const CheckoutPage = () => {
       const requestBody = {
         user_id: user.userId,
         selected_ids: products.map(p => p.cartItemId),
-        shipping_address_id: formData.selectedAddressId, // Use address ID
+        shipping_address_id: formData.selectedAddressId,
         payment_method: formData.paymentMethod,
         shipping_method: formData.shippingMethod,
         voucher_id: appliedVoucher?.id || null,
         remarks: formData.remarks.substring(0, 500) || null,
-        ...(formData.paymentMethod !== 'Cash on Delivery' && {
+        ...(formData.paymentMethod !== "Cash on Delivery" && formData.paymentMethod !== "Cash on Pickup" && {
           ewallet_details: {
             name: formData.ewalletName,
             number: formData.ewalletNumber,
@@ -423,7 +456,7 @@ const CheckoutPage = () => {
       const response = await AxiosInstance.post('/checkout-order/create_order/', requestBody);
 
       if (response.data.success) {
-        window.location.href = `/orders/${response.data.order_id}`;
+        window.location.href = `/order-successful/${response.data.order_id}`;
       } else {
         throw new Error(response.data.error || 'Failed to create order');
       }
@@ -442,7 +475,9 @@ const CheckoutPage = () => {
   const discount = summary.discount;
   const total = subtotal + shippingCost - discount;
 
-  const selectedPaymentMethod = paymentMethods.find(method => method.name === formData.paymentMethod);
+  const selectedPaymentMethod = paymentMethods.find(method => 
+    getPaymentMethodName(method) === formData.paymentMethod
+  );
   const showEwalletFields = selectedPaymentMethod?.requiresDetails;
 
   const isEwalletFieldsValid = !showEwalletFields || (
@@ -500,7 +535,6 @@ const CheckoutPage = () => {
     return shippingAddresses.find(addr => addr.id === formData.selectedAddressId);
   };
 
-  // Get shop addresses for the current products
   const getShopAddressesForProducts = () => {
     if (products.length === 0 || shopAddresses.length === 0) return [];
     
@@ -510,7 +544,6 @@ const CheckoutPage = () => {
     );
   };
 
-  // Get the main shop address (for pickup display)
   const getMainShopAddress = () => {
     const shopAddressesForProducts = getShopAddressesForProducts();
     if (shopAddressesForProducts.length > 0) {
@@ -519,7 +552,6 @@ const CheckoutPage = () => {
     return null;
   };
 
-  // Render the address display based on shipping method
   const renderAddressDisplay = () => {
     if (formData.shippingMethod === "Pickup from Store") {
       const shopAddress = getMainShopAddress();
@@ -544,7 +576,6 @@ const CheckoutPage = () => {
         );
       }
     } else {
-      // Standard Delivery - show shipping address
       if (formData.selectedAddressId && getSelectedAddress()) {
         const selectedAddress = getSelectedAddress();
         return (
@@ -570,7 +601,6 @@ const CheckoutPage = () => {
     }
   };
 
-  // Check if shipping address is required for the current shipping method
   const isShippingAddressRequired = () => {
     return formData.shippingMethod === "Standard Delivery";
   };
@@ -587,16 +617,20 @@ const CheckoutPage = () => {
     );
   }
 
-  if (checkoutData?.success === false || products.length === 0) {
+  const hasOrderedItems = checkoutData?.checkout_items?.some((item: any) => item.is_ordered === true);
+
+  if (checkoutData?.success === false || products.length === 0 || hasOrderedItems) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center max-w-md">
           <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">
-            {checkoutData?.error ? 'Failed to Load Items' : 'No Items Selected'}
+            {hasOrderedItems ? 'Items Already Ordered' : 
+            checkoutData?.error ? 'Failed to Load Items' : 'No Items Selected'}
           </h2>
           <p className="text-gray-600 mb-4">
-            {checkoutData?.error || 'Please add items to your cart first'}
+            {hasOrderedItems ? 'Some items in your cart have already been purchased. Please remove them from your cart.' : 
+            checkoutData?.error || 'Please add items to your cart first'}
           </p>
           
           <Button onClick={() => window.location.href = '/cart'}>
@@ -675,7 +709,7 @@ const CheckoutPage = () => {
                   </div>
                 ))}
               </div>
-
+            </div>
 
             <div className="bg-white rounded-xl shadow-sm border p-6 mt-5">
               <div className="flex items-center gap-3 mb-6">
@@ -699,7 +733,7 @@ const CheckoutPage = () => {
                         type="radio"
                         name="shippingMethod"
                         checked={formData.shippingMethod === method.name}
-                        onChange={() => handleInputChange("shippingMethod", method.name)}
+                        onChange={() => handleShippingMethodChange(method.name)}
                       />
                       <label
                         htmlFor={`shipping-${method.id}`}
@@ -725,133 +759,127 @@ const CheckoutPage = () => {
               </div>
             </div>
 
-              {/* Shipping Address Section - Updated to show/hide based on shipping method */}
-              {isShippingAddressRequired() && (
-                <div className="mt-8 p-4 border rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-900">Delivery Address</h3>
+            {isShippingAddressRequired() && (
+              <div className="mt-8 p-4 border rounded-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-gray-900">Delivery Address</h3>
+                  </div>
+                  <Link to="/shipping-address">
+                    <Button variant="ghost" size="sm" className="flex items-center gap-1">
+                      <Edit className="h-3 w-3" />
+                      Manage
+                    </Button>
+                  </Link>
+                </div>
+
+                {shippingAddresses && shippingAddresses.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      {shippingAddresses.map((address) => (
+                        <div
+                          key={address.id}
+                          className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                            formData.selectedAddressId === address.id
+                              ? 'border-orange-500 bg-orange-50'
+                              : 'border-gray-200 hover:bg-orange-50'
+                          }`}
+                          onClick={() => handleAddressSelect(address.id)}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="font-medium">{address.recipient_name}</span>
+                                {address.is_default && (
+                                  <span className="px-2 py-0.5 bg-orange-100 text-orange-800 text-xs rounded-full">
+                                    Default
+                                  </span>
+                                )}
+                                <span className="text-xs text-gray-500">{address.recipient_phone}</span>
+                              </div>
+                              <p className="text-sm text-gray-600">{address.full_address}</p>
+                              {address.instructions && (
+                                <p className="text-xs text-gray-500 mt-1">
+                                  📝 {address.instructions}
+                                </p>
+                              )}
+                            </div>
+                            <div className="ml-2">
+                              <div className={`h-4 w-4 rounded-full border-2 ${
+                                formData.selectedAddressId === address.id
+                                  ? 'border-orange-500 bg-orange-500'
+                                  : 'border-gray-300'
+                              }`}></div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
+                    
+                    {formData.selectedAddressId && (
+                      <div className="p-3 bg-white border border-orange-200 rounded-lg">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="font-medium text-orange-700">Selected Address</span>
+                        </div>
+                        <div className="text-sm">
+                          <p className="font-medium">{getSelectedAddress()?.recipient_name}</p>
+                          <p className="text-gray-600">{getSelectedAddress()?.full_address}</p>
+                          <p className="text-gray-500 mt-1">{getSelectedAddress()?.recipient_phone}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <div className="p-3 bg-yellow-50 rounded-full inline-flex mb-3">
+                      <MapPin className="h-6 w-6 text-yellow-600" />
+                    </div>
+                    <h4 className="font-medium text-gray-900 mb-2">No Shipping Addresses</h4>
+                    <p className="text-sm text-gray-600 mb-4">
+                      You need to add a shipping address for delivery orders.
+                    </p>
                     <Link to="/shipping-address">
-                      <Button variant="ghost" size="sm" className="flex items-center gap-1">
-                        <Edit className="h-3 w-3" />
-                        Manage
+                      <Button className="w-full">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Shipping Address
                       </Button>
                     </Link>
                   </div>
+                )}
+              </div>
+            )}
 
-                  {shippingAddresses && shippingAddresses.length > 0 ? (
-                    <div className="space-y-3">
-                      {/* Address Selection */}
-                      <div className="space-y-2">
-                        {shippingAddresses.map((address) => (
-                          <div
-                            key={address.id}
-                            className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                              formData.selectedAddressId === address.id
-                                ? 'border-orange-500 bg-orange-50'
-                                : 'border-gray-200 hover:bg-orange-50'
-                            }`}
-                            onClick={() => handleAddressSelect(address.id)}
-                          >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="font-medium">{address.recipient_name}</span>
-                                  {address.is_default && (
-                                    <span className="px-2 py-0.5 bg-orange-100 text-orange-800 text-xs rounded-full">
-                                      Default
-                                    </span>
-                                  )}
-                                  <span className="text-xs text-gray-500">{address.recipient_phone}</span>
-                                </div>
-                                <p className="text-sm text-gray-600">{address.full_address}</p>
-                                {address.instructions && (
-                                  <p className="text-xs text-gray-500 mt-1">
-                                    📝 {address.instructions}
-                                  </p>
-                                )}
-                              </div>
-                              <div className="ml-2">
-                                <div className={`h-4 w-4 rounded-full border-2 ${
-                                  formData.selectedAddressId === address.id
-                                    ? 'border-orange-500 bg-orange-500'
-                                    : 'border-gray-300'
-                                }`}></div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      
-                      {/* Selected Address Display */}
-                      {formData.selectedAddressId && (
-                        <div className="p-3 bg-white border border-orange-200 rounded-lg">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="font-medium text-orange-700">Selected Address</span>
-                          </div>
-                          <div className="text-sm">
-                            <p className="font-medium">{getSelectedAddress()?.recipient_name}</p>
-                            <p className="text-gray-600">{getSelectedAddress()?.full_address}</p>
-                            <p className="text-gray-500 mt-1">{getSelectedAddress()?.recipient_phone}</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-center py-6">
-                      <div className="p-3 bg-yellow-50 rounded-full inline-flex mb-3">
-                        <MapPin className="h-6 w-6 text-yellow-600" />
-                      </div>
-                      <h4 className="font-medium text-gray-900 mb-2">No Shipping Addresses</h4>
-                      <p className="text-sm text-gray-600 mb-4">
-                        You need to add a shipping address for delivery orders.
-                      </p>
-                      <Link to="/shipping-address">
-                        <Button className="w-full">
-                          <Plus className="h-4 w-4 mr-2" />
-                          Add Shipping Address
-                        </Button>
-                      </Link>
-                    </div>
-                  )}
+            {formData.shippingMethod === "Pickup from Store" && shopAddresses.length > 0 && (
+              <div className="mt-8 p-4 border rounded-lg">
+                <div className="flex items-center gap-2 pb-3 border-b">
+                  <h3 className="font-semibold text-gray-900">Pickup Location</h3>
                 </div>
-              )}
-
-              {/* Pickup Location Info - Only show for pickup method */}
-              {formData.shippingMethod === "Pickup from Store" && shopAddresses.length > 0 && (
-                <div className="mt-8 p-4 border rounded-lg">
-                  <div className="flex items-center gap-2 pb-3 border-b">
-                    <h3 className="font-semibold text-gray-900">Pickup Location</h3>
-                  </div>
-                  
-                  <div className="space-y-3">
-                    {getShopAddressesForProducts().map((shop, index) => (
-                      <div key={index} className="p-3 bg-white">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="font-medium ">{shop.shop_name}</span>
-                        </div>
-                        <div className="text-sm">
-                          <p className="text-gray-600">{shop.shop_address}</p>
-                          {shop.shop_contact_number && (
-                            <p className="text-gray-500 mt-1">Contact: {shop.shop_contact_number}</p>
-                          )}
-                        </div>
+                
+                <div className="space-y-3">
+                  {getShopAddressesForProducts().map((shop, index) => (
+                    <div key={index} className="p-3 bg-white">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="font-medium ">{shop.shop_name}</span>
                       </div>
-                    ))}
-                  </div>
-                  
-                  <div className="p-3 bg-orange-100 rounded-md">
-                    <p className="text-xs">
-                      <span className="font-medium">Pickup Instructions:</span> Orders are typically ready within 1-2 hours. 
-                            Please bring your order confirmation when picking up. Please check with the shop for exact pickup times. 
-                    </p>
-                  </div>
+                      <div className="text-sm">
+                        <p className="text-gray-600">{shop.shop_address}</p>
+                        {shop.shop_contact_number && (
+                          <p className="text-gray-500 mt-1">Contact: {shop.shop_contact_number}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              )}
-            </div>
+                
+                <div className="p-3 bg-orange-100 rounded-md">
+                  <p className="text-xs">
+                    <span className="font-medium">Pickup Instructions:</span> Orders are typically ready within 1-2 hours. 
+                          Please bring your order confirmation when picking up. Please check with the shop for exact pickup times. 
+                  </p>
+                </div>
+              </div>
+            )}
 
-            {/* Enhanced Voucher Section */}
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="p-2 bg-orange-50 rounded-lg">
@@ -944,7 +972,6 @@ const CheckoutPage = () => {
                 </div>
               ) : null}
 
-              {/* Enhanced Available Vouchers Section */}
               {availableVouchers.length > 0 && (
                 <div className="mt-8">
                   <div className="flex items-center justify-between mb-4">
@@ -959,7 +986,6 @@ const CheckoutPage = () => {
                     </div>
                   </div>
 
-                  {/* Voucher Categories Tabs */}
                   <div className="flex flex-wrap gap-2 mb-4">
                     <Button
                       variant={activeVoucherCategory === "all" ? "default" : "outline"}
@@ -982,7 +1008,6 @@ const CheckoutPage = () => {
                     ))}
                   </div>
 
-                  {/* Voucher List */}
                   <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
                     {activeVoucherCategory === "all" ? (
                       availableVouchers.map((category: any, catIndex: number) => (
@@ -1158,7 +1183,6 @@ const CheckoutPage = () => {
               )}
             </div>
 
-
             <div className="bg-white rounded-xl shadow-sm border p-6">
               <h3 className="font-semibold text-gray-900 mb-3">Order Remarks (Optional)</h3>
               <Input
@@ -1188,6 +1212,9 @@ const CheckoutPage = () => {
               <div className="space-y-3">
                 {paymentMethods.map((method) => {
                   const Icon = method.icon;
+                  const methodName = getPaymentMethodName(method);
+                  const methodDescription = getPaymentMethodDescription(method);
+                  
                   return (
                     <div key={method.id} className="relative">
                       <input
@@ -1195,7 +1222,7 @@ const CheckoutPage = () => {
                         id={`payment-${method.id}`}
                         type="radio"
                         name="paymentMethod"
-                        checked={formData.paymentMethod === method.name}
+                        checked={formData.paymentMethod === methodName}
                         onChange={() => handlePaymentMethodChange(method.id)}
                       />
                       <label
@@ -1206,8 +1233,8 @@ const CheckoutPage = () => {
                           <Icon className={`h-5 w-5 text-orange-600`} />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">{method.name}</h3>
-                          <p className="text-xs text-gray-500">{method.description}</p>
+                          <h3 className="font-medium text-gray-900">{methodName}</h3>
+                          <p className="text-xs text-gray-500">{methodDescription}</p>
                         </div>
                         <div className="h-4 w-4 rounded-full border-2 border-gray-300 peer-checked:border-orange-500 peer-checked:bg-orange-500 peer-checked:border-4"></div>
                       </label>
@@ -1222,11 +1249,11 @@ const CheckoutPage = () => {
                     <div className="p-1.5 bg-white rounded-md">
                       <Smartphone className="h-4 w-4 text-orange-600" />
                     </div>
-                    <h3 className="font-semibold text-orange-900">{selectedPaymentMethod?.name} Details</h3>
+                    <h3 className="font-semibold text-orange-900">{getPaymentMethodName(selectedPaymentMethod)} Details</h3>
                   </div>
                   
                   <p className="text-sm text-orange-700 mb-4">
-                    Please provide your {selectedPaymentMethod?.name} account information for payment verification.
+                    Please provide your  {getPaymentMethodName(selectedPaymentMethod)} account information for payment verification.
                   </p>
 
                   <div className="space-y-4">
@@ -1320,7 +1347,6 @@ const CheckoutPage = () => {
                   </span>
                 </div>
                 
-                
                 <div className="border-t pt-4 mt-3">
                   <div className="flex justify-between items-center">
                     <span className="font-semibold text-gray-900">Total</span>
@@ -1370,9 +1396,9 @@ const CheckoutPage = () => {
                     Processing Order...
                   </div>
                 ) : (
-                  formData.paymentMethod === "Cash on Delivery" 
+                  ["Cash on Pickup", "Cash on Delivery"].includes(formData.paymentMethod)
                     ? `Place Order • ₱${total.toFixed(2)}` 
-                    : `Pay with ${selectedPaymentMethod?.name} • ₱${total.toFixed(2)}`
+                    : `Pay with ${formData.paymentMethod} • ₱${total.toFixed(2)}`
                 )}
               </Button>
 
@@ -1394,15 +1420,13 @@ const CheckoutPage = () => {
               {showEwalletFields && !isEwalletFieldsValid && (
                 <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
                   <p className="text-xs text-amber-700">
-                    Please fill in all required {selectedPaymentMethod?.name} details to proceed.
+                    Please fill in all required  {getPaymentMethodName(selectedPaymentMethod)} details to proceed.
                   </p>
                 </div>
               )}
 
-              {/* Dynamic address display based on shipping method */}
               {renderAddressDisplay()}
 
-              {/* Show warning if shipping address is required but not selected */}
               {isShippingAddressRequired() && !formData.selectedAddressId && shippingAddresses.length > 0 && (
                 <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
                   <p className="text-xs text-red-700">

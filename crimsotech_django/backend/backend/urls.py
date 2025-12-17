@@ -48,6 +48,7 @@ router.register(r'seller-order-list', SellerOrderList, basename='seller-order-li
 router.register(r'checkout-order', CheckoutOrder, basename='checkout-order')
 router.register(r'purchases-buyer', PurchasesBuyer, basename='purchases-buyer')  # Add this line
 router.register(r'shipping-address', ShippingAddressViewSet, basename='shipping-address')  # Add this line
+router.register(r'order-sucessful', OrderSuccessfull, basename='order-successful')
 
 
 urlpatterns = [

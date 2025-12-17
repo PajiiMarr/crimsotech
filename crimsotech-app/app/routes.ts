@@ -50,6 +50,7 @@ export default [
 
     //shipping addresses add
     route('shipping-address', 'routes/customer/shipping-address.tsx'),
+    route('order-successful/:orderId', 'components/customer/order-successful.tsx'),
     
     
     
