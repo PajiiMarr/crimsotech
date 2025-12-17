@@ -217,7 +217,7 @@ export default function ViewShop() {
   // Helpers copied from Favorites compact card to ensure consistent UI
   const getImageUrl = (url?: string | null) => {
     const baseUrl = import.meta.env.VITE_MEDIA_URL || '';
-    if (!url) return '/images/placeholder-product.jpg';
+    if (!url) return '/crimsonity.png';
     if (url.startsWith('http')) return url;
     if (url.startsWith('/')) return `${baseUrl}${url}`;
     return `${baseUrl}/media/${url}`;
@@ -228,7 +228,7 @@ export default function ViewShop() {
     if (product?.media_files && product.media_files.length > 0) return getImageUrl(product.media_files[0].file_data);
     if (product?.image) return getImageUrl(product.image);
     if (product?.shop?.shop_picture) return getImageUrl(product.shop.shop_picture);
-    return '/images/placeholder-product.jpg';
+    return '/crimsonity.png';
   };
 
   const CompactProductCard = ({ product }: { product: any }) => {

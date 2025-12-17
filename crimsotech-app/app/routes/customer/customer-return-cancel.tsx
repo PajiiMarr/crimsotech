@@ -5,6 +5,7 @@ import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { useNavigate } from 'react-router';
 import { useState } from 'react';
+import { useToast } from '~/hooks/use-toast';
 import { Input } from '~/components/ui/input';
 import { 
   Card, 
@@ -192,42 +193,59 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         // Transform backend data to match our frontend interface
         // The viewset returns a list of refunds (serialized), so handle both wrapped and bare lists
         const serverList = data.refunds || data.results || data || [];
-        refundRequests = serverList.map((refund: any) => ({
-          refund: refund.refund || refund.id,
-          order_id: refund.order?.order_number || refund.order_id || refund.order?.order || 'N/A',
-          order_ref: refund.order?.id || refund.order_ref,
-          product_name: refund.order_item?.product?.name || refund.product_name || (refund.order_item?.product?.name) || 'Product',
-          shop_name: refund.order?.shop?.name || refund.shop_name || refund.order?.shop?.name || 'Shop',
-          color: refund.order_item?.color || refund.color || '',
-          quantity: refund.order_item?.quantity || refund.quantity || 1,
-          status: refund.status,
-          payment_status: refund.payment_status,
-          requested_at: refund.requested_at,
-          total_refund_amount: parseFloat(refund.total_refund_amount) || 0,
-          reason: refund.reason,
-          preferred_refund_method: refund.preferred_refund_method,
-          final_refund_method: refund.final_refund_method,
-          evidence_count: refund.evidence_count || (refund.refundmedias_count || 0),
-          image: refund.order_item?.product?.image || refund.image || '/images/placeholder-product.jpg',
-          last_updated: refund.last_updated || refund.updated_at,
-          request_number: refund.request_number,
-          tracking_number: refund.tracking_number,
-          logistic_service: refund.logistic_service,
-          seller_response: refund.seller_response,
-          processed_by: refund.processed_by?.username || refund.processed_by,
-          processed_at: refund.processed_at,
-          seller_suggested_method: refund.seller_suggested_method,
-          seller_suggested_amount: refund.seller_suggested_amount ? parseFloat(refund.seller_suggested_amount) : undefined,
-          seller_suggested_reason: refund.seller_suggested_reason,
-          negotiation_deadline: refund.negotiation_deadline,
-          is_negotiation_expired: refund.is_negotiation_expired,
-          dispute_filed_at: refund.dispute_filed_at,
-          dispute_reason: refund.dispute_reason,
-          admin_decision: refund.admin_decision,
-          admin_response: refund.admin_response,
-          resolved_at: refund.resolved_at,
-          customer_note: refund.customer_note,
-        }));
+        refundRequests = serverList.map((refund: any) => {
+          // Try to read product/shop from different possible payload shapes
+          const firstItem = Array.isArray(refund.order_items) && refund.order_items.length ? refund.order_items[0] : (refund.order_item || null);
+          const productFromItem = firstItem?.product || null;
+          const shopFromItem = productFromItem?.shop || null;
+
+          const productName = productFromItem?.name || refund.product_name || refund.product?.name || 'Product';
+          const shopName = shopFromItem?.name || refund.shop_name || refund.order?.shop?.name || 'Shop';
+
+          // Image: prefer SKU/product image, fallback to placeholder
+          let imageUrl = '/crimsonity.png';
+          if (productFromItem) {
+            imageUrl = productFromItem.image || productFromItem.primary_image || productFromItem.media?.[0] || imageUrl;
+          }
+          imageUrl = refund.image || refund.image_url || imageUrl;
+
+          return {
+            refund: refund.refund || refund.id,
+            order_id: refund.order?.order_number || refund.order_id || refund.order?.order || 'N/A',
+            order_ref: refund.order?.id || refund.order_ref,
+            product_name: productName,
+            shop_name: shopName,
+            color: firstItem?.color || refund.color || '',
+            quantity: firstItem?.quantity || refund.quantity || 1,
+            status: refund.status,
+            payment_status: refund.payment_status,
+            requested_at: refund.requested_at,
+            total_refund_amount: parseFloat(refund.total_refund_amount) || 0,
+            reason: refund.reason,
+            preferred_refund_method: refund.preferred_refund_method,
+            final_refund_method: refund.final_refund_method,
+            evidence_count: refund.evidence_count || (refund.refundmedias_count || 0),
+            image: imageUrl,
+            last_updated: refund.last_updated || refund.updated_at,
+            request_number: refund.request_number,
+            tracking_number: refund.tracking_number,
+            logistic_service: refund.logistic_service,
+            seller_response: refund.seller_response,
+            processed_by: refund.processed_by?.username || refund.processed_by,
+            processed_at: refund.processed_at,
+            seller_suggested_method: refund.seller_suggested_method,
+            seller_suggested_amount: refund.seller_suggested_amount ? parseFloat(refund.seller_suggested_amount) : undefined,
+            seller_suggested_reason: refund.seller_suggested_reason,
+            negotiation_deadline: refund.negotiation_deadline,
+            is_negotiation_expired: refund.is_negotiation_expired,
+            dispute_filed_at: refund.dispute_filed_at,
+            dispute_reason: refund.dispute_reason,
+            admin_decision: refund.admin_decision,
+            admin_response: refund.admin_response,
+            resolved_at: refund.resolved_at,
+            customer_note: refund.customer_note,
+          };
+        });
         
         console.log("✅ Successfully transformed", refundRequests.length, "refund requests");
         
@@ -515,6 +533,7 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
 
   const getActionButtons = (request: RefundRequest) => {
     const actions = [];
+    const { toast } = useToast();
     
     // View Details button for all statuses
     actions.push(
@@ -524,7 +543,15 @@ export default function RefundReturn({ loaderData }: Route.ComponentProps) {
         variant="ghost"
         className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
         title="View Details"
-        onClick={() => navigate(`/view-customer-return-cancel/${request.refund}?status=${request.status}`)}
+        onClick={() => {
+          const id = String(request.refund || '');
+          // Basic sanity check to avoid filename-like ids (e.g., crimsonity.png)
+          if (/\./.test(id)) {
+            toast({ title: 'Invalid request', description: 'Invalid refund identifier', variant: 'destructive' });
+            return;
+          }
+          navigate(`/view-customer-return-cancel/${encodeURIComponent(id)}?status=${request.status}`);
+        }}
       >
         <Eye className="w-3 h-3" />
       </Button>

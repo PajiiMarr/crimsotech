@@ -625,14 +625,6 @@ class ProductSKUSerializer(serializers.ModelSerializer):
                 continue
         return None
     
-class RefundSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Refund
-        fields = '__all__'
-        read_only_fields = [
-            'refund', 'request_number', 'requested_at', 'processed_at',
-            'dispute_filed_at', 'resolved_at', 'negotiation_deadline'
-        ]
 
 class RefundCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -641,3 +633,193 @@ class RefundCreateSerializer(serializers.ModelSerializer):
                   'total_refund_amount', 'customer_note', 'requested_by']
         
         
+class RefundWalletSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundWallet
+        fields = '__all__'
+
+class RefundBankSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundBank
+        fields = '__all__'
+
+class RefundRemittanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundRemittance
+        fields = '__all__'
+
+class UserPaymentMethodSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserPaymentMethod
+        fields = '__all__'
+
+class RefundSerializer(serializers.ModelSerializer):
+    wallet_details = RefundWalletSerializer(read_only=True)
+    bank_details = RefundBankSerializer(read_only=True)
+    remittance_details = RefundRemittanceSerializer(read_only=True)
+    payment_details = serializers.SerializerMethodField()
+    
+    # === ADD THESE PROPERTIES ===
+    requires_return = serializers.BooleanField(read_only=True)
+    is_partial_refund = serializers.BooleanField(read_only=True)
+    refund_category_display = serializers.CharField(
+        source='get_refund_category_display', 
+        read_only=True
+    )
+    # ============================
+    
+    class Meta:
+        model = Refund
+        fields = '__all__'
+        read_only_fields = [
+            'refund', 'request_number', 'requested_at', 'processed_at',
+            'dispute_filed_at', 'resolved_at', 'negotiation_deadline',
+            'approved_at', 'return_deadline', 'refund_category'  # Add refund_category here
+        ]
+    
+    def get_payment_details(self, obj):
+        """Get the payment details based on selected method"""
+        try:
+            if 'wallet' in obj.preferred_refund_method.lower():
+                return RefundWalletSerializer(obj.wallet_details).data
+            elif 'bank' in obj.preferred_refund_method.lower():
+                return RefundBankSerializer(obj.bank_details).data
+            elif 'money back' in obj.preferred_refund_method.lower() or 'remittance' in obj.preferred_refund_method.lower():
+                return RefundRemittanceSerializer(obj.remittance_details).data
+        except:
+            return None
+    
+    # === OPTIONAL: Add validation for refund creation ===
+    def validate_preferred_refund_method(self, value):
+        """Validate that preferred_refund_method is one of the allowed options"""
+        allowed_methods = [
+            'Return Item & Refund to Wallet',
+            'Return Item & Bank Transfer',
+            'Return Item & Store Voucher',
+            'Return & Replacement',
+            'Return Item & Money Back',
+            'Keep Item & Partial Refund to Wallet',
+            'Keep Item & Partial Bank Transfer',
+            'Keep Item & Partial Store Voucher',
+            'Keep Item & Partial Money Back'
+        ]
+        
+        if value not in allowed_methods:
+            raise serializers.ValidationError(
+                f"Invalid refund method. Allowed methods: {', '.join(allowed_methods)}"
+            )
+        return value
+
+
+class ReturnWaybillSerializer(serializers.ModelSerializer):
+    """Serializer for ReturnWaybill model"""
+    
+    # Read-only fields for computed data
+    return_items = serializers.SerializerMethodField(read_only=True)
+    customer_info = serializers.SerializerMethodField(read_only=True)
+    shop_info = serializers.SerializerMethodField(read_only=True)
+    
+    class Meta:
+        model = ReturnWaybill
+        fields = [
+            'id', 'refund', 'shop', 
+            'waybill_number', 'logistic_service', 'tracking_number', 'status',
+            'return_instructions', 'created_at', 'updated_at', 'printed_at',
+            'shipped_at', 'received_at', 'return_items', 'customer_info', 'shop_info'
+        ]
+        read_only_fields = ['id', 'waybill_number', 'created_at', 'updated_at', 'printed_at', 'shipped_at', 'received_at']
+    
+    def get_return_items(self, obj):
+        """Get the items being returned"""
+        return obj.return_items
+    
+    def get_customer_info(self, obj):
+        """Get customer information for the return"""
+        return obj.customer_info
+    
+    def get_shop_info(self, obj):
+        """Get shop information for the return"""
+        return {
+            'name': obj.shop_name,
+            'contact_number': obj.shop_contact_number,
+            'address': obj.shop_address
+        }
+    
+    def create(self, validated_data):
+        """Create a new ReturnWaybill with shop information populated"""
+        shop = validated_data.get('shop')
+        if shop:
+            # Populate shop information from the shop instance
+            validated_data['shop_name'] = shop.name
+            validated_data['shop_contact_number'] = getattr(shop, 'contact_number', '')
+            # Build address from shop fields
+            address_parts = [
+                getattr(shop, 'street', ''),
+                getattr(shop, 'barangay', ''),
+                getattr(shop, 'city', ''),
+                getattr(shop, 'province', ''),
+                "Philippines"
+            ]
+            validated_data['shop_address'] = ", ".join(filter(None, address_parts))
+        
+        return super().create(validated_data)
+    
+
+
+# serializers.py
+class DisputeEvidenceSerializer(serializers.ModelSerializer):
+    """Serializer for dispute evidence"""
+    file_url = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.CharField(source='uploaded_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = DisputeEvidence
+        fields = [
+            'id', 'dispute', 'uploaded_by', 'uploaded_by_name', 
+            'file', 'file_url', 'created_at'
+        ]
+        read_only_fields = ['created_at']
+    
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if request and obj.file:
+            return request.build_absolute_uri(obj.file.url)
+        return None
+
+
+class DisputeRequestSerializer(serializers.ModelSerializer):
+    """Serializer for dispute requests"""
+    evidence = DisputeEvidenceSerializer(many=True, read_only=True)
+    filed_by_name = serializers.CharField(source='filed_by.get_full_name', read_only=True)
+    order_number = serializers.CharField(source='order.order', read_only=True)
+    refund_request_number = serializers.CharField(source='refund.request_number', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = DisputeRequest
+        fields = [
+            'id', 'order', 'order_number', 'refund', 'refund_request_number',
+            'filed_by', 'filed_by_name', 'reason', 'description', 'status',
+            'outcome', 'awarded_amount', 'admin_note', 'created_at', 
+            'resolved_at', 'evidence'
+        ]
+        read_only_fields = [
+            'filed_by', 'created_at', 'resolved_at', 'status', 'outcome',
+            'admin_note', 'awarded_amount'
+        ]
+    
+    def create(self, validated_data):
+        # Auto-set filed_by to current user
+        validated_data['filed_by'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class DisputeRequestCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating dispute requests (with validation)"""
+    class Meta:
+        model = DisputeRequest
+        fields = ['order', 'refund', 'filed_by', 'reason', 'description']
+    
+    def validate(self, data):
+        # Validation is handled in the ViewSet, so we skip it here
+        # to avoid issues with request.user not being set
+        return data

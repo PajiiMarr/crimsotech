@@ -46,6 +46,7 @@ import {
   Banknote, 
   MessageSquare,
   X, 
+  AlertCircle,
 } from 'lucide-react';
 // Mock Dialog components for completeness - replace with actual UI library imports
 const Dialog = (props: any) => <div {...props}>{props.children}</div>;
@@ -128,6 +129,7 @@ export async function loader({ params }: Route.LoaderArgs) {
     requested_at: "2024-01-20T10:30:00Z",
     refund_amount: 45000,
     preferred_refund_method: "Return Item and Refund to Wallet",
+    buyer_notified_at: null, // null means seller hasn't notified buyer yet
     attachments: [
       // Mocked attachments are provided by the loader/backend
       { id: 1, name: "defect1.jpg", url: "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400&h=300&fit=crop", type: "image" },
@@ -533,7 +535,9 @@ function ApprovedStatusUI({ refundDetails, formatDate, formatCurrency, handleSta
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Next Step:</span>
-              <span className="font-medium text-green-600">Process refund</span>
+              <span className="font-medium text-green-600">
+                {refundDetails.buyer_notified_at ? 'Process refund' : 'Waiting for seller notification'}
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -543,10 +547,21 @@ function ApprovedStatusUI({ refundDetails, formatDate, formatCurrency, handleSta
             <CardTitle className="text-sm">Process Options</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {!refundDetails.buyer_notified_at && (
+              <Alert className="bg-amber-50 border-amber-200">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <AlertTitle className="text-amber-800">Waiting for Seller Notification</AlertTitle>
+                <AlertDescription className="text-amber-700">
+                  The seller needs to notify you before you can proceed with the refund process.
+                </AlertDescription>
+              </Alert>
+            )}
+
             <Button
               className="w-full bg-blue-600 hover:bg-blue-700 h-10"
               onClick={() => handleStatusChange('waiting')}
               size="sm"
+              disabled={!refundDetails.buyer_notified_at}
             >
               Start Return Process
             </Button>
@@ -556,6 +571,7 @@ function ApprovedStatusUI({ refundDetails, formatDate, formatCurrency, handleSta
               className="w-full text-blue-600 border-blue-300 hover:bg-blue-50 h-10"
               onClick={() => handleStatusChange('to_process')}
               size="sm"
+              disabled={!refundDetails.buyer_notified_at}
             >
               Skip Return & Process Refund
             </Button>
@@ -1849,19 +1865,109 @@ function DisputeStatusUI({ refundDetails, formatDate, formatCurrency, handleStat
   
   const attachments = refundDetails.attachments || [];
   
-  // Mock dispute data 
+  // Check if dispute was filed by seller (shop owner)
+  const isSellerDispute = refundDetails.dispute_filed_by && 
+    refundDetails.dispute_filed_by !== refundDetails.customer?.id;
+
+  if (isSellerDispute) {
+    // Simple message for buyer when seller filed dispute
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 space-y-4">
+          <Card className="border">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ShoppingBag className="h-4 w-4" />
+                  <CardTitle className="text-base">
+                    #{refundDetails.refund} - Refund Request
+                  </CardTitle>
+                </div>
+                <Badge className="bg-orange-100 text-orange-800">
+                  <AlertTriangle className="h-3 w-3 mr-1" />
+                  Dispute Filed
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Alert className="bg-orange-50 border-orange-200">
+                <AlertTriangle className="h-4 w-4 text-orange-600" />
+                <AlertTitle className="text-orange-800">Shop Owner Filed Dispute</AlertTitle>
+                <AlertDescription className="text-orange-700">
+                  The shop owner has filed a dispute for this refund request. This is now under admin review.
+                </AlertDescription>
+              </Alert>
+
+              {/* Basic refund info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Refund Details</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Refund Amount</p>
+                      <p className="text-lg font-bold">{formatCurrency(refundDetails.total_refund_amount)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Reason</p>
+                      <p className="text-sm">{refundDetails.reason || '—'}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Order Information</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Order Number</p>
+                      <p className="text-sm font-medium">{refundDetails.order?.order_number || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Order Total</p>
+                      <p className="text-sm">{formatCurrency(refundDetails.order?.total_amount)}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-4">
+          <Card className="border border-blue-100 bg-blue-50">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-2">
+                <Info className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-blue-800">Dispute Resolution</p>
+                  <p className="text-xs text-blue-700 mt-1">
+                    This dispute is under admin review. You will be notified once a decision is made.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // Original detailed dispute UI for when buyer filed the dispute
   const disputeDetails = {
     id: 'DSP-2024-001',
     filed_by: 'Buyer',
     filed_by_name: refundDetails.customer.name,
-    filed_date: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
-    reason: 'Unfair rejection - item meets refund criteria',
-    description: 'The seller rejected my refund request unfairly. The item is clearly defective as shown in my evidence. I request admin review and full refund as per platform policy.',
-    status: 'pending_review', // pending_review, under_review, resolved
-    admin_decision: null, // approved, rejected, partial
+    filed_date: refundDetails.dispute_filed_at || new Date(Date.now() - 86400000).toISOString(),
+    reason: refundDetails.dispute_reason || 'Unfair rejection - item meets refund criteria',
+    description: refundDetails.dispute_description || 'The seller rejected my refund request unfairly. The item is clearly defective as shown in my evidence. I request admin review and full refund as per platform policy.',
+    status: 'pending_review',
+    admin_decision: null,
     admin_response: null,
     admin_response_date: null,
-    evidence_count: 3
+    evidence_count: attachments.length || 3
   };
 
   const handleImagePreview = (attachment: { url: string; name: string }) => {

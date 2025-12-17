@@ -1,7 +1,7 @@
 // app/components/navigations/sidebar.tsx
 "use client";
 import { 
-  Home, ShoppingCart, TicketCheck, Star, Gift, Package,
+  Home, ShoppingCart, TicketCheck, Star, Gift, Handshake, Package,
   Store, CreditCard, List, MessageSquare, Users, 
   Shield, AlertCircle, FileText, Settings, Bell,
   BarChart, Bike, MapPin, Calendar, DollarSign, ClipboardList
@@ -92,6 +92,7 @@ const menuItems = [
       { title: "Product Return & Cancelled", url: "/customer-return-cancel", icon: TicketCheck, roles: ["customer"] },
       { title: "Favorites", url: "/favorites", icon: Star, roles: ["customer"] },
       { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
+      { title: "Trade", url: "/trade", icon: Handshake, roles: ["customer"] },
       
       
     ]

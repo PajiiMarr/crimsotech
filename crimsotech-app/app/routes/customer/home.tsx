@@ -236,7 +236,7 @@ const CompactProductCard = ({
           onError={(e) => {
             const el = e.currentTarget as HTMLImageElement;
             el.onerror = null;
-            el.src = '/images/placeholder-product.jpg';
+            el.src = '/crimsonity.png';
           }}
         />
       </div>

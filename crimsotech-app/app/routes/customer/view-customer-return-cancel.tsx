@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Route } from './+types/view-customer-return-cancel';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -392,90 +392,170 @@ const STATUS_CONFIG = {
   }
 };
 
-// --- Types ---
-interface ReturnItem {
+// --- Types matching backend response ---
+interface RefundItem {
   id: string;
-  product_id: string;
-  name: string;
-  price: number;
-  quantity: number;
-  color?: string;
-  size?: string;
-  image_url?: string;
-  reason: string;
-  condition: 'defective' | 'wrong_item' | 'not_as_described' | 'changed_mind' | 'damaged' | 'other';
-  return_type: 'refund' | 'replacement' | 'store_credit';
-  evidence_photos?: string[];
-}
-
-interface ShippingInfo {
-  method: 'pickup' | 'dropoff';
-  pickup_address?: {
-    street: string;
-    city: string;
-    province: string;
-    zip_code: string;
-    contact_person: string;
-    contact_phone: string;
+  product: {
+    id: string;
+    name: string;
+    price: number;
+    condition?: string;
+    shop?: {
+      id: string;
+      name: string;
+    };
+    skus?: Array<{
+      id: string;
+      product_id: string;
+      image: string;
+      sku_code: string;
+      price: number;
+      option_ids: string[];
+    }>;
+    variants?: Array<{
+      id: string;
+      title: string;
+      product_id: string;
+      options: Array<{
+        id: string;
+        title: string;
+        variant_id: string;
+      }>;
+    }>;
   };
-  dropoff_point?: string;
-  tracking_number?: string;
-  courier?: string;
-  estimated_delivery: string;
+  quantity: number;
+  total_amount: number;
+  status?: string;
 }
 
-interface PaymentInfo {
-  method: 'original_payment' | 'wallet' | 'bank_transfer' | 'store_credit';
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  amount: number;
-  transaction_id?: string;
-  refunded_at?: string;
-}
-
-interface NegotiationMessage {
+interface Shop {
   id: string;
-  sender: 'customer' | 'seller' | 'admin';
-  message: string;
-  timestamp: string;
-  attachments?: string[];
+  name: string;
+  is_suspended?: boolean;
 }
 
-interface ReturnRequest {
-  id: string;
+interface RefundResponse {
+  refund: string;
   request_number: string;
-  order_id: string;
-  order_number: string;
-  user_id: string;
-  shop_id: string;
-  shop_name: string;
-  created_at: string;
-  updated_at: string;
+  order: {
+    order: string;
+    total_amount: number;
+    payment_method?: string;
+    delivery_address_text?: string;
+  };
+  requested_by: string;
   status: 'pending' | 'negotiation' | 'approved' | 'waiting' | 'to_verify' | 'to_process' | 'dispute' | 'completed' | 'rejected' | 'cancelled';
-  items: ReturnItem[];
-  shipping: ShippingInfo;
-  payment: PaymentInfo;
-  total_refund_amount: number;
+  payment_status: 'pending' | 'processing' | 'completed' | 'failed' | 'not_applicable';
   reason: string;
+  total_refund_amount: number;
+  preferred_refund_method?: string;
+  final_refund_method?: string;
   customer_note?: string;
   seller_response?: string;
   admin_response?: string;
-  negotiation_messages?: NegotiationMessage[];
-  available_actions?: string[];
+  
+  // Timeline fields
+  requested_at: string;
+  negotiation_at?: string;
+  approved_at?: string;
+  buyer_notified_at?: string;
+  buyer_return_deadline?: string;
+  waiting_at?: string;
+  to_verify_at?: string;
+  verification_deadline?: string;
+  to_process_at?: string;
+  processing_deadline?: string;
+  completed_at?: string;
+  rejected_at?: string;
+  cancelled_at?: string;
+  
+  // Negotiation fields
+  seller_suggested_method?: string;
+  seller_suggested_amount?: number;
+  seller_suggested_reason?: string;
+  negotiation_deadline?: string;
+  
+  // Dispute fields
+  dispute_filed_at?: string;
+  dispute_reason?: string;
+  resolved_at?: string;
+  
+  // Evidence
+  evidence: Array<{
+    id: string;
+    url: string;
+    file_type: string;
+  }>;
   evidence_count: number;
-  deadline?: string;
-}
-
-interface Customer {
-  id: string;
-  name: string;
-  email: string;
-  phone?: string;
-  avatar_url?: string;
-}
-
-interface ReturnDetails {
-  returnRequest: ReturnRequest;
-  customer: Customer;
+  is_negotiation_expired: boolean;
+  
+  // Order info
+  order_info?: {
+    order_number: string;
+    order_id: string;
+    total_amount: number;
+    payment_method?: string;
+    delivery_address_text?: string;
+  };
+  
+  // Order items
+  order_items: RefundItem[];
+  
+  // Shops
+  shops: Shop[];
+  
+  // Delivery
+  delivery?: {
+    id: string;
+    status: string;
+    picked_at?: string;
+    delivered_at?: string;
+    tracking_number?: string;
+    rider_id?: string;
+  };
+  
+  // Available actions
+  available_actions: string[];
+  
+  // Payment method details
+  payment_method_details?: {
+    wallet?: {
+      id: string;
+      provider: string;
+      account_name: string;
+      account_number: string;
+      contact_number: string;
+      created_at: string;
+    };
+    bank?: {
+      id: string;
+      bank_name: string;
+      account_name: string;
+      account_number: string;
+      account_type: string;
+      branch: string;
+      created_at: string;
+    };
+    remittance?: {
+      id: string;
+      provider: string;
+      first_name: string;
+      last_name: string;
+      full_name: string;
+      contact_number: string;
+      address: string;
+      city: string;
+      province: string;
+      zip_code: string;
+      valid_id_type: string;
+      valid_id_number: string;
+      created_at: string;
+    };
+  };
+  
+  // Additional properties
+  payment_method_set: boolean;
+  return_deadline?: string;
 }
 
 // --- Loader ---
@@ -485,7 +565,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const status = url.searchParams.get('status');
   const action = url.searchParams.get('action');
 
-  // Use same session / role checks as other customer pages
+  // Basic validation
+  if (!returnId) {
+    throw new Response('return_id is required', { status: 400 });
+  }
+
   try {
     const { registrationMiddleware } = await import('~/middleware/registration.server');
     await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
@@ -506,7 +590,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   }
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-  const endpoint = `${API_BASE_URL}/return-refund/${returnId}/get_my_refund/`;
+  const endpoint = `${API_BASE_URL}/return-refund/${returnId}/get_my_refund/`; 
 
   try {
     const res = await fetch(endpoint, {
@@ -523,104 +607,96 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       throw new Response('Failed to fetch refund detail', { status: res.status });
     }
 
-    const refund = await res.json();
-
-    // Map backend refund shape to ReturnDetails used by UI
-    const returnDetails: ReturnDetails = {
-      returnRequest: {
-        id: refund.refund || returnId,
-        request_number: refund.request_number || '',
-        order_id: refund.order_info?.order_id || refund.order?.id || '',
-        order_number: refund.order_info?.order_number || refund.order?.order || '',
-        user_id: refund.requested_by || userId,
-        shop_id: refund.order?.shop?.id || null,
-        shop_name: refund.order?.shop?.name || refund.shop_name || '',
-        created_at: refund.requested_at || refund.requested_on || new Date().toISOString(),
-        updated_at: refund.last_updated || refund.processed_at || refund.requested_at,
-        status: (status as any) || refund.status || 'pending',
-        total_refund_amount: Number(refund.total_refund_amount) || 0,
-        reason: refund.reason || '',
-        customer_note: refund.customer_note || '',
-        seller_response: refund.seller_response || refund.seller_offer?.message || '',
-        available_actions: Array.isArray(refund.available_actions) ? refund.available_actions : [],
-        evidence_count: refund.evidence_count || 0,
-        deadline: refund.negotiation_deadline || null,
-        items: Array.isArray(refund.order_items) ? refund.order_items.map((it: any) => ({
-          id: it.id || it.order_item_id || `${it.product?.id}-${it.sku || ''}`,
-          product_id: it.product?.id || it.product_id || '',
-          name: it.product?.name || it.name || 'Product',
-          price: Number(it.price) || Number(it.unit_price) || 0,
-          quantity: Number(it.quantity) || 1,
-          color: it.color || null,
-          image_url: it.product?.image || it.image_url || '',
-          reason: it.reason || '',
-          condition: it.condition || 'unknown',
-          return_type: it.return_type || 'refund',
-          evidence_photos: Array.isArray(it.evidence_photos) ? it.evidence_photos.map((e:any)=> e.url || e) : []
-        })) : (refund.items || []),
-        shipping: refund.delivery || refund.order?.delivery_address || {
-          method: 'pickup',
-          pickup_address: null,
-          dropoff_point: null,
-          tracking_number: refund.tracking_number || null,
-          courier: refund.logistic_service || null,
-        },
-        payment: {
-          method: refund.preferred_refund_method || refund.final_refund_method || 'N/A',
-          status: refund.payment_status || 'pending',
-          amount: Number(refund.total_refund_amount) || 0,
-          transaction_id: refund.transaction_id || null
-        },
-      },
-      customer: {
-        id: refund.requested_by || userId,
-        name: refund.requested_by_name || refund.customer_name || 'Customer',
-        email: refund.requested_by_email || '',
-        phone: refund.requested_by_phone || '',
-        avatar_url: ''
-      }
-    };
+    const refundData: RefundResponse = await res.json();
 
     return {
-      user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false, username: 'customer', email: '' },
-      returnDetails,
+      user: { 
+        id: userId, 
+        name: 'Customer', 
+        isCustomer: true, 
+        isAdmin: false, 
+        isRider: false, 
+        isModerator: false, 
+        username: 'customer', 
+        email: '' 
+      },
+      refundData,
       action: action || null
     };
 
   } catch (err) {
     console.error('Error fetching refund detail', err);
-    // Fallback to mock if API fails (keeps UX friendly)
+    // Fallback to empty state
     return {
-      user: { id: userId, name: 'Customer', isCustomer: true, isAdmin: false, isRider: false, isModerator: false, username: 'customer', email: '' },
-      returnDetails: {
-        returnRequest: {
-          id: returnId || 'unknown',
-          request_number: `RR-${Date.now().toString().slice(-6)}`,
-          order_id: 'unknown',
-          order_number: 'unknown',
-          user_id: userId,
-          shop_id: 'unknown',
-          shop_name: 'Unknown Shop',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          status: (status as any) || 'pending',
-          total_refund_amount: 0,
-          reason: '',
-          evidence_count: 0,
-          items: [],
-          shipping: { method: 'pickup' },
-          payment: { method: 'wallet', status: 'pending', amount: 0 }
-        }
+      user: { 
+        id: userId, 
+        name: 'Customer', 
+        isCustomer: true, 
+        isAdmin: false, 
+        isRider: false, 
+        isModerator: false, 
+        username: 'customer', 
+        email: '' 
       },
+      refundData: null,
       action: action || null
     };
   }
 }        
 
-// --- Status-Specific UI Components ---
+// --- Helper functions ---
+function getShopName(refundData: RefundResponse): string {
+  if (refundData.shops && refundData.shops.length > 0) {
+    return refundData.shops[0].name;
+  }
+  
+  // Fallback to first item's shop
+  if (refundData.order_items && refundData.order_items.length > 0) {
+    return refundData.order_items[0].product?.shop?.name || 'Unknown Shop';
+  }
+  
+  return 'Unknown Shop';
+}
 
-function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, onCancel, actionLoading }: any) {
-  const returnRequest = returnDetails.returnRequest;
+function getShopId(refundData: RefundResponse): string {
+  if (refundData.shops && refundData.shops.length > 0) {
+    return refundData.shops[0].id;
+  }
+  
+  // Fallback to first item's shop
+  if (refundData.order_items && refundData.order_items.length > 0) {
+    return refundData.order_items[0].product?.shop?.id || '';
+  }
+  
+  return '';
+}
+
+function getOrderNumber(refundData: RefundResponse): string {
+  if (refundData.order_info?.order_number) {
+    return refundData.order_info.order_number;
+  }
+  
+  if (refundData.order?.order) {
+    return refundData.order.order;
+  }
+  
+  return 'Unknown';
+}
+
+function getOrderTotal(refundData: RefundResponse): number {
+  if (refundData.order_info?.total_amount) {
+    return refundData.order_info.total_amount;
+  }
+  
+  if (refundData.order?.total_amount) {
+    return refundData.order.total_amount;
+  }
+  
+  return 0;
+}
+
+// --- Status-Specific UI Components ---
+function PendingStatusUI({ refundData, formatDate, formatCurrency, navigate, onCancel, actionLoading }: any) {
   const statusConfig = STATUS_CONFIG.pending;
 
   return (
@@ -632,7 +708,7 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
             <div className="flex items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2">
                 <RotateCcw className="h-4 w-4" />
-                Return Request #{returnRequest.request_number}
+                Refund Request #{refundData.request_number}
               </CardTitle>
               <Badge variant="outline" className={statusConfig.color + " text-xs"}>
                 <statusConfig.icon className="h-3 w-3 mr-1" />
@@ -640,7 +716,7 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
               </Badge>
             </div>
             <CardDescription className="text-xs">
-              Order #{returnRequest.order_number} • Requested on {formatDate(returnRequest.created_at)}
+              Order #{getOrderNumber(refundData)} • Requested on {formatDate(refundData.requested_at)}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -649,18 +725,18 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
               <Clock className="h-4 w-4 text-yellow-600" />
               <AlertTitle className="text-yellow-800">Waiting for Seller Review</AlertTitle>
               <AlertDescription className="text-yellow-700">
-                Your return request has been submitted. The seller will review it within 48 hours.
+                Your refund request has been submitted. The seller will review it within 48 hours.
               </AlertDescription>
             </Alert>
 
-            {/* Return Summary */}
+            {/* Refund Summary */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-0.5">
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
                   <Calendar className="h-3 w-3" />
                   Request Date
                 </p>
-                <p className="font-medium text-sm">{formatDate(returnRequest.created_at)}</p>
+                <p className="font-medium text-sm">{formatDate(refundData.requested_at)}</p>
               </div>
 
               <div className="space-y-0.5">
@@ -668,7 +744,7 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
                   <Package className="h-3 w-3" />
                   Items
                 </p>
-                <p className="font-medium text-sm">{returnRequest.items.length} item(s)</p>
+                <p className="font-medium text-sm">{refundData.order_items?.length || 0} item(s)</p>
               </div>
 
               <div className="space-y-0.5">
@@ -676,7 +752,9 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
                   <Banknote className="h-3 w-3" />
                   Refund Method
                 </p>
-                <p className="font-medium text-sm capitalize">{returnRequest.payment.method.replace('_', ' ')}</p>
+                <p className="font-medium text-sm capitalize">
+                  {refundData.preferred_refund_method || 'Not specified'}
+                </p>
               </div>
 
               <div className="space-y-0.5">
@@ -685,113 +763,129 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
                   Response Deadline
                 </p>
                 <p className="font-medium text-sm text-yellow-600">
-                  {returnRequest.deadline ? formatDate(returnRequest.deadline) : '48 hours'}
+                  48 hours
                 </p>
               </div>
+
+              {refundData.approved_at && (
+                <div className="space-y-0.5">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Calendar className="h-3 w-3" />
+                    Approved on
+                  </p>
+                  <p className="font-medium text-sm">{formatDate(refundData.approved_at)}</p>
+                </div>
+              )}
+
+              {refundData.buyer_return_deadline && (
+                <div className="space-y-0.5">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    Return Deadline
+                  </p>
+                  <p className="font-medium text-sm text-blue-600">{formatDate(refundData.buyer_return_deadline)}</p>
+                </div>
+              )}
             </div>
 
-            {/* Return Items */}
+            {/* Refund Items */}
             <div>
               <p className="text-xs text-muted-foreground flex items-center gap-1 mb-2">
                 <Package className="h-3 w-3" />
-                Items to Return ({returnRequest.items.length})
+                Items for Refund ({refundData.order_items?.length || 0})
               </p>
               <div className="space-y-2">
-                {returnRequest.items.map((item: any) => (
-                  <div key={item.id} className="p-3 border rounded space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 flex-shrink-0">
-                        <img
-                          src={item.image_url}
-                          alt={item.name}
-                          className="w-full h-full object-cover rounded"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{item.name}</p>
-                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <span>Qty: {item.quantity}</span>
-                          {item.color && (
-                            <>
-                              <span>•</span>
-                              <span>Color: {item.color}</span>
-                            </>
+                {refundData.order_items?.map((item: RefundItem) => {
+                  // Get variant label from SKUs
+                  const sku = item.product?.skus?.[0];
+                  const variantLabel = sku?.option_ids?.map((id: string) => {
+                    const variant = item.product?.variants?.find(v => 
+                      v.options.some(opt => opt.id === id)
+                    );
+                    if (variant) {
+                      const option = variant.options.find(opt => opt.id === id);
+                      return option?.title;
+                    }
+                    return null;
+                  }).filter(Boolean).join(' • ');
+
+                  return (
+                    <div key={item.id} className="p-3 border rounded space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 flex-shrink-0">
+                          <img
+                            src={sku?.image || '/crimsonity.png'}
+                            alt={item.product.name}
+                            className="w-full h-full object-cover rounded"
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{item.product.name}</p>
+                          {variantLabel && (
+                            <div className="mt-2 text-sm text-gray-700">
+                              <div>
+                                <div className="text-xs text-muted-foreground">Variant</div>
+                                <div className="font-medium">{variantLabel}</div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {sku?.sku_code ? `SKU: ${sku.sku_code}` : null}
+                                </div>
+                              </div>
+                            </div>
                           )}
+
+                          <div className="flex items-center gap-2 text-xs text-gray-500 mt-2">
+                            <span>Qty: {item.quantity}</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="outline" className="text-xs">
-                            {item.return_type === 'refund' ? 'Refund' :
-                             item.return_type === 'replacement' ? 'Replacement' :
-                             'Store Credit'}
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="font-medium text-sm">
-                        {formatCurrency(item.price)}
-                      </div>
-                    </div>
-                    
-                    {/* Return Details */}
-                    <div className="pl-14 space-y-2 border-t pt-2">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                        <div>
-                          <p className="text-muted-foreground">Reason:</p>
-                          <p className="font-medium capitalize">{item.reason}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Condition:</p>
-                          <p className="font-medium capitalize">{item.condition.replace('_', ' ')}</p>
+                        <div className="font-medium text-sm">
+                          {formatCurrency(item.product.price)}
                         </div>
                       </div>
 
-                      {/* Evidence Photos */}
-                      {item.evidence_photos && item.evidence_photos.length > 0 && (
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">Evidence Photos:</p>
-                          <div className="flex gap-2 overflow-x-auto pb-1">
-                            {item.evidence_photos.map((photo: string, index: number) => (
-                              <div key={index} className="w-12 h-12 flex-shrink-0 border rounded overflow-hidden">
-                                <img
-                                  src={photo}
-                                  alt={`Evidence ${index + 1}`}
-                                  className="w-full h-full object-cover"
-                                />
-                              </div>
-                            ))}
+                      {/* Shop Info */}
+                      {item.product.shop && (
+                        <div className="pl-14 space-y-2 border-t pt-2">
+                          <div className="text-xs">
+                            <p className="text-muted-foreground">Shop:</p>
+                            <p className="font-medium">{item.product.shop.name}</p>
                           </div>
                         </div>
                       )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
-            {/* Shop Information */}
+            {/* Reason for Refund */}
             <div className="p-3 bg-gray-50 border border-gray-200 rounded">
-              <p className="text-xs font-medium text-gray-800 mb-2">Shop Information</p>
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
-                    <Store className="h-5 w-5 text-gray-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">{returnRequest.shop_name}</p>
-                    <p className="text-xs text-gray-700">Return processing: 3-5 business days</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Response Time:</p>
-                    <p className="font-medium">Within 48 hours</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Return Policy:</p>
-                    <p className="font-medium">30-day window</p>
-                  </div>
+              <p className="text-xs font-medium text-gray-800 mb-2">Reason for Refund</p>
+              <p className="text-sm text-gray-700">{refundData.reason}</p>
+              {refundData.customer_note && (
+                <p className="text-sm text-gray-600 mt-2">{refundData.customer_note}</p>
+              )}
+            </div>
+
+            {/* Evidence */}
+            {refundData.evidence && refundData.evidence.length > 0 && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded">
+                <p className="text-xs font-medium text-blue-800 mb-2 flex items-center gap-1">
+                  <FileText className="h-3 w-3" />
+                  Evidence ({refundData.evidence_count})
+                </p>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {refundData.evidence.map((evidence: any) => (
+                    <div key={evidence.id} className="w-16 h-16 flex-shrink-0 border rounded overflow-hidden">
+                      <img
+                        src={evidence.url}
+                        alt="Evidence"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -804,76 +898,71 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Item Price:</span>
-              <span>{formatCurrency(returnRequest.items[0].price)}</span>
+              <span className="text-muted-foreground">Order Total:</span>
+              <span>{formatCurrency(getOrderTotal(refundData))}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Quantity:</span>
-              <span>{returnRequest.items[0].quantity}</span>
+              <span className="text-muted-foreground">Refund Amount:</span>
+              <span>{formatCurrency(refundData.total_refund_amount)}</span>
             </div>
             <Separator className="my-2" />
             <div className="flex justify-between font-bold text-sm">
-              <span>Total Refund:</span>
-              <span className="text-green-600">{formatCurrency(returnRequest.total_refund_amount)}</span>
+              <span>Status:</span>
+              <span className={statusConfig.color.replace('hover:bg-', 'bg-') + " px-2 py-1 rounded text-xs"}>
+                {statusConfig.label}
+              </span>
             </div>
             
             <div className="pt-2 mt-2 border-t">
               <p className="text-muted-foreground">Refund Method:</p>
               <div className="flex items-center gap-2 mt-1 text-sm">
-                {returnRequest.payment.method === 'wallet' && <Wallet className="h-3 w-3 text-blue-600" />}
-                {returnRequest.payment.method === 'original_payment' && <CreditCard className="h-3 w-3 text-purple-600" />}
-                {returnRequest.payment.method === 'bank_transfer' && <Building className="h-3 w-3 text-green-600" />}
-                {returnRequest.payment.method === 'store_credit' && <Receipt className="h-3 w-3 text-orange-600" />}
-                <span className="font-medium capitalize">{returnRequest.payment.method.replace('_', ' ')}</span>
+                {refundData.preferred_refund_method?.includes('wallet') && <Wallet className="h-3 w-3 text-blue-600" />}
+                {refundData.preferred_refund_method?.includes('bank') && <Building className="h-3 w-3 text-green-600" />}
+                {refundData.preferred_refund_method?.includes('money') && <Receipt className="h-3 w-3 text-orange-600" />}
+                <span className="font-medium capitalize">
+                  {refundData.preferred_refund_method || 'Not specified'}
+                </span>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* <Card className="border">
+        <Card className="border">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Return Timeline</CardTitle>
+            <CardTitle className="text-sm">Shop Information</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-xs">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-3 w-3 text-green-500" />
-                <span>Return Requested ✓</span>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                <Store className="h-5 w-5 text-gray-600" />
               </div>
-              <div className="flex items-center gap-2">
-                <Clock className="h-3 w-3 text-yellow-500" />
-                <span className="font-medium">Seller Review</span>
-                <Badge variant="outline" className="ml-auto bg-yellow-50 text-yellow-700 border-yellow-200 text-xs">
-                  <Clock className="h-3 w-3 mr-1" />
-                  Pending
-                </Badge>
-              </div>
-              <div className="flex items-center gap-2">
-                <Package className="h-3 w-3 text-gray-400" />
-                <span className="text-gray-500">Item Return</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Banknote className="h-3 w-3 text-gray-400" />
-                <span className="text-gray-500">Refund Processing</span>
+              <div>
+                <p className="text-sm font-medium">{getShopName(refundData)}</p>
+                <p className="text-xs text-gray-700">Response time: Within 48 hours</p>
               </div>
             </div>
-            <div className="pt-2 mt-2 border-t">
-              <p className="text-muted-foreground">Expected Response:</p>
-              <p className="font-medium">Within 48 hours</p>
-            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-8 text-xs"
+              onClick={() => navigate(`/shop/${getShopId(refundData)}`)}
+            >
+              <Eye className="h-3 w-3 mr-1.5" />
+              View Shop
+            </Button>
           </CardContent>
-        </Card> */}
+        </Card>
 
         <Card className="border">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Order Actions</CardTitle>
+            <CardTitle className="text-sm">Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             <Button
               variant="ghost"
               size="sm"
               className="w-full justify-start h-8 text-xs"
-              onClick={() => navigate(`/chat/seller/${returnRequest.shop_id}`)}
+              onClick={() => navigate(`/chat/seller/${getShopId(refundData)}`)}
             >
               <MessageCircle className="h-3 w-3 mr-1.5" />
               Contact Seller
@@ -882,17 +971,17 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
               variant="ghost"
               size="sm"
               className="w-full justify-start h-8 text-xs"
-              onClick={() => navigate(`/request-refund/edit/${returnRequest.id}`)}
+              onClick={() => navigate(`/upload-evidence/${refundData.refund}`)}
             >
-              <Edit className="h-3 w-3 mr-1.5" />
-              Edit Request
+              <Upload className="h-3 w-3 mr-1.5" />
+              Add More Evidence
             </Button>
-            {(returnRequest.available_actions?.includes('cancel_request') ?? returnRequest.status === 'pending') && (
+            {refundData.available_actions?.includes('cancel_request') && (
               <Button
                 variant="ghost"
                 size="sm"
                 className="w-full justify-start h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                onClick={() => onCancel(returnRequest.id)}
+                onClick={() => onCancel(refundData.refund)}
                 disabled={actionLoading}
               >
                 <XCircle className="h-3 w-3 mr-1.5" />
@@ -936,540 +1025,231 @@ function PendingStatusUI({ returnDetails, formatDate, formatCurrency, navigate, 
   );
 }
 
-function NegotiationStatusUI({ returnDetails, formatDate, formatCurrency, navigate, onRespond, actionLoading }: any) {
-  const returnRequest = returnDetails.returnRequest;
-  const statusConfig = STATUS_CONFIG.negotiation;
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {/* Left Column */}
-      <div className="lg:col-span-2 space-y-4">
-        <Card className="border">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2">
-                <RotateCcw className="h-4 w-4" />
-                Return Request #{returnRequest.request_number}
-              </CardTitle>
-              <Badge variant="outline" className={statusConfig.color + " text-xs"}>
-                <statusConfig.icon className="h-3 w-3 mr-1" />
-                {statusConfig.label}
-              </Badge>
-            </div>
-            <CardDescription className="text-xs">
-              Order #{returnRequest.order_number} • Under negotiation
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Status Message */}
-            <Alert className="bg-blue-50 border-blue-200">
-              <MessageCircle className="h-4 w-4 text-blue-600" />
-              <AlertTitle className="text-blue-800">Negotiation in Progress</AlertTitle>
-              <AlertDescription className="text-blue-700">
-                The seller has responded to your request. Review their offer and respond.
-              </AlertDescription>
-            </Alert>
-
-            {/* Return Summary */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="space-y-0.5">
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Calendar className="h-3 w-3" />
-                  Request Date
-                </p>
-                <p className="font-medium text-sm">{formatDate(returnRequest.created_at)}</p>
-              </div>
-
-              <div className="space-y-0.5">
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Package className="h-3 w-3" />
-                  Items
-                </p>
-                <p className="font-medium text-sm">{returnRequest.items.length} item(s)</p>
-              </div>
-
-              <div className="space-y-0.5">
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Banknote className="h-3 w-3" />
-                  Original Refund
-                </p>
-                <p className="font-medium text-sm text-green-600">{formatCurrency(returnRequest.total_refund_amount)}</p>
-              </div>
-
-              <div className="space-y-0.5">
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  Response Deadline
-                </p>
-                <p className="font-medium text-sm text-yellow-600">
-                  {returnRequest.deadline ? formatDate(returnRequest.deadline) : '48 hours'}
-                </p>
-              </div>
-            </div>
-
-            {/* Return Items */}
-            <div>
-              <p className="text-xs text-muted-foreground flex items-center gap-1 mb-2">
-                <Package className="h-3 w-3" />
-                Items ({returnRequest.items.length})
-              </p>
-              <div className="space-y-2">
-                {returnRequest.items.map((item: any) => (
-                  <div key={item.id} className="p-3 border rounded space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 flex-shrink-0">
-                        <img
-                          src={item.image_url}
-                          alt={item.name}
-                          className="w-full h-full object-cover rounded"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{item.name}</p>
-                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <span>Qty: {item.quantity}</span>
-                          {item.color && (
-                            <>
-                              <span>•</span>
-                              <span>Color: {item.color}</span>
-                            </>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="outline" className="text-xs">
-                            {item.return_type === 'refund' ? 'Refund' :
-                             item.return_type === 'replacement' ? 'Replacement' :
-                             'Store Credit'}
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="font-medium text-sm">
-                        {formatCurrency(item.price)}
-                      </div>
-                    </div>
-                    
-                    {/* Evidence Photos - Compact */}
-                    {item.evidence_photos && item.evidence_photos.length > 0 && (
-                      <div className="pl-14">
-                        <p className="text-xs text-muted-foreground mb-1">Evidence Photos:</p>
-                        <div className="flex gap-2 overflow-x-auto pb-1">
-                          {item.evidence_photos.map((photo: string, index: number) => (
-                            <div key={index} className="w-12 h-12 flex-shrink-0 border rounded overflow-hidden">
-                              <img
-                                src={photo}
-                                alt={`Evidence ${index + 1}`}
-                                className="w-full h-full object-cover"
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Seller's Offer */}
-            {returnRequest.seller_response && (
-              <div className="bg-blue-50 border border-blue-200 rounded p-3">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <Store className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="text-sm font-medium text-blue-800">Seller's Offer</p>
-                        <p className="text-xs text-blue-700">From {returnRequest.shop_name}</p>
-                      </div>
-                      {returnRequest.deadline && (
-                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
-                          <Clock className="h-3 w-3 mr-1" />
-                          Due: {formatDate(returnRequest.deadline)}
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-sm text-gray-700 mt-2">{returnRequest.seller_response}</p>
-                    
-                    {/* Offer Details */}
-                    {returnRequest.offer_details && (
-                      <div className="mt-2 p-2 bg-white border border-blue-100 rounded">
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          {returnRequest.offer_details.partial_amount && (
-                            <>
-                              <span className="text-muted-foreground">Offered Amount:</span>
-                              <span className="font-medium text-green-600">
-                                {formatCurrency(returnRequest.offer_details.partial_amount)}
-                              </span>
-                            </>
-                          )}
-                          {returnRequest.offer_details.offer_type && (
-                            <>
-                              <span className="text-muted-foreground">Offer Type:</span>
-                              <span className="font-medium capitalize">
-                                {returnRequest.offer_details.offer_type.replace('_', ' ')}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Action Buttons - Compact */}
-                    {/* <div className="mt-3 flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        className="bg-green-600 hover:bg-green-700 h-8 text-xs"
-                        onClick={() => navigate(`/negotiation/accept/${returnRequest.id}`)}
-                      >
-                        <CheckCircle className="h-3 w-3 mr-1.5" />
-                        Accept Offer
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs"
-                        onClick={() => navigate(`/negotiation/counter/${returnRequest.id}`)}
-                      >
-                        <MessageSquareReply className="h-3 w-3 mr-1.5" />
-                        Counter Offer
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-red-600 border-red-200 hover:bg-red-50 h-8 text-xs"
-                        onClick={() => navigate(`/negotiation/reject/${returnRequest.id}`)}
-                      >
-                        <XCircle className="h-3 w-3 mr-1.5" />
-                        Reject Offer
-                      </Button>
-                    </div> */}
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Right Column */}
-      <div className="space-y-4">
-        <Card className="border">
-          {/* <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Refund Summary</CardTitle>
-          </CardHeader> */}
-          {/* <CardContent className="space-y-2 text-xs">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Original Amount:</span>
-              <span>{formatCurrency(returnRequest.total_refund_amount)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Seller's Offer:</span>
-              <span className="text-green-600">
-                {returnRequest.offer_details?.partial_amount 
-                  ? formatCurrency(returnRequest.offer_details.partial_amount)
-                  : formatCurrency(returnRequest.total_refund_amount * 0.5)}
-              </span>
-            </div>
-            <Separator className="my-2" />
-            <div className="flex justify-between font-bold text-sm">
-              <span>Potential Refund:</span>
-              <span className="text-green-600">
-                {returnRequest.offer_details?.partial_amount 
-                  ? formatCurrency(returnRequest.offer_details.partial_amount)
-                  : formatCurrency(returnRequest.total_refund_amount * 0.5)}
-              </span>
-            </div>
-            <p className="text-xs text-gray-500 text-center mt-1">
-              {returnRequest.offer_details?.offer_type === 'partial_refund' 
-                ? 'Partial refund if you keep the item'
-                : 'Seller\'s offer'}
-            </p>
-          </CardContent> */}
-        </Card>
-
-        <Card className="border">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Order Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {(returnRequest.available_actions?.includes('accept_offer') ?? true) && (
-              <Button
-                size="sm"
-                className="w-full bg-green-600 hover:bg-green-700 h-8 text-xs"
-                onClick={() => onRespond(returnRequest.id, 'accept')}
-                disabled={actionLoading}
-              >
-                <CheckCircle className="h-3 w-3 mr-1.5" />
-                Accept Seller's Offer
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start h-8 text-xs"
-              onClick={() => navigate(`/negotiation/counter/${returnRequest.id}`)}
-            >
-              <MessageSquareReply className="h-3 w-3 mr-1.5" />
-              Make Counter Offer
-            </Button>
-            {(returnRequest.available_actions?.includes('reject_offer') ?? true) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                onClick={() => onRespond(returnRequest.id, 'reject')}
-                disabled={actionLoading}
-              >
-                <XCircle className="h-3 w-3 mr-1.5" />
-                Reject & Escalate
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start h-8 text-xs"
-              onClick={() => navigate(`/chat/seller/${returnRequest.shop_id}`)}
-            >
-              <MessageCircle className="h-3 w-3 mr-1.5" />
-              Contact Seller
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start h-8 text-xs"
-              onClick={() => navigate(`/faq/negotiations`)}
-            >
-              <HelpCircle className="h-3 w-3 mr-1.5" />
-              Negotiation Tips
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* <Card className="border">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Return Policy</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-xs">
-            <div className="space-y-1.5">
-              <div className="flex items-start gap-2">
-                <Package className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
-                <span>7-day return window from delivery</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <RotateCcw className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
-                <span>Free return for damaged items</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <Banknote className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
-                <span>Refund in 3-5 business days</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card> */}
-
-        {/* <Card className="border border-blue-100 bg-blue-50">
-          <CardContent className="p-3">
-            <div className="flex items-start gap-2">
-              <HelpCircle className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-blue-800">Need Help?</p>
-                <p className="text-xs text-blue-700 mt-1">
-                  Respond to the seller's offer before the deadline. You can accept, counter, or reject their proposal.
-                </p>
-                <Button
-                  variant="link"
-                  className="h-6 px-0 text-xs text-blue-700 mt-1"
-                  onClick={() => navigate('/support/negotiations')}
-                >
-                  Contact Support →
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card> */}
-      </div>
-    </div>
-  );
-}
-
-function ApprovedStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
-  const returnRequest = returnDetails.returnRequest;
-  const statusConfig = STATUS_CONFIG.approved;
+function CompletedStatusUI({ refundData, formatDate, formatCurrency, navigate }: any) {
+  const statusConfig = STATUS_CONFIG.completed;
+  const StatusIcon = statusConfig.icon;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Left Column */}
       <div className="lg:col-span-2 space-y-6">
         <Card className="border">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg flex items-center gap-2">
                 <RotateCcw className="h-5 w-5" />
-                Return Request #{returnRequest.request_number}
+                Refund Request #{refundData.request_number}
               </CardTitle>
               <Badge variant="outline" className={statusConfig.color + " text-xs"}>
-                <statusConfig.icon className="h-3 w-3 mr-1" />
+                <StatusIcon className="h-3 w-3 mr-1" />
                 {statusConfig.label}
               </Badge>
             </div>
             <CardDescription>
-              Order #{returnRequest.order_number} • Approved on {formatDate(returnRequest.updated_at)}
+              Order #{getOrderNumber(refundData)} • Completed on {formatDate(refundData.completed_at || refundData.updated_at)}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Status Message */}
             <Alert className="bg-green-50 border-green-200">
               <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertTitle className="text-green-800">Return Request Approved!</AlertTitle>
+              <AlertTitle className="text-green-800">Refund Completed Successfully</AlertTitle>
               <AlertDescription className="text-green-700">
-                Your return request has been approved. Please prepare the item for return within 7 days.
+                Your refund has been processed and completed. The amount has been refunded to your account.
               </AlertDescription>
             </Alert>
 
-            {/* Return Instructions */}
+            {/* Refund Details */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-blue-800 mb-3 flex items-center gap-2">
-                <Package className="h-4 w-4" />
-                Return Instructions
-              </h3>
+              <h3 className="text-sm font-medium text-blue-800 mb-3">Refund Details</h3>
               <div className="space-y-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Return Method:</p>
-                    <div className="flex items-center gap-2">
-                      <Truck className="h-4 w-4 text-blue-600" />
-                      <span className="text-sm capitalize">{returnRequest.shipping.method}</span>
-                    </div>
+                    <p className="text-xs font-medium text-gray-700 mb-1">Refund Amount:</p>
+                    <p className="text-sm font-medium text-green-600">{formatCurrency(refundData.total_refund_amount)}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Deadline:</p>
-                    <div className="flex items-center gap-2">
-                      <Calendar className="h-4 w-4 text-blue-600" />
-                      <span className="text-sm">
-                        {returnRequest.deadline ? formatDate(returnRequest.deadline) : 'Within 7 days'}
-                      </span>
-                    </div>
+                    <p className="text-xs font-medium text-gray-700 mb-1">Refund Method:</p>
+                    <p className="text-sm capitalize">{refundData.final_refund_method || refundData.preferred_refund_method}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-700 mb-1">Completed Date:</p>
+                    <p className="text-sm">{formatDate(refundData.completed_at || refundData.updated_at)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-700 mb-1">Processing Time:</p>
+                    <p className="text-sm">3-5 business days</p>
                   </div>
                 </div>
-
-                {returnRequest.shipping.method === 'pickup' && returnRequest.shipping.pickup_address && (
+                
+                {/* Payment Method Details */}
+                {refundData.payment_method_details && (
                   <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Pickup Address:</p>
-                    <div className="text-sm text-gray-600 bg-white p-3 rounded border">
-                      <p className="font-medium">{returnRequest.shipping.pickup_address.contact_person}</p>
-                      <p>{returnRequest.shipping.pickup_address.street}</p>
-                      <p>{returnRequest.shipping.pickup_address.city}, {returnRequest.shipping.pickup_address.province}</p>
-                      <p className="flex items-center gap-1 mt-1">
-                        <Phone className="h-3 w-3" />
-                        {returnRequest.shipping.pickup_address.contact_phone}
-                      </p>
+                    <p className="text-xs font-medium text-gray-700 mb-1">Refund sent to:</p>
+                    <div className="bg-white border rounded p-3">
+                      {refundData.payment_method_details.wallet && (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Wallet className="h-4 w-4 text-blue-600" />
+                            <span className="text-sm font-medium">Wallet</span>
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            <p>Provider: {refundData.payment_method_details.wallet.provider}</p>
+                            <p>Account: {refundData.payment_method_details.wallet.account_name}</p>
+                          </div>
+                        </div>
+                      )}
+                      {refundData.payment_method_details.bank && (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Building className="h-4 w-4 text-green-600" />
+                            <span className="text-sm font-medium">Bank Transfer</span>
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            <p>Bank: {refundData.payment_method_details.bank.bank_name}</p>
+                            <p>Account: {refundData.payment_method_details.bank.account_name}</p>
+                            <p>Number: {refundData.payment_method_details.bank.account_number}</p>
+                          </div>
+                        </div>
+                      )}
+                      {refundData.payment_method_details.remittance && (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Receipt className="h-4 w-4 text-orange-600" />
+                            <span className="text-sm font-medium">Remittance</span>
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            <p>Provider: {refundData.payment_method_details.remittance.provider}</p>
+                            <p>Name: {refundData.payment_method_details.remittance.full_name}</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
-
-                {returnRequest.shipping.method === 'dropoff' && returnRequest.shipping.dropoff_point && (
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Drop-off Point:</p>
-                    <div className="text-sm text-gray-600 bg-white p-3 rounded border">
-                      <p className="font-medium">{returnRequest.shipping.dropoff_point}</p>
-                      <p className="text-xs text-gray-500 mt-1">Business hours: 9AM - 6PM, Monday to Saturday</p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
-                  <p className="text-xs font-medium text-yellow-800 mb-1">Important Notes:</p>
-                  <ul className="text-xs text-yellow-700 space-y-1">
-                    <li>• Include all original accessories and packaging</li>
-                    <li>• Ensure item is in the same condition as when received</li>
-                    <li>• Remove any personal data from the device</li>
-                    <li>• Keep the return receipt for tracking</li>
-                  </ul>
-                </div>
               </div>
             </div>
 
-            {/* Prepare Return Steps */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <CheckCircle className="h-4 w-4" />
-                Next Steps
+            {/* Shop Information */}
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
+                <Store className="h-4 w-4" />
+                Shop Information
               </h3>
               <div className="space-y-3">
-                <div className="flex items-center gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                    <span className="text-sm font-medium text-green-600">1</span>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center">
+                    <Store className="h-6 w-6 text-gray-600" />
                   </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Prepare the Item</p>
-                    <p className="text-xs text-gray-600">Package the item securely with all accessories</p>
-                  </div>
-                  <Badge className="bg-green-100 text-green-700 hover:bg-green-100 text-xs">
-                    Ready
-                  </Badge>
-                </div>
-
-                <div className="flex items-center gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <span className="text-sm font-medium text-blue-600">2</span>
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Schedule Return</p>
-                    <p className="text-xs text-gray-600">Arrange pickup or drop-off</p>
-                  </div>
-                  <Button
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => navigate(`/schedule-return/${returnRequest.id}`)}
-                  >
-                    Schedule Now
-                  </Button>
-                </div>
-
-                <div className="flex items-center gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-                    <span className="text-sm font-medium text-gray-400">3</span>
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm text-gray-500">Wait for Verification</p>
-                    <p className="text-xs text-gray-400">Seller will verify item upon receipt</p>
+                  <div>
+                    <p className="text-sm font-medium">{getShopName(refundData)}</p>
+                    <p className="text-xs text-gray-600">Shop ID: {getShopId(refundData)}</p>
                   </div>
                 </div>
+                {/* Shop Address - assuming it's available in shops[0] or from order delivery */}
+                <div>
+                  <p className="text-xs text-muted-foreground">Shop Address</p>
+                  <p className="text-sm">{refundData.order_info?.delivery_address_text || 'Address not available'}</p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => navigate(`/shop/${getShopId(refundData)}`)}
+                >
+                  <Eye className="h-3 w-3 mr-2" />
+                  Visit Shop Again
+                </Button>
               </div>
             </div>
+
+            {/* Items Returned */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Items Returned</CardTitle>
+                <CardDescription>Items that were successfully refunded</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {!refundData.order_items?.length ? (
+                  <div className="text-sm text-muted-foreground">No items found.</div>
+                ) : (
+                  <div className="space-y-4">
+                    {refundData.order_items.map((item: RefundItem) => {
+                      const sku = item.product?.skus?.[0];
+                      const variantLabel = sku?.option_ids?.map((id: string) => {
+                        const variant = item.product?.variants?.find(v => 
+                          v.options.some(opt => opt.id === id)
+                        );
+                        if (variant) {
+                          const option = variant.options.find(opt => opt.id === id);
+                          return option?.title;
+                        }
+                        return null;
+                      }).filter(Boolean).join(' • ');
+
+                      return (
+                        <div key={item.id} className="rounded-lg border p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex items-start gap-3">
+                              <div className="w-16 h-16 flex-shrink-0 rounded bg-gray-100 flex items-center justify-center">
+                                <img
+                                  src={sku?.image || '/crimsonity.png'}
+                                  alt={item.product.name}
+                                  className="w-full h-full object-cover rounded"
+                                />
+                              </div>
+                              <div>
+                                <div className="font-medium">{item.product?.name || 'Product'}</div>
+                                {variantLabel && (
+                                  <div className="mt-1 text-sm text-gray-700">
+                                    <div className="text-xs text-muted-foreground">Variant</div>
+                                    <div className="font-medium">{variantLabel}</div>
+                                    <div className="text-xs text-gray-500">{sku?.sku_code ? `SKU: ${sku.sku_code}` : null}</div>
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Badge variant="outline" className="text-xs">
+                                    Qty: {item.quantity}
+                                  </Badge>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm text-muted-foreground">Refunded</div>
+                              <div className="font-medium text-green-600">{formatCurrency(item.total_amount)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </CardContent>
         </Card>
       </div>
 
-      {/* Right Column */}
       <div className="space-y-6">
-        {/* Return Summary */}
         <Card className="border">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Return Summary
-            </CardTitle>
+            <CardTitle className="text-sm">Refund Summary</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Item:</span>
-                <span className="text-right">{returnRequest.items[0].name}</span>
+                <span className="text-gray-600">Total Refunded:</span>
+                <span className="font-medium text-green-600">
+                  {formatCurrency(refundData.total_refund_amount)}
+                </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Refund Amount:</span>
-                <span className="font-medium text-green-600">{formatCurrency(returnRequest.total_refund_amount)}</span>
+                <span className="text-gray-600">Method:</span>
+                <span className="capitalize">
+                  {refundData.final_refund_method || refundData.preferred_refund_method}
+                </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Return Method:</span>
-                <span className="capitalize">{returnRequest.shipping.method}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Deadline:</span>
-                <span>{returnRequest.deadline ? formatDate(returnRequest.deadline) : '7 days'}</span>
+                <span className="text-gray-600">Completed:</span>
+                <span>{formatDate(refundData.completed_at || '')}</span>
               </div>
             </div>
             <Separator className="my-2" />
@@ -1482,64 +1262,51 @@ function ApprovedStatusUI({ returnDetails, formatDate, formatCurrency, navigate 
           </CardContent>
         </Card>
 
-        {/* Actions */}
         <Card className="border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             <Button
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/schedule-return/${returnRequest.id}`)}
-            >
-              <Calendar className="h-3 w-3 mr-1.5" />
-              Schedule Return
-            </Button>
-            <Button
               variant="outline"
               size="sm"
               className="w-full h-8 text-xs"
-              onClick={() => navigate(`/download-return-label/${returnRequest.id}`)}
+              onClick={() => navigate(`/chat/seller/${getShopId(refundData)}`)}
             >
-              <Download className="h-3 w-3 mr-1.5" />
-              Download Return Label
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/chat/seller/${returnRequest.shop_id}`)}
-            >
-              <MessageCircle className="h-3 w-3 mr-1.5" />
+              <MessageSquare className="h-3 w-3 mr-1.5" />
               Contact Seller
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-8 text-xs"
+              onClick={() => navigate(`/orders/${getOrderNumber(refundData)}`)}
+            >
+              <Eye className="h-3 w-3 mr-1.5" />
+              View Order
             </Button>
             <Separator className="my-2" />
             <Button
               variant="ghost"
               size="sm"
-              className="w-full h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-              onClick={() => navigate(`/request-refund/cancel/${returnRequest.id}`)}
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => navigate(`/faq/refunds`)}
             >
-              <XCircle className="h-3 w-3 mr-1.5" />
-              Cancel Return
+              <HelpCircle className="h-3 w-3 mr-1.5" />
+              Refund FAQ
             </Button>
           </CardContent>
         </Card>
 
-        {/* Help Section */}
         <Card className="border border-green-100 bg-green-50">
           <CardContent className="p-4">
             <div className="flex items-start gap-3">
               <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-medium text-green-800">Return Tips</p>
-                <ul className="text-xs text-green-700 mt-1 space-y-1">
-                  <li>• Take photos before packaging</li>
-                  <li>• Use original packaging if available</li>
-                  <li>• Keep tracking number safe</li>
-                  <li>• Expect refund 3-5 days after verification</li>
-                </ul>
+                <p className="text-sm font-medium text-green-800">Refund Completed</p>
+                <p className="text-xs text-green-700 mt-1">
+                  Your refund has been processed successfully. Thank you for shopping with us!
+                </p>
               </div>
             </div>
           </CardContent>
@@ -1549,9 +1316,255 @@ function ApprovedStatusUI({ returnDetails, formatDate, formatCurrency, navigate 
   );
 }
 
-function WaitingStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
-  const returnRequest = returnDetails.returnRequest;
-  const statusConfig = STATUS_CONFIG.waiting;
+function NegotiationStatusUI({ refundData, formatDate, formatCurrency, navigate, onRespond, actionLoading }: any) {
+  const statusConfig = STATUS_CONFIG.negotiation;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Left Column */}
+      <div className="lg:col-span-2 space-y-4">
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <RotateCcw className="h-4 w-4" />
+                Refund Request #{refundData.request_number}
+              </CardTitle>
+              <Badge variant="outline" className={statusConfig.color + " text-xs"}>
+                <statusConfig.icon className="h-3 w-3 mr-1" />
+                {statusConfig.label}
+              </Badge>
+            </div>
+            <CardDescription className="text-xs">
+              Order #{getOrderNumber(refundData)} • Under negotiation
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Status Message */}
+            <Alert className="bg-blue-50 border-blue-200">
+              <MessageCircle className="h-4 w-4 text-blue-600" />
+              <AlertTitle className="text-blue-800">Negotiation in Progress</AlertTitle>
+              <AlertDescription className="text-blue-700">
+                The seller has responded to your request. Review their offer and respond.
+              </AlertDescription>
+            </Alert>
+
+            {/* Seller's Offer */}
+            {refundData.seller_suggested_method && (
+              <div className="bg-blue-50 border border-blue-200 rounded p-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                    <Store className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-sm font-medium text-blue-800">Seller's Offer</p>
+                        <p className="text-xs text-blue-700">From {getShopName(refundData)}</p>
+                      </div>
+                      {refundData.negotiation_deadline && (
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                          <Clock className="h-3 w-3 mr-1" />
+                          Due: {formatDate(refundData.negotiation_deadline)}
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    {/* Offer Details */}
+                    <div className="mt-3 space-y-2">
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Suggested Method:</p>
+                          <p className="font-medium">{refundData.seller_suggested_method}</p>
+                        </div>
+                        {refundData.seller_suggested_amount && (
+                          <div>
+                            <p className="text-xs text-muted-foreground">Suggested Amount:</p>
+                            <p className="font-medium text-green-600">
+                              {formatCurrency(refundData.seller_suggested_amount)}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {refundData.seller_suggested_reason && (
+                        <div>
+                          <p className="text-xs text-muted-foreground">Seller's Reason:</p>
+                          <p className="text-sm text-gray-700">{refundData.seller_suggested_reason}</p>
+                        </div>
+                      )}
+                      
+                      {refundData.seller_response && (
+                        <div>
+                          <p className="text-xs text-muted-foreground">Additional Message:</p>
+                          <p className="text-sm text-gray-700">{refundData.seller_response}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Your Original Request */}
+            <div className="border rounded p-3">
+              <p className="text-sm font-medium mb-2">Your Original Request</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Requested Amount:</p>
+                  <p className="text-sm font-medium">{formatCurrency(refundData.total_refund_amount)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Requested Method:</p>
+                  <p className="text-sm font-medium">{refundData.preferred_refund_method || 'Not specified'}</p>
+                </div>
+                <div className="md:col-span-2">
+                  <p className="text-xs text-muted-foreground">Reason:</p>
+                  <p className="text-sm">{refundData.reason}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Negotiation Deadline Warning */}
+            {refundData.is_negotiation_expired && (
+              <Alert className="bg-red-50 border-red-200">
+                <AlertCircle className="h-4 w-4 text-red-600" />
+                <AlertTitle className="text-red-800">Negotiation Deadline Passed</AlertTitle>
+                <AlertDescription className="text-red-700">
+                  The negotiation deadline has passed. You can still respond or file a dispute.
+                </AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Right Column */}
+      <div className="space-y-4">
+        {/* Offer Comparison */}
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Offer Comparison</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Your Request:</span>
+              <span>{formatCurrency(refundData.total_refund_amount)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Seller's Offer:</span>
+              <span className="text-green-600">
+                {refundData.seller_suggested_amount 
+                  ? formatCurrency(refundData.seller_suggested_amount)
+                  : 'No amount specified'}
+              </span>
+            </div>
+            <Separator className="my-2" />
+            <div className="flex justify-between font-bold text-sm">
+              <span>Difference:</span>
+              <span className={
+                (refundData.seller_suggested_amount && refundData.seller_suggested_amount < refundData.total_refund_amount)
+                  ? 'text-yellow-600'
+                  : 'text-green-600'
+              }>
+                {refundData.seller_suggested_amount 
+                  ? formatCurrency(refundData.seller_suggested_amount - refundData.total_refund_amount)
+                  : 'N/A'}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Actions */}
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Response Actions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {(refundData.available_actions?.includes('accept_offer') ?? true) && (
+              <Button
+                size="sm"
+                className="w-full bg-green-600 hover:bg-green-700 h-8 text-xs"
+                onClick={() => onRespond(refundData.refund, 'accept', 'Accepted seller offer')}
+                disabled={actionLoading}
+              >
+                <CheckCircle className="h-3 w-3 mr-1.5" />
+                Accept Seller's Offer
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-8 text-xs"
+              onClick={() => navigate(`/negotiation/counter/${refundData.refund}`)}
+            >
+              <MessageSquareReply className="h-3 w-3 mr-1.5" />
+              Make Counter Offer
+            </Button>
+            {(refundData.available_actions?.includes('reject_offer') ?? true) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                onClick={() => onRespond(refundData.refund, 'reject', 'Rejected seller offer')}
+                disabled={actionLoading}
+              >
+                <XCircle className="h-3 w-3 mr-1.5" />
+                Reject Offer
+              </Button>
+            )}
+            <Separator className="my-2" />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => navigate(`/file-dispute/${refundData.refund}`)}
+            >
+              <AlertTriangle className="h-3 w-3 mr-1.5" />
+              File Dispute
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => navigate(`/chat/seller/${getShopId(refundData)}`)}
+            >
+              <MessageCircle className="h-3 w-3 mr-1.5" />
+              Contact Seller
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Deadline Info */}
+        {refundData.negotiation_deadline && (
+          <Card className="border border-blue-100 bg-blue-50">
+            <CardContent className="p-3">
+              <div className="flex items-start gap-2">
+                <Clock className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-blue-800">Response Deadline</p>
+                  <p className="text-xs text-blue-700 mt-1">
+                    Please respond by: {formatDate(refundData.negotiation_deadline)}
+                  </p>
+                  {refundData.is_negotiation_expired && (
+                    <p className="text-xs text-red-600 mt-1 font-medium">
+                      Deadline has passed
+                    </p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, user }: any) {
+  const statusConfig = refundData.status === 'to_process' ? STATUS_CONFIG.to_process : STATUS_CONFIG.approved;
+  const [showReturnDetails, setShowReturnDetails] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState(refundData.status);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1562,7 +1575,7 @@ function WaitingStatusUI({ returnDetails, formatDate, formatCurrency, navigate }
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg flex items-center gap-2">
                 <RotateCcw className="h-5 w-5" />
-                Return Request #{returnRequest.request_number}
+                Refund Request #{refundData.request_number}
               </CardTitle>
               <Badge variant="outline" className={statusConfig.color + " text-xs"}>
                 <statusConfig.icon className="h-3 w-3 mr-1" />
@@ -1570,221 +1583,501 @@ function WaitingStatusUI({ returnDetails, formatDate, formatCurrency, navigate }
               </Badge>
             </div>
             <CardDescription>
-              Order #{returnRequest.order_number} • Awaiting return
+              Order #{getOrderNumber(refundData)} • {refundData.status === 'to_process' ? 'Processing started' : 'Approved'} on {formatDate(refundData.approved_at || refundData.updated_at)}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Status Message */}
-            <Alert className="bg-indigo-50 border-indigo-200">
-              <Package className="h-4 w-4 text-indigo-600" />
-              <AlertTitle className="text-indigo-800">Waiting for Return</AlertTitle>
-              <AlertDescription className="text-indigo-700">
-                Your return has been scheduled. Please return the item before {returnRequest.deadline ? formatDate(returnRequest.deadline) : 'the deadline'}.
+            <Alert className={refundData.status === 'to_process' ? "bg-blue-50 border-blue-200" : "bg-green-50 border-green-200"}>
+              {refundData.status === 'to_process' ? (
+                <Package className="h-4 w-4 text-blue-600" />
+              ) : (
+                <CheckCircle className="h-4 w-4 text-green-600" />
+              )}
+              <AlertTitle className={refundData.status === 'to_process' ? "text-blue-800" : "text-green-800"}>
+                {refundData.status === 'to_process' ? 'Return Processing Started!' : 'Refund Request Approved!'}
+              </AlertTitle>
+              <AlertDescription className={refundData.status === 'to_process' ? "text-blue-700" : "text-green-700"}>
+                {refundData.status === 'to_process' 
+                  ? 'Your return is being processed. Please complete the return steps below.'
+                  : refundData.refund_category === 'keep_item'
+                  ? 'Your partial refund request has been approved. The refund will be processed to your selected method.'
+                  : 'Your refund request has been approved. Please prepare the item for return within 7 days.'
+                }
               </AlertDescription>
             </Alert>
 
-            {/* Return Tracking */}
-            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-indigo-800 mb-3 flex items-center gap-2">
-                <Truck className="h-4 w-4" />
-                Return Tracking
-              </h3>
-              
-              <div className="space-y-4">
-                {/* Tracking Info */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Tracking Number:</p>
-                    <div className="flex items-center gap-2">
-                      <Hash className="h-4 w-4 text-indigo-600" />
-                      <code className="text-sm font-mono bg-white px-2 py-1 rounded border">
-                        {returnRequest.shipping.tracking_number || 'Not assigned yet'}
-                      </code>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Courier:</p>
-                    <div className="flex items-center gap-2">
-                      <Truck className="h-4 w-4 text-indigo-600" />
-                      <span className="text-sm">{returnRequest.shipping.courier || 'To be assigned'}</span>
-                    </div>
-                  </div>
-                </div>
+            {/* Refund Items */}
+            <div>
+              <p className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
+                <Package className="h-4 w-4" />
+                {refundData.refund_category === 'keep_item' ? 'Items for Partial Refund' : 'Items to Return'} ({refundData.order_items?.length || 0})
+              </p>
+              <div className="space-y-3">
+                {refundData.order_items?.map((item: RefundItem) => {
+                  // Get variant label from SKUs
+                  const sku = item.product?.skus?.[0];
+                  const variantLabel = sku?.option_ids?.map((id: string) => {
+                    const variant = item.product?.variants?.find(v => 
+                      v.options.some(opt => opt.id === id)
+                    );
+                    if (variant) {
+                      const option = variant.options.find(opt => opt.id === id);
+                      return option?.title;
+                    }
+                    return null;
+                  }).filter(Boolean).join(' • ');
 
-                {/* Pickup/Drop-off Details */}
-                {returnRequest.shipping.method === 'pickup' && returnRequest.shipping.pickup_address && (
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Scheduled Pickup:</p>
-                    <div className="text-sm text-gray-600 bg-white p-3 rounded border">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-medium">Address:</span>
-                        <Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-100 text-xs">
-                          {returnRequest.shipping.estimated_delivery}
-                        </Badge>
+                  return (
+                    <div key={item.id} className="p-4 border rounded-lg space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 flex-shrink-0">
+                          <img
+                            src={sku?.image || '/crimsonity.png'}
+                            alt={item.product.name}
+                            className="w-full h-full object-cover rounded"
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{item.product.name}</p>
+                          {variantLabel && (
+                            <div className="mt-2 text-sm text-gray-700">
+                              <div>
+                                <div className="text-xs text-muted-foreground">Variant</div>
+                                <div className="font-medium">{variantLabel}</div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {sku?.sku_code ? `SKU: ${sku.sku_code}` : null}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-2 text-xs text-gray-500 mt-2">
+                            <span>Qty: {item.quantity}</span>
+                          </div>
+                        </div>
+                        <div className="font-medium text-sm">
+                          {formatCurrency(item.product.price)}
+                        </div>
                       </div>
-                      <p>{returnRequest.shipping.pickup_address.street}</p>
-                      <p>{returnRequest.shipping.pickup_address.city}, {returnRequest.shipping.pickup_address.province}</p>
-                      <p className="flex items-center gap-1 mt-2">
-                        <User className="h-3 w-3" />
-                        {returnRequest.shipping.pickup_address.contact_person}
-                      </p>
-                      <p className="flex items-center gap-1">
-                        <Phone className="h-3 w-3" />
-                        {returnRequest.shipping.pickup_address.contact_phone}
-                      </p>
-                    </div>
-                  </div>
-                )}
 
-                {returnRequest.shipping.method === 'dropoff' && returnRequest.shipping.dropoff_point && (
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Drop-off Point:</p>
-                    <div className="text-sm text-gray-600 bg-white p-3 rounded border">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-medium">{returnRequest.shipping.dropoff_point}</span>
-                        <Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-100 text-xs">
-                          {returnRequest.shipping.estimated_delivery}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-gray-500">Business hours: 9AM - 6PM, Monday to Saturday</p>
+                      {/* Shop Info */}
+                      {item.product.shop && (
+                        <div className="pl-15 space-y-2 border-t pt-2">
+                          <div className="text-xs">
+                            <p className="text-muted-foreground">Shop:</p>
+                            <p className="font-medium">{item.product.shop.name}</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="flex gap-2 pt-2">
-                  {returnRequest.shipping.tracking_number && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="flex-1 h-8 text-xs"
-                      onClick={() => navigate(`/track-return/${returnRequest.id}`)}
-                    >
-                      <Navigation className="h-3 w-3 mr-1.5" />
-                      Track Return
-                    </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 h-8 text-xs"
-                    onClick={() => navigate(`/update-return/${returnRequest.id}`)}
-                  >
-                    <Edit className="h-3 w-3 mr-1.5" />
-                    Update Schedule
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 h-8 text-xs"
-                    onClick={() => navigate(`/chat/seller/${returnRequest.shop_id}`)}
-                  >
-                    <MessageCircle className="h-3 w-3 mr-1.5" />
-                    Contact Seller
-                  </Button>
-                </div>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Return Timeline */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <Calendar className="h-4 w-4" />
-                Return Progress
-              </h3>
-              <div className="space-y-3">
-                {statusConfig.timeline.map((step, index) => (
-                  <div key={index} className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      step.status === 'completed' ? 'bg-green-100 text-green-600' :
-                      step.status === 'current' ? 'bg-indigo-100 text-indigo-600' :
-                      'bg-gray-100 text-gray-400'
-                    }`}>
-                      <step.icon className="h-4 w-4" />
+            {/* Return Instructions and Waybill - Show only after Process Return is clicked */}
+            {showReturnDetails && refundData.refund_category !== 'keep_item' && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h3 className="text-sm font-medium text-blue-800 mb-3 flex items-center gap-2">
+                  <Package className="h-4 w-4" />
+                  Return Instructions
+                </h3>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs font-medium text-gray-700 mb-1">Return Method:</p>
+                      <p className="text-sm">Customer Self Arrange</p>
                     </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-center">
-                        <p className={`text-sm font-medium ${
-                          step.status === 'completed' ? 'text-green-700' :
-                          step.status === 'current' ? 'text-indigo-700' :
-                          'text-gray-500'
-                        }`}>
-                          {step.label}
-                        </p>
-                        {step.status === 'current' && (
-                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-xs">
-                            Active
-                          </Badge>
+                    <div>
+                      <p className="text-xs font-medium text-gray-700 mb-1">Deadline:</p>
+                      <p className="text-sm">
+                        {refundData.buyer_return_deadline 
+                          ? formatDate(refundData.buyer_return_deadline)
+                          : 'Within 7 days'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Payment Method Details */}
+                  {refundData.payment_method_details && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-700 mb-1">Refund Payment Details:</p>
+                      <div className="bg-white border rounded p-3">
+                        {refundData.payment_method_details.wallet && (
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Wallet className="h-4 w-4 text-blue-600" />
+                              <span className="text-sm font-medium">Wallet</span>
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              <p>Provider: {refundData.payment_method_details.wallet.provider}</p>
+                              <p>Account: {refundData.payment_method_details.wallet.account_name}</p>
+                              <p>Number: {refundData.payment_method_details.wallet.account_number}</p>
+                            </div>
+                          </div>
+                        )}
+                        {refundData.payment_method_details.bank && (
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Building className="h-4 w-4 text-green-600" />
+                              <span className="text-sm font-medium">Bank Transfer</span>
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              <p>Bank: {refundData.payment_method_details.bank.bank_name}</p>
+                              <p>Account: {refundData.payment_method_details.bank.account_name}</p>
+                              <p>Number: {refundData.payment_method_details.bank.account_number}</p>
+                            </div>
+                          </div>
+                        )}
+                        {refundData.payment_method_details.remittance && (
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Receipt className="h-4 w-4 text-orange-600" />
+                              <span className="text-sm font-medium">Remittance</span>
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              <p>Provider: {refundData.payment_method_details.remittance.provider}</p>
+                              <p>Name: {refundData.payment_method_details.remittance.full_name}</p>
+                              <p>Contact: {refundData.payment_method_details.remittance.contact_number}</p>
+                            </div>
+                          </div>
                         )}
                       </div>
-                      <p className="text-xs text-gray-500">
-                        {step.status === 'completed' ? 'Completed' :
-                         step.status === 'current' ? 'In Progress - Return scheduled' :
-                         'Pending'}
-                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Step-by-Step Return Process */}
+                <div className="mt-4">
+                  <p className="text-xs font-medium text-gray-700 mb-3">Return Process:</p>
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-3">
+                      <div className="w-6 h-6 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-xs font-medium text-blue-700">1</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">Prepare Your Package</p>
+                        <p className="text-xs text-gray-600">Ensure the item is in its original condition with all accessories and packaging.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-6 h-6 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-xs font-medium text-blue-700">2</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">Schedule Return</p>
+                        <p className="text-xs text-gray-600">Use the "Schedule Return" button below to arrange pickup or find drop-off locations.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-6 h-6 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-xs font-medium text-blue-700">3</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">Track Your Return</p>
+                        <p className="text-xs text-gray-600">Monitor the return status and receive updates on processing.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-6 h-6 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-xs font-medium text-blue-700">4</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">Receive Refund</p>
+                        <p className="text-xs text-gray-600">Once verified, your refund will be processed to your selected payment method.</p>
+                      </div>
                     </div>
                   </div>
-                ))}
+                </div>
+
+                {/* Return Waybill - Show if exists and status is waiting or to_process */}
+                {refundData.waybill && (currentStatus === 'waiting' || currentStatus === 'to_process') && (
+                  <div className="mt-4 bg-purple-50 border border-purple-200 rounded-lg p-4">
+                    <h3 className="text-sm font-medium text-purple-800 mb-3 flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Return Waybill
+                    </h3>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-xs font-medium text-gray-700 mb-1">Waybill Number:</p>
+                          <p className="text-sm font-mono bg-white px-2 py-1 rounded border">{refundData.waybill.waybill_number}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-gray-700 mb-1">Status:</p>
+                          <Badge variant="outline" className="text-xs">
+                            {refundData.waybill.status}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-xs font-medium text-gray-700 mb-1">From (You):</p>
+                          <div className="text-xs text-gray-600 bg-white p-2 rounded border">
+                            <p><strong>{refundData.waybill.customer_info?.name}</strong></p>
+                            <p>{refundData.waybill.customer_info?.address}</p>
+                            <p>{refundData.waybill.customer_info?.phone}</p>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-gray-700 mb-1">To (Shop):</p>
+                          <div className="text-xs text-gray-600 bg-white p-2 rounded border">
+                            <p><strong>{refundData.waybill.shop_info?.name}</strong></p>
+                            <p>{refundData.waybill.shop_info?.address}</p>
+                            <p>{refundData.waybill.shop_info?.phone}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-medium text-gray-700 mb-2">Items to Return:</p>
+                        <div className="bg-white border rounded p-3">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b">
+                                <th className="text-left py-1">Item</th>
+                                <th className="text-left py-1">Quantity</th>
+                                <th className="text-left py-1">Description</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {refundData.waybill.return_items?.map((item: any, idx: number) => (
+                                <tr key={idx} className="border-b last:border-b-0">
+                                  <td className="py-1">{item.name}</td>
+                                  <td className="py-1">{item.quantity}</td>
+                                  <td className="py-1">{item.description}</td>
+                                </tr>
+                              )) || (
+                                <tr>
+                                  <td colSpan={3} className="py-2 text-center text-gray-500">No items listed</td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t">
+                        <div className="text-xs text-gray-500">
+                          Created: {formatDate(refundData.waybill.created_at)}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs"
+                          onClick={() => {
+                            // Print waybill functionality
+                            const printWindow = window.open('', '_blank');
+                            if (printWindow) {
+                              printWindow.document.write(`
+                                <html>
+                                  <head>
+                                    <title>Return Waybill - ${refundData.waybill.waybill_number}</title>
+                                    <style>
+                                      body { font-family: Arial, sans-serif; margin: 20px; }
+                                      .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+                                      .waybill-info { display: flex; justify-content: space-between; margin-bottom: 20px; }
+                                      .info-section { flex: 1; padding: 10px; }
+                                      .info-section h3 { margin-top: 0; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+                                      .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                                      .items-table th, .items-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+                                      .items-table th { background-color: #f5f5f5; }
+                                      .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
+                                    </style>
+                                  </head>
+                                  <body>
+                                    <div class="header">
+                                      <h1>Return Waybill</h1>
+                                      <h2>Waybill #${refundData.waybill.waybill_number}</h2>
+                                    </div>
+                                    
+                                    <div class="waybill-info">
+                                      <div class="info-section">
+                                        <h3>Sender Information</h3>
+                                        <p><strong>Customer:</strong> ${refundData.waybill.customer_info?.name || 'N/A'}</p>
+                                        <p><strong>Address:</strong> ${refundData.waybill.customer_info?.address || 'N/A'}</p>
+                                        <p><strong>Phone:</strong> ${refundData.waybill.customer_info?.phone || 'N/A'}</p>
+                                      </div>
+                                      
+                                      <div class="info-section">
+                                        <h3>Receiver Information</h3>
+                                        <p><strong>Shop:</strong> ${refundData.waybill.shop_info?.name || 'N/A'}</p>
+                                        <p><strong>Address:</strong> ${refundData.waybill.shop_info?.address || 'N/A'}</p>
+                                        <p><strong>Phone:</strong> ${refundData.waybill.shop_info?.phone || 'N/A'}</p>
+                                      </div>
+                                    </div>
+                                    
+                                    <div class="info-section">
+                                      <h3>Return Details</h3>
+                                      <p><strong>Order Number:</strong> ${refundData.order_info?.order_number || 'N/A'}</p>
+                                      <p><strong>Refund ID:</strong> ${refundData.refund || 'N/A'}</p>
+                                      <p><strong>Status:</strong> ${refundData.waybill.status || 'N/A'}</p>
+                                      <p><strong>Created:</strong> ${new Date(refundData.waybill.created_at).toLocaleDateString()}</p>
+                                    </div>
+                                    
+                                    <table class="items-table">
+                                      <thead>
+                                        <tr>
+                                          <th>Item</th>
+                                          <th>Quantity</th>
+                                          <th>Description</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        ${refundData.waybill.return_items?.map((item: any) => `
+                                          <tr>
+                                            <td>${item.name || 'N/A'}</td>
+                                            <td>${item.quantity || 'N/A'}</td>
+                                            <td>${item.description || 'N/A'}</td>
+                                          </tr>
+                                        `).join('') || '<tr><td colspan="3">No items found</td></tr>'}
+                                      </tbody>
+                                    </table>
+                                    
+                                    <div class="footer">
+                                      <p>Generated on ${new Date().toLocaleString()}</p>
+                                    </div>
+                                  </body>
+                                </html>
+                              `);
+                              printWindow.document.close();
+                              printWindow.print();
+                            }
+                          }}
+                        >
+                          <Printer className="h-3 w-3 mr-1" />
+                          Print Waybill
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Shipping Information Form */}
+                <div className="mt-4 bg-white border border-gray-200 rounded-lg p-4">
+                  <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
+                    <Truck className="h-4 w-4" />
+                    Shipping Information
+                  </h3>
+                  <p className="text-xs text-gray-600 mb-4">
+                    Please provide the shipping details for your return package.
+                  </p>
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.target as HTMLFormElement);
+                    const logisticService = formData.get('logistic_service') as string;
+                    const trackingNumber = formData.get('tracking_number') as string;
+
+                    if (!logisticService || !trackingNumber) {
+                      alert('Please fill in all fields');
+                      return;
+                    }
+
+                    try {
+                      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+                      const response = await fetch(`${API_BASE_URL}/return-refund/${refundData.refund}/update_tracking/`, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'X-User-Id': user.id,
+                        },
+                        body: JSON.stringify({
+                          logistic_service: logisticService,
+                          tracking_number: trackingNumber,
+                        }),
+                        credentials: 'include',
+                      });
+
+                      if (response.ok) {
+                        alert('Shipping information updated successfully');
+                        // Optionally refresh or update state
+                      } else {
+                        console.error('Failed to update tracking');
+                        alert('Failed to update shipping information');
+                      }
+                    } catch (error) {
+                      console.error('Error updating tracking:', error);
+                      alert('Error updating shipping information');
+                    }
+                  }}>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Logistic Service *
+                        </label>
+                        <input
+                          type="text"
+                          name="logistic_service"
+                          required
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="e.g., LBC, J&T Express, etc."
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Tracking Number *
+                        </label>
+                        <input
+                          type="text"
+                          name="tracking_number"
+                          required
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Enter tracking number"
+                        />
+                      </div>
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="w-full h-8 text-xs"
+                      >
+                        <Package className="h-3 w-3 mr-1.5" />
+                        Submit Shipping Info
+                      </Button>
+                    </div>
+                  </form>
+                </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
       {/* Right Column */}
       <div className="space-y-6">
-        {/* Return Deadline */}
-        <Card className="border border-indigo-100 bg-indigo-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Clock className="h-5 w-5 text-indigo-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-indigo-800">Return Deadline</p>
-                {returnRequest.deadline ? (
-                  <div className="mt-1">
-                    <p className="text-lg font-bold text-indigo-700">{formatDate(returnRequest.deadline)}</p>
-                    <p className="text-xs text-indigo-600">
-                      Please return the item before this date to avoid cancellation
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-sm text-indigo-700 mt-1">Within 7 days of approval</p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Return Summary */}
         <Card className="border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm flex items-center gap-2">
               <Package className="h-4 w-4" />
-              Return Details
+              Refund Summary
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Item Value:</span>
-                <span>{formatCurrency(returnRequest.total_refund_amount)}</span>
+                <span className="text-gray-600">Refund Amount:</span>
+                <span className="font-medium text-green-600">
+                  {formatCurrency(refundData.total_refund_amount)}
+                </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Return Method:</span>
-                <span className="capitalize">{returnRequest.shipping.method}</span>
+                <span className="text-gray-600">Preferred Refund Method:</span>
+                <span className="capitalize">
+                  {refundData.final_refund_method || refundData.preferred_refund_method}
+                </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Courier:</span>
-                <span>{returnRequest.shipping.courier || 'To be assigned'}</span>
+                <span className="text-gray-600">Approved At:</span>
+                <span>{formatDate(refundData.approved_at || '')}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Tracking:</span>
+                <span className="text-gray-600">Return Deadline:</span>
                 <span>
-                  {returnRequest.shipping.tracking_number ? (
-                    <code className="font-mono text-xs">{returnRequest.shipping.tracking_number}</code>
-                  ) : (
-                    'Pending'
-                  )}
+                  {refundData.buyer_return_deadline 
+                    ? formatDate(refundData.buyer_return_deadline)
+                    : '7 days'}
                 </span>
               </div>
             </div>
@@ -1801,62 +2094,78 @@ function WaitingStatusUI({ returnDetails, formatDate, formatCurrency, navigate }
         {/* Actions */}
         <Card className="border">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Actions</CardTitle>
+            <CardTitle className="text-sm">Next Steps</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {returnRequest.shipping.tracking_number && (
+            {/* Show alert if seller hasn't notified buyer */}
+            {!refundData.buyer_notified_at && refundData.status === 'approved' && (
+              <Alert className="bg-amber-50 border-amber-200">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <AlertTitle className="text-amber-800">Waiting for Seller Notification</AlertTitle>
+                <AlertDescription className="text-amber-700">
+                  The seller needs to notify you before you can proceed with the return process.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Show Process Return button only for return-type refunds */}
+            {refundData.refund_category !== 'keep_item' && !showReturnDetails && (
               <Button
                 size="sm"
                 className="w-full h-8 text-xs"
-                onClick={() => navigate(`/track-return/${returnRequest.id}`)}
+                onClick={async () => {
+                  const refundId = refundData?.refund;
+                  if (!refundId || typeof refundId !== 'string' || refundId === 'undefined' || refundId.length !== 36) {
+                    alert('Invalid refund ID. Please refresh the page and try again.');
+                    return;
+                  }
+                  
+                  try {
+                    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+                    const response = await fetch(`${API_BASE_URL}/return-refund/${refundId}/start_return_process/`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'X-User-Id': user.id,
+                      },
+                      credentials: 'include',
+                    });
+                    if (response.ok) {
+                      const data = await response.json();
+                      setCurrentStatus(data.status);
+                      setShowReturnDetails(true);
+                    } else {
+                      console.error('Failed to start return process');
+                    }
+                  } catch (error) {
+                    console.error('Error starting return process:', error);
+                  }
+                }}
+                disabled={!refundData.buyer_notified_at}
               >
-                <Navigation className="h-3 w-3 mr-1.5" />
-                Track Return
+                <Calendar className="h-3 w-3 mr-1.5" />
+                Process Return
               </Button>
             )}
             <Button
               variant="outline"
               size="sm"
               className="w-full h-8 text-xs"
-              onClick={() => navigate(`/download-return-label/${returnRequest.id}`)}
+              onClick={() => navigate(`/chat/seller/${getShopId(refundData)}`)}
             >
-              <Download className="h-3 w-3 mr-1.5" />
-              Download Label
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/update-return/${returnRequest.id}`)}
-            >
-              <Edit className="h-3 w-3 mr-1.5" />
-              Update Schedule
+              <MessageCircle className="h-3 w-3 mr-1.5" />
+              Contact Seller
             </Button>
             <Separator className="my-2" />
             <Button
               variant="ghost"
               size="sm"
               className="w-full h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-              onClick={() => navigate(`/request-refund/cancel/${returnRequest.id}`)}
+              onClick={() => navigate(`/cancel-refund/${refundData.refund}`)}
             >
               <XCircle className="h-3 w-3 mr-1.5" />
-              Cancel Return
+              Cancel Refund
             </Button>
-          </CardContent>
-        </Card>
-
-        {/* Help Section */}
-        <Card className="border border-blue-100 bg-blue-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <HelpCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-blue-800">Need Help?</p>
-                <p className="text-xs text-blue-700 mt-1">
-                  If you need to change your return schedule or have questions, contact the seller or courier directly.
-                </p>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>
@@ -1864,768 +2173,157 @@ function WaitingStatusUI({ returnDetails, formatDate, formatCurrency, navigate }
   );
 }
 
-function ToVerifyStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
-  const returnRequest = returnDetails.returnRequest;
-  const statusConfig = STATUS_CONFIG.to_verify;
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Left Column */}
-      <div className="lg:col-span-2 space-y-6">
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <RotateCcw className="h-5 w-5" />
-                Return Request #{returnRequest.request_number}
-              </CardTitle>
-              <Badge variant="outline" className={statusConfig.color + " text-xs"}>
-                <statusConfig.icon className="h-3 w-3 mr-1" />
-                {statusConfig.label}
-              </Badge>
-            </div>
-            <CardDescription>
-              Order #{returnRequest.order_number} • Item received, under verification
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Status Message */}
-            <Alert className="bg-purple-50 border-purple-200">
-              <PackageCheck className="h-4 w-4 text-purple-600" />
-              <AlertTitle className="text-purple-800">Item Received by Seller</AlertTitle>
-              <AlertDescription className="text-purple-700">
-                Your returned item has been received. The seller is now verifying its condition. This usually takes 1-3 business days.
-              </AlertDescription>
-            </Alert>
-
-            {/* Verification Progress */}
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-purple-800 mb-3 flex items-center gap-2">
-                <PackageCheck className="h-4 w-4" />
-                Verification Status
-              </h3>
-              
-              <div className="space-y-4">
-                {/* Tracking Info */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Tracking Number:</p>
-                    <div className="flex items-center gap-2">
-                      <Hash className="h-4 w-4 text-purple-600" />
-                      <code className="text-sm font-mono bg-white px-2 py-1 rounded border">
-                        {returnRequest.shipping.tracking_number}
-                      </code>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Delivery Status:</p>
-                    <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
-                      <CheckCircle className="h-3 w-3 mr-1" />
-                      Delivered
-                    </Badge>
-                  </div>
-                </div>
-
-                {/* Verification Timeline */}
-                <div>
-                  <p className="text-xs font-medium text-gray-700 mb-2">Verification Steps:</p>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                        <CheckCircle className="h-3 w-3 text-green-600" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">Item Received</p>
-                        <p className="text-xs text-gray-500">Seller confirmed receipt of package</p>
-                      </div>
-                      <span className="text-xs text-gray-500">{formatDate(returnRequest.updated_at)}</span>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                        <PackageCheck className="h-3 w-3 text-purple-600" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">Quality Inspection</p>
-                        <p className="text-xs text-gray-500">Checking item condition and completeness</p>
-                      </div>
-                      <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 text-xs">
-                        In Progress
-                      </Badge>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-                        <CheckCheck className="h-3 w-3 text-gray-400" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-gray-500">Verification Complete</p>
-                        <p className="text-xs text-gray-400">Final approval for refund</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Expected Timeline */}
-                <div className="bg-white border rounded p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Expected Completion:</p>
-                      <p className="text-xs text-gray-600">Within 3 business days</p>
-                    </div>
-                    <Clock className="h-4 w-4 text-purple-600" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* What Happens Next */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <ArrowRight className="h-4 w-4" />
-                What Happens Next
-              </h3>
-              <div className="space-y-3">
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                    <PackageCheck className="h-4 w-4 text-purple-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Verification Process</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      The seller will check if the item is in acceptable condition, complete with all accessories, and matches the return reason.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <Banknote className="h-4 w-4 text-blue-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Refund Initiation</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      Once verified, the refund will be processed to your selected payment method within 3-5 business days.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Completion</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      You'll receive a confirmation email once the refund is completed. The amount should appear in your account shortly after.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Right Column */}
-      <div className="space-y-6">
-        {/* Verification Status */}
-        <Card className="border border-purple-100 bg-purple-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <PackageCheck className="h-5 w-5 text-purple-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-purple-800">Verification Timeline</p>
-                <div className="mt-2 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-purple-700">Started:</span>
-                    <span className="text-xs font-medium">{formatDate(returnRequest.updated_at)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-purple-700">Expected Complete:</span>
-                    <span className="text-xs font-medium">Within 3 days</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-purple-700">Status:</span>
-                    <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 text-xs">
-                      In Progress
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Refund Summary */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Banknote className="h-4 w-4" />
-              Expected Refund
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Item Value:</span>
-                <span>{formatCurrency(returnRequest.total_refund_amount)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Return Shipping:</span>
-                <span className="text-green-600">Free</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Restocking Fee:</span>
-                <span className="text-green-600">None</span>
-              </div>
-              <Separator />
-              <div className="flex justify-between font-medium">
-                <span>Total Refund:</span>
-                <span className="text-green-600">{formatCurrency(returnRequest.total_refund_amount)}</span>
-              </div>
-            </div>
-            <div className="pt-2">
-              <p className="text-xs font-medium text-gray-700 mb-1">Refund Method:</p>
-              <div className="flex items-center gap-2 text-sm">
-                {returnRequest.payment.method === 'wallet' && <Wallet className="h-4 w-4 text-blue-600" />}
-                {returnRequest.payment.method === 'original_payment' && <CreditCard className="h-4 w-4 text-purple-600" />}
-                {returnRequest.payment.method === 'bank_transfer' && <Building className="h-4 w-4 text-green-600" />}
-                {returnRequest.payment.method === 'store_credit' && <Receipt className="h-4 w-4 text-orange-600" />}
-                <span className="capitalize">{returnRequest.payment.method.replace('_', ' ')}</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Actions */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/track-return/${returnRequest.id}`)}
-            >
-              <Navigation className="h-3 w-3 mr-1.5" />
-              View Tracking
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/chat/seller/${returnRequest.shop_id}`)}
-            >
-              <MessageCircle className="h-3 w-3 mr-1.5" />
-              Contact Seller
-            </Button>
-            <Separator className="my-2" />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/faq/verification`)}
-            >
-              <HelpCircle className="h-3 w-3 mr-1.5" />
-              Verification FAQ
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Help Section */}
-        <Card className="border border-blue-100 bg-blue-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-blue-800">Verification Note</p>
-                <p className="text-xs text-blue-700 mt-1">
-                  If the seller finds any issues with the returned item, they will contact you within 3 business days.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function ToProcessStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
-  const returnRequest = returnDetails.returnRequest;
-  const statusConfig = STATUS_CONFIG.to_process;
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Left Column */}
-      <div className="lg:col-span-2 space-y-6">
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <RotateCcw className="h-5 w-5" />
-                Return Request #{returnRequest.request_number}
-              </CardTitle>
-              <Badge variant="outline" className={statusConfig.color + " text-xs"}>
-                <statusConfig.icon className="h-3 w-3 mr-1" />
-                {statusConfig.label}
-              </Badge>
-            </div>
-            <CardDescription>
-              Order #{returnRequest.order_number} • Ready for refund processing
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Status Message */}
-            <Alert className="bg-purple-50 border-purple-200">
-              <RefreshCw className="h-4 w-4 text-purple-600" />
-              <AlertTitle className="text-purple-800">Ready for Refund Processing</AlertTitle>
-              <AlertDescription className="text-purple-700">
-                Your returned item has been verified. The refund is now being processed and should be completed within 3-5 business days.
-              </AlertDescription>
-            </Alert>
-
-            {/* Refund Processing */}
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-purple-800 mb-3 flex items-center gap-2">
-                <Banknote className="h-4 w-4" />
-                Refund Processing Details
-              </h3>
-              
-              <div className="space-y-4">
-                {/* Processing Steps */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                      <CheckCircle className="h-3 w-3 text-green-600" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Item Verification Complete</p>
-                      <p className="text-xs text-gray-500">Seller confirmed item is in acceptable condition</p>
-                    </div>
-                    <span className="text-xs text-gray-500">{formatDate(returnRequest.updated_at)}</span>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                      <RefreshCw className="h-3 w-3 text-purple-600" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Refund Processing</p>
-                      <p className="text-xs text-gray-500">Transferring funds to your account</p>
-                    </div>
-                    <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 text-xs">
-                      In Progress
-                    </Badge>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-                      <CheckCheck className="h-3 w-3 text-gray-400" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-500">Refund Completed</p>
-                      <p className="text-xs text-gray-400">Funds will appear in your account</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Expected Timeline */}
-                <div className="bg-white border rounded p-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs font-medium text-gray-700">Expected Completion:</p>
-                      <p className="text-sm font-medium">Within 5 business days</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-gray-700">Payment Method:</p>
-                      <div className="flex items-center gap-2">
-                        {returnRequest.payment.method === 'wallet' && <Wallet className="h-4 w-4 text-blue-600" />}
-                        {returnRequest.payment.method === 'original_payment' && <CreditCard className="h-4 w-4 text-purple-600" />}
-                        <span className="text-sm capitalize">{returnRequest.payment.method.replace('_', ' ')}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Refund Timeline */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <Calendar className="h-4 w-4" />
-                Refund Timeline
-              </h3>
-              <div className="space-y-3">
-                {statusConfig.timeline.map((step, index) => (
-                  <div key={index} className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      step.status === 'completed' ? 'bg-green-100 text-green-600' :
-                      step.status === 'current' ? 'bg-purple-100 text-purple-600' :
-                      'bg-gray-100 text-gray-400'
-                    }`}>
-                      <step.icon className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-center">
-                        <p className={`text-sm font-medium ${
-                          step.status === 'completed' ? 'text-green-700' :
-                          step.status === 'current' ? 'text-purple-700' :
-                          'text-gray-500'
-                        }`}>
-                          {step.label}
-                        </p>
-                        {step.status === 'current' && (
-                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 text-xs">
-                            Processing
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {step.status === 'completed' ? 'Completed' :
-                         step.status === 'current' ? 'In Progress - Refund being processed' :
-                         'Pending'}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Right Column */}
-      <div className="space-y-6">
-        {/* Refund Summary */}
-        <Card className="border border-purple-100 bg-purple-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Banknote className="h-5 w-5 text-purple-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-purple-800">Refund Amount</p>
-                <p className="text-2xl font-bold text-purple-700 mt-1">{formatCurrency(returnRequest.total_refund_amount)}</p>
-                <p className="text-xs text-purple-600 mt-1">
-                  Processing to your {returnRequest.payment.method.replace('_', ' ')}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Refund Details */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Refund Details
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Transaction ID:</span>
-                <code className="font-mono text-xs">{returnRequest.payment.transaction_id || 'Pending'}</code>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Payment Method:</span>
-                <span className="capitalize">{returnRequest.payment.method.replace('_', ' ')}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Processing Time:</span>
-                <span>3-5 business days</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Status:</span>
-                <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100">
-                  Processing
-                </Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Actions */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/view-receipt/${returnRequest.id}`)}
-            >
-              <Receipt className="h-3 w-3 mr-1.5" />
-              View Receipt
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/chat/seller/${returnRequest.shop_id}`)}
-            >
-              <MessageCircle className="h-3 w-3 mr-1.5" />
-              Contact Seller
-            </Button>
-            <Separator className="my-2" />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/faq/refunds`)}
-            >
-              <HelpCircle className="h-3 w-3 mr-1.5" />
-              Refund FAQ
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Help Section */}
-        <Card className="border border-green-100 bg-green-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Clock className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-green-800">Processing Time</p>
-                <p className="text-xs text-green-700 mt-1">
-                  Refunds typically take 3-5 business days to process. The exact timing depends on your payment method and bank.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function DisputeStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
-  const returnRequest = returnDetails.returnRequest;
+function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate }: any) {
   const statusConfig = STATUS_CONFIG.dispute;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       {/* Left Column */}
-      <div className="lg:col-span-2 space-y-6">
+      <div className="lg:col-span-2 space-y-4">
         <Card className="border">
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <RotateCcw className="h-5 w-5" />
-                Return Request #{returnRequest.request_number}
+              <CardTitle className="text-base flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                Refund Request #{refundData.request_number}
               </CardTitle>
               <Badge variant="outline" className={statusConfig.color + " text-xs"}>
                 <statusConfig.icon className="h-3 w-3 mr-1" />
                 {statusConfig.label}
               </Badge>
             </div>
-            <CardDescription>
-              Order #{returnRequest.order_number} • Under admin review
+            <CardDescription className="text-xs">
+              Order #{getOrderNumber(refundData)} • Dispute filed on {formatDate(refundData.dispute_filed_at || refundData.updated_at)}
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Status Message */}
+          <CardContent className="space-y-4">
+            {/* Dispute Notification */}
             <Alert className="bg-orange-50 border-orange-200">
               <AlertTriangle className="h-4 w-4 text-orange-600" />
               <AlertTitle className="text-orange-800">Dispute Filed</AlertTitle>
               <AlertDescription className="text-orange-700">
-                This return request has been escalated to admin for review. A decision will be made within 5-7 business days.
+                The shop owner has filed a dispute for this refund request. Our team will review the dispute and get back to you within 48 hours.
               </AlertDescription>
             </Alert>
 
-            {/* Dispute Details */}
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-orange-800 mb-3 flex items-center gap-2">
-                <ShieldAlert className="h-4 w-4" />
-                Dispute Information
-              </h3>
-              
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Dispute Reason:</p>
-                    <p className="text-sm">Unable to reach agreement with seller</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Filed On:</p>
-                    <p className="text-sm">{formatDate(returnRequest.updated_at)}</p>
-                  </div>
-                </div>
+            {/* Refund Summary */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Calendar className="h-3 w-3" />
+                  Request Date
+                </p>
+                <p className="font-medium text-sm">{formatDate(refundData.requested_at)}</p>
+              </div>
 
-                <div>
-                  <p className="text-xs font-medium text-gray-700 mb-1">Your Position:</p>
-                  <div className="bg-white border rounded p-3">
-                    <p className="text-sm">{returnRequest.reason}</p>
-                    {returnRequest.customer_note && (
-                      <p className="text-sm text-gray-600 mt-2">{returnRequest.customer_note}</p>
-                    )}
-                  </div>
-                </div>
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Package className="h-3 w-3" />
+                  Items
+                </p>
+                <p className="font-medium text-sm">{refundData.order_items?.length || 0} item(s)</p>
+              </div>
 
-                {returnRequest.admin_response && (
-                  <div className="bg-blue-50 border border-blue-200 rounded p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Shield className="h-4 w-4 text-blue-600" />
-                      <p className="text-sm font-medium text-blue-800">Admin Response:</p>
-                    </div>
-                    <p className="text-sm text-blue-700">{returnRequest.admin_response}</p>
-                  </div>
-                )}
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Banknote className="h-3 w-3" />
+                  Refund Amount
+                </p>
+                <p className="font-medium text-sm">{formatCurrency(refundData.total_refund_amount)}</p>
+              </div>
+
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  Dispute Filed
+                </p>
+                <p className="font-medium text-sm text-orange-600">
+                  {formatDate(refundData.dispute_filed_at || refundData.updated_at)}
+                </p>
               </div>
             </div>
 
-            {/* Dispute Timeline */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <Calendar className="h-4 w-4" />
-                Dispute Timeline
-              </h3>
-              <div className="space-y-3">
-                {statusConfig.timeline.map((step, index) => (
-                  <div key={index} className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      step.status === 'completed' ? 'bg-green-100 text-green-600' :
-                      step.status === 'current' ? 'bg-orange-100 text-orange-600' :
-                      'bg-gray-100 text-gray-400'
-                    }`}>
-                      <step.icon className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-center">
-                        <p className={`text-sm font-medium ${
-                          step.status === 'completed' ? 'text-green-700' :
-                          step.status === 'current' ? 'text-orange-700' :
-                          'text-gray-500'
-                        }`}>
-                          {step.label}
-                        </p>
-                        {step.status === 'current' && (
-                          <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
-                            Under Review
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {step.status === 'completed' ? 'Completed' :
-                         step.status === 'current' ? 'Admin is reviewing the case' :
-                         'Pending'}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* What to Expect */}
-            <div className="bg-gray-50 border rounded-lg p-4">
-              <h3 className="text-sm font-medium mb-3">What to Expect</h3>
-              <div className="space-y-2 text-sm">
-                <p className="text-gray-600">• Admin will review all evidence from both parties</p>
-                <p className="text-gray-600">• Decision typically made within 5-7 business days</p>
-                <p className="text-gray-600">• You'll be notified of the decision via email</p>
-                <p className="text-gray-600">• Admin's decision is final and binding</p>
-              </div>
+            {/* Reason for Refund */}
+            <div className="p-3 bg-gray-50 border border-gray-200 rounded">
+              <p className="text-xs font-medium text-gray-800 mb-2">Your Refund Reason</p>
+              <p className="text-sm text-gray-700">{refundData.reason}</p>
+              {refundData.customer_note && (
+                <p className="text-sm text-gray-600 mt-2">{refundData.customer_note}</p>
+              )}
             </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Right Column */}
-      <div className="space-y-6">
-        {/* Dispute Status */}
-        <Card className="border border-orange-100 bg-orange-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-orange-800">Dispute Status</p>
-                <div className="mt-2 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-orange-700">Status:</span>
-                    <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100 text-xs">
-                      Under Review
-                    </Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-orange-700">Filed:</span>
-                    <span className="text-xs font-medium">{formatDate(returnRequest.updated_at)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-orange-700">Expected Decision:</span>
-                    <span className="text-xs font-medium">5-7 business days</span>
-                  </div>
-                </div>
-              </div>
+      <div className="space-y-4">
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Refund Summary</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Order Total:</span>
+              <span>{formatCurrency(getOrderTotal(refundData))}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Refund Amount:</span>
+              <span>{formatCurrency(refundData.total_refund_amount)}</span>
+            </div>
+            <Separator className="my-2" />
+            <div className="flex justify-between font-bold text-sm">
+              <span>Status:</span>
+              <span className={statusConfig.color.replace('hover:bg-', 'bg-') + " px-2 py-1 rounded text-xs"}>
+                {statusConfig.label}
+              </span>
             </div>
           </CardContent>
         </Card>
 
-        {/* Potential Outcomes */}
         <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Potential Outcomes</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Shop Information</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <div className="flex items-start gap-2">
-                <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium">In Your Favor</p>
-                  <p className="text-xs text-gray-600">Full refund processed immediately</p>
-                </div>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                <Store className="h-5 w-5 text-gray-600" />
               </div>
-              <div className="flex items-start gap-2">
-                <ThumbsUp className="h-4 w-4 text-blue-600 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium">Partial Settlement</p>
-                  <p className="text-xs text-gray-600">Compromise amount agreed upon</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-2">
-                <XCircle className="h-4 w-4 text-red-600 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium">In Seller's Favor</p>
-                  <p className="text-xs text-gray-600">Return request denied</p>
-                </div>
+              <div>
+                <p className="text-sm font-medium">{getShopName(refundData)}</p>
+                <p className="text-xs text-gray-700">Dispute under review</p>
               </div>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-8 text-xs"
+              onClick={() => navigate(`/shop/${getShopId(refundData)}`)}
+            >
+              <Eye className="h-3 w-3 mr-1.5" />
+              View Shop
+            </Button>
           </CardContent>
         </Card>
 
-        {/* Actions */}
         <Card className="border">
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-2">
             <CardTitle className="text-sm">Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/dispute/evidence/${returnRequest.id}`)}
-            >
-              <FileUp className="h-3 w-3 mr-1.5" />
-              Add Evidence
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/support/contact`)}
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => navigate(`/chat/seller/${getShopId(refundData)}`)}
             >
               <MessageCircle className="h-3 w-3 mr-1.5" />
-              Contact Support
+              Contact Seller
             </Button>
-            <Separator className="my-2" />
             <Button
               variant="ghost"
               size="sm"
-              className="w-full h-8 text-xs"
+              className="w-full justify-start h-8 text-xs"
               onClick={() => navigate(`/faq/disputes`)}
             >
               <HelpCircle className="h-3 w-3 mr-1.5" />
@@ -2634,834 +2332,22 @@ function DisputeStatusUI({ returnDetails, formatDate, formatCurrency, navigate }
           </CardContent>
         </Card>
 
-        {/* Help Section */}
-        <Card className="border border-blue-100 bg-blue-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+        <Card className="border border-orange-100 bg-orange-50">
+          <CardContent className="p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-orange-600 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-medium text-blue-800">Need Help?</p>
-                <p className="text-xs text-blue-700 mt-1">
-                  For questions about the dispute process, contact our support team. Provide as much evidence as possible to support your case.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function CompletedStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
-  const returnRequest = returnDetails.returnRequest;
-  const statusConfig = STATUS_CONFIG.completed;
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Left Column */}
-      <div className="lg:col-span-2 space-y-6">
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <RotateCcw className="h-5 w-5" />
-                Return Request #{returnRequest.request_number}
-              </CardTitle>
-              <Badge variant="outline" className={statusConfig.color + " text-xs"}>
-                <statusConfig.icon className="h-3 w-3 mr-1" />
-                {statusConfig.label}
-              </Badge>
-            </div>
-            <CardDescription>
-              Order #{returnRequest.order_number} • Completed on {formatDate(returnRequest.updated_at)}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Status Message */}
-            <Alert className="bg-emerald-50 border-emerald-200">
-              <CheckSquare className="h-4 w-4 text-emerald-600" />
-              <AlertTitle className="text-emerald-800">Return Completed Successfully!</AlertTitle>
-              <AlertDescription className="text-emerald-700">
-                Your return and refund have been completed. Thank you for using our return service.
-              </AlertDescription>
-            </Alert>
-
-            {/* Completion Summary */}
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-emerald-800 mb-3 flex items-center gap-2">
-                <CheckCircle className="h-4 w-4" />
-                Completion Summary
-              </h3>
-              
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Refund Amount:</p>
-                    <p className="text-xl font-bold text-emerald-700">{formatCurrency(returnRequest.total_refund_amount)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Completed On:</p>
-                    <p className="text-sm">{formatDate(returnRequest.updated_at)}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-medium text-gray-700 mb-1">Transaction ID:</p>
-                  <code className="text-sm font-mono bg-white px-2 py-1 rounded border">
-                    {returnRequest.payment.transaction_id || 'REF-' + returnRequest.id.slice(-8)}
-                  </code>
-                </div>
-
-                <div className="bg-white border rounded p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Banknote className="h-4 w-4 text-emerald-600" />
-                    <p className="text-sm font-medium">Refund Method:</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {returnRequest.payment.method === 'wallet' && <Wallet className="h-5 w-5 text-blue-600" />}
-                    {returnRequest.payment.method === 'original_payment' && <CreditCard className="h-5 w-5 text-purple-600" />}
-                    {returnRequest.payment.method === 'bank_transfer' && <Building className="h-5 w-5 text-green-600" />}
-                    {returnRequest.payment.method === 'store_credit' && <Receipt className="h-5 w-5 text-orange-600" />}
-                    <span className="text-sm capitalize">{returnRequest.payment.method.replace('_', ' ')}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Complete Timeline */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <Calendar className="h-4 w-4" />
-                Return Timeline
-              </h3>
-              <div className="space-y-3">
-                {statusConfig.timeline.map((step, index) => (
-                  <div key={index} className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      step.status === 'completed' ? 'bg-emerald-100 text-emerald-600' :
-                      step.status === 'current' ? 'bg-emerald-100 text-emerald-600' :
-                      'bg-gray-100 text-gray-400'
-                    }`}>
-                      <step.icon className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-center">
-                        <p className={`text-sm font-medium ${
-                          step.status === 'completed' ? 'text-emerald-700' :
-                          step.status === 'current' ? 'text-emerald-700' :
-                          'text-gray-500'
-                        }`}>
-                          {step.label}
-                        </p>
-                        {step.status === 'current' && (
-                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
-                            Completed
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {step.status === 'completed' || step.status === 'current' ? 'Completed' : 'Not required'}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Rate Your Experience */}
-            <div className="border rounded-lg p-4">
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <Star className="h-4 w-4" />
-                Rate Your Experience
-              </h3>
-              <div className="space-y-3">
-                <p className="text-sm text-gray-600">
-                  How was your return experience? Your feedback helps us improve our service.
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 h-9"
-                    onClick={() => navigate(`/rate-return/${returnRequest.id}`)}
-                  >
-                    <Star className="h-4 w-4 mr-1.5" />
-                    Rate Return
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="flex-1 h-9"
-                    onClick={() => navigate(`/rate-seller/${returnRequest.shop_id}`)}
-                  >
-                    <Store className="h-4 w-4 mr-1.5" />
-                    Rate Seller
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Right Column */}
-      <div className="space-y-6">
-        {/* Completion Card */}
-        <Card className="border border-emerald-100 bg-emerald-50">
-          <CardContent className="p-4">
-            <div className="flex flex-col items-center text-center">
-              <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mb-3">
-                <CheckSquare className="h-6 w-6 text-emerald-600" />
-              </div>
-              <p className="text-sm font-medium text-emerald-800">Return Completed</p>
-              <p className="text-xs text-emerald-700 mt-1">
-                Process finished successfully
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Refund Details */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Receipt className="h-4 w-4" />
-              Refund Details
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Amount:</span>
-                <span className="font-medium text-emerald-700">{formatCurrency(returnRequest.total_refund_amount)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Method:</span>
-                <span className="capitalize">{returnRequest.payment.method.replace('_', ' ')}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Status:</span>
-                <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
-                  Completed
-                </Badge>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Transaction ID:</span>
-                <code className="font-mono text-xs">{returnRequest.payment.transaction_id?.slice(-8)}</code>
-              </div>
-            </div>
-            <Separator className="my-2" />
-            <div className="text-center">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => navigate(`/download-receipt/${returnRequest.id}`)}
-              >
-                <Download className="h-3 w-3 mr-1.5" />
-                Download Receipt
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Actions */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/shop/${returnRequest.shop_id}`)}
-            >
-              <Store className="h-3 w-3 mr-1.5" />
-              Visit Shop Again
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/similar-products/${returnRequest.items[0].product_id}`)}
-            >
-              <ShoppingCart className="h-3 w-3 mr-1.5" />
-              Shop Similar Items
-            </Button>
-            <Separator className="my-2" />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/request-refund-return`)}
-            >
-              <Plus className="h-3 w-3 mr-1.5" />
-              New Return Request
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Help Section */}
-        <Card className="border border-blue-100 bg-blue-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-blue-800">Need Assistance?</p>
-                <p className="text-xs text-blue-700 mt-1">
-                  If you have any questions about your refund or need further assistance, please contact our support team.
+                <p className="text-sm font-medium text-orange-800">Dispute in Progress</p>
+                <p className="text-xs text-orange-700 mt-1">
+                  Our team is reviewing the dispute filed by the seller. You'll be notified once a decision is made.
                 </p>
                 <Button
                   variant="link"
-                  className="h-6 px-0 text-xs text-blue-700 mt-2"
-                  onClick={() => navigate('/support/contact')}
+                  className="h-6 px-0 text-xs text-orange-700 mt-1"
+                  onClick={() => navigate('/support/disputes')}
                 >
                   Contact Support →
                 </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function RejectedStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
-  const returnRequest = returnDetails.returnRequest;
-  const statusConfig = STATUS_CONFIG.rejected;
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Left Column */}
-      <div className="lg:col-span-2 space-y-6">
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <RotateCcw className="h-5 w-5" />
-                Return Request #{returnRequest.request_number}
-              </CardTitle>
-              <Badge variant="outline" className={statusConfig.color + " text-xs"}>
-                <statusConfig.icon className="h-3 w-3 mr-1" />
-                {statusConfig.label}
-              </Badge>
-            </div>
-            <CardDescription>
-              Order #{returnRequest.order_number} • Rejected on {formatDate(returnRequest.updated_at)}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Status Message */}
-            <Alert className="bg-red-50 border-red-200">
-              <XCircle className="h-4 w-4 text-red-600" />
-              <AlertTitle className="text-red-800">Return Request Rejected</AlertTitle>
-              <AlertDescription className="text-red-700">
-                Your return request has been rejected by the seller. {returnRequest.seller_response && `Reason: ${returnRequest.seller_response}`}
-              </AlertDescription>
-            </Alert>
-
-            {/* Rejection Details */}
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-red-800 mb-3 flex items-center gap-2">
-                <FileText className="h-4 w-4" />
-                Rejection Details
-              </h3>
-              
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Rejected On:</p>
-                    <p className="text-sm">{formatDate(returnRequest.updated_at)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">By:</p>
-                    <div className="flex items-center gap-2">
-                      <Store className="h-4 w-4 text-red-600" />
-                      <span className="text-sm">{returnRequest.shop_name}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {returnRequest.seller_response && (
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Seller's Response:</p>
-                    <div className="bg-white border rounded p-3">
-                      <p className="text-sm">{returnRequest.seller_response}</p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-white border rounded p-3">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Common Rejection Reasons:</p>
-                  <ul className="text-sm text-gray-600 space-y-1">
-                    <li>• Item not in original condition</li>
-                    <li>• Return request outside policy period</li>
-                    <li>• Missing accessories or packaging</li>
-                    <li>• Evidence insufficient or unclear</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-
-            {/* Your Options */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <ArrowRight className="h-4 w-4" />
-                Your Options
-              </h3>
-              <div className="space-y-3">
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <MessageCircle className="h-4 w-4 text-blue-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Contact Seller</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      Discuss the rejection reason and see if there's a resolution.
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => navigate(`/chat/seller/${returnRequest.shop_id}`)}
-                    >
-                      <MessageCircle className="h-3 w-3 mr-1.5" />
-                      Contact Seller
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
-                    <AlertTriangle className="h-4 w-4 text-orange-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">File a Dispute</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      If you believe the rejection is unfair, you can escalate to admin review.
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => navigate(`/file-dispute/${returnRequest.id}`)}
-                    >
-                      <AlertTriangle className="h-3 w-3 mr-1.5" />
-                      File Dispute
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-                    <ShoppingCart className="h-4 w-4 text-gray-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Keep the Item</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      Continue using the item or consider other options like reselling.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Right Column */}
-      <div className="space-y-6">
-        {/* Rejection Summary */}
-        <Card className="border border-red-100 bg-red-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-red-800">Request Rejected</p>
-                <div className="mt-2 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-red-700">Status:</span>
-                    <Badge className="bg-red-100 text-red-700 hover:bg-red-100 text-xs">
-                      Rejected
-                    </Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-red-700">Date:</span>
-                    <span className="text-xs font-medium">{formatDate(returnRequest.updated_at)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-red-700">By:</span>
-                    <span className="text-xs font-medium">{returnRequest.shop_name}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Original Request */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Original Request</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Item:</span>
-                <span>{returnRequest.items[0].name}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Requested Amount:</span>
-                <span>{formatCurrency(returnRequest.total_refund_amount)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Reason:</span>
-                <span className="text-right">{returnRequest.reason}</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Actions */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/chat/seller/${returnRequest.shop_id}`)}
-            >
-              <MessageCircle className="h-3 w-3 mr-1.5" />
-              Contact Seller
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/file-dispute/${returnRequest.id}`)}
-            >
-              <AlertTriangle className="h-3 w-3 mr-1.5" />
-              File Dispute
-            </Button>
-            <Separator className="my-2" />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/request-refund/new`)}
-            >
-              <Plus className="h-3 w-3 mr-1.5" />
-              New Return Request
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/faq/rejections`)}
-            >
-              <HelpCircle className="h-3 w-3 mr-1.5" />
-              Rejection FAQ
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Help Section */}
-        <Card className="border border-blue-100 bg-blue-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-blue-800">Need Help?</p>
-                <p className="text-xs text-blue-700 mt-1">
-                  If you need assistance understanding the rejection or want to explore your options, contact our support team.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function CancelledStatusUI({ returnDetails, formatDate, formatCurrency, navigate }: any) {
-  const returnRequest = returnDetails.returnRequest;
-  const statusConfig = STATUS_CONFIG.cancelled;
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Left Column */}
-      <div className="lg:col-span-2 space-y-6">
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <RotateCcw className="h-5 w-5" />
-                Return Request #{returnRequest.request_number}
-              </CardTitle>
-              <Badge variant="outline" className={statusConfig.color + " text-xs"}>
-                <statusConfig.icon className="h-3 w-3 mr-1" />
-                {statusConfig.label}
-              </Badge>
-            </div>
-            <CardDescription>
-              Order #{returnRequest.order_number} • Cancelled on {formatDate(returnRequest.updated_at)}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Status Message */}
-            <Alert className="bg-gray-50 border-gray-200">
-              <Ban className="h-4 w-4 text-gray-600" />
-              <AlertTitle className="text-gray-800">Return Request Cancelled</AlertTitle>
-              <AlertDescription className="text-gray-700">
-                This return request has been cancelled. {returnRequest.seller_response && `Note: ${returnRequest.seller_response}`}
-              </AlertDescription>
-            </Alert>
-
-            {/* Cancellation Details */}
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
-                <Info className="h-4 w-4" />
-                Cancellation Information
-              </h3>
-              
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Cancelled On:</p>
-                    <p className="text-sm">{formatDate(returnRequest.updated_at)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700 mb-1">Request ID:</p>
-                    <code className="text-sm font-mono">{returnRequest.request_number}</code>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-medium text-gray-700 mb-1">Original Request:</p>
-                  <div className="bg-white border rounded p-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 flex-shrink-0">
-                        <img
-                          src={returnRequest.items[0].image_url}
-                          alt={returnRequest.items[0].name}
-                          className="w-full h-full object-cover rounded"
-                        />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{returnRequest.items[0].name}</p>
-                        <p className="text-xs text-gray-500">Requested: {formatCurrency(returnRequest.total_refund_amount)}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white border rounded p-3">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Common Cancellation Reasons:</p>
-                  <ul className="text-sm text-gray-600 space-y-1">
-                    <li>• Customer changed their mind</li>
-                    <li>• Found alternative solution with seller</li>
-                    <li>• Decided to keep the item</li>
-                    <li>• Missed return deadline</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-
-            {/* Next Steps */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <ArrowRight className="h-4 w-4" />
-                What's Next?
-              </h3>
-              <div className="space-y-3">
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <ShoppingCart className="h-4 w-4 text-blue-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Continue Shopping</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      Browse for other products or visit the seller's shop again.
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => navigate(`/shop/${returnRequest.shop_id}`)}
-                    >
-                      <Store className="h-3 w-3 mr-1.5" />
-                      Visit Shop
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                    <RotateCcw className="h-4 w-4 text-green-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Create New Return Request</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      If you have a different issue, you can submit a new return request.
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => navigate(`/request-refund/new?order=${returnRequest.order_id}`)}
-                    >
-                      <Plus className="h-3 w-3 mr-1.5" />
-                      New Request
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 border rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-                    <HelpCircle className="h-4 w-4 text-gray-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">Get Help</p>
-                    <p className="text-xs text-gray-600 mt-1">
-                      If you have questions about the cancellation or need assistance.
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => navigate('/support/contact')}
-                    >
-                      <MessageCircle className="h-3 w-3 mr-1.5" />
-                      Contact Support
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Right Column */}
-      <div className="space-y-6">
-        {/* Cancellation Summary */}
-        <Card className="border border-gray-100 bg-gray-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Ban className="h-5 w-5 text-gray-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-gray-800">Request Cancelled</p>
-                <div className="mt-2 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-700">Status:</span>
-                    <Badge className="bg-gray-100 text-gray-700 hover:bg-gray-100 text-xs">
-                      Cancelled
-                    </Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-700">Date:</span>
-                    <span className="text-xs font-medium">{formatDate(returnRequest.updated_at)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-700">Order:</span>
-                    <span className="text-xs font-medium">{returnRequest.order_number}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Item Details */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Item Details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 flex-shrink-0">
-                <img
-                  src={returnRequest.items[0].image_url}
-                  alt={returnRequest.items[0].name}
-                  className="w-full h-full object-cover rounded"
-                />
-              </div>
-              <div>
-                <p className="text-sm font-medium">{returnRequest.items[0].name}</p>
-                <p className="text-xs text-gray-500">
-                  {returnRequest.items[0].color && `Color: ${returnRequest.items[0].color}`}
-                </p>
-              </div>
-            </div>
-            <Separator />
-            <div className="text-center">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => navigate(`/product/${returnRequest.items[0].product_id}`)}
-              >
-                <Eye className="h-3 w-3 mr-1.5" />
-                View Product
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Actions */}
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/shop/${returnRequest.shop_id}`)}
-            >
-              <Store className="h-3 w-3 mr-1.5" />
-              Visit Shop
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/request-refund/new?order=${returnRequest.order_id}`)}
-            >
-              <RotateCcw className="h-3 w-3 mr-1.5" />
-              New Return Request
-            </Button>
-            <Separator className="my-2" />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full h-8 text-xs"
-              onClick={() => navigate(`/purchases`)}
-            >
-              <ShoppingBag className="h-3 w-3 mr-1.5" />
-              View My Orders
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Help Section */}
-        <Card className="border border-blue-100 bg-blue-50">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-blue-800">Need Assistance?</p>
-                <p className="text-xs text-blue-700 mt-1">
-                  If you have questions about cancelled requests or need help with future returns, our support team is here to help.
-                </p>
               </div>
             </div>
           </CardContent>
@@ -3476,48 +2362,84 @@ const STATUS_UI_COMPONENTS = {
   pending: PendingStatusUI,
   negotiation: NegotiationStatusUI,
   approved: ApprovedStatusUI,
-  waiting: WaitingStatusUI,
-  to_verify: ToVerifyStatusUI,
-  to_process: ToProcessStatusUI,
-  dispute: DisputeStatusUI,
+  waiting: PendingStatusUI, // Use pending UI for now, update later
+  to_verify: PendingStatusUI, // Use pending UI for now, update later
+  to_process: ApprovedStatusUI, // Use approved UI since it has product list and return instructions
+  dispute: DisputeStatusUI, // Custom UI for dispute status
   completed: CompletedStatusUI,
-  rejected: RejectedStatusUI,
-  cancelled: CancelledStatusUI,
+  rejected: PendingStatusUI, // Use pending UI for now, update later
+  cancelled: PendingStatusUI, // Use pending UI for now, update later
 };
 
 // --- Main Component ---
 export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) {
-  const { user, returnDetails, action } = loaderData;
+  const { user, refundData, action } = loaderData;
   const params = useParams<{ returnId: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   
-  // Get status from URL query param
-  const queryStatus = searchParams.get('status');
-  
-  // Use the status from the query parameter if available, otherwise use loader data's status
-  const currentStatus = (queryStatus || returnDetails.returnRequest.status) as keyof typeof STATUS_CONFIG;
-
-
-
-
+  // Use the status from the refund data
+  const currentStatus = refundData?.status as keyof typeof STATUS_CONFIG || 'pending';
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    if (!dateString) return 'N/A';
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return 'Invalid date';
+    }
   };
 
-  // Local state so we can optimistically update UI after actions
-  const [returnDetailsState, setReturnDetails] = useState(returnDetails);
+  // Local state
+  const [refundDataState, setRefundData] = useState(refundData);
   const { toast } = useToast();
   const [actionLoading, setActionLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+  // Refresh refund data (optionally by returnId)
+  const refreshRefundData = async (id?: string) => {
+    const targetId = id || refundDataState?.refund;
+    if (!targetId) return;
+
+    setIsRefreshing(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/return-refund/${targetId}/get_my_refund/`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'X-User-Id': user?.id,
+        },
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setRefundData(data);
+        toast({
+          title: 'Refund details refreshed',
+          variant: 'success',
+        });
+        return data;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to fetch (${res.status})`);
+      }
+    } catch (err: any) {
+      console.error('Error refreshing refund data:', err);
+      toast({ title: 'Failed to load refund details', description: String(err.message || err), variant: 'destructive' });
+      return null;
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   async function handleCancel(refundId: string) {
     if (!refundId) return;
@@ -3532,15 +2454,36 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
         },
         credentials: 'include'
       });
-      if (!res.ok) throw new Error('Failed to cancel request');
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to cancel request');
+      }
+      
       const data = await res.json();
-      setReturnDetails(prev => ({
-        ...(prev as any),
-        returnRequest: { ...prev.returnRequest, status: data.status || 'cancelled' }
+      
+      // Update local state
+      setRefundData((prev: any) => ({
+        ...prev,
+        status: data.status || 'cancelled',
+        cancelled_at: new Date().toISOString(),
       }));
-      toast({ title: 'Refund cancelled', variant: 'success' });
-    } catch (err) {
-      toast({ title: 'Cancel failed', description: String(err), variant: 'destructive' });
+      
+      toast({ 
+        title: 'Refund cancelled', 
+        description: 'Your refund request has been cancelled.',
+        variant: 'success' 
+      });
+      
+      // Refresh data to get latest from server
+      setTimeout(refreshRefundData, 500);
+      
+    } catch (err: any) {
+      toast({ 
+        title: 'Cancel failed', 
+        description: err.message || 'Something went wrong',
+        variant: 'destructive' 
+      });
     } finally {
       setActionLoading(false);
     }
@@ -3560,23 +2503,48 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
         credentials: 'include',
         body: JSON.stringify({ action, reason })
       });
-      if (!res.ok) throw new Error('Failed to respond to offer');
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to respond to offer');
+      }
+      
       const data = await res.json();
-      // Update UI from returned status/amount
-      setReturnDetails(prev => ({
-        ...(prev as any),
-        returnRequest: { ...(prev as any).returnRequest, status: data.status || (prev as any).returnRequest.status, seller_response: data.message || (prev as any).returnRequest.seller_response }
+      
+      // Update local state
+      setRefundData((prev: any) => ({
+        ...prev,
+        status: data.status || prev.status,
+        seller_response: data.message || prev.seller_response,
+        approved_at: data.approved_at || prev.approved_at,
       }));
-      toast({ title: 'Response submitted', variant: 'success' });
-    } catch (err) {
-      toast({ title: 'Action failed', description: String(err), variant: 'destructive' });
+      
+      toast({ 
+        title: 'Response submitted', 
+        description: `Offer ${action === 'accept' ? 'accepted' : 'rejected'}`,
+        variant: 'success' 
+      });
+      
+      // Refresh data to get latest from server
+      setTimeout(refreshRefundData, 500);
+      
+    } catch (err: any) {
+      toast({ 
+        title: 'Action failed', 
+        description: err.message || 'Something went wrong',
+        variant: 'destructive' 
+      });
     } finally {
       setActionLoading(false);
     }
   }
 
   const formatCurrency = (amount: number) => {
-    return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+    if (!amount && amount !== 0) return '₱0.00';
+    return `₱${amount.toLocaleString('en-PH', { 
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2 
+    })}`;
   };
 
   const handlePrint = () => {
@@ -3584,39 +2552,78 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
   };
 
   const handleCopyRequestNumber = () => {
-    navigator.clipboard.writeText(returnRequest.request_number);
-    alert('Request number copied to clipboard!');
+    if (refundDataState?.request_number) {
+      navigator.clipboard.writeText(refundDataState.request_number);
+      toast({
+        title: 'Copied',
+        description: 'Request number copied to clipboard',
+        variant: 'default',
+      });
+    }
   };
 
-  // Props passed into each status-specific UI so they can trigger actions
+  // Props passed into each status-specific UI
   const statusProps = {
-    returnDetails: returnDetailsState,
+    refundData: refundDataState,
     formatDate,
     formatCurrency,
     navigate,
     onCancel: handleCancel,
     onRespond: respondToNegotiation,
     actionLoading,
+    user,
   };
 
-  // Compute current request and status-aware UI helpers after state/handlers are declared
-  const returnRequest = {
-    ...returnDetailsState.returnRequest,
-    status: currentStatus,
-    id: params.returnId || returnDetailsState.returnRequest.id
-  };
-
-  const returnId = returnRequest.id;
+  const refundId = refundDataState?.refund || params.returnId;
   const statusConfig = STATUS_CONFIG[currentStatus];
   const StatusIcon = statusConfig?.icon || Clock;
+  const StatusSpecificUI = STATUS_UI_COMPONENTS[currentStatus] || PendingStatusUI;
 
-  const StatusSpecificUI = STATUS_UI_COMPONENTS[currentStatus] || (() => 
-    <Alert variant="destructive">
-      <XCircle className="h-4 w-4" />
-      <AlertTitle>Error</AlertTitle>
-      <AlertDescription>Unknown status: {currentStatus}</AlertDescription>
-    </Alert>
-  );
+  // Loading / Error state: show a friendly message and permit retry (instead of an indefinite spinner)
+  if (!refundDataState) {
+    return (
+      <UserProvider user={user}>
+        <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
+          <div className="flex items-center justify-between">
+            <Button
+              variant="ghost"
+              onClick={() => navigate('/customer-return-cancel')}
+              className="text-gray-600 hover:text-gray-900 px-0"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              <span className="font-semibold">Back to Refund Requests</span>
+            </Button>
+            <Breadcrumbs />
+          </div>
+
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center space-y-4">
+              <Alert className="max-w-md">
+                <AlertTitle>Unable to load refund details</AlertTitle>
+                <AlertDescription>
+                  We couldn't fetch the refund details. This can happen if you're offline or if there was a temporary server issue.
+                </AlertDescription>
+              </Alert>
+
+              <div className="flex items-center justify-center gap-2">
+                <Button size="sm" onClick={() => refreshRefundData(params.returnId)} disabled={isRefreshing}>
+                  {isRefreshing ? (
+                    <span className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Retry</span>
+                  ) : (
+                    'Retry'
+                  )}
+                </Button>
+
+                <Button size="sm" variant="ghost" onClick={() => navigate('/customer-return-cancel')}>Back to list</Button>
+              </div>
+
+              <p className="text-xs text-muted-foreground mt-3">Tip: If Retry keeps failing, check your network or contact support.</p>
+            </div>
+          </div>
+        </div>
+      </UserProvider>
+    );
+  }
 
   return (
     <UserProvider user={user}>
@@ -3629,7 +2636,7 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
             className="text-gray-600 hover:text-gray-900 px-0"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            <span className="font-semibold">Back to Return Requests</span>
+            <span className="font-semibold">Back to Refund Requests</span>
           </Button>
           <Breadcrumbs />
         </div>
@@ -3640,8 +2647,10 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4">
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Return & Refund Request</h1>
-              <p className="text-muted-foreground">Request #<strong>{returnRequest.request_number}</strong></p>
+              <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Refund Request</h1>
+              <p className="text-muted-foreground">
+                Request #<strong>{refundDataState.request_number}</strong>
+              </p>
             </div>
           </div>
 
@@ -3654,6 +2663,16 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
               <StatusIcon className="h-3.5 w-3.5 mr-1.5" />
               {statusConfig?.label}
             </Badge>
+
+            {/* Refresh Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refreshRefundData()}
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
 
             {/* Actions Dropdown */}
             <DropdownMenu>
@@ -3673,13 +2692,13 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
                   Copy Request Number
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate(`/download-receipt/${returnRequest.id}`)}>
-                  <Download className="w-4 h-4 mr-2" />
-                  Download Receipt
+                <DropdownMenuItem onClick={() => navigate(`/upload-evidence/${refundId}`)}>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Upload Evidence
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => navigate(`/share-return/${returnRequest.id}`)}>
-                  <Share2 className="w-4 h-4 mr-2" />
-                  Share Details
+                <DropdownMenuItem onClick={() => navigate(`/chat/seller/${getShopId(refundDataState)}`)}>
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  Contact Seller
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -3687,10 +2706,8 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
         </div>
 
         {/* Status-Specific UI Section */}
-        <StatusSpecificUI
-          {...statusProps}
-          returnDetails={{ ...returnDetailsState, returnRequest }}
-        />
+        <StatusSpecificUI {...statusProps} />
+
       </div>
     </UserProvider>
   );

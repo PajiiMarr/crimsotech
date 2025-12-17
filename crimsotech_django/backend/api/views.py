@@ -24,6 +24,7 @@ import hashlib
 import os
 from django.db.models import Count, Avg, Sum, Q, F, Case, When, Value
 from datetime import datetime, time, timedelta
+from django.utils import timezone
 
 
 
@@ -11081,18 +11082,15 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             user = User.objects.get(id=user_id)
-            # Robust lookup: support both DB primary key and business UUID field
-            refund = Refund.objects.filter(id=pk).first()
-            if not refund:
-                refund = Refund.objects.filter(refund=pk).first()
-            if not refund:
+            # Get refund by UUID (primary key is 'refund', not 'id')
+            try:
+                refund = Refund.objects.get(refund=pk)
+            except Refund.DoesNotExist:
                 return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
 
             # Authorize: buyer who requested it, shop owner for the related order, or admin
             authorized = False
             if refund.requested_by and str(refund.requested_by.id) == str(user.id):
-                authorized = True
-            if user.is_staff:
                 authorized = True
             # Check seller ownership (via order items -> product.shop)
             try:
@@ -11151,9 +11149,47 @@ class RefundViewSet(viewsets.ViewSet):
                                     'name': prod.shop.name if prod.shop else None
                                 }
                             }
+                        # Enrich product with SKUs and variants for buyer view
+                        skus = []
+                        if product and product.get('id'):
+                            try:
+                                prod_obj = Product.objects.get(id=product['id'])
+                                for sku in prod_obj.skus.all():
+                                    skus.append({
+                                        'id': str(sku.id),
+                                        'product_id': str(sku.product.id) if sku.product else None,
+                                        'image': request.build_absolute_uri(sku.image.url) if getattr(sku, 'image', None) else None,
+                                        'sku_code': sku.sku_code,
+                                        'price': float(sku.price) if sku.price is not None else None,
+                                        'option_ids': sku.option_ids or [],
+                                    })
+                            except Exception:
+                                skus = []
+
+                        variants_data = []
+                        if product and product.get('id'):
+                            try:
+                                prod_obj = Product.objects.get(id=product['id'])
+                                for v in Variants.objects.filter(product=prod_obj):
+                                    opts = []
+                                    for opt in VariantOptions.objects.filter(variant=v):
+                                        opts.append({
+                                            'id': str(opt.id),
+                                            'title': opt.title,
+                                            'variant_id': str(v.id),
+                                        })
+                                    variants_data.append({
+                                        'id': str(v.id),
+                                        'title': v.title,
+                                        'product_id': str(prod_obj.id),
+                                        'options': opts
+                                    })
+                            except Exception:
+                                variants_data = []
+
                         order_items.append({
                             'id': str(co.id),
-                            'product': product,
+                            'product': dict(product or {}, skus=skus, variants=variants_data),
                             'quantity': int(co.quantity or (cart.quantity if cart else 0)),
                             'total_amount': float(co.total_amount) if co.total_amount is not None else None,
                             'status': co.status,
@@ -11185,9 +11221,22 @@ class RefundViewSet(viewsets.ViewSet):
                 else:
                     data['delivery'] = None
 
+            # Include waybill information if exists
+            try:
+                waybill = refund.waybill
+                serializer = ReturnWaybillSerializer(waybill)
+                data['waybill'] = serializer.data
+            except ReturnWaybill.DoesNotExist:
+                data['waybill'] = None
+
             # Helpful flags and status-driven fields
             data['is_negotiation_expired'] = refund.is_negotiation_expired
             data['evidence_count'] = refund.evidence_count if hasattr(refund, 'evidence_count') else len(evidence)
+
+            # Approval / return timestamps
+            data['approved_at'] = refund.approved_at.isoformat() if getattr(refund, 'approved_at', None) else None
+            data['buyer_notified_at'] = refund.buyer_notified_at.isoformat() if getattr(refund, 'buyer_notified_at', None) else None
+            data['return_deadline'] = refund.return_deadline.isoformat() if getattr(refund, 'return_deadline', None) else None
 
             # Available actions for the current viewer/based on status
             actions = []
@@ -11445,6 +11494,7 @@ class RefundViewSet(viewsets.ViewSet):
 
             # Base refund data
             data = RefundSerializer(refund).data
+            
             # include shop summary in response
             data['shop'] = {
                 'id': str(shop.id) if shop else None,
@@ -11462,6 +11512,52 @@ class RefundViewSet(viewsets.ViewSet):
                     'file_type': m.file_type,
                 })
             data['evidence'] = evidence
+
+            # Payment method details
+            payment_methods = {}
+            
+            # Wallet details
+            if hasattr(refund, 'wallet_details'):
+                payment_methods['wallet'] = {
+                    'id': str(refund.wallet_details.id),
+                    'provider': refund.wallet_details.provider,
+                    'account_name': refund.wallet_details.account_name,
+                    'account_number': refund.wallet_details.account_number,
+                    'contact_number': refund.wallet_details.contact_number,
+                    'created_at': refund.wallet_details.created_at.isoformat() if refund.wallet_details.created_at else None,
+                }
+            
+            # Bank details
+            if hasattr(refund, 'bank_details'):
+                payment_methods['bank'] = {
+                    'id': str(refund.bank_details.id),
+                    'bank_name': refund.bank_details.bank_name,
+                    'account_name': refund.bank_details.account_name,
+                    'account_number': refund.bank_details.account_number,
+                    'account_type': refund.bank_details.account_type,
+                    'branch': refund.bank_details.branch,
+                    'created_at': refund.bank_details.created_at.isoformat() if refund.bank_details.created_at else None,
+                }
+            
+            # Remittance details
+            if hasattr(refund, 'remittance_details'):
+                payment_methods['remittance'] = {
+                    'id': str(refund.remittance_details.id),
+                    'provider': refund.remittance_details.provider,
+                    'first_name': refund.remittance_details.first_name,
+                    'last_name': refund.remittance_details.last_name,
+                    'full_name': f"{refund.remittance_details.first_name} {refund.remittance_details.last_name}",
+                    'contact_number': refund.remittance_details.contact_number,
+                    'address': refund.remittance_details.address,
+                    'city': refund.remittance_details.city,
+                    'province': refund.remittance_details.province,
+                    'zip_code': refund.remittance_details.zip_code,
+                    'valid_id_type': refund.remittance_details.valid_id_type,
+                    'valid_id_number': refund.remittance_details.valid_id_number,
+                    'created_at': refund.remittance_details.created_at.isoformat() if refund.remittance_details.created_at else None,
+                }
+            
+            data['payment_method_details'] = payment_methods
 
             # Order summary and addresses
             order = refund.order
@@ -11604,6 +11700,10 @@ class RefundViewSet(viewsets.ViewSet):
             data['is_negotiation_expired'] = refund.is_negotiation_expired
             data['evidence_count'] = refund.evidence_count if hasattr(refund, 'evidence_count') else len(evidence)
 
+            # Approval and return timeline
+            data['approved_at'] = refund.approved_at.isoformat() if getattr(refund, 'approved_at', None) else None
+            data['return_deadline'] = refund.return_deadline.isoformat() if getattr(refund, 'return_deadline', None) else None
+
             # Available actions for seller view
             actions = []
             st = refund.status
@@ -11625,11 +11725,18 @@ class RefundViewSet(viewsets.ViewSet):
                 actions = []
             data['available_actions'] = actions
 
+            # Payment method status
+            data['payment_method_set'] = (
+                hasattr(refund, 'wallet_details') or 
+                hasattr(refund, 'bank_details') or 
+                hasattr(refund, 'remittance_details')
+            )
+            data['preferred_refund_method'] = refund.preferred_refund_method
+
             return Response(data)
 
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
     @action(detail=True, methods=['post'])
     def approve_refund(self, request, pk=None):
         """Seller approves a refund request"""
@@ -11651,12 +11758,123 @@ class RefundViewSet(viewsets.ViewSet):
             refund.status = 'approved'
             refund.processed_by = user
             refund.seller_response = request.data.get('notes', 'Approved by seller')
+
+            # Set approval timestamps explicitly (deadline 7 days by default)
+            now = timezone.now()
+            refund.approved_at = now
+            refund.return_deadline = now + timedelta(days=7)
+
             refund.save()
             
             return Response({
                 "message": "Refund approved successfully",
                 "refund_id": str(refund.refund),
-                "status": refund.status
+                "status": refund.status,
+                "approved_at": refund.approved_at.isoformat() if refund.approved_at else None,
+                "return_deadline": refund.return_deadline.isoformat() if refund.return_deadline else None,
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def notify_buyer(self, request, pk=None):
+        """Seller notifies buyer that refund is approved and ready for processing"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+            
+            if refund.status != 'approved':
+                return Response({"error": "Can only notify buyer for approved refunds"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if refund.buyer_notified_at:
+                return Response({"error": "Buyer has already been notified"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Set notification timestamp
+            refund.buyer_notified_at = timezone.now()
+            refund.save()
+            
+            return Response({
+                "message": "Buyer notified successfully",
+                "refund_id": str(refund.refund),
+                "buyer_notified_at": refund.buyer_notified_at.isoformat(),
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def start_return_process(self, request, pk=None):
+        """Buyer starts the return process"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
+            
+            if refund.status != 'approved':
+                return Response({"error": "Can only start process for approved refunds"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not refund.buyer_notified_at:
+                return Response({"error": "Buyer must be notified first"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if refund.refund_category == 'return_item':
+                refund.status = 'waiting'
+            elif refund.refund_category == 'keep_item':
+                refund.status = 'to_process'
+            else:
+                return Response({"error": "Invalid refund category"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.save()
+            
+            return Response({
+                "message": "Return process started",
+                "refund_id": str(refund.refund),
+                "status": refund.status,
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def update_tracking(self, request, pk=None):
+        """Buyer updates tracking information for return shipment"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
+            
+            if refund.status not in ['waiting', 'to_process']:
+                return Response({"error": "Can only update tracking for active return processes"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            logistic_service = request.data.get('logistic_service')
+            tracking_number = request.data.get('tracking_number')
+            
+            if not logistic_service or not tracking_number:
+                return Response({"error": "Logistic service and tracking number are required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.logistic_service = logistic_service
+            refund.tracking_number = tracking_number
+            refund.save()
+            
+            return Response({
+                "message": "Tracking information updated successfully",
+                "refund_id": str(refund.refund),
+                "logistic_service": refund.logistic_service,
+                "tracking_number": refund.tracking_number,
             })
             
         except User.DoesNotExist:
@@ -11799,9 +12017,9 @@ class RefundViewSet(viewsets.ViewSet):
                 refund.status = 'to_process'
                 refund.seller_response = f"Item verified and approved: {verification_notes}"
             elif verification_result == 'rejected':
-                refund.status = 'dispute'
-                refund.dispute_reason = f"Item verification failed: {verification_notes}"
-                refund.dispute_filed_by = user
+                # Move to rejected tab; seller can file dispute later if needed
+                refund.status = 'rejected'
+                refund.seller_response = f"Item verification failed: {verification_notes}"
             else:
                 return Response({"error": "Invalid verification result"}, status=status.HTTP_400_BAD_REQUEST)
             
@@ -11863,8 +12081,6 @@ class RefundViewSet(viewsets.ViewSet):
         
         try:
             user = User.objects.get(id=user_id)
-            if not user.is_staff:
-                return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
             
             disputes = Refund.objects.filter(status='dispute').order_by('-dispute_filed_at')
             serializer = RefundSerializer(disputes, many=True)
@@ -11882,8 +12098,6 @@ class RefundViewSet(viewsets.ViewSet):
         
         try:
             user = User.objects.get(id=user_id)
-            if not user.is_staff:
-                return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
             
             refund = get_object_or_404(Refund, refund=pk, status='dispute')
             
@@ -11942,9 +12156,6 @@ class RefundViewSet(viewsets.ViewSet):
             elif hasattr(user, 'is_customer') and user.is_customer:
                 # Buyer stats
                 refunds = Refund.objects.filter(requested_by=user)
-            elif user.is_staff:
-                # Admin stats
-                refunds = Refund.objects.all()
             else:
                 return Response({"error": "User role not recognized"}, status=status.HTTP_400_BAD_REQUEST)
             
@@ -11984,6 +12195,171 @@ class RefundViewSet(viewsets.ViewSet):
                 {'value': 'cancelled', 'label': 'Cancelled'},
             ]
         })
+    
+    # ========== RETURN WAYBILL ENDPOINTS ==========
+    
+    @action(detail=True, methods=['post'])
+    def create_return_waybill(self, request, pk=None):
+        """Seller creates a return waybill for a refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+            
+            # Check if waybill already exists
+            if hasattr(refund, 'return_waybill') and refund.return_waybill:
+                return Response({"error": "Return waybill already exists for this refund"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create return waybill
+            waybill_data = {
+                'refund': refund,
+                'shop': shop,
+                'status': 'pending',
+            }
+            
+            waybill = ReturnWaybill.objects.create(**waybill_data)
+            
+            # Serialize and return
+            serializer = ReturnWaybillSerializer(waybill)
+            return Response({
+                "message": "Return waybill created successfully",
+                "waybill": serializer.data
+            }, status=status.HTTP_201_CREATED)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['get'])
+    def get_return_waybill(self, request, pk=None):
+        """Get return waybill for a refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Check authorization: buyer who requested refund, or seller who owns the shop
+            authorized = False
+            if refund.requested_by and str(refund.requested_by.id) == str(user.id):
+                authorized = True
+            else:
+                # Check seller ownership
+                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+                if not err:
+                    authorized = True
+            
+            if not authorized:
+                return Response({"error": "Not authorized to view this waybill"}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get waybill
+            try:
+                waybill = refund.return_waybill
+            except ReturnWaybill.DoesNotExist:
+                return Response({"error": "Return waybill not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            serializer = ReturnWaybillSerializer(waybill)
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def update_waybill_status(self, request, pk=None):
+        """Seller updates return waybill status"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+            
+            # Get waybill
+            try:
+                waybill = refund.return_waybill
+            except ReturnWaybill.DoesNotExist:
+                return Response({"error": "Return waybill not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            new_status = request.data.get('status')
+            if not new_status:
+                return Response({"error": "Status required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate status transition
+            valid_statuses = ['pending', 'in_transit', 'delivered', 'cancelled']
+            if new_status not in valid_statuses:
+                return Response({"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            waybill.status = new_status
+            waybill.save()
+            
+            serializer = ReturnWaybillSerializer(waybill)
+            return Response({
+                "message": f"Waybill status updated to {new_status}",
+                "waybill": serializer.data
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def print_waybill(self, request, pk=None):
+        """Generate printable return waybill"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Check authorization
+            authorized = False
+            if refund.requested_by and str(refund.requested_by.id) == str(user.id):
+                authorized = True
+            else:
+                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+                if not err:
+                    authorized = True
+            
+            if not authorized:
+                return Response({"error": "Not authorized to print this waybill"}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get waybill
+            try:
+                waybill = refund.return_waybill
+            except ReturnWaybill.DoesNotExist:
+                return Response({"error": "Return waybill not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Generate printable data
+            serializer = ReturnWaybillSerializer(waybill)
+            printable_data = serializer.data
+            
+            # Add print-specific fields
+            printable_data['print_date'] = timezone.now().isoformat()
+            printable_data['printed_by'] = f"{user.first_name} {user.last_name}".strip() or user.username
+            
+            return Response({
+                "message": "Waybill data ready for printing",
+                "printable_data": printable_data
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 class OrderSuccessfull(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_order_successful(self, request, pk=None):
@@ -12127,3 +12503,734 @@ class OrderSuccessfull(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+
+
+
+
+class RefundPaymentMethodViewSet(viewsets.ViewSet):
+    """Payment method management for refunds"""
+    
+    # ========== WALLET ENDPOINTS ==========
+    
+    @action(detail=False, methods=['post'])
+    def add_wallet(self, request):
+        """Add wallet details to a refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund_id = request.data.get('refund_id')
+            
+            if not refund_id:
+                return Response({"error": "Refund ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get refund
+            refund = get_object_or_404(Refund, refund=refund_id)
+            
+            # Check authorization
+            if refund.requested_by != user:
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Check if wallet already exists
+            if hasattr(refund, 'wallet_details'):
+                return Response({"error": "Wallet details already exist for this refund"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create wallet
+            wallet_data = {
+                'provider': request.data.get('provider'),
+                'account_name': request.data.get('account_name'),
+                'account_number': request.data.get('account_number'),
+                'contact_number': request.data.get('contact_number'),
+            }
+            
+            serializer = RefundWalletSerializer(data=wallet_data)
+            if serializer.is_valid():
+                wallet = serializer.save(refund=refund)
+                
+                # Update refund's preferred method if needed
+                if not refund.preferred_refund_method or 'wallet' in refund.preferred_refund_method.lower():
+                    refund.preferred_refund_method = 'Return Item & Refund to Wallet'
+                    refund.save()
+                
+                return Response({
+                    "message": "Wallet details added successfully",
+                    "wallet_id": str(wallet.id),
+                    "refund_id": str(refund.refund)
+                }, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['get'])
+    def get_wallet(self, request, pk=None):
+        """Get wallet details for a refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Check authorization
+            if refund.requested_by != user:
+                # Also check if user is seller for this refund
+                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+                if err:
+                    return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if hasattr(refund, 'wallet_details'):
+                serializer = RefundWalletSerializer(refund.wallet_details)
+                return Response(serializer.data)
+            
+            return Response({"message": "No wallet details found for this refund"}, status=status.HTTP_404_NOT_FOUND)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # ========== BANK ENDPOINTS ==========
+    
+    @action(detail=False, methods=['post'])
+    def add_bank(self, request):
+        """Add bank details to a refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund_id = request.data.get('refund_id')
+            
+            if not refund_id:
+                return Response({"error": "Refund ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund = get_object_or_404(Refund, refund=refund_id)
+            
+            # Check authorization
+            if refund.requested_by != user:
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Check if bank already exists
+            if hasattr(refund, 'bank_details'):
+                return Response({"error": "Bank details already exist for this refund"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create bank
+            bank_data = {
+                'bank_name': request.data.get('bank_name'),
+                'account_name': request.data.get('account_name'),
+                'account_number': request.data.get('account_number'),
+                'account_type': request.data.get('account_type'),
+                'branch': request.data.get('branch', ''),
+            }
+            
+            serializer = RefundBankSerializer(data=bank_data)
+            if serializer.is_valid():
+                bank = serializer.save(refund=refund)
+                
+                # Update refund's preferred method if needed
+                if not refund.preferred_refund_method or 'bank' in refund.preferred_refund_method.lower():
+                    refund.preferred_refund_method = 'Return Item & Bank Transfer'
+                    refund.save()
+                
+                return Response({
+                    "message": "Bank details added successfully",
+                    "bank_id": str(bank.id),
+                    "refund_id": str(refund.refund)
+                }, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['get'])
+    def get_bank(self, request, pk=None):
+        """Get bank details for a refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Check authorization
+            if refund.requested_by != user:
+                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+                if err:
+                    return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if hasattr(refund, 'bank_details'):
+                serializer = RefundBankSerializer(refund.bank_details)
+                return Response(serializer.data)
+            
+            return Response({"message": "No bank details found for this refund"}, status=status.HTTP_404_NOT_FOUND)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # ========== REMITTANCE ENDPOINTS ==========
+    
+    @action(detail=False, methods=['post'])
+    def add_remittance(self, request):
+        """Add remittance details to a refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund_id = request.data.get('refund_id')
+            
+            if not refund_id:
+                return Response({"error": "Refund ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund = get_object_or_404(Refund, refund=refund_id)
+            
+            # Check authorization
+            if not (refund.requested_by == user or user.is_staff):
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Check if remittance already exists
+            if hasattr(refund, 'remittance_details'):
+                return Response({"error": "Remittance details already exist for this refund"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create remittance
+            remittance_data = {
+                'provider': request.data.get('provider'),
+                'first_name': request.data.get('first_name'),
+                'last_name': request.data.get('last_name'),
+                'contact_number': request.data.get('contact_number'),
+                'address': request.data.get('address'),
+                'city': request.data.get('city'),
+                'province': request.data.get('province'),
+                'zip_code': request.data.get('zip_code', ''),
+                'valid_id_type': request.data.get('valid_id_type'),
+                'valid_id_number': request.data.get('valid_id_number'),
+            }
+            
+            serializer = RefundRemittanceSerializer(data=remittance_data)
+            if serializer.is_valid():
+                remittance = serializer.save(refund=refund)
+                
+                # Update refund's preferred method if needed
+                if not refund.preferred_refund_method or 'money back' in refund.preferred_refund_method.lower():
+                    refund.preferred_refund_method = 'Return Item & Money Back'
+                    refund.save()
+                
+                return Response({
+                    "message": "Remittance details added successfully",
+                    "remittance_id": str(remittance.id),
+                    "refund_id": str(refund.refund)
+                }, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['get'])
+    def get_remittance(self, request, pk=None):
+        """Get remittance details for a refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Check authorization
+            if not (refund.requested_by == user or user.is_staff):
+                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+                if err:
+                    return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if hasattr(refund, 'remittance_details'):
+                serializer = RefundRemittanceSerializer(refund.remittance_details)
+                return Response(serializer.data)
+            
+            return Response({"message": "No remittance details found for this refund"}, status=status.HTTP_404_NOT_FOUND)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class UserPaymentMethodViewSet(viewsets.ViewSet):
+    """User's saved payment methods"""
+    
+    @action(detail=False, methods=['get'])
+    def get_my_payment_methods(self, request):
+        """Get user's saved payment methods"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            methods = UserPaymentMethod.objects.filter(user=user)
+            serializer = UserPaymentMethodSerializer(methods, many=True)
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['post'])
+    def add_payment_method(self, request):
+        """Add a new payment method"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            method_type = request.data.get('method_type')
+            
+            if not method_type:
+                return Response({"error": "Method type required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            data = request.data.copy()
+            data['user'] = user.id
+            
+            serializer = UserPaymentMethodSerializer(data=data)
+            if serializer.is_valid():
+                method = serializer.save()
+                
+                return Response({
+                    "message": "Payment method added successfully",
+                    "method_id": str(method.id)
+                }, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['put'])
+    def update_payment_method(self, request, pk=None):
+        """Update a payment method"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            method = get_object_or_404(UserPaymentMethod, id=pk, user=user)
+            
+            serializer = UserPaymentMethodSerializer(method, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response({
+                    "message": "Payment method updated",
+                    "method_id": str(method.id)
+                })
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['delete'])
+    def delete_payment_method(self, request, pk=None):
+        """Delete a payment method"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            method = get_object_or_404(UserPaymentMethod, id=pk, user=user)
+            
+            method.delete()
+            return Response({
+                "message": "Payment method deleted",
+                "method_id": str(pk)
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def set_default(self, request, pk=None):
+        """Set a payment method as default"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            method = get_object_or_404(UserPaymentMethod, id=pk, user=user)
+            
+            # Remove default from all methods
+            UserPaymentMethod.objects.filter(user=user).update(is_default=False)
+            
+            # Set this as default
+            method.is_default = True
+            method.save()
+            
+            return Response({
+                "message": "Payment method set as default",
+                "method_id": str(method.id)
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+
+
+class DisputeViewSet(viewsets.ViewSet):
+    """
+    ViewSet for managing dispute requests
+    """
+    
+    # ========== USER ENDPOINTS ==========
+    
+    @action(detail=False, methods=['get'])
+    def my_disputes(self, request):
+        """Get disputes filed by current user"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            disputes = DisputeRequest.objects.filter(filed_by=user).order_by('-created_at')
+            serializer = DisputeRequestSerializer(disputes, many=True, context={'request': request})
+            return Response(serializer.data)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+    
+    @action(detail=False, methods=['post'])
+    def file_dispute(self, request):
+        """File a new dispute"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Validate required fields
+            if not request.data.get('order'):
+                return Response({"error": "Order ID is required"}, status=400)
+            
+            # Check if order exists
+            try:
+                order = Order.objects.get(order=request.data.get('order'))
+            except Order.DoesNotExist:
+                return Response({"error": "Order not found"}, status=404)
+            
+            # Check if user owns the order or is a seller for items in the order
+            is_buyer = order.user == user
+            is_seller = False
+            try:
+                is_seller = Checkout.objects.filter(
+                    order=order,
+                    cart_item__product__shop__customer__customer=user,
+                ).exists()
+            except Exception:
+                pass
+            
+            if not (is_buyer or is_seller):
+                return Response({"error": "You can only file disputes for your own orders or orders containing your shop's products"}, status=403)
+            
+            # Check for existing dispute
+            if DisputeRequest.objects.filter(order=order).exists():
+                return Response({"error": "A dispute already exists for this order"}, status=400)
+            
+            # Create dispute
+            data = request.data.copy()
+            data['filed_by'] = str(user.id)
+            data['order'] = str(order.order)  # Use the order UUID
+            
+            # Check if refund is provided and valid
+            if data.get('refund'):
+                try:
+                    refund = Refund.objects.get(refund=data['refund'])
+                    # Check if user can access this refund (buyer who requested it or seller of the shop)
+                    can_access_refund = refund.requested_by == user
+                    if not can_access_refund:
+                        try:
+                            can_access_refund = Checkout.objects.filter(
+                                order=refund.order,
+                                cart_item__product__shop__customer__customer=user,
+                            ).exists()
+                        except Exception:
+                            pass
+                    
+                    if not can_access_refund:
+                        return Response({"error": "You can only file disputes for your own refunds or refunds for orders containing your shop's products"}, status=403)
+                    data['refund'] = str(refund.refund)  # Use the refund UUID
+                except Refund.DoesNotExist:
+                    return Response({"error": "Refund not found"}, status=404)
+            
+            serializer = DisputeRequestCreateSerializer(data=data, context={'request': request})
+            if serializer.is_valid():
+                dispute = serializer.save()
+                
+                # Update refund status if dispute is for a refund
+                if dispute.refund:
+                    dispute.refund.status = 'dispute'
+                    dispute.refund.dispute_filed_by = user
+                    dispute.refund.dispute_filed_at = timezone.now()
+                    dispute.refund.save()
+                
+                return Response({
+                    "message": "Dispute filed successfully",
+                    "dispute_id": str(dispute.id),
+                    "status": dispute.status
+                }, status=201)
+            
+            return Response(serializer.errors, status=400)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+    
+    @action(detail=True, methods=['get'])
+    def get_dispute(self, request, pk=None):
+        """Get dispute details"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            dispute = get_object_or_404(DisputeRequest, id=pk)
+            
+            # Check authorization - only filer or admin can view
+            if dispute.filed_by != user and not user.is_staff:
+                return Response({"error": "Not authorized to view this dispute"}, status=403)
+            
+            serializer = DisputeRequestSerializer(dispute, context={'request': request})
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+    
+    @action(detail=True, methods=['post'])
+    def upload_evidence(self, request, pk=None):
+        """Upload evidence for dispute"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            print(f"Upload evidence: user_id={user_id}, dispute_id={pk}")  # Debug logging
+            dispute = get_object_or_404(DisputeRequest, id=pk)
+            print(f"Found dispute: {dispute.id}, filed_by: {dispute.filed_by.id}")  # Debug logging
+            
+            # Check authorization - only filer can upload evidence
+            if dispute.filed_by != user:
+                print(f"Authorization failed: dispute.filed_by={dispute.filed_by.id}, user={user.id}")  # Debug logging
+                return Response({"error": "Not authorized to upload evidence for this dispute"}, status=403)
+            
+            # Check if dispute is still active
+            if dispute.status not in ['filed', 'under_review']:
+                return Response({"error": f"Cannot upload evidence for dispute in {dispute.status} status"}, status=400)
+            
+            # Check file in request
+            if 'file' not in request.FILES:
+                print(f"No file in request.FILES: {list(request.FILES.keys())}")  # Debug logging
+                return Response({"error": "No file uploaded"}, status=400)
+            
+            print(f"File found: {request.FILES['file'].name}")  # Debug logging
+            
+            # Create evidence
+            evidence_data = {
+                'dispute': dispute,
+                'uploaded_by': user,
+                'file': request.FILES['file']
+            }
+            
+            serializer = DisputeEvidenceSerializer(data=evidence_data, context={'request': request})
+            if serializer.is_valid():
+                print("Serializer is valid, saving evidence...")  # Debug logging
+                evidence = serializer.save()
+                print(f"Evidence saved: {evidence.id}")  # Debug logging
+                return Response({
+                    "message": "Evidence uploaded successfully",
+                    "evidence_id": str(evidence.id),
+                    "file_url": request.build_absolute_uri(evidence.file.url)
+                }, status=201)
+            else:
+                print(f"Serializer errors: {serializer.errors}")  # Debug logging
+                return Response({
+                    "error": "Invalid data",
+                    "details": serializer.errors
+                }, status=400)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        except Exception as e:
+            print(f"Upload evidence error: {str(e)}")  # Debug logging
+            return Response({"error": str(e)}, status=500)
+    
+    @action(detail=True, methods=['post'])
+    def withdraw_dispute(self, request, pk=None):
+        """User withdraws their dispute"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            dispute = get_object_or_404(DisputeRequest, id=pk, filed_by=user)
+            
+            # Check if dispute can be withdrawn
+            if dispute.status not in ['filed', 'under_review']:
+                return Response({"error": f"Cannot withdraw dispute in {dispute.status} status"}, status=400)
+            
+            # Update dispute
+            dispute.status = 'cancelled'
+            dispute.outcome = 'withdrawn'
+            dispute.resolved_at = timezone.now()
+            dispute.save()
+            
+            # Update refund status if applicable
+            if dispute.refund:
+                dispute.refund.status = 'cancelled'  # or revert to previous status
+                dispute.refund.save()
+            
+            return Response({
+                "message": "Dispute withdrawn successfully",
+                "dispute_id": str(dispute.id),
+                "status": dispute.status
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+    
+    # ========== ADMIN ENDPOINTS ==========
+    
+    @action(detail=False, methods=['get'])
+    def all_disputes(self, request):
+        """Get all disputes (admin only)"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            if not user.is_staff:
+                return Response({"error": "Admin access required"}, status=403)
+            
+            status_filter = request.query_params.get('status')
+            disputes = DisputeRequest.objects.all().order_by('-created_at')
+            
+            if status_filter:
+                disputes = disputes.filter(status=status_filter)
+            
+            serializer = DisputeRequestSerializer(disputes, many=True, context={'request': request})
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+    
+    @action(detail=True, methods=['post'])
+    def update_status(self, request, pk=None):
+        """Admin updates dispute status"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            if not user.is_staff:
+                return Response({"error": "Admin access required"}, status=403)
+            
+            dispute = get_object_or_404(DisputeRequest, id=pk)
+            new_status = request.data.get('status')
+            admin_note = request.data.get('admin_note', '')
+            
+            if not new_status:
+                return Response({"error": "Status is required"}, status=400)
+            
+            # Validate status transition
+            valid_transitions = {
+                'filed': ['under_review', 'cancelled'],
+                'under_review': ['processing', 'rejected', 'cancelled'],
+                'processing': ['completed', 'rejected'],
+                'completed': [],  # terminal state
+                'rejected': [],   # terminal state
+                'cancelled': [],  # terminal state
+            }
+            
+            current_status = dispute.status
+            if new_status not in valid_transitions.get(current_status, []):
+                return Response({"error": f"Cannot change status from {current_status} to {new_status}"}, status=400)
+            
+            # Update dispute
+            dispute.status = new_status
+            if admin_note:
+                dispute.admin_note = admin_note
+            
+            # Set outcome based on status
+            if new_status == 'completed':
+                dispute.outcome = request.data.get('outcome', 'buyer_wins')
+                dispute.awarded_amount = request.data.get('awarded_amount')
+                dispute.resolved_at = timezone.now()
+                
+                # Update refund if applicable
+                if dispute.refund and dispute.outcome == 'buyer_wins':
+                    dispute.refund.status = 'to_process'
+                    dispute.refund.total_refund_amount = dispute.awarded_amount or dispute.refund.total_refund_amount
+                    dispute.refund.save()
+            
+            elif new_status == 'rejected':
+                dispute.outcome = 'seller_wins'
+                dispute.resolved_at = timezone.now()
+                
+                # Update refund if applicable
+                if dispute.refund:
+                    dispute.refund.status = 'rejected'
+                    dispute.refund.save()
+            
+            dispute.save()
+            
+            return Response({
+                "message": f"Dispute status updated to {new_status}",
+                "dispute_id": str(dispute.id),
+                "status": dispute.status,
+                "outcome": dispute.outcome
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+    
+    @action(detail=True, methods=['post'])
+    def add_admin_response(self, request, pk=None):
+        """Admin adds response/note to dispute"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            if not user.is_staff:
+                return Response({"error": "Admin access required"}, status=403)
+            
+            dispute = get_object_or_404(DisputeRequest, id=pk)
+            response = request.data.get('response')
+            
+            if not response:
+                return Response({"error": "Response text is required"}, status=400)
+            
+            # Update admin note (append or replace based on your preference)
+            if dispute.admin_note:
+                dispute.admin_note += f"\n\n[{timezone.now().strftime('%Y-%m-%d %H:%M')}] {response}"
+            else:
+                dispute.admin_note = f"[{timezone.now().strftime('%Y-%m-%d %H:%M')}] {response}"
+            
+            dispute.save()
+            
+            return Response({
+                "message": "Response added successfully",
+                "dispute_id": str(dispute.id)
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)

@@ -48,6 +48,9 @@ export default [
     route('view-refund-request/:refundId', 'routes/customer/view-refund-request.tsx'),
     route('customer-return-cancel', 'routes/customer/customer-return-cancel.tsx'),
 
+    // File dispute route
+    route('file-dispute/:refundId', 'routes/seller/file-dispute.tsx'),
+
     //shipping addresses add
     route('shipping-address', 'routes/customer/shipping-address.tsx'),
     route('order-successful/:orderId', 'components/customer/order-successful.tsx'),
