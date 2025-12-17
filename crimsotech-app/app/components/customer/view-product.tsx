@@ -71,6 +71,7 @@ interface Product {
   compare_price?: number; // Product-level compare price
   category?: { name: string };
   shop?: {
+    id?: string;
     shop_picture?: string;
     name?: string;
     address?: string;
@@ -346,7 +347,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const mainImageFromSKU = currentSKU?.image ? resolveImageUrl(currentSKU.image) : null;
   const displayImageUrl = mainImageFromSKU || 
                          thumbnailUrls[activeImage]?.url || 
-                         '/public/default.jpg';
+                         '/appliances.jpg';
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
@@ -413,7 +414,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
   const shopPic = product.shop?.shop_picture ? 
     `${MEDIA_URL}${product.shop.shop_picture}` : 
-    '/public/default.jpg';
+    '/appliances.jpg';
 
   // Get dimensions and weight (use SKU if available, otherwise product level)
   const displayLength = hasVariants
@@ -700,7 +701,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                   </div>
                 )}
               </div>
-              <Link to={`/shop/${product.shop.name}`}>
+              <Link to={`/shop/${product.shop.id}`}>
                 <Button size="sm" className="h-7 text-xs px-3 bg-gray-800 hover:bg-gray-900">
                   Visit
                 </Button>

@@ -10733,4 +10733,907 @@ class ReturnPurchaseBuyer(viewsets.ViewSet):
         user_id = request.headers.get('X-User-Id')
 
 
+class ViewShopAPIView(APIView):
+    """View details of a single shop including products, categories, and followers"""
+
+    def get(self, request, shop_id):
+        # Fetch shop if exists (including suspended) so frontend can show suspended UI
+        shop = Shop.objects.filter(id=shop_id).first()
+        if not shop:
+            return Response({'detail': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Build address string
+        address_parts = [
+            shop.street,
+            shop.barangay,
+            shop.city,
+            shop.province
+        ]
+        address = ', '.join(filter(None, address_parts))
         
+        # Shop basic info
+        shop_data = {
+            'id': str(shop.id),
+            'name': shop.name,
+            'shop_picture': request.build_absolute_uri(shop.shop_picture.url) if shop.shop_picture else None,
+            'description': shop.description or 'No description provided',
+            'province': shop.province,
+            'city': shop.city,
+            'barangay': shop.barangay,
+            'street': shop.street,
+            'address': address,
+            'contact_number': shop.contact_number,
+            'verified': shop.verified,
+            'status': shop.status,
+            'total_sales': str(shop.total_sales),
+            'created_at': shop.created_at,
+            'updated_at': shop.updated_at,
+            'total_followers': shop.followers.count(),
+            'is_suspended': getattr(shop, 'is_suspended', False),
+            'suspension_reason': getattr(shop, 'suspension_reason', None),
+        }
+
+        # Shop products (still include products; frontend can choose how to display)
+        products = Product.objects.filter(shop=shop, is_removed=False)
+        shop_data['products'] = ProductSerializer(products, many=True, context={'request': request}).data
+
+        # Shop categories (unique categories from products)
+        category_qs = products.values_list('category__id', 'category__name').distinct()
+        shop_data['categories'] = [{'id': str(c[0]), 'name': c[1]} for c in category_qs if c[0]]
+
+        # Add whether current user is following this shop
+        user_id = request.headers.get('X-User-Id')
+        is_following = False
+        try:
+            if user_id:
+                customer = Customer.objects.filter(customer__id=user_id).first()
+                if customer:
+                    is_following = ShopFollow.objects.filter(shop=shop, customer=customer).exists()
+        except Exception as e:
+            print(f"Error checking follow status: {e}")
+
+        shop_data['is_following'] = is_following
+
+        # --- Additional metrics for frontend display ---
+        try:
+            # Ratings: average rating and review count for this shop
+            rating_agg = Review.objects.filter(shop=shop).aggregate(avg=Avg('rating'), count=Count('id'))
+            rating_avg = float(round(rating_agg.get('avg') or 0, 1)) if rating_agg.get('avg') is not None else None
+            rating_count = rating_agg.get('count') or 0
+
+            # Product sold & customer metrics (use Checkout records linked to Orders)
+            valid_order_statuses = ['pending', 'processing', 'shipped', 'delivered']
+            checkouts = Checkout.objects.filter(
+                order__isnull=False,
+                cart_item__product__shop=shop,
+                order__status__in=valid_order_statuses
+            )
+
+            product_sold = checkouts.aggregate(total_sold=Sum('quantity'))['total_sold'] or 0
+
+            # Unique customers who purchased from this shop
+            total_customers = checkouts.values('cart_item__user').distinct().count()
+
+            # Repeated customers (customers with >1 distinct orders for this shop)
+            repeated_customers = checkouts.values('cart_item__user').annotate(order_count=Count('order', distinct=True)).filter(order_count__gt=1).count()
+
+            shop_data.update({
+                'rating': rating_avg,
+                'rating_count': rating_count,
+                'total_products': products.count(),
+                'total_customers': total_customers,
+                'repeated_customers': repeated_customers,
+                'product_sold': int(product_sold),
+            })
+        except Exception as e:
+            # Don't break the whole response if analytics fail - log and continue
+            print(f"Error computing shop metrics: {e}")
+            shop_data.update({
+                'rating': None,
+                'rating_count': 0,
+                'total_products': products.count(),
+                'total_customers': 0,
+                'repeated_customers': 0,
+                'product_sold': 0,
+            })
+
+        return Response(shop_data, status=status.HTTP_200_OK)
+
+    def post(self, request, shop_id):
+        """Follow this shop for the current (customer) user"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            customer = Customer.objects.filter(customer__id=user_id).first()
+            if not customer:
+                return Response({'error': 'Customer profile not found for user'}, status=status.HTTP_404_NOT_FOUND)
+
+            shop = Shop.objects.filter(id=shop_id).first()
+            if not shop:
+                return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            follow, created = ShopFollow.objects.get_or_create(shop=shop, customer=customer)
+            return Response({'success': True, 'is_following': True, 'total_followers': shop.followers.count()})
+
+        except Exception as e:
+            print(f"Error following shop: {e}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request, shop_id):
+        """Unfollow this shop for the current (customer) user"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            customer = Customer.objects.filter(customer__id=user_id).first()
+            if not customer:
+                return Response({'error': 'Customer profile not found for user'}, status=status.HTTP_404_NOT_FOUND)
+
+            shop = Shop.objects.filter(id=shop_id).first()
+            if not shop:
+                return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            deleted, _ = ShopFollow.objects.filter(shop=shop, customer=customer).delete()
+            return Response({'success': True, 'is_following': False, 'total_followers': shop.followers.count()})
+
+        except Exception as e:
+            print(f"Error unfollowing shop: {e}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+class RefundViewSet(viewsets.ViewSet):
+    """
+    Refund Management API for buyers and sellers
+    """
+    
+    # ========== BUYER ENDPOINTS ==========
+    
+    @action(detail=False, methods=['get'])
+    def get_my_refunds(self, request):
+        """Get all refunds for current buyer"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refunds = Refund.objects.filter(requested_by=user).order_by('-requested_at')
+            serializer = RefundSerializer(refunds, many=True)
+            return Response(serializer.data)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['post'])
+    def create_refund(self, request):
+        """Buyer creates a new refund request"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            order_uuid = request.data.get('order')
+            
+            if not order_uuid:
+                return Response({"error": "Order ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check if order exists and belongs to user
+            order = get_object_or_404(Order, order=order_uuid, user=user)
+            
+            # Check if refund already exists for this order
+            existing_refund = Refund.objects.filter(order=order, requested_by=user).first()
+            if existing_refund:
+                return Response({
+                    "error": "Refund request already exists for this order",
+                    "refund_id": str(existing_refund.refund)
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create refund
+            refund_data = {
+                'order': order.id,
+                'requested_by': user.id,
+                'reason': request.data.get('reason'),
+                'preferred_refund_method': request.data.get('preferred_refund_method'),
+                'total_refund_amount': request.data.get('total_refund_amount'),
+                'customer_note': request.data.get('customer_note', ''),
+                'status': 'pending'
+            }
+            
+            serializer = RefundCreateSerializer(data=refund_data)
+            if serializer.is_valid():
+                refund = serializer.save()
+                return Response({
+                    "message": "Refund request created successfully",
+                    "refund_id": str(refund.refund),
+                    "request_number": refund.request_number
+                }, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['get'])
+    def get_my_refund(self, request, pk=None):
+        """Get detailed refund info for buyer (requester), seller (owner of shop), or admin"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+
+            # Authorize: buyer who requested it, shop owner for the related order, or admin
+            authorized = False
+            if refund.requested_by and str(refund.requested_by.id) == str(user.id):
+                authorized = True
+            if user.is_staff:
+                authorized = True
+            # Check seller ownership
+            try:
+                if refund.order and Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                    authorized = True
+            except Exception:
+                pass
+
+            if not authorized:
+                return Response({"error": "Not authorized to view this refund"}, status=status.HTTP_403_FORBIDDEN)
+
+            # Base serialized data
+            data = RefundSerializer(refund).data
+
+            # Attach evidence media URLs
+            medias = RefundMedias.objects.filter(refund=refund)
+            evidence = []
+            for m in medias:
+                url = request.build_absolute_uri(m.file_data.url) if m.file_data else None
+                evidence.append({
+                    'id': str(m.refund_media),
+                    'url': url,
+                    'file_type': m.file_type,
+                })
+            data['evidence'] = evidence
+
+            # Attach enriched order and item info when available
+            if refund.order:
+                data['order_info'] = {
+                    'order_number': refund.order.order,
+                    'order_id': str(refund.order.id),
+                    'total_amount': float(refund.order.total_amount) if refund.order.total_amount else None,
+                    'payment_method': refund.order.payment_method if hasattr(refund.order, 'payment_method') else None,
+                    'delivery_address_text': refund.order.delivery_address_text or None,
+                }
+
+                # Order items (from Checkout entries related to this order)
+                order_items = []
+                try:
+                    checkouts = Checkout.objects.filter(order=refund.order).select_related('cart_item__product')
+                    for co in checkouts:
+                        cart = co.cart_item
+                        product = None
+                        if cart and cart.product:
+                            prod = cart.product
+                            product = {
+                                'id': str(prod.id),
+                                'name': prod.name,
+                                'price': float(prod.price) if prod.price is not None else None,
+                                'condition': prod.condition if hasattr(prod, 'condition') else None,
+                                'shop': {
+                                    'id': str(prod.shop.id) if prod.shop else None,
+                                    'name': prod.shop.name if prod.shop else None
+                                }
+                            }
+                        order_items.append({
+                            'id': str(co.id),
+                            'product': product,
+                            'quantity': int(co.quantity or (cart.quantity if cart else 0)),
+                            'total_amount': float(co.total_amount) if co.total_amount is not None else None,
+                            'status': co.status,
+                        })
+                except Exception:
+                    order_items = []
+
+                data['order_items'] = order_items
+
+                # Aggregate shops involved in this refund/order
+                shops = {}
+                for it in order_items:
+                    p = it.get('product')
+                    if p and p.get('shop') and p['shop'].get('id'):
+                        shops[p['shop']['id']] = p['shop']
+                data['shops'] = list(shops.values())
+
+                # Delivery / shipping info
+                delivery = Delivery.objects.filter(order=refund.order).order_by('-created_at').first()
+                if delivery:
+                    data['delivery'] = {
+                        'id': str(delivery.id),
+                        'status': delivery.status,
+                        'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
+                        'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                        'tracking_number': refund.tracking_number or None,
+                        'rider_id': str(delivery.rider.id) if delivery.rider else None,
+                    }
+                else:
+                    data['delivery'] = None
+
+            # Helpful flags and status-driven fields
+            data['is_negotiation_expired'] = refund.is_negotiation_expired
+            data['evidence_count'] = refund.evidence_count if hasattr(refund, 'evidence_count') else len(evidence)
+
+            # Available actions for the current viewer/based on status
+            actions = []
+            st = refund.status
+            if st == 'pending':
+                actions = ['cancel_request']
+            elif st == 'negotiation':
+                actions = ['accept_offer', 'reject_offer']
+                # include seller offer details
+                data['seller_offer'] = {
+                    'method': refund.seller_suggested_method,
+                    'amount': float(refund.seller_suggested_amount) if refund.seller_suggested_amount is not None else None,
+                    'reason': refund.seller_suggested_reason,
+                    'deadline': refund.negotiation_deadline.isoformat() if refund.negotiation_deadline else None,
+                }
+            elif st == 'approved':
+                actions = ['prepare_return', 'contact_seller']
+            elif st == 'waiting':
+                actions = ['upload_tracking', 'contact_seller']
+            elif st == 'to_verify':
+                actions = ['await_verification', 'contact_seller']
+            elif st == 'to_process':
+                actions = ['await_processing']
+            elif st == 'dispute':
+                actions = ['await_admin']
+            else:
+                actions = []
+            data['available_actions'] = actions
+
+            return Response(data)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def upload_evidence(self, request, pk=None):
+        """Buyer uploads evidence for refund"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
+            
+            files = request.FILES.getlist('files')
+            if not files:
+                return Response({"error": "No files uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            for file in files:
+                RefundMedias.objects.create(
+                    refund=refund,
+                    file_data=file,
+                    file_type=file.content_type
+                )
+            
+            return Response({
+                "message": f"{len(files)} evidence files uploaded successfully",
+                "evidence_count": len(files)
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def respond_to_negotiation(self, request, pk=None):
+        """Buyer responds to seller's negotiation offer"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
+            
+            if refund.status != 'negotiation':
+                return Response({"error": "This refund is not in negotiation"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            action = request.data.get('action')  # 'accept' or 'reject'
+            reason = request.data.get('reason', '')
+            
+            if action == 'accept':
+                # Accept seller's offer
+                refund.status = 'approved'
+                refund.final_refund_method = refund.seller_suggested_method
+                if refund.seller_suggested_amount:
+                    refund.total_refund_amount = refund.seller_suggested_amount
+                refund.customer_note = f"{refund.customer_note or ''}\nAccepted seller's offer: {reason}"
+                refund.save()
+                
+                return Response({
+                    "message": "Seller's offer accepted",
+                    "refund_id": str(refund.refund),
+                    "status": refund.status,
+                    "final_method": refund.final_refund_method,
+                    "amount": refund.total_refund_amount
+                })
+                
+            elif action == 'reject':
+                # Reject seller's offer, buyer can file dispute
+                refund.status = 'rejected'
+                refund.seller_response = f"Buyer rejected offer: {reason}"
+                refund.save()
+                
+                return Response({
+                    "message": "Seller's offer rejected",
+                    "refund_id": str(refund.refund),
+                    "status": refund.status,
+                    "note": "You can file a dispute if needed"
+                })
+            
+            else:
+                return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
+                
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def cancel_refund(self, request, pk=None):
+        """Buyer cancels a pending refund request"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
+            if refund.status != 'pending':
+                return Response({"error": "Only pending refunds can be cancelled"}, status=status.HTTP_400_BAD_REQUEST)
+            refund.status = 'cancelled'
+            refund.save()
+            return Response({"message": "Refund cancelled", "refund_id": str(refund.refund), "status": refund.status})
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def file_dispute(self, request, pk=None):
+        """Buyer files a dispute after rejecting seller's offer"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
+            
+            if refund.status != 'rejected':
+                return Response({"error": "Can only file dispute for rejected refunds"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            dispute_reason = request.data.get('dispute_reason')
+            if not dispute_reason:
+                return Response({"error": "Dispute reason required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.status = 'dispute'
+            refund.dispute_filed_by = user
+            refund.dispute_reason = dispute_reason
+            refund.save()
+            
+            return Response({
+                "message": "Dispute filed successfully",
+                "refund_id": str(refund.refund),
+                "status": refund.status,
+                "dispute_id": str(refund.refund)
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # ========== SELLER ENDPOINTS ==========
+    
+    @action(detail=False, methods=['get'])
+    def get_shop_refunds(self, request):
+        """Seller gets all refunds for their shop"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Get all shops owned by this user
+            shops = Shop.objects.filter(owner=user)
+            if not shops:
+                return Response({"error": "No shops found for this user"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get all orders from these shops
+            shop_ids = shops.values_list('shop_id', flat=True)
+            orders = Order.objects.filter(shop__in=shop_ids)
+            
+            # Get refunds for these orders
+            refunds = Refund.objects.filter(order__in=orders).order_by('-requested_at')
+            
+            # Filter by status if provided
+            status_filter = request.query_params.get('status')
+            if status_filter:
+                refunds = refunds.filter(status=status_filter)
+            
+            serializer = RefundSerializer(refunds, many=True)
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['get'])
+    def get_refund_details(self, request, pk=None):
+        """Seller gets detailed refund information"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Verify seller owns the shop for this order
+            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                return Response({"error": "Not authorized to view this refund"}, status=status.HTTP_403_FORBIDDEN)
+            
+            serializer = RefundSerializer(refund)
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def approve_refund(self, request, pk=None):
+        """Seller approves a refund request"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Verify seller owns the shop
+            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if refund.status != 'pending':
+                return Response({"error": "Can only approve pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.status = 'approved'
+            refund.processed_by = user
+            refund.seller_response = request.data.get('notes', 'Approved by seller')
+            refund.save()
+            
+            return Response({
+                "message": "Refund approved successfully",
+                "refund_id": str(refund.refund),
+                "status": refund.status
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def reject_refund(self, request, pk=None):
+        """Seller rejects a refund request"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Verify seller owns the shop
+            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if refund.status != 'pending':
+                return Response({"error": "Can only reject pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.status = 'rejected'
+            refund.processed_by = user
+            refund.seller_response = request.data.get('reason', 'Rejected by seller')
+            refund.save()
+            
+            return Response({
+                "message": "Refund rejected",
+                "refund_id": str(refund.refund),
+                "status": refund.status
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def propose_negotiation(self, request, pk=None):
+        """Seller proposes alternative refund method (negotiation)"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Verify seller owns the shop
+            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if refund.status != 'pending':
+                return Response({"error": "Can only negotiate pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            suggested_method = request.data.get('seller_suggested_method')
+            suggested_amount = request.data.get('seller_suggested_amount')
+            suggested_reason = request.data.get('seller_suggested_reason')
+            
+            if not suggested_method:
+                return Response({"error": "Suggested method required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.status = 'negotiation'
+            refund.processed_by = user
+            refund.seller_suggested_method = suggested_method
+            refund.seller_suggested_amount = suggested_amount
+            refund.seller_suggested_reason = suggested_reason
+            refund.seller_response = f"Seller proposed alternative: {suggested_reason}"
+            refund.save()
+            
+            return Response({
+                "message": "Negotiation proposal sent to buyer",
+                "refund_id": str(refund.refund),
+                "status": refund.status,
+                "suggested_method": refund.seller_suggested_method,
+                "suggested_amount": refund.seller_suggested_amount,
+                "deadline": refund.negotiation_deadline
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def mark_as_received(self, request, pk=None):
+        """Seller marks returned item as received (to_verify)"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Verify seller owns the shop
+            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if refund.status != 'waiting':
+                return Response({"error": "Can only mark received items that are waiting for return"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            tracking_number = request.data.get('tracking_number')
+            if tracking_number:
+                refund.tracking_number = tracking_number
+            
+            refund.status = 'to_verify'
+            refund.processed_by = user
+            refund.save()
+            
+            return Response({
+                "message": "Item marked as received",
+                "refund_id": str(refund.refund),
+                "status": refund.status
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def verify_item(self, request, pk=None):
+        """Seller verifies returned item condition"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Verify seller owns the shop
+            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if refund.status != 'to_verify':
+                return Response({"error": "Can only verify items in 'to_verify' status"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            verification_result = request.data.get('verification_result')  # 'approved' or 'rejected'
+            verification_notes = request.data.get('verification_notes', '')
+            
+            if verification_result == 'approved':
+                refund.status = 'to_process'
+                refund.seller_response = f"Item verified and approved: {verification_notes}"
+            elif verification_result == 'rejected':
+                refund.status = 'dispute'
+                refund.dispute_reason = f"Item verification failed: {verification_notes}"
+                refund.dispute_filed_by = user
+            else:
+                return Response({"error": "Invalid verification result"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.processed_by = user
+            refund.save()
+            
+            return Response({
+                "message": f"Item verification {verification_result}",
+                "refund_id": str(refund.refund),
+                "status": refund.status
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def process_refund(self, request, pk=None):
+        """Seller processes the refund payment"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+            
+            # Verify seller owns the shop
+            if not Order.objects.filter(order=refund.order.order, shop__owner=user).exists():
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            if refund.status != 'to_process':
+                return Response({"error": "Can only process refunds in 'to_process' status"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.status = 'completed'
+            refund.processed_by = user
+            refund.final_refund_method = request.data.get('final_refund_method', refund.seller_suggested_method or refund.preferred_refund_method)
+            refund.save()
+            
+            return Response({
+                "message": "Refund processed successfully",
+                "refund_id": str(refund.refund),
+                "status": refund.status,
+                "final_method": refund.final_refund_method,
+                "amount": refund.total_refund_amount,
+                "processed_at": refund.processed_at
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # ========== ADMIN ENDPOINTS ==========
+    
+    @action(detail=False, methods=['get'])
+    def get_all_disputes(self, request):
+        """Admin gets all disputes"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            if not user.is_staff:
+                return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+            
+            disputes = Refund.objects.filter(status='dispute').order_by('-dispute_filed_at')
+            serializer = RefundSerializer(disputes, many=True)
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def resolve_dispute(self, request, pk=None):
+        """Admin resolves a dispute"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            if not user.is_staff:
+                return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+            
+            refund = get_object_or_404(Refund, refund=pk, status='dispute')
+            
+            admin_decision = request.data.get('admin_decision')
+            admin_response = request.data.get('admin_response')
+            
+            if not admin_decision or not admin_response:
+                return Response({"error": "Admin decision and response required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            refund.admin_decision = admin_decision
+            refund.admin_response = admin_response
+            refund.processed_by = user
+            
+            # Determine final status based on decision
+            if admin_decision.lower() in ['approved', 'in_favor_buyer']:
+                refund.status = 'to_process'
+            elif admin_decision.lower() in ['rejected', 'in_favor_seller']:
+                refund.status = 'rejected'
+            else:
+                refund.status = 'completed'
+            
+            refund.save()
+            
+            return Response({
+                "message": "Dispute resolved successfully",
+                "refund_id": str(refund.refund),
+                "status": refund.status,
+                "admin_decision": refund.admin_decision
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # ========== COMMON ENDPOINTS ==========
+    
+    @action(detail=False, methods=['get'])
+    def get_refund_stats(self, request):
+        """Get refund statistics for dashboard"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            if hasattr(user, 'is_seller') and user.is_seller:
+                # Seller stats
+                shops = Shop.objects.filter(owner=user)
+                shop_ids = shops.values_list('shop_id', flat=True)
+                orders = Order.objects.filter(shop__in=shop_ids)
+                refunds = Refund.objects.filter(order__in=orders)
+            elif hasattr(user, 'is_customer') and user.is_customer:
+                # Buyer stats
+                refunds = Refund.objects.filter(requested_by=user)
+            elif user.is_staff:
+                # Admin stats
+                refunds = Refund.objects.all()
+            else:
+                return Response({"error": "User role not recognized"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            stats = {
+                'total': refunds.count(),
+                'pending': refunds.filter(status='pending').count(),
+                'negotiation': refunds.filter(status='negotiation').count(),
+                'approved': refunds.filter(status='approved').count(),
+                'waiting': refunds.filter(status='waiting').count(),
+                'to_verify': refunds.filter(status='to_verify').count(),
+                'to_process': refunds.filter(status='to_process').count(),
+                'dispute': refunds.filter(status='dispute').count(),
+                'completed': refunds.filter(status='completed').count(),
+                'rejected': refunds.filter(status='rejected').count(),
+                'cancelled': refunds.filter(status='cancelled').count(),
+            }
+            
+            return Response(stats)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['get'])
+    def get_status_options(self, request):
+        """Get all available status options"""
+        return Response({
+            'status_options': [
+                {'value': 'pending', 'label': 'Pending Review'},
+                {'value': 'negotiation', 'label': 'Negotiation'},
+                {'value': 'approved', 'label': 'Approved'},
+                {'value': 'waiting', 'label': 'Waiting For Return'},
+                {'value': 'to_verify', 'label': 'To Verify'},
+                {'value': 'to_process', 'label': 'To Process'},
+                {'value': 'dispute', 'label': 'Dispute'},
+                {'value': 'completed', 'label': 'Completed'},
+                {'value': 'rejected', 'label': 'Rejected'},
+                {'value': 'cancelled', 'label': 'Cancelled'},
+            ]
+        })

@@ -624,3 +624,18 @@ class ProductSKUSerializer(serializers.ModelSerializer):
             except VariantOptions.DoesNotExist:
                 continue
         return None
+    
+class RefundSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Refund
+        fields = '__all__'
+        read_only_fields = [
+            'refund', 'request_number', 'requested_at', 'processed_at',
+            'dispute_filed_at', 'resolved_at', 'negotiation_deadline'
+        ]
+
+class RefundCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Refund
+        fields = ['order', 'reason', 'preferred_refund_method', 
+                  'total_refund_amount', 'customer_note', 'requested_by']

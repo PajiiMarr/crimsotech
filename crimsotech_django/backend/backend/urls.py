@@ -48,6 +48,9 @@ router.register(r'seller-order-list', SellerOrderList, basename='seller-order-li
 router.register(r'checkout-order', CheckoutOrder, basename='checkout-order')
 router.register(r'purchases-buyer', PurchasesBuyer, basename='purchases-buyer')  # Add this line
 router.register(r'shipping-address', ShippingAddressViewSet, basename='shipping-address')  # Add this line
+router.register(r'return-refund', RefundViewSet, basename='return-refund')
+
+
 
 
 urlpatterns = [
@@ -57,7 +60,11 @@ urlpatterns = [
     path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),
     path('api/customer-favorites/', CustomerFavoritesView.as_view(), name='customer-favorites'),
     path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
+    path('api/shops/<uuid:shop_id>/', ViewShopAPIView.as_view(), name='view-shop'),
+  
+
     
+
     # GET all items (no item_id in URL)
     path('api/view-cart/', CartListView.as_view(), name='view-cart'),
     

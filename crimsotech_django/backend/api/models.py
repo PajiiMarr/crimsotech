@@ -797,19 +797,118 @@ class Payment(models.Model):
     def __str__(self):
         return f"Payment {self.id} for Order {self.order.order}"
 
+
 class Refund(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('negotiation', 'Negotiation'),
+        ('approved', 'Approved'),
+        ('waiting', 'Waiting For Return'),
+        ('to_verify', 'To Verify'),
+        ('to_process', 'To Process'),
+        ('dispute', 'Dispute'),
+        ('completed', 'Completed'),
+        ('rejected', 'Rejected'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    PAYMENT_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('not_applicable', 'Not Applicable'),
+    ]
+    
     refund = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True)
     requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='refunds_requested')
     processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='refunds_processed')
     reason = models.CharField(max_length=500)
-    status = models.CharField(max_length=20, choices=[('pending','Pending'),('approved','Approved'),('rejected','Rejected'), ('waiting','Waiting'), ('to process','To Process'), ('completed','Completed')])
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
     requested_at = models.DateTimeField(auto_now_add=True)
     logistic_service = models.CharField(max_length=100, null=True, blank=True)
     tracking_number = models.CharField(max_length=100, null=True, blank=True)
     preferred_refund_method = models.CharField(max_length=100, null=True, blank=True)
     final_refund_method = models.CharField(max_length=100, null=True, blank=True)
+    total_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     processed_at = models.DateTimeField(null=True, blank=True)
+    request_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
+    customer_note = models.TextField(blank=True, null=True)
+    seller_response = models.TextField(blank=True, null=True)
+    
+    # negotition
+    seller_suggested_method = models.CharField(max_length=100, null=True, blank=True)
+    seller_suggested_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    seller_suggested_reason = models.TextField(blank=True, null=True)
+    negotiation_deadline = models.DateTimeField(null=True, blank=True)  # e.g., 3 days to respond
+    
+    # dispute
+    dispute_filed_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True
+    )
+    dispute_filed_at = models.DateTimeField(null=True, blank=True)
+    dispute_reason = models.TextField(blank=True, null=True)
+    
+    # admin response
+    admin_decision = models.CharField(max_length=100, null=True, blank=True)  # e.g., "Full refund to buyer"
+    admin_response = models.TextField(blank=True, null=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate request number
+        if not self.request_number:
+            date_str = timezone.now().strftime('%Y%m%d')
+            last_request = Refund.objects.filter(
+                requested_at__date=timezone.now().date()
+            ).count()
+            self.request_number = f"RR-{date_str}-{last_request + 1:05d}"
+        
+        # Auto-update payment_status based on main status
+        if self.status in ['pending', 'negotiation', 'approved', 'waiting', 'to_verify', 'dispute']:
+            self.payment_status = 'pending'
+        elif self.status == 'to_process':
+            self.payment_status = 'processing'
+        elif self.status == 'completed':
+            self.payment_status = 'completed'
+        elif self.status in ['rejected', 'cancelled']:
+            self.payment_status = 'not_applicable'
+            
+        # Set negotiation deadline when seller suggests alternative
+        if self.status == 'negotiation' and self.seller_suggested_method and not self.negotiation_deadline:
+            self.negotiation_deadline = timezone.now() + timezone.timedelta(days=3)
+        
+        # Set dispute filed date when status changes to dispute
+        if self.status == 'dispute' and not self.dispute_filed_at:
+            self.dispute_filed_at = timezone.now()
+        
+        # Set resolved_at when admin makes decision
+        if self.status == 'dispute' and self.admin_decision and not self.resolved_at:
+            self.resolved_at = timezone.now()
+            
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"Refund {self.request_number or self.refund}"
+    
+    # Property to check if negotiation expired
+    @property
+    def is_negotiation_expired(self):
+        if self.negotiation_deadline:
+            return timezone.now() > self.negotiation_deadline
+        return False
+    
+    # Property to get evidence count (if you have RefundMedias model)
+    @property
+    def evidence_count(self):
+        try:
+            return self.refundmedias_set.count()
+        except:
+            return 0
 
 class RefundMedias(models.Model):
     refund_media = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
