@@ -214,7 +214,7 @@ const CompactProductCard = ({ product, user, favoriteIds = [], onToggleFavorite 
 
       {/* Open for Swap tag (left) */}
       {product.open_for_swap && (
-        <div className="absolute top-1 left-1 z-10 px-2 py-0.5 bg-white rounded-full shadow-sm flex items-center gap-1">
+        <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-indigo-50 border border-indigo-100 rounded-full flex items-center gap-2">
           <Handshake className="h-4 w-4 text-indigo-600" />
           <span className="text-xs text-indigo-700 font-medium">Open for Swap</span>
         </div>
@@ -356,6 +356,10 @@ export default function Home({ loaderData }: any) {
   const { user, products, categories } = loaderData;
   const [searchTerm, setSearchTerm] = useState("");
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+  const [minPrice, setMinPrice] = useState<string>('');
+  const [maxPrice, setMaxPrice] = useState<string>('');
+  const [selectedCondition, setSelectedCondition] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
   const navigate = useNavigate();
 
   // Fetch favorites for heart states
@@ -376,37 +380,121 @@ export default function Home({ loaderData }: any) {
     fetchFavorites();
   }, [user?.user_id]);
 
-  // Filter products locally
-  const filteredProducts: Product[] = products.filter((product: Product) =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.description.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Available condition options derived from products
+  const conditionOptions = Array.from(new Set(products.map((p: Product) => p.condition).filter(Boolean))) as string[];
+
+  // Filter products locally (search + filters)
+  const filteredProducts: Product[] = products.filter((product: Product) => {
+    const q = searchTerm.trim().toLowerCase();
+    const matchesSearch = q === '' || product.name.toLowerCase().includes(q) || product.description.toLowerCase().includes(q);
+
+    // Price filter
+    const p = Number(product.price || 0);
+    const min = minPrice === '' ? null : Number(minPrice);
+    const max = maxPrice === '' ? null : Number(maxPrice);
+
+    const matchesMin = min === null || (!isNaN(min) && p >= min);
+    const matchesMax = max === null || (!isNaN(max) && p <= max);
+
+    // Condition filter
+    const matchesCondition = selectedCondition === '' || (product.condition && product.condition === selectedCondition);
+
+    // Category filter (product.category may be an object or string)
+    const prodCatId = (typeof product.category === 'string') ? product.category : (product.category && (product.category as any).id);
+    const matchesCategory = selectedCategory === '' || (prodCatId && prodCatId === selectedCategory);
+
+    return matchesSearch && matchesMin && matchesMax && matchesCondition && matchesCategory;
+  });
 
 
   return (
     <UserProvider user={user}>
       <SidebarLayout>
         <section className="w-full p-3">
-          <CompactSearchBar searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+            <div className="w-full md:w-auto">
+              <CompactSearchBar searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+            </div>
+
+            <div className="flex items-center gap-3 w-full md:w-auto">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-600">Price</label>
+                <input
+                  type="number"
+                  min={0}
+                  placeholder="Min"
+                  value={minPrice}
+                  onChange={(e) => setMinPrice(e.target.value)}
+                  className="w-20 h-8 px-2 border rounded text-sm"
+                />
+                <span className="text-sm text-gray-400">—</span>
+                <input
+                  type="number"
+                  min={0}
+                  placeholder="Max"
+                  value={maxPrice}
+                  onChange={(e) => setMaxPrice(e.target.value)}
+                  className="w-20 h-8 px-2 border rounded text-sm"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-600">Condition</label>
+                <select
+                  value={selectedCondition}
+                  onChange={(e) => setSelectedCondition(e.target.value)}
+                  className="h-8 px-2 border rounded text-sm"
+                >
+                  <option value="">All</option>
+                  {conditionOptions.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <button
+                  onClick={() => { setMinPrice(''); setMaxPrice(''); setSelectedCondition(''); }}
+                  className="px-3 py-1 text-xs text-gray-600 border rounded hover:bg-gray-50"
+                >
+                  Clear filters
+                </button>
+              </div>
+            </div>
+          </div>
 
           <h2 className="mb-2 text-sm font-semibold text-gray-700">Categories</h2>
           <div className="flex gap-2 overflow-x-auto py-1 mb-4">
-            {categories.map((cat: Category) => (
-              <div 
-                key={cat.id} 
-                onClick={() => navigate(`/category/${cat.id}`)}
-                className="flex-shrink-0 w-16 text-center cursor-pointer"
-              >
-                <div className="w-12 h-12 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-1">
-                  <span className="text-xs font-medium text-gray-700">
-                    {cat.name.charAt(0)}
+            {/* "All" category */}
+            <div
+              key="all"
+              onClick={() => setSelectedCategory('')}
+              className={`flex-shrink-0 w-16 text-center cursor-pointer`}
+            >
+              <div className={`w-12 h-12 mx-auto rounded-full flex items-center justify-center mb-1 ${selectedCategory === '' ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-700'}`}>
+                <span className="text-xs font-medium">All</span>
+              </div>
+              <span className={`text-xs truncate block ${selectedCategory === '' ? 'text-indigo-700' : 'text-gray-600'}`}>All</span>
+            </div>
+
+            {categories.map((cat: Category) => {
+              const active = selectedCategory === cat.id;
+              return (
+                <div 
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(active ? '' : cat.id)}
+                  className={`flex-shrink-0 w-16 text-center cursor-pointer`}>
+                  <div className={`w-12 h-12 mx-auto rounded-full flex items-center justify-center mb-1 ${active ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-700'}`}>
+                    <span className="text-xs font-medium">
+                      {cat.name.charAt(0)}
+                    </span>
+                  </div>
+                  <span className={`text-xs truncate block ${active ? 'text-indigo-700' : 'text-gray-600'}`}>
+                    {cat.name}
                   </span>
                 </div>
-                <span className="text-xs text-gray-600 truncate block">
-                  {cat.name}
-                </span>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           <h2 className="mb-2 text-sm font-semibold text-gray-700">
