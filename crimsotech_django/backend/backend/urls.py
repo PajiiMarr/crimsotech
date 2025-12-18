@@ -55,7 +55,9 @@ router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='use
 router.register(r'disputes', DisputeViewSet, basename='dispute')
 router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment')
 router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-orders-active')
-
+router.register(r'swap-products', SwapViewset, basename='swap-products')
+router.register(r'customer-products-viewset', CustomerProductViewSet, basename='customer-products-viewset')
+router.register(r'customer-product-list', CustomerProductsList, basename='customer-product-list')
 
 
 urlpatterns = [

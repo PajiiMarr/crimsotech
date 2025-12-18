@@ -312,8 +312,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
 
       // Fetch products list with date range
       const productsParams = new URLSearchParams(params);
-      productsParams.append('page', '1');
-      productsParams.append('page_size', '50');
 
       const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`);
 

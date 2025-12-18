@@ -8,7 +8,7 @@ import CreateProductForm from '~/components/customer/customer-create-product-for
 import { useState } from 'react';
 import { Button } from '~/components/ui/button';
 
-// --- BACKEND/SERVER FUNCTIONS (UNCHANGED) ---
+// --- BACKEND/SERVER FUNCTIONS (UPDATED) ---
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -37,32 +37,29 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
 
   const shopId = session.get("shopId");
-  console.log("Loader Session Shop ID:", shopId);
 
   await requireRole(request, context, ["isCustomer"]);
 
   // Fetch shops for the form
   try {
-    const shopsResponse = await AxiosInstance.get('/shop-add-product/get_shop/',
-      { 
-        headers: {
-          'X-Shop-Id': shopId || '',
-        }
-      }
-    );
+    // const shopsResponse = await AxiosInstance.get('/shop-add-product/get_shop/',
+    //   { 
+    //     headers: {  
+    //       'X-Shop-Id': shopId || '',
+    //     }
+    //   }
+    // );
 
-    const shop = shopsResponse.data.shop
-    console.log('ShopId', shop)
+    // const shop = shopsResponse.data.shop
 
-    const selectedShop = shop
+    // const selectedShop = shop
 
     // Fetch global categories
     let globalCategories = [];
     try {
-      const categoriesResponse = await AxiosInstance.get('/customer-products/global-categories/');
+      const categoriesResponse = await AxiosInstance.get('/customer-products-viewset/global_categories/');
       if (categoriesResponse.data.success) {
         globalCategories = categoriesResponse.data.categories || [];
-        console.log('Global categories loaded:', globalCategories.length);
       }
     } catch (categoryError) {
       console.error('Failed to fetch global categories:', categoryError);
@@ -71,7 +68,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     
     return data({ 
       user,
-      selectedShop: selectedShop,
       globalCategories: globalCategories
     }, {
       headers: {
@@ -82,7 +78,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // Even if shops fail, try to fetch categories
     let globalCategories = [];
     try {
-      const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
+      const categoriesResponse = await AxiosInstance.get('/customer-products-viewset/global_categories/');
       if (categoriesResponse.data.success) {
         globalCategories = categoriesResponse.data.categories || [];
       }
@@ -93,7 +89,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     return data({ 
       user,
       shops: [],
-      selectedShop: null,
       globalCategories: globalCategories
     }, {
       headers: {
@@ -104,26 +99,31 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
-  // ... (Action content remains exactly the same) ...
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
   const formData = await request.formData();
 
+  console.log('this is a formdata: ', formData)
+
   // Get basic product fields
   const name = String(formData.get("name"));
   const description = String(formData.get("description"));
   const quantity = String(formData.get("quantity"));
-  const used_for = String(formData.get("used_for"));
+  const used_for = String(formData.get("used_for") || "General use");
   const price = String(formData.get("price"));
+  const open_for_swap = String(formData.get('open_for_swap') || 'false');
   const condition = String(formData.get("condition"));
   const category_admin_id = String(formData.get("category_admin_id"));
 
-  // Get variant fields
-  const variant_title = String(formData.get("variant_title"));
-  const variant_option_title = String(formData.get("variant_option_title"));
-  const variant_option_quantity = String(formData.get("variant_option_quantity"));
-  const variant_option_price = String(formData.get("variant_option_price"));
+  // Get dimension fields
+  const length = formData.get("length");
+  const width = formData.get("width");
+  const height = formData.get("height");
+  const weight = formData.get("weight");
+
+  // Get critical trigger fields
+  const critical_threshold = formData.get("critical_threshold");
 
   // Get media files
   const media_files = formData.getAll("media_files") as File[];
@@ -133,8 +133,6 @@ export async function action({ request }: Route.ActionArgs) {
   cleanInput(description);
   cleanInput(used_for);
   cleanInput(condition);
-  cleanInput(variant_title);
-  cleanInput(variant_option_title);
 
   const errors: Record<string, string> = {};
 
@@ -161,10 +159,18 @@ export async function action({ request }: Route.ActionArgs) {
     errors.quantity = "Please enter a valid quantity";
   }
 
-  if (!price.trim()) {
-    errors.price = "Price is required";
-  } else if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
-    errors.price = "Please enter a valid price";
+  if (open_for_swap !== 'true') {
+    // For normal products, price is required and must be > 0
+    if (!price.trim()) {
+      errors.price = "Price is required";
+    } else if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
+      errors.price = "Please enter a valid price";
+    }
+  } else {
+    // For swap-only products, accept price 0 or empty and coerce to '0' when sending
+    if (price.trim() && (isNaN(parseFloat(price)) || parseFloat(price) < 0)) {
+      errors.price = "Please enter a valid price";
+    }
   }
 
   if (!condition.trim()) {
@@ -174,31 +180,15 @@ export async function action({ request }: Route.ActionArgs) {
   // Validate media files
   media_files.forEach((file, index) => {
     if (file.size > 0) {
-      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime'];
+      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4'];
       if (!validTypes.includes(file.type)) {
-        errors[`media_${index}`] = "Please upload valid image or video files (JPEG, PNG, GIF, WebP, MP4)";
+        errors[`media_${index}`] = "Please upload images or MP4 videos only (JPEG, PNG, GIF, WebP, MP4)";
       }
       if (file.size > 50 * 1024 * 1024) {
         errors[`media_${index}`] = "File size should be less than 50MB";
       }
     }
   });
-
-  // Validate variants (if any variant field is filled, all should be filled)
-  if (variant_title || variant_option_title || variant_option_quantity || variant_option_price) {
-    if (!variant_title.trim()) {
-      errors.variant_title = "Variant title is required";
-    }
-    if (!variant_option_title.trim()) {
-      errors.variant_option_title = "Variant option title is required";
-    }
-    if (!variant_option_quantity.trim() || isNaN(parseInt(variant_option_quantity)) || parseInt(variant_option_quantity) < 0) {
-      errors.variant_option_quantity = "Please enter a valid variant quantity";
-    }
-    if (!variant_option_price.trim() || isNaN(parseFloat(variant_option_price)) || parseFloat(variant_option_price) <= 0) {
-      errors.variant_option_price = "Please enter a valid variant price";
-    }
-  }
 
   if (Object.keys(errors).length > 0) {
     console.log("Product validation errors:", errors);
@@ -209,19 +199,22 @@ export async function action({ request }: Route.ActionArgs) {
     const userId = session.get("userId");
     if (!userId) return data({ errors: { message: "User not authenticated" } }, { status: 401 });
 
-    const shop_id = session.get("shopId");
 
     // Create FormData for API request
     const apiFormData = new FormData();
     
-    // Append individual fields directly
+    // Append basic fields
     apiFormData.append('name', name.trim());
     apiFormData.append('description', description.trim());
     apiFormData.append('quantity', quantity);
-    apiFormData.append('used_for', used_for.trim() || "General use");
-    apiFormData.append('price', price);
+    apiFormData.append('used_for', used_for.trim());
+    // If this is a swap-only product, send price='0' for compatibility if no positive price provided
+    if (open_for_swap === 'true' && (!price.trim() || parseFloat(price) <= 0)) {
+      apiFormData.append('price', '0');
+    } else {
+      apiFormData.append('price', price);
+    }
     apiFormData.append('condition', condition.trim());
-    apiFormData.append('shop', shop_id ?? "");
     apiFormData.append('status', "active");
     apiFormData.append('customer_id', userId);
 
@@ -230,24 +223,23 @@ export async function action({ request }: Route.ActionArgs) {
       apiFormData.append('category_admin_id', category_admin_id.trim());
     }
 
-    // Append product-level dimensions and weight unit when provided
-    const length = formData.get('length');
-    const width = formData.get('width');
-    const height = formData.get('height');
-    const weight = formData.get('weight');
-    const weightUnit = formData.get('weight_unit');
-    if (length) apiFormData.append('length', String(length));
-    if (width) apiFormData.append('width', String(width));
+    // Swap-related fields (optional)
+    if (String(formData.get('open_for_swap')) === 'true') {
+      apiFormData.append('open_for_swap', 'true');
+      apiFormData.append('swap_type', String(formData.get('swap_type') || 'direct_swap'));
+      // accepted_categories may be sent as multiple values
+      const acceptedCategories = formData.getAll('accepted_categories') || [];
+      apiFormData.append('accepted_categories', JSON.stringify(acceptedCategories));
+      apiFormData.append('minimum_additional_payment', String(formData.get('minimum_additional_payment') || 0));
+      apiFormData.append('maximum_additional_payment', String(formData.get('maximum_additional_payment') || 0));
+      apiFormData.append('swap_description', String(formData.get('swap_description') || ''));
+    }
     if (height) apiFormData.append('height', String(height));
     if (weight) apiFormData.append('weight', String(weight));
-    if (weightUnit) apiFormData.append('weight_unit', String(weightUnit));
 
-    // Add variants if provided
-    if (variant_title.trim() && variant_option_title.trim()) {
-      apiFormData.append('variant_title', variant_title.trim());
-      apiFormData.append('variant_option_title', variant_option_title.trim());
-      apiFormData.append('variant_option_quantity', variant_option_quantity);
-      apiFormData.append('variant_option_price', variant_option_price);
+    // Add critical threshold if provided
+    if (critical_threshold) {
+      apiFormData.append('critical_threshold', String(critical_threshold));
     }
 
     // Append media files
@@ -257,18 +249,165 @@ export async function action({ request }: Route.ActionArgs) {
       }
     });
 
+    // Handle variants - collect all variant data
+    const variantData: any[] = [];
+    
+    // Parse all form data to find variant groups and options
+    const formDataObj: Record<string, any> = {};
+    for (const [key, value] of formData.entries()) {
+      if (key.startsWith('variant_')) {
+        formDataObj[key] = value;
+      }
+    }
+
+    // Extract variant structure from form data
+    const variantGroups: Map<string, any> = new Map();
+    
+    for (const [key, value] of Object.entries(formDataObj)) {
+      const groupMatch = key.match(/^variant_group_([^_]+)_title$/);
+      if (groupMatch) {
+        const groupId = groupMatch[1];
+        if (!variantGroups.has(groupId)) {
+          variantGroups.set(groupId, {
+            title: value,
+            options: []
+          });
+        }
+      }
+
+      const optionMatch = key.match(/^variant_group_([^_]+)_option_([^_]+)_(.+)$/);
+      if (optionMatch) {
+        const groupId = optionMatch[1];
+        const optionId = optionMatch[2];
+        const field = optionMatch[3];
+
+        if (!variantGroups.has(groupId)) {
+          variantGroups.set(groupId, {
+            title: '',
+            options: []
+          });
+        }
+
+        const group = variantGroups.get(groupId);
+        let option = group.options.find((o: any) => o.id === optionId);
+        
+        if (!option) {
+          option = { id: optionId };
+          group.options.push(option);
+        }
+
+        option[field] = value;
+      }
+    }
+
+    // Convert variant groups to array format (we will include ids later when sending to API)
+    // Build from the map of parsed groups/options
+    // (ids are kept in the map keys and option.id fields)
+
+    // Add variants as structural metadata (no numeric fields; SKUs carry numeric/swap data)
+    if (variantGroups.size > 0) {
+      // include group and option ids so backend can match uploaded variant images
+      const variantsWithIds = Array.from(variantGroups.entries()).map(([groupId, group]) => ({
+        id: groupId,
+        title: group.title,
+        options: group.options.map((option: any) => ({
+          id: option.id,
+          title: option.title,
+        }))
+      }));
+
+      apiFormData.append('variants', JSON.stringify(variantsWithIds));
+    }
+
+    // Forward SKUs payload from the form if provided (the client sends comprehensive per-SKU fields)
+    const skusRaw = formData.get('skus');
+    if (skusRaw) {
+      apiFormData.append('skus', String(skusRaw));
+    }
+
+    // Always include the open_for_swap indicator (can be 'true', 'false', or 'variant_specific')
+    apiFormData.append('open_for_swap', String(formData.get('open_for_swap') || 'false'));
+
+
+    // Handle variant images and per-SKU images by forwarding their original keys
+    // variant_image_<groupId>_<optionId> and sku_image_<skuId>
+    for (const [key, value] of formData.entries()) {
+      if (key.startsWith('variant_image_') || key.startsWith('sku_image_')) {
+        const file = value as File;
+        if (file && (file as any).size > 0) {
+          apiFormData.append(key, file);
+        }
+      }
+    }
+
+    // Append product-level dimensions/weight unit if available
+    if (length) apiFormData.append('length', String(length));
+    if (width) apiFormData.append('width', String(width));
+    if (height) apiFormData.append('height', String(height));
+    if (weight) apiFormData.append('weight', String(weight));
+    const weightUnitVal = String(formData.get('weight_unit') || 'kg');
+    apiFormData.append('weight_unit', weightUnitVal);
+
+    // Handle shipping zones
+    const shippingZones: any[] = [];
+    const shippingZoneIds = new Set<string>();
+    
+    for (const [key, value] of formData.entries()) {
+      const zoneMatch = key.match(/^shipping_zone_([^_]+)_(.+)$/);
+      if (zoneMatch) {
+        const zoneId = zoneMatch[1];
+        const field = zoneMatch[2];
+        
+        shippingZoneIds.add(zoneId);
+        
+        let zone = shippingZones.find(z => z.id === zoneId);
+        if (!zone) {
+          zone = { id: zoneId };
+          shippingZones.push(zone);
+        }
+        
+        zone[field] = value;
+      }
+    }
+
+    // Format shipping zones for API
+    const formattedShippingZones = shippingZones.map(zone => ({
+      name: zone.name,
+      fee: zone.freeShipping === 'true' ? 0 : parseFloat(zone.fee) || 0,
+      free_shipping: zone.freeShipping === 'true'
+    }));
+
+    if (formattedShippingZones.length > 0) {
+      apiFormData.append('shipping_zones', JSON.stringify(formattedShippingZones));
+    }
+
     console.log("Sending product data to API with user ID:", userId);
     console.log("Category admin ID:", category_admin_id);
+    console.log("Variants count:", variantGroups.size);
+    console.log("Shipping zones count:", formattedShippingZones.length);
+
+    // Debug: inspect entries in apiFormData before sending to API
+    try {
+      for (const [k, v] of (apiFormData as any).entries()) {
+        const valPreview = (v && typeof v === 'object' && 'name' in v) ? { name: v.name, size: v.size, type: v.type } : String(v).slice(0, 200);
+        console.log('apiFormData entry ->', k, valPreview);
+      }
+    } catch (err) {
+      console.log('Failed to iterate apiFormData entries for debug:', err);
+    }
     
-    const response = await AxiosInstance.post('/seller-products/', apiFormData, {
-      headers: { 
-        'Content-Type': 'multipart/form-data',
-      },
+    // NOTE: Do NOT manually set Content-Type for multipart FormData here — Axios will set the proper boundary header for us.
+    const response = await AxiosInstance.post('/customer-products-viewset/create_product/', apiFormData, {
+      headers: {
+        'X-User-Id': userId
+      }
     });
     
     if (response.data.success) {
       console.log("Product created successfully:", response.data);
-      return redirect('/seller/seller-product-list', {
+      
+      // SSR Redirect to product list page
+      return redirect('/personal-listing', {
         headers: {
           "Set-Cookie": await commitSession(session),
         },
@@ -332,10 +471,8 @@ interface Category {
   };
 }
 
-// --- COMPONENT (MODIFIED - All forms shown, no next button) ---
-
 export default function CreateProduct({ loaderData, actionData }: Route.ComponentProps) {
-  const { user, selectedShop, globalCategories } = loaderData;
+  const { user, globalCategories } = loaderData;
   const errors: FormErrors = actionData?.errors || {};
 
   return (
@@ -356,34 +493,12 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
         {/* Single Column Layout - All forms visible */}
         <div className="grid grid-cols-12 gap-8">
           
-          {/* LEFT COLUMN: All Form Content */}
-          <div className="col-span-12 lg:col-span-9 xl:col-span-10"> 
+          {/* LEFT COLUMN: Form (full width) */}
+          <div className="col-span-12">
             <CreateProductForm 
-              selectedShop={selectedShop}
               globalCategories={globalCategories}
               errors={errors}
             />
-          </div>
-
-          {/* RIGHT COLUMN: Quick Navigation */}
-          <div className="col-span-12 lg:col-span-3 xl:col-span-2 lg:sticky lg:top-8 h-fit">
-            <div className="space-y-2 p-4 border rounded-lg shadow-md bg-white">
-              <h3 className="text-lg font-semibold mb-3 border-b pb-2 text-gray-700">Quick Navigation</h3>
-              <div className="space-y-1">
-                <a href="#basic-information" className="block py-1.5 px-2 rounded-md hover:bg-gray-50 text-sm text-gray-600 hover:text-gray-900">
-                  1. Basic Information
-                </a>
-                <a href="#variations" className="block py-1.5 px-2 rounded-md hover:bg-gray-50 text-sm text-gray-600 hover:text-gray-900">
-                  2. Variations
-                </a>
-                <a href="#pricing" className="block py-1.5 px-2 rounded-md hover:bg-gray-50 text-sm text-gray-600 hover:text-gray-900">
-                  3. Pricing
-                </a>
-                <a href="#stock" className="block py-1.5 px-2 rounded-md hover:bg-gray-50 text-sm text-gray-600 hover:text-gray-900">
-                  4. Stock
-                </a>
-              </div>
-            </div>
           </div>
           
         </div>

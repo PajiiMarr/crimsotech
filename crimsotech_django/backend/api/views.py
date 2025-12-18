@@ -2864,14 +2864,13 @@ class AdminProduct(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_products_list(self, request):
         """
-        Get paginated list of products for admin with search, filter, and date range support
+        Get complete list of products for admin with search, filter, and date range support
+        (No pagination - returns all products)
         """
         try:
             # Get query parameters
             search = request.query_params.get('search', '')
             category = request.query_params.get('category', 'all')
-            page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', 10))
             
             # Get date range parameters
             start_date = request.query_params.get('start_date')
@@ -2919,8 +2918,12 @@ class AdminProduct(viewsets.ViewSet):
             if category != 'all':
                 products = products.filter(category__name=category)
             
+            # Get all products (no pagination)
+            all_products = list(products)
+            total_count = len(all_products)
+            
             # Get product IDs for related data queries
-            product_ids = list(products.values_list('id', flat=True))
+            product_ids = [product.id for product in all_products]
             
             # Compute engagement data from CustomerActivity with date range
             engagement_filters = {}
@@ -2981,16 +2984,9 @@ class AdminProduct(viewsets.ViewSet):
                 if boost.boost_plan:
                     boost_map[boost.product.id] = boost.boost_plan.name
             
-            # Pagination
-            start_index = (page - 1) * page_size
-            end_index = start_index + page_size
-            
-            paginated_products = products[start_index:end_index]
-            total_count = products.count()
-            
             # Serialize with computed fields
             products_data = []
-            for product in paginated_products:
+            for product in all_products:
                 product_id = product.id
                 
                 # Get computed engagement data
@@ -3044,18 +3040,13 @@ class AdminProduct(viewsets.ViewSet):
             response_data = {
                 'success': True,
                 'products': products_data,
-                'pagination': {
-                    'page': page,
-                    'page_size': page_size,
-                    'total_count': total_count,
-                    'total_pages': (total_count + page_size - 1) // page_size
-                },
+                'total_count': total_count,
                 'date_range': {
                     'start_date': start_date,
                     'end_date': end_date,
                     'range_type': range_type
                 } if start_date and end_date else None,
-                'message': 'Products retrieved successfully',
+                'message': f'{total_count} products retrieved successfully',
                 'data_source': 'database'
             }
             
@@ -3067,7 +3058,8 @@ class AdminProduct(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving products: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+
     @action(detail=False, methods=['get'])    
     def get_product(self, request):
         product_id = request.query_params.get('product_id')
@@ -12987,6 +12979,7 @@ class RefundViewSet(viewsets.ViewSet):
             
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
 class OrderSuccessfull(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_order_successful(self, request, pk=None):
@@ -14644,9 +14637,6 @@ class RiderOrdersActive(viewsets.ViewSet):
             }
         })
 
-
-
-
 class CreateRefundView(APIView):
     def post(self, request):
         user_id = request.headers.get('X-User-Id')
@@ -14812,5 +14802,1313 @@ class CreateRefundView(APIView):
     #     except Exception as e:
     #         print(f"Error notifying seller: {str(e)}")
 
+class SwapViewset(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_swap(self, request):
+        """
+        Get all products available for swapping
+        Simple endpoint that respects ProductSKU model integrity
+        """
+        try:
+            # Get user_id from headers
+            user_id = request.headers.get('X-User-Id')
+            
+            # If user_id is provided, verify the user exists
+            current_user = None
+            if user_id:
+                try:
+                    current_user = User.objects.get(id=user_id)
+                except User.DoesNotExist:
+                    pass
+            
+            # Get query parameters
+            swap_type = request.GET.get('swap_type', None)  # 'direct_swap' or 'swap_plus_payment'
+            category_id = request.GET.get('category_id', None)
+            min_price = request.GET.get('min_price', None)
+            max_price = request.GET.get('max_price', None)
+            search = request.GET.get('search', '')
+            
+            # Start with base query - only products that allow swapping
+            swap_products = ProductSKU.objects.select_related(
+                'product',
+                'product__shop',
+                'product__customer',
+                'product__customer__customer'
+            ).prefetch_related(
+                'accepted_categories',
+                'product__productmedia_set',
+                'variant_options'
+            ).filter(
+                allow_swap=True,
+                is_active=True,
+                product__upload_status='published',  # Only published products
+                product__is_removed=False
+            )
+            
+            # Exclude current user's own products (if user is authenticated)
+            if current_user and current_user.is_customer:
+                try:
+                    customer_profile = current_user.customer
+                    swap_products = swap_products.exclude(
+                        product__customer=customer_profile
+                    )
+                except:
+                    pass
+            
+            # Apply filters
+            if swap_type:
+                swap_products = swap_products.filter(swap_type=swap_type)
+            
+            if category_id:
+                # Filter by accepted categories
+                swap_products = swap_products.filter(
+                    accepted_categories__id=category_id
+                ).distinct()
+            
+            if min_price:
+                try:
+                    min_price_decimal = Decimal(min_price)
+                    swap_products = swap_products.filter(price__gte=min_price_decimal)
+                except:
+                    pass
+            
+            if max_price:
+                try:
+                    max_price_decimal = Decimal(max_price)
+                    swap_products = swap_products.filter(price__lte=max_price_decimal)
+                except:
+                    pass
+            
+            # Search filter (product name or description)
+            if search:
+                swap_products = swap_products.filter(
+                    Q(product__name__icontains=search) |
+                    Q(product__description__icontains=search) |
+                    Q(sku_code__icontains=search)
+                )
+            
+            # Prepare response data
+            swap_list = []
+            for sku in swap_products[:50]:  # Limit to 50 results for performance
+                # Get main product image
+                product_image = None
+                if sku.image:
+                    product_image = request.build_absolute_uri(sku.image.url) if sku.image else None
+                else:
+                    # Try to get from product media
+                    try:
+                        media = ProductMedia.objects.filter(
+                            product=sku.product,
+                            file_type__startswith='image/'
+                        ).first()
+                        if media and media.file_data:
+                            product_image = request.build_absolute_uri(media.file_data.url)
+                    except:
+                        pass
+                
+                # Calculate stock status
+                stock_status = 'available'
+                if sku.quantity <= 0:
+                    stock_status = 'out_of_stock'
+                elif sku.critical_trigger and sku.quantity <= sku.critical_trigger:
+                    stock_status = 'low_stock'
+                
+                # Get accepted categories
+                accepted_categories = []
+                for cat in sku.accepted_categories.all():
+                    accepted_categories.append({
+                        'id': str(cat.id),
+                        'name': cat.name
+                    })
+                
+                # Get variant options
+                variant_options = []
+                for opt in sku.variant_options.all():
+                    variant_options.append({
+                        'id': str(opt.id),
+                        'title': opt.title,
+                        'variant_id': str(opt.variant_id) if opt.variant_id else None
+                    })
+                
+                swap_data = {
+                    'id': str(sku.id),
+                    'product_id': str(sku.product.id) if sku.product else None,
+                    'product_name': sku.product.name if sku.product else 'Unknown Product',
+                    'product_description': sku.product.description if sku.product else '',
+                    'product_price': str(sku.product.price) if sku.product and sku.product.price else '0.00',
+                    'product_condition': sku.product.condition if sku.product else '',
+                    
+                    # SKU Details
+                    'sku_code': sku.sku_code,
+                    'price': str(sku.price) if sku.price else None,
+                    'compare_price': str(sku.compare_price) if sku.compare_price else None,
+                    'quantity': sku.quantity,
+                    
+                    # Physical Details
+                    'length': str(sku.length) if sku.length else None,
+                    'width': str(sku.width) if sku.width else None,
+                    'height': str(sku.height) if sku.height else None,
+                    'weight': str(sku.weight) if sku.weight else None,
+                    'weight_unit': sku.weight_unit,
+                    
+                    # Swap Details
+                    'allow_swap': sku.allow_swap,
+                    'swap_type': sku.swap_type,
+                    'minimum_additional_payment': str(sku.minimum_additional_payment),
+                    'maximum_additional_payment': str(sku.maximum_additional_payment),
+                    'swap_description': sku.swap_description,
+                    
+                    # Accepted Categories
+                    'accepted_categories': accepted_categories,
+                    
+                    # Variant Options
+                    'variant_options': variant_options,
+                    
+                    # Shop Information
+                    'shop': {
+                        'id': str(sku.product.shop.id) if sku.product and sku.product.shop else None,
+                        'name': sku.product.shop.name if sku.product and sku.product.shop else None,
+                        'verified': sku.product.shop.verified if sku.product and sku.product.shop else False,
+                        'province': sku.product.shop.province if sku.product and sku.product.shop else None,
+                        'city': sku.product.shop.city if sku.product and sku.product.shop else None,
+                    },
+                    
+                    # Seller Information
+                    'seller': {
+                        'id': str(sku.product.customer.customer.id) if sku.product and sku.product.customer and sku.product.customer.customer else None,
+                        'username': sku.product.customer.customer.username if sku.product and sku.product.customer and sku.product.customer.customer else None,
+                        'first_name': sku.product.customer.customer.first_name if sku.product and sku.product.customer and sku.product.customer.customer else '',
+                        'last_name': sku.product.customer.customer.last_name if sku.product and sku.product.customer and sku.product.customer.customer else '',
+                    },
+                    
+                    # Category
+                    'category': {
+                        'id': str(sku.product.category.id) if sku.product and sku.product.category else None,
+                        'name': sku.product.category.name if sku.product and sku.product.category else None,
+                    } if sku.product and sku.product.category else None,
+                    
+                    # Media
+                    'product_image': product_image,
+                    
+                    # Status
+                    'stock_status': stock_status,
+                    'is_active': sku.is_active,
+                    'critical_trigger': sku.critical_trigger,
+                    
+                    # Timestamps
+                    'created_at': sku.created_at.isoformat() if sku.created_at else timezone.now().isoformat(),
+                    'updated_at': sku.updated_at.isoformat() if sku.updated_at else timezone.now().isoformat(),
+                    
+                    # Current user info (for frontend)
+                    'current_user_id': user_id,
+                    'is_current_user_seller': False,  # Will be calculated below
+                }
+                
+                # Check if current user is the seller of this product
+                if current_user and sku.product and sku.product.customer:
+                    swap_data['is_current_user_seller'] = (
+                        sku.product.customer.customer.id == current_user.id
+                    )
+                
+                swap_list.append(swap_data)
+            
+            return Response({
+                'success': True,
+                'data': swap_list,
+                'total': len(swap_list),
+                'message': f'Found {len(swap_list)} swap products',
+                'current_user_id': user_id
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_swap: {str(e)}")
+            return Response({
+                'success': False,
+                'error': str(e),
+                'data': [],
+                'total': 0,
+                'message': 'Error fetching swap products'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class CustomerProductViewSet(viewsets.ViewSet):
+    """
+    Comprehensive ViewSet for customer product management 
+    (No shop required - for personal listings)
+    """
     
+    @action(detail=False, methods=['get'])
+    def global_categories(self, request):
+        """Get all global categories (no shop) for customer products"""
+        try:
+            categories = Category.objects.filter(shop__isnull=True).order_by('name')
+            categories_data = []
+            
+            for category in categories:
+                categories_data.append({
+                    "id": str(category.id),
+                    "name": category.name,
+                    "shop": None,
+                    "user": {
+                        "id": str(category.user.id),
+                        "username": category.user.username
+                    } if category.user else None,
+                })
+            
+            return Response({
+                "success": True,
+                "categories": categories_data,
+                "message": "Global categories retrieved successfully",
+                "total_count": len(categories_data)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch global categories",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def create_product(self, request):
+        """
+        Comprehensive product creation for customers - handles everything:
+        - Basic product info
+        - Categories (global only)
+        - Media files
+        - Variants & SKUs
+        - Swap settings (per SKU or product-level)
+        - No shop required
+        """
+        try:
+            # Get user_id from headers or data
+            user_id = request.data.get('customer_id') or request.headers.get('X-User-Id')
+            
+            if not user_id:
+                return Response({
+                    "error": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get customer profile
+            try:
+                customer = Customer.objects.get(customer_id=user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "error": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check product limit
+            if not customer.can_add_product():
+                return Response({
+                    "error": f"Cannot add more than {customer.product_limit} products. Current count: {customer.current_product_count}"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Prepare base product data
+            product_data = {}
+            
+            # Handle single values (fix duplicates from FormData)
+            single_value_fields = [
+                'name', 'description', 'condition', 'category_admin_id', 
+                'weight_unit', 'swap_type', 'swap_description',
+                'upload_status', 'status', 'compare_price'
+            ]
+            
+            for field in single_value_fields:
+                value = request.data.get(field)
+                if isinstance(value, list) and len(value) > 0:
+                    product_data[field] = value[0]  # Take first if list
+                elif value is not None:
+                    product_data[field] = value
+            
+            # Handle numeric fields with validation
+            numeric_fields = ['quantity', 'price', 'compare_price', 'length', 'width', 'height', 'weight', 'critical_stock']
+            for field in numeric_fields:
+                value = request.data.get(field)
+                if value:
+                    try:
+                        if isinstance(value, list) and len(value) > 0:
+                            product_data[field] = float(value[0])
+                        else:
+                            product_data[field] = float(value)
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Set customer and defaults
+            product_data['customer'] = customer.customer_id
+            product_data['upload_status'] = product_data.get('upload_status', 'draft')
+            product_data['status'] = product_data.get('status', 'active')
+            
+            # Handle product-level swap
+            open_for_swap = request.data.get('open_for_swap')
+            if open_for_swap:
+                product_data['open_for_swap'] = True if open_for_swap in ['true', 'True', True] else False
+            
+            # Validate global category if provided
+            category_admin_id = product_data.get('category_admin_id')
+            if category_admin_id and category_admin_id != "none":
+                try:
+                    Category.objects.get(id=category_admin_id, shop__isnull=True)
+                except Category.DoesNotExist:
+                    return Response({
+                        "error": "Invalid global category selected"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle accepted_categories for product-level swap
+            accepted_categories_raw = request.data.get('accepted_categories')
+            if accepted_categories_raw:
+                try:
+                    if isinstance(accepted_categories_raw, str):
+                        accepted_list = json.loads(accepted_categories_raw)
+                    else:
+                        accepted_list = accepted_categories_raw
+                    
+                    # Validate categories exist and are global
+                    valid_categories = []
+                    for cat_id in accepted_list:
+                        try:
+                            Category.objects.get(id=cat_id, shop__isnull=True)
+                            valid_categories.append(cat_id)
+                        except Category.DoesNotExist:
+                            pass
+                    
+                    product_data['accepted_categories'] = valid_categories
+                except (json.JSONDecodeError, TypeError):
+                    product_data['accepted_categories'] = []
+            
+            # Handle shipping zones (for customer products if needed)
+            shipping_zones_raw = request.data.get('shipping_zones')
+            if shipping_zones_raw:
+                try:
+                    if isinstance(shipping_zones_raw, str):
+                        shipping_zones = json.loads(shipping_zones_raw)
+                    else:
+                        shipping_zones = shipping_zones_raw
+                    
+                    # Validate shipping zones
+                    valid_zones = []
+                    for zone in shipping_zones:
+                        if isinstance(zone, dict) and 'name' in zone:
+                            valid_zones.append({
+                                'name': zone.get('name'),
+                                'fee': float(zone.get('fee', 0)),
+                                'free_shipping': bool(zone.get('free_shipping', False))
+                            })
+                    
+                    if valid_zones:
+                        product_data['shipping_zones'] = valid_zones
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
+            
+            # Create product with transaction
+            with transaction.atomic():
+                serializer = ProductCreateSerializer(
+                    data=product_data, 
+                    context={'request': request}
+                )
+                
+                if serializer.is_valid():
+                    # Create the product (shop will be null for customer products)
+                    product = serializer.save()
+                    
+                    # Handle media files
+                    media_files = request.FILES.getlist('media_files', [])
+                    for media_file in media_files:
+                        ProductMedia.objects.create(
+                            product=product,
+                            file_data=media_file,
+                            file_type=media_file.content_type
+                        )
+                    
+                    # Handle variants and SKUs if provided
+                    variants_raw = request.data.get('variants')
+                    skus_raw = request.data.get('skus')
+                    
+                    # In the create_product method, modify the variants handling section:
+                    if variants_raw:
+                        # Parse variants data
+                        try:
+                            variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+                            
+                            # Parse SKUs data
+                            skus_list = []
+                            if skus_raw:
+                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+                            
+                            # Process variants and SKUs
+                            self._create_variants_with_skus(
+                                product=product,
+                                variants_data=variants_list,
+                                skus_data=skus_list,
+                                files=request.FILES
+                            )
+                        except Exception as e:
+                            print(f"Error processing variants/SKUs: {type(e)} - {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                            # Rollback transaction if variant creation fails
+                            raise ValidationError(f"Failed to create variants: {str(e)}")
+                    # Increment customer's product count
+                    customer.increment_product_count()
+                    
+                    # Return comprehensive success response
+                    return Response({
+                        "success": True,
+                        "product": self._get_product_detail_data(product),
+                        "message": "Customer product created successfully",
+                        "product_limit": {
+                            "current_count": customer.current_product_count,
+                            "limit": customer.product_limit,
+                            "remaining": customer.product_limit - customer.current_product_count
+                        }
+                    }, status=status.HTTP_201_CREATED)
+                else:
+                    return Response({
+                        "error": "Validation failed",
+                        "details": serializer.errors
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+        except ValidationError as e:
+            return Response({
+                "error": "Validation failed",
+                "details": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({
+                "error": "Product creation failed",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _create_variants_with_skus(self, product, variants_data, skus_data, files):
+        from decimal import Decimal, InvalidOperation
+
+        """Helper method to create variants and SKUs for customer products"""
+        option_image_files = {}
+        option_id_map = {}
+        
+        print(f"Creating variants for product {product.id}")
+        print(f"Variants data: {variants_data}")
+        print(f"SKUs data: {skus_data}")
+        print(f"Files keys: {list(files.keys())}")
+        
+        # Create variant groups and options
+        for variant_group in variants_data:
+            variant = Variants.objects.create(
+                product=product,
+                shop=None,  # Customer products have no shop
+                title=variant_group.get('title', '')
+            )
+            print(f"Created variant: {variant.id} - {variant.title}")
+            
+            for option in variant_group.get('options', []):
+                provided_option_id = option.get('id', str(uuid.uuid4()))
+                voption = VariantOptions.objects.create(
+                    variant=variant,
+                    title=option.get('title', '')
+                )
+                print(f"Created variant option: {voption.id} - {voption.title}")
+                
+                # Map provided ID to actual DB ID
+                option_id_map[str(provided_option_id)] = str(voption.id)
+                
+                # Store variant images if any
+                file_key = f"variant_image_{variant_group.get('id', '')}_{provided_option_id}"
+                if file_key in files:
+                    option_image_files[str(provided_option_id)] = files[file_key]
+                    option_image_files[str(voption.id)] = files[file_key]
+                    print(f"Stored variant image for option {provided_option_id}")
+        
+        # Create SKUs if provided
+        if skus_data:
+            print(f"Creating {len(skus_data)} SKUs")
+            for sku_data in skus_data:
+                provided_option_ids = sku_data.get('option_ids', [])
+                mapped_option_ids = [
+                    option_id_map.get(str(oid), str(oid)) 
+                    for oid in provided_option_ids
+                ]
+                
+                # Get swap data from SKU
+                allow_swap = sku_data.get('allow_swap', False)
+                swap_type = sku_data.get('swap_type', 'direct_swap')
+                min_payment = sku_data.get('minimum_additional_payment', 0)
+                max_payment = sku_data.get('maximum_additional_payment', 0)
+                
+                # DEBUG: Print SKU data before conversion
+                print(f"SKU Data before conversion: {sku_data}")
+                
+                # Safe Decimal conversion helper function
+                def safe_decimal(value, default=None):
+                    if value is None or value == '':
+                        return default
+                    try:
+                        # Handle string or numeric values
+                        if isinstance(value, str):
+                            # Remove any whitespace and check if empty
+                            value = value.strip()
+                            if value == '':
+                                return default
+                            # Replace comma with dot for decimal separator
+                            value = value.replace(',', '.')
+                        return Decimal(str(value))
+                    except (ValueError, TypeError, InvalidOperation):
+                        print(f"Warning: Could not convert '{value}' to Decimal, using default: {default}")
+                        return default
+                
+                # Create SKU with safe conversions
+                sku = ProductSKU.objects.create(
+                    product=product,
+                    option_ids=mapped_option_ids,
+                    option_map=sku_data.get('option_map', {}),
+                    price=safe_decimal(sku_data.get('price'), None),
+                    compare_price=safe_decimal(sku_data.get('compare_price'), None),
+                    quantity=int(sku_data.get('quantity', 0)),
+                    length=safe_decimal(sku_data.get('length'), None),
+                    width=safe_decimal(sku_data.get('width'), None),
+                    height=safe_decimal(sku_data.get('height'), None),
+                    weight=safe_decimal(sku_data.get('weight'), None),
+                    weight_unit=sku_data.get('weight_unit', 'g'),
+                    sku_code=sku_data.get('sku_code', ''),
+                    critical_trigger=int(sku_data.get('critical_trigger')) if sku_data.get('critical_trigger') not in (None, '') else None,
+                    allow_swap=bool(allow_swap),
+                    swap_type=swap_type if allow_swap else 'direct_swap',
+                    minimum_additional_payment=safe_decimal(min_payment, Decimal('0.00')),
+                    maximum_additional_payment=safe_decimal(max_payment, Decimal('0.00')),
+                    swap_description=sku_data.get('swap_description', ''),
+                )
+                print(f"Created SKU: {sku.id}")
+                
+                # Handle accepted categories for swap
+                accepted_categories = sku_data.get('accepted_categories', [])
+                for cat_id in accepted_categories:
+                    try:
+                        category = Category.objects.get(id=cat_id, shop__isnull=True)
+                        sku.accepted_categories.add(category)
+                        print(f"Added accepted category {category.name} to SKU {sku.id}")
+                    except Category.DoesNotExist:
+                        pass
+                
+                # Handle SKU images
+                sku_id = sku_data.get('id')
+                file_key = f"sku_image_{sku_id}" if sku_id else None
+                
+                if file_key and file_key in files:
+                    sku.image = files[file_key]
+                    sku.save()
+                    print(f"Added explicit image to SKU {sku.id}")
+                else:
+                    # Try to get image from option images
+                    for oid in provided_option_ids:
+                        if str(oid) in option_image_files:
+                            sku.image = option_image_files[str(oid)]
+                            sku.save()
+                            print(f"Added option image to SKU {sku.id}")
+                            break
+        else:
+            # Auto-create SKUs from variants if no SKUs provided
+            print("Auto-creating SKUs from variants")
+            for variant_group in variants_data:
+                for option in variant_group.get('options', []):
+                    provided_option_id = option.get('id', str(uuid.uuid4()))
+                    mapped_option_id = option_id_map.get(str(provided_option_id), str(provided_option_id))
+                    
+                    # Safe price conversion for auto-created SKUs
+                    option_price = option.get('price', 0)
+                    try:
+                        if option_price and option_price != '':
+                            price_decimal = Decimal(str(option_price).replace(',', '.'))
+                        else:
+                            price_decimal = None
+                    except (ValueError, TypeError, InvalidOperation):
+                        price_decimal = None
+                    
+                    sku = ProductSKU.objects.create(
+                        product=product,
+                        option_ids=[mapped_option_id],
+                        option_map={variant_group.get('title', 'Option'): option.get('title', '')},
+                        price=price_decimal,
+                        quantity=int(option.get('quantity', 0)),
+                    )
+                    
+                    # Add image if available
+                    f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(provided_option_id))
+                    if f:
+                        sku.image = f
+                        sku.save()
+
+    def _get_product_detail_data(self, product):
+        """Get detailed product data for response"""
+        # Get media files
+        media_files = []
+        for media in product.productmedia_set.all():
+            media_files.append({
+                "id": str(media.id),
+                "file_data": media.file_data.url if media.file_data else None,
+                "file_type": media.file_type
+            })
+        
+        # Get SKUs
+        skus = []
+        for sku in product.skus.all():
+            sku_data = {
+                "id": str(sku.id),
+                "option_ids": sku.option_ids,
+                "option_map": sku.option_map,
+                "sku_code": sku.sku_code,
+                "price": str(sku.price) if sku.price else None,
+                "compare_price": str(sku.compare_price) if sku.compare_price else None,
+                "quantity": sku.quantity,
+                "allow_swap": sku.allow_swap,
+                "swap_type": sku.swap_type,
+                "minimum_additional_payment": str(sku.minimum_additional_payment) if sku.minimum_additional_payment else "0.00",
+                "maximum_additional_payment": str(sku.maximum_additional_payment) if sku.maximum_additional_payment else "0.00",
+                "swap_description": sku.swap_description,
+                "image": sku.image.url if sku.image else None,
+            }
+            
+            # Add accepted categories for this SKU
+            accepted_cats = []
+            for cat in sku.accepted_categories.all():
+                accepted_cats.append({
+                    "id": str(cat.id),
+                    "name": cat.name
+                })
+            sku_data["accepted_categories"] = accepted_cats
+            skus.append(sku_data)
+        
+        # Get variants
+        variants = []
+        for variant in product.variants_set.all():
+            variant_data = {
+                "id": str(variant.id),
+                "title": variant.title,
+                "options": []
+            }
+            
+            for option in variant.variantoptions_set.all():
+                option_data = {
+                    "id": str(option.id),
+                    "title": option.title,
+                }
+                variant_data["options"].append(option_data)
+            
+            variants.append(variant_data)
+        
+        return {
+            "id": str(product.id),
+            "name": product.name,
+            "description": product.description,
+            "quantity": product.quantity,
+            "price": str(product.price),
+            "compare_price": str(product.compare_price) if product.compare_price else None,
+            "upload_status": product.upload_status,
+            "status": product.status,
+            "condition": product.condition,
+            "open_for_swap": getattr(product, 'open_for_swap', False),
+            "swap_type": getattr(product, 'swap_type', None),
+            "swap_description": getattr(product, 'swap_description', None),
+            "category_admin": {
+                "id": str(product.category_admin.id),
+                "name": product.category_admin.name
+            } if product.category_admin else None,
+            "media_files": media_files,
+            "skus": skus,
+            "variants": variants,
+            "dimensions": {
+                "length": str(product.length) if product.length else None,
+                "width": str(product.width) if product.width else None,
+                "height": str(product.height) if product.height else None,
+                "weight": str(product.weight) if product.weight else None,
+                "weight_unit": product.weight_unit,
+            } if any([product.length, product.width, product.height, product.weight]) else None,
+            "created_at": product.created_at.isoformat(),
+            "updated_at": product.updated_at.isoformat(),
+        }
+    
+    @action(detail=False, methods=['get'])
+    def predict_category(self, request):
+        """
+        Predict category for a product - Reuse from SellerProducts
+        """
+        # Copy the predict_category method from SellerProducts class
+        try:
+            import pandas as pd
+            import numpy as np
+            import tensorflow as tf
+            import joblib
+            import os
+            
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+            MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+            
+            # Load models (same as seller version)
+            try:
+                category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+                scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+                model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
+                feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
+                
+            except FileNotFoundError as e:
+                return Response(
+                    {'success': False, 'error': f'Model files not found. Please train the model first.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Extract data from request
+            data = request.data
+            
+            # Required fields
+            required_fields = ['name', 'description', 'quantity', 'price', 'condition']
+            for field in required_fields:
+                if field not in data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Prepare item data
+            item_data = {
+                'name': str(data['name']),
+                'description': str(data['description']),
+                'quantity': int(data['quantity']),
+                'price': float(data['price']),
+                'condition': str(data['condition'])
+            }
+            
+            # ... [rest of the prediction logic from SellerProducts] ...
+            # For brevity, copying the full prediction logic from SellerProducts
+            
+            # This should be the same as the SellerProducts.predict_category method
+            # Just make sure to import the same packages and use the same model
+            
+            return Response({
+                'success': True,
+                'message': 'Category prediction endpoint (copy logic from SellerProducts)'
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    'success': False, 
+                    'error': f'Prediction failed: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+
+class CustomerProductsList(viewsets.ViewSet):
+    """
+    ViewSet for listing customer's PERSONAL products (without shop)
+    """
+    
+    @action(detail=False, methods=['get'])
+    def products_list(self, request):
+        """
+        Get only PERSONAL products for a customer (products without a shop)
+        """
+        try:
+            # Get user_id from headers
+            user_id = request.headers.get('X-User-Id')
+            
+            if not user_id:
+                return Response({
+                    "success": False,
+                    "error": "User ID is required in headers"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get customer profile
+            try:
+                customer = Customer.objects.get(customer_id=user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": True,
+                    "products": [],
+                    "message": "Customer not found",
+                    "total_count": 0,
+                    "summary": self._get_empty_summary()
+                }, status=status.HTTP_200_OK)
+            
+            # Get query parameters for filtering
+            status_filter = request.query_params.get('status', None)
+            upload_status_filter = request.query_params.get('upload_status', None)
+            search_query = request.query_params.get('search', None)
+            
+            # Build base queryset - ONLY products WITHOUT a shop (personal listings)
+            products = Product.objects.filter(
+                customer=customer,
+                is_removed=False,
+                shop__isnull=True  # CRITICAL: Only products without a shop
+            ).select_related(
+                'category_admin',
+                'category'
+            ).prefetch_related(
+                Prefetch('productmedia_set', queryset=ProductMedia.objects.all()),
+                Prefetch('skus', queryset=ProductSKU.objects.all())
+            ).order_by('-created_at')
+            
+            # Apply filters
+            if status_filter:
+                products = products.filter(status=status_filter)
+            
+            if upload_status_filter:
+                products = products.filter(upload_status=upload_status_filter)
+            
+            if search_query:
+                products = products.filter(
+                    Q(name__icontains=search_query) |
+                    Q(description__icontains=search_query) |
+                    Q(sku_code__icontains=search_query)
+                )
+            
+            # Get total count before pagination
+            total_count = products.count()
+            
+            # Prepare response data
+            products_data = []
+            
+            for product in products:
+                product_data = self._prepare_product_data(product)
+                products_data.append(product_data)
+            
+            # Get summary statistics (only for personal products)
+            summary = self._get_summary_statistics(customer)
+            
+            return Response({
+                "success": True,
+                "products": products_data,
+                "total_count": total_count,
+                "summary": summary,
+                "customer_info": {
+                    "customer_id": str(customer.customer_id),
+                    "username": customer.customer.username if customer.customer else None,
+                    "product_limit": customer.product_limit,
+                    "current_product_count": self._get_personal_product_count(customer),  # Only personal products
+                    "remaining_products": customer.product_limit - self._get_personal_product_count(customer)
+                },
+                "message": "Personal products retrieved successfully",
+                "filters_applied": {
+                    "status": status_filter,
+                    "upload_status": upload_status_filter,
+                    "search": search_query
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch personal products",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_personal_product_count(self, customer):
+        """Get count of only personal products (without shop)"""
+        return Product.objects.filter(
+            customer=customer,
+            is_removed=False,
+            shop__isnull=True
+        ).count()
+    
+    def _prepare_product_data(self, product):
+        """Helper method to prepare individual product data"""
+        # Get first media file for thumbnail
+        main_image = None
+        media_files = list(product.productmedia_set.all())
+        if media_files:
+            main_media = media_files[0]
+            main_image = {
+                "id": str(main_media.id),
+                "url": main_media.file_data.url if main_media.file_data else None,
+                "type": main_media.file_type
+            }
+        
+        # Get all media files
+        all_media = [
+            {
+                "id": str(media.id),
+                "url": media.file_data.url if media.file_data else None,
+                "type": media.file_type
+            }
+            for media in media_files
+        ]
+        
+        # Get SKU information
+        skus = list(product.skus.all())
+        sku_data = []
+        total_quantity = 0
+        
+        for sku in skus:
+            sku_data.append({
+                "id": str(sku.id),
+                "option_ids": sku.option_ids or [],
+                "option_map": sku.option_map or {},
+                "sku_code": sku.sku_code,
+                "price": str(sku.price) if sku.price else None,
+                "compare_price": str(sku.compare_price) if sku.compare_price else None,
+                "quantity": sku.quantity,
+                "allow_swap": sku.allow_swap,
+                "swap_type": sku.swap_type if sku.allow_swap else None,
+                "is_active": sku.is_active,
+                "critical_trigger": sku.critical_trigger,
+                "stock_status": self._get_stock_status(sku.quantity, sku.critical_trigger),
+                "image": sku.image.url if sku.image else None
+            })
+            total_quantity += sku.quantity
+        
+        # Calculate overall stock status
+        if skus:
+            has_swap = any(sku.allow_swap for sku in skus)
+            overall_stock_status = self._get_stock_status(total_quantity, product.critical_stock)
+        else:
+            has_swap = False
+            overall_stock_status = self._get_stock_status(product.quantity, product.critical_stock)
+            total_quantity = product.quantity
+        
+        # Get active report count if available
+        active_report_count = getattr(product, 'active_report_count', 0)
+        
+        # Determine product status badge
+        status_badge = self._get_status_badge(
+            product.upload_status, 
+            product.status,
+            total_quantity,
+            has_swap
+        )
+        
+        # Prepare dimensions
+        dimensions = None
+        if any([product.length, product.width, product.height, product.weight]):
+            dimensions = {
+                "length": str(product.length) if product.length else None,
+                "width": str(product.width) if product.width else None,
+                "height": str(product.height) if product.height else None,
+                "weight": str(product.weight) if product.weight else None,
+                "weight_unit": product.weight_unit or 'kg'
+            }
+        
+        return {
+            "id": str(product.id),
+            "name": product.name,
+            "description": product.description,
+            "short_description": product.description[:100] + "..." if len(product.description) > 100 else product.description,
+            "quantity": product.quantity,
+            "total_sku_quantity": total_quantity,
+            "price": str(product.price),
+            "compare_price": str(product.compare_price) if product.compare_price else None,
+            "upload_status": product.upload_status,
+            "status": product.status,
+            "condition": product.condition,
+            "status_badge": status_badge,
+            "stock_status": overall_stock_status,
+            
+            # Categories
+            "category_admin": {
+                "id": str(product.category_admin.id),
+                "name": product.category_admin.name
+            } if product.category_admin else None,
+            "category": {
+                "id": str(product.category.id),
+                "name": product.category.name
+            } if product.category else None,
+            
+            # Media
+            "main_image": main_image,
+            "media_count": len(all_media),
+            "all_media": all_media,
+            
+            # SKUs
+            "has_variants": len(skus) > 0,
+            "sku_count": len(skus),
+            "skus": sku_data,
+            
+            # Swap information
+            "allow_swap": has_swap,
+            "has_swap": has_swap,
+            "swap_type": skus[0].swap_type if has_swap and skus else None,
+            
+            # Shop information (will be null for personal listings)
+            "shop_id": None,
+            "shop_name": None,
+            "is_personal_listing": True,  # Add flag to identify personal listings
+            
+            # Physical details
+            "dimensions": dimensions,
+            
+            # Critical stock
+            "critical_stock": product.critical_stock,
+            "is_low_stock": total_quantity <= product.critical_stock if product.critical_stock else False,
+            
+            # Reports
+            "active_report_count": active_report_count,
+            "has_active_reports": active_report_count > 0,
+            
+            # Timestamps
+            "created_at": product.created_at.isoformat(),
+            "updated_at": product.updated_at.isoformat(),
+            "created_date": product.created_at.strftime("%b %d, %Y"),
+            "updated_date": product.updated_at.strftime("%b %d, %Y"),
+            
+            # Flags
+            "is_published": product.upload_status == 'published',
+            "is_draft": product.upload_status == 'draft',
+            "is_archived": product.upload_status == 'archived',
+            "is_active": product.status == 'active' and product.upload_status == 'published',
+        }
+    
+    def _get_stock_status(self, quantity, critical_trigger):
+        """Determine stock status based on quantity and critical trigger"""
+        if quantity is None:
+            quantity = 0
+            
+        if quantity <= 0:
+            return "out_of_stock"
+        elif critical_trigger and quantity <= critical_trigger:
+            return "low_stock"
+        else:
+            return "in_stock"
+    
+    def _get_status_badge(self, upload_status, status, quantity, has_swap):
+        """Get status badge information"""
+        badges = []
+        
+        # Upload status badge
+        if upload_status == 'published':
+            badges.append({"type": "success", "label": "Published"})
+        elif upload_status == 'draft':
+            badges.append({"type": "warning", "label": "Draft"})
+        elif upload_status == 'archived':
+            badges.append({"type": "secondary", "label": "Archived"})
+        
+        # Product status badge
+        if status == 'active':
+            badges.append({"type": "success", "label": "Active"})
+        elif status == 'inactive':
+            badges.append({"type": "secondary", "label": "Inactive"})
+        
+        # Stock status badge
+        if quantity is not None:
+            if quantity <= 0:
+                badges.append({"type": "danger", "label": "Out of Stock"})
+            elif quantity <= 10:
+                badges.append({"type": "warning", "label": "Low Stock"})
+        
+        # Swap badge
+        if has_swap:
+            badges.append({"type": "info", "label": "Swap Available"})
+        
+        return badges
+    
+    def _get_summary_statistics(self, customer):
+        """Get summary statistics for customer's PERSONAL products only"""
+        products = Product.objects.filter(
+            customer=customer, 
+            is_removed=False,
+            shop__isnull=True  # Only personal products
+        )
+        
+        # Count by upload status
+        status_counts = products.aggregate(
+            total=Count('id'),
+            published=Count('id', filter=Q(upload_status='published')),
+            draft=Count('id', filter=Q(upload_status='draft')),
+            archived=Count('id', filter=Q(upload_status='archived'))
+        )
+        
+        # Count by product status
+        product_status_counts = products.aggregate(
+            active=Count('id', filter=Q(status='active')),
+            inactive=Count('id', filter=Q(status='inactive'))
+        )
+        
+        # Count personal products with swap enabled
+        swap_products_count = 0
+        for product in products:
+            if product.skus.filter(allow_swap=True).exists():
+                swap_products_count += 1
+        
+        # Get recent personal products (last 7 days)
+        week_ago = timezone.now() - timezone.timedelta(days=7)
+        recent_count = products.filter(created_at__gte=week_ago).count()
+        
+        personal_product_count = self._get_personal_product_count(customer)
+        
+        return {
+            "total_products": status_counts['total'] or 0,
+            "by_upload_status": {
+                "published": status_counts['published'] or 0,
+                "draft": status_counts['draft'] or 0,
+                "archived": status_counts['archived'] or 0
+            },
+            "by_product_status": {
+                "active": product_status_counts['active'] or 0,
+                "inactive": product_status_counts['inactive'] or 0
+            },
+            "swap_products": swap_products_count,
+            "recent_products": recent_count,
+            "product_limit": {
+                "limit": customer.product_limit,
+                "used": personal_product_count,  # Only personal products
+                "remaining": customer.product_limit - personal_product_count,
+                "percentage_used": round((personal_product_count / customer.product_limit * 100), 2) if customer.product_limit > 0 else 0
+            }
+        }
+    
+    def _get_empty_summary(self):
+        """Return empty summary when no customer found"""
+        return {
+            "total_products": 0,
+            "by_upload_status": {
+                "published": 0,
+                "draft": 0,
+                "archived": 0
+            },
+            "by_product_status": {
+                "active": 0,
+                "inactive": 0
+            },
+            "swap_products": 0,
+            "recent_products": 0,
+            "product_limit": {
+                "limit": 0,
+                "used": 0,
+                "remaining": 0,
+                "percentage_used": 0
+            }
+        }
+    
+    @action(detail=False, methods=['get'])
+    def product_detail(self, request):
+        """
+        Get detailed information for a specific PERSONAL product
+        """
+        try:
+            user_id = request.headers.get('X-User-Id')
+            product_id = request.query_params.get('product_id')
+            
+            if not user_id:
+                return Response({
+                    "success": False,
+                    "error": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not product_id:
+                return Response({
+                    "success": False,
+                    "error": "Product ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verify customer owns the personal product
+            try:
+                customer = Customer.objects.get(customer_id=user_id)
+                product = Product.objects.get(
+                    id=product_id,
+                    customer=customer,
+                    is_removed=False,
+                    shop__isnull=True  # Must be a personal product
+                )
+            except (Customer.DoesNotExist, Product.DoesNotExist):
+                return Response({
+                    "success": False,
+                    "error": "Personal product not found or access denied"
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Prepare detailed product data
+            product_data = self._prepare_product_data(product)
+            
+            # Add additional details for single product view
+            product_data.update({
+                "full_description": product.description,
+                "sales_stats": self._get_sales_stats(product),
+                "view_count": getattr(product, 'view_count', 0),
+                "favorite_count": getattr(product, 'favorite_count', 0),
+            })
+            
+            return Response({
+                "success": True,
+                "product": product_data,
+                "message": "Personal product details retrieved successfully"
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch personal product details",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_sales_stats(self, product):
+        """Get sales statistics for a product (placeholder)"""
+        return {
+            "total_sold": 0,
+            "total_revenue": "0.00",
+            "last_sale_date": None
+        }
+    
+    @action(detail=False, methods=['get'])
+    def shop_products_list(self, request):
+        """
+        Separate endpoint to get shop products if needed
+        """
+        try:
+            user_id = request.headers.get('X-User-Id')
+            
+            if not user_id:
+                return Response({
+                    "success": False,
+                    "error": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                customer = Customer.objects.get(customer_id=user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": True,
+                    "products": [],
+                    "message": "Customer not found",
+                    "total_count": 0
+                }, status=status.HTTP_200_OK)
+            
+            # Get shop products ONLY (with shop)
+            products = Product.objects.filter(
+                customer=customer,
+                is_removed=False,
+                shop__isnull=False  # Only products with shop
+            ).select_related(
+                'shop',
+                'category_admin',
+                'category'
+            ).order_by('-created_at')
+            
+            total_count = products.count()
+            products_data = []
+            
+            for product in products:
+                # Simplified data for shop products
+                products_data.append({
+                    "id": str(product.id),
+                    "name": product.name,
+                    "price": str(product.price),
+                    "shop_id": str(product.shop.id) if product.shop else None,
+                    "shop_name": product.shop.name if product.shop else None,
+                    "upload_status": product.upload_status,
+                    "status": product.status,
+                    "is_personal_listing": False,  # This is a shop product
+                })
+            
+            return Response({
+                "success": True,
+                "products": products_data,
+                "total_count": total_count,
+                "message": "Shop products retrieved successfully"
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch shop products",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

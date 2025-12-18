@@ -1,5 +1,5 @@
 import type { Route } from './+types/personal-listing';
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router";
 import SidebarLayout from '~/components/layouts/sidebar';
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -45,6 +45,8 @@ import {
   InfoIcon,
   RefreshCw,
   ShoppingBag,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 // ================================
@@ -59,167 +61,273 @@ export function meta(): Route.MetaDescriptors {
 }
 
 // ================================
-// Loader function - UI ONLY
+// Interfaces
 // ================================
-export async function loader({ request, context }: Route.LoaderArgs) {
-  // For UI demo only - return dummy user with correct User type
-  return {
-    id: "demo-user-123",
-    name: "Demo User",
-    email: "demo@example.com",
-    isCustomer: true,
-    isAdmin: false,
-    isRider: false,
-    isModerator: false,
-    // Add any other minimal data needed for SidebarLayout
-  };
+interface ProductMedia {
+  id: string;
+  url: string | null;
+  type: string;
 }
 
-// ================================
-// Product type interfaces
-// ================================
-interface VariantOption {
+interface ProductSKU {
   id: string;
-  title: string;
+  option_ids: string[];
+  option_map: Record<string, string>;
+  sku_code: string | null;
+  price: string | null;
+  compare_price: string | null;
   quantity: number;
-  price: string;
+  allow_swap: boolean;
+  swap_type: string;
+  is_active: boolean;
+  critical_trigger: number | null;
+  stock_status: string;
+  image: string | null;
 }
 
-interface Variant {
+interface ProductCategory {
   id: string;
-  title: string;
-  options: VariantOption[];
+  name: string;
+}
+
+interface ProductDimensions {
+  length: string | null;
+  width: string | null;
+  height: string | null;
+  weight: string | null;
+  weight_unit: string;
+}
+
+interface StatusBadge {
+  type: string;
+  label: string;
 }
 
 interface Product {
   id: string;
   name: string;
   description: string;
-  price: string;
+  short_description: string;
   quantity: number;
-  used_for?: string;
+  total_sku_quantity: number;
+  price: string;
+  compare_price: string | null;
+  upload_status: string;
   status: string;
   condition: string;
-  upload_status: string;
-  is_in_shop: boolean;
-  is_shop_visible: boolean;
-  shop: {
-    id: string;
-    name: string;
-  } | null;
-  category_admin: {
-    id: string;
-    name: string;
-  } | null;
-  category: {
-    id: string;
-    name: string;
-  } | null;
-  variants?: Variant[];
+  status_badge: StatusBadge[];
+  stock_status: string;
+  
+  category_admin: ProductCategory | null;
+  category: ProductCategory | null;
+  
+  main_image: ProductMedia | null;
+  media_count: number;
+  all_media: ProductMedia[];
+  
+  has_variants: boolean;
+  sku_count: number;
+  skus: ProductSKU[];
+  
+  allow_swap: boolean;
+  has_swap: boolean;
+  swap_type: string | null;
+  
+  dimensions: ProductDimensions | null;
+  
+  critical_stock: number | null;
+  is_low_stock: boolean;
+  
+  active_report_count: number;
+  has_active_reports: boolean;
+  
   created_at: string;
   updated_at: string;
+  created_date: string;
+  updated_date: string;
+  
+  is_published: boolean;
+  is_draft: boolean;
+  is_archived: boolean;
+  is_active: boolean;
+}
+
+interface CustomerInfo {
+  customer_id: string;
+  product_limit: number;
+  current_product_count: number;
+  remaining_products: number;
+}
+
+interface SummaryStats {
+  total_products: number;
+  by_upload_status: {
+    published: number;
+    draft: number;
+    archived: number;
+  };
+  by_product_status: {
+    active: number;
+    inactive: number;
+  };
+  swap_products: number;
+  recent_products: number;
+  product_limit: {
+    limit: number;
+    used: number;
+    remaining: number;
+    percentage_used: number;
+  };
+}
+
+interface APIResponse {
+  success: boolean;
+  products: Product[];
+  total_count: number;
+  summary: SummaryStats;
+  customer_info: CustomerInfo;
+  message: string;
+  filters_applied?: {
+    status?: string;
+    upload_status?: string;
+    search?: string;
+  };
 }
 
 // ================================
-// PersonalListingsContent Component - UI ONLY
+// Loader function - REAL DATA
 // ================================
-function PersonalListingsContent() {
-  const navigate = useNavigate();
-  const [products, setProducts] = useState<Product[]>([
-    // Sample data for UI display
-    {
-      id: "1",
-      name: "Apple iPhone 13 Pro",
-      description: "256GB, Sierra Blue, Excellent condition",
-      price: "45000",
-      quantity: 1,
-      used_for: "Personal use",
-      status: "active",
-      condition: "excellent",
-      upload_status: "completed",
-      is_in_shop: true,
-      is_shop_visible: true,
-      shop: { id: "shop1", name: "My Electronics Shop" },
-      category_admin: { id: "cat1", name: "Smartphones" },
-      category: { id: "cat2", name: "Electronics" },
-      created_at: "2024-01-15T10:30:00Z",
-      updated_at: "2024-01-20T14:25:00Z"
-    },
-    {
-      id: "2",
-      name: "Samsung Galaxy Watch 4",
-      description: "44mm, Black, Bluetooth",
-      price: "12000",
-      quantity: 0,
-      status: "inactive",
-      condition: "good",
-      upload_status: "completed",
-      is_in_shop: false,
-      is_shop_visible: false,
-      shop: null,
-      category_admin: { id: "cat3", name: "Wearables" },
-      category: { id: "cat4", name: "Accessories" },
-      created_at: "2024-01-10T09:15:00Z",
-      updated_at: "2024-01-18T11:45:00Z"
-    },
-    {
-      id: "3",
-      name: "MacBook Air M1",
-      description: "8GB RAM, 256GB SSD, 2020 model",
-      price: "55000",
-      quantity: 1,
-      status: "active",
-      condition: "excellent",
-      upload_status: "completed",
-      is_in_shop: true,
-      is_shop_visible: true,
-      shop: { id: "shop1", name: "My Electronics Shop" },
-      category_admin: { id: "cat5", name: "Laptops" },
-      category: { id: "cat2", name: "Electronics" },
-      variants: [
-        {
-          id: "var1",
-          title: "Color",
-          options: [
-            { id: "opt1", title: "Space Gray", quantity: 1, price: "55000" },
-            { id: "opt2", title: "Gold", quantity: 0, price: "56000" }
-          ]
-        }
-      ],
-      created_at: "2024-01-05T14:20:00Z",
-      updated_at: "2024-01-22T16:30:00Z"
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { registrationMiddleware } = await import("~/middleware/registration.server");
+  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
+  const { requireRole } = await import("~/middleware/role-require.server");
+  const { fetchUserRole } = await import("~/middleware/role.server");
+  const { userContext } = await import("~/contexts/user-role");
+
+  let user = context.get(userContext);
+  if (!user) {
+    user = await fetchUserRole({ request, context });
+  }
+
+  await requireRole(request, context, ["isCustomer"]);
+
+  try {
+    // Get session for authentication
+    const { getSession, commitSession } = await import('~/sessions.server');
+    const session = await getSession(request.headers.get("Cookie"));
+    
+    // Import AxiosInstance for server-side request
+    const { default: AxiosInstance } = await import('~/components/axios/Axios');
+    
+    // Fetch customer products from API
+    const response = await AxiosInstance.get<APIResponse>('/customer-product-list/products_list/', {
+      headers: {
+        'X-User-Id': user?.user_id || ''
+      }
+    });
+
+    if (!response.data.success) {
+      throw new Error(response.data.message || 'Failed to fetch products');
     }
-  ]);
-  
+
+    return {
+      user: {
+        id: user?.user_id || '',
+        isCustomer: true,
+        isAdmin: false,
+        isRider: false,
+        isModerator: false,
+      },
+      initialProducts: response.data.products || [],
+      customerInfo: response.data.customer_info,
+      summary: response.data.summary,
+      totalCount: response.data.total_count,
+      message: response.data.message
+    };
+
+  } catch (error: any) {
+    console.error('Error fetching customer products:', error);
+
+    // Return user data with empty products on error
+    return {
+      user: {
+        id: user?.user_id || '',
+        
+        isCustomer: true,
+        isAdmin: false,
+        isRider: false,
+        isModerator: false,
+      },
+      initialProducts: [],
+      customerInfo: {
+        customer_id: user?.user_id || '',
+        product_limit: 500,
+        current_product_count: 0,
+        remaining_products: 500
+      },
+      summary: {
+        total_products: 0,
+        by_upload_status: { published: 0, draft: 0, archived: 0 },
+        by_product_status: { active: 0, inactive: 0 },
+        swap_products: 0,
+        recent_products: 0,
+        product_limit: { limit: 500, used: 0, remaining: 500, percentage_used: 0 }
+      },
+      totalCount: 0,
+      message: error.response?.data?.message || 'Failed to load products. Please try again.',
+      error: error.message
+    };
+  }
+}
+
+// ================================
+// PersonalListingsContent Component - REAL DATA
+// ================================
+function PersonalListingsContent({ 
+  loaderData 
+}: { 
+  loaderData: { 
+    initialProducts: Product[];
+    customerInfo: CustomerInfo;
+    summary: SummaryStats;
+    totalCount: number;
+    message: string;
+    error?: string;
+  } 
+}) {
+  const navigate = useNavigate();
+  const [products, setProducts] = useState<Product[]>(loaderData.initialProducts);
   const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [error, setError] = useState<string | null>(loaderData.error || null);
   
-  // Mock listing limit info for UI display
-  const listingLimitInfo = {
-    current_count: 3,
-    limit: 10,
-    remaining: 7
-  };
-  
-  const hasShop = true; // Mock value for UI
+  const listingLimitInfo = loaderData.customerInfo;
+  const hasShop = false; // This would need to be fetched from a different endpoint
 
   // Helper functions
   const formatPrice = (price: string) => {
-    const priceNumber = parseFloat(price);
-    return new Intl.NumberFormat('en-PH', {
-      style: 'currency',
-      currency: 'PHP'
-    }).format(priceNumber);
+    try {
+      const priceNumber = parseFloat(price);
+      return new Intl.NumberFormat('en-PH', {
+        style: 'currency',
+        currency: 'PHP'
+      }).format(priceNumber);
+    } catch {
+      return '₱0.00';
+    }
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-PH', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+    try {
+      return new Date(dateString).toLocaleDateString('en-PH', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch {
+      return 'Invalid date';
+    }
   };
 
   const getCategoryName = (product: Product) => {
@@ -227,15 +335,14 @@ function PersonalListingsContent() {
   };
 
   const getStatusBadge = (status: string) => {
-    const statusConfig = {
-      active: { variant: "default" as const, label: "Active" },
-      inactive: { variant: "secondary" as const, label: "Inactive" },
-      draft: { variant: "outline" as const, label: "Draft" },
-      sold: { variant: "secondary" as const, label: "Sold" }
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
+      active: { variant: "default", label: "Active" },
+      inactive: { variant: "secondary", label: "Inactive" },
+      draft: { variant: "outline", label: "Draft" },
+      sold: { variant: "secondary", label: "Sold" }
     };
 
-    const config = statusConfig[status as keyof typeof statusConfig] || 
-                   { variant: "outline" as const, label: status };
+    const config = statusConfig[status.toLowerCase()] || { variant: "outline" as const, label: status };
 
     return (
       <Badge variant={config.variant}>
@@ -244,43 +351,71 @@ function PersonalListingsContent() {
     );
   };
 
-  const getVariantSummary = (product: Product) => {
-    if (!product.variants || product.variants.length === 0) return null;
+  const getStockStatusBadge = (product: Product) => {
+    const stockStatus = product.stock_status;
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "warning", label: string }> = {
+      in_stock: { variant: "default", label: "In Stock" },
+      low_stock: { variant: "warning", label: "Low Stock" },
+      out_of_stock: { variant: "destructive", label: "Out of Stock" }
+    };
 
-    const totalOptions = product.variants.reduce((sum, variant) => 
-      sum + (variant.options?.length || 0), 0);
-    
-    const variantTypes = product.variants.map(v => v.title).join(', ') || '';
+    const config = statusConfig[stockStatus] || { variant: "secondary" as const, label: stockStatus };
+
+    return (
+      <Badge>
+        {config.label}
+      </Badge>
+    );
+  };
+
+  const getVariantSummary = (product: Product) => {
+    if (!product.has_variants) return null;
 
     return (
       <div className="text-xs text-muted-foreground mt-1">
         <Package className="h-3 w-3 inline mr-1" />
-        Variants: {variantTypes} ({totalOptions} options)
+        {product.sku_count} variant{product.sku_count !== 1 ? 's' : ''}
       </div>
     );
   };
 
-  // Mock fetch listings - UI ONLY
-  const fetchListings = () => {
-    // No API call - just simulate loading
-    setRefreshing(true);
-    setTimeout(() => {
+  // Fetch real listings
+  const fetchListings = async () => {
+    try {
+      setRefreshing(true);
+      setError(null);
+      
+      // Import AxiosInstance for client-side request
+      const { default: AxiosInstance } = await import('~/components/axios/Axios');
+      
+      const response = await AxiosInstance.get<APIResponse>('/customer-products-list/products_list/', {
+        headers: {
+          'X-User-Id': loaderData.customerInfo.customer_id
+        }
+      });
+
+      if (response.data.success) {
+        setProducts(response.data.products || []);
+      } else {
+        setError(response.data.message || 'Failed to fetch products');
+      }
+    } catch (error: any) {
+      setError(error.response?.data?.message || 'Failed to refresh listings');
+      console.error('Error refreshing listings:', error);
+    } finally {
       setRefreshing(false);
-    }, 1000);
+    }
   };
 
   const handleRefresh = () => {
-    setRefreshing(true);
     fetchListings();
   };
 
   const handleEditListing = (productId: string) => {
-    alert(`Edit listing ${productId} - This would navigate to edit page`);
     navigate(`/personal-listings/edit/${productId}`);
   };
 
   const handleViewListing = (productId: string) => {
-    alert(`View listing ${productId} - This would navigate to listing page`);
     navigate(`/listings/${productId}`);
   };
 
@@ -289,33 +424,64 @@ function PersonalListingsContent() {
       return;
     }
 
-    // Mock delete - just remove from local state
-    setProducts(prev => prev.filter(p => p.id !== productId));
-    
-    // Update limit info (mock)
-    if (listingLimitInfo) {
-      alert('Listing deleted successfully');
+    try {
+      setLoading(true);
+      const { default: AxiosInstance } = await import('~/components/axios/Axios');
+      
+      // This endpoint would need to be created
+      await AxiosInstance.delete(`/customer-products/${productId}/`);
+      
+      // Remove from local state
+      setProducts(prev => prev.filter(p => p.id !== productId));
+      
+      // Refresh summary info
+      fetchListings();
+      
+    } catch (error: any) {
+      alert('Failed to delete listing: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleAddToShop = async (productId: string) => {
-    // Mock add to shop - just update local state
-    setProducts(prev => prev.map(p => 
-      p.id === productId ? { ...p, is_shop_visible: true } : p
-    ));
-    
-    alert('Listing added to your shop successfully');
+    try {
+      const { default: AxiosInstance } = await import('~/components/axios/Axios');
+      
+      // This endpoint would need to be created
+      await AxiosInstance.post(`/customer-products/${productId}/add-to-shop/`);
+      
+      // Update local state
+      setProducts(prev => prev.map(p => 
+        p.id === productId ? { ...p, is_shop_visible: true } : p
+      ));
+      
+      alert('Listing added to your shop successfully');
+    } catch (error: any) {
+      alert('Failed to add to shop: ' + (error.response?.data?.message || error.message));
+    }
   };
 
   const handleToggleStatus = async (productId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
     
-    // Mock toggle - just update local state
-    setProducts(prev => prev.map(p => 
-      p.id === productId ? { ...p, status: newStatus } : p
-    ));
-    
-    alert(`Listing ${newStatus === 'active' ? 'activated' : 'deactivated'} successfully`);
+    try {
+      const { default: AxiosInstance } = await import('~/components/axios/Axios');
+      
+      // This endpoint would need to be created
+      await AxiosInstance.patch(`/customer-products/${productId}/`, {
+        status: newStatus
+      });
+      
+      // Update local state
+      setProducts(prev => prev.map(p => 
+        p.id === productId ? { ...p, status: newStatus } : p
+      ));
+      
+      alert(`Listing ${newStatus === 'active' ? 'activated' : 'deactivated'} successfully`);
+    } catch (error: any) {
+      alert('Failed to update status: ' + (error.response?.data?.message || error.message));
+    }
   };
 
   const filteredProducts = products.filter(product =>
@@ -329,21 +495,8 @@ function PersonalListingsContent() {
     return (
       <div className="w-full p-6 flex justify-center items-center">
         <div className="text-center text-gray-500">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
           Loading your listings...
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="w-full p-6">
-        <div className="text-center py-8">
-          <div className="text-red-500 text-lg mb-4">{error}</div>
-          <Button onClick={() => window.location.reload()}>
-            Try Again
-          </Button>
         </div>
       </div>
     );
@@ -374,7 +527,7 @@ function PersonalListingsContent() {
             asChild 
             className="bg-primary hover:bg-primary/90 flex items-center gap-2"
             size="default"
-            disabled={listingLimitInfo?.remaining === 0}
+            disabled={listingLimitInfo.remaining_products === 0}
           >
             <Link to="/customer-create-product">
               <Plus className="w-4 h-4" />
@@ -384,17 +537,53 @@ function PersonalListingsContent() {
         </div>
       </div>
 
-
+      {/* Error Alert */}
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {error}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Info Alert */}
       <Alert>
         <InfoIcon className="h-4 w-4" />
         <AlertDescription>
-          You can list up to 10 items personally. {hasShop && "If you have a shop, you can choose to also display these items in your shop."}
+          You can list up to {listingLimitInfo.product_limit} items. Current: {listingLimitInfo.current_product_count}/{listingLimitInfo.product_limit} ({listingLimitInfo.remaining_products} remaining)
         </AlertDescription>
       </Alert>
 
-      {/* Search (simplified) */}
+      {/* Stats Summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold">{loaderData.summary.total_products}</div>
+            <div className="text-sm text-muted-foreground">Total Listings</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold text-green-600">{loaderData.summary.by_upload_status.published}</div>
+            <div className="text-sm text-muted-foreground">Published</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold text-amber-600">{loaderData.summary.by_upload_status.draft}</div>
+            <div className="text-sm text-muted-foreground">Drafts</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold text-blue-600">{loaderData.summary.swap_products}</div>
+            <div className="text-sm text-muted-foreground">Swap Available</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Search */}
       <div className="mb-4">
         <div className="max-w-md">
           <div className="flex items-center gap-2 border rounded-md px-3 py-2">
@@ -415,7 +604,7 @@ function PersonalListingsContent() {
           <CardTitle>Your Listings</CardTitle>
           <CardDescription>
             {filteredProducts.length} listing{filteredProducts.length !== 1 ? 's' : ''} found
-            {listingLimitInfo && ` • ${listingLimitInfo.remaining} listings remaining`}
+            {listingLimitInfo && ` • ${listingLimitInfo.remaining_products} listings remaining`}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -438,9 +627,9 @@ function PersonalListingsContent() {
                     asChild 
                     className="bg-primary hover:bg-primary/90 flex items-center gap-2"
                     size="lg"
-                    disabled={listingLimitInfo?.remaining === 0}
+                    disabled={listingLimitInfo.remaining_products === 0}
                   >
-                    <Link to="/personal-listings/create">
+                    <Link to="/customer-create-product">
                       <Plus className="w-4 h-4" />
                       Create Your First Listing
                     </Link>
@@ -451,138 +640,151 @@ function PersonalListingsContent() {
               )}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead className="text-right">Price</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead>Condition</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Shop Status</TableHead>
-                  <TableHead>Date Added</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProducts.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center">
-                          <Tag className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-medium truncate">{product.name}</div>
-                          <div className="text-sm text-muted-foreground line-clamp-1">
-                            {product.description}
-                          </div>
-                          {product.used_for && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              Used for: {product.used_for}
-                            </div>
-                          )}
-                          {getVariantSummary(product)}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">
-                        {getCategoryName(product)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatPrice(product.price)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className={product.quantity === 0 ? 'text-red-600 font-medium' : ''}>
-                        {product.quantity}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="capitalize">
-                        {product.condition}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {getStatusBadge(product.status)}
-                    </TableCell>
-                    <TableCell>
-                      {hasShop && product.is_shop_visible ? (
-                        <Badge variant="default" className="bg-green-600">
-                          In Shop
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline">Not in Shop</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {formatDate(product.created_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" className="h-8 w-8 p-0">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuItem onClick={() => handleViewListing(product.id)}>
-                            <Eye className="h-4 w-4 mr-2" />
-                            View Listing
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleEditListing(product.id)}>
-                            <Edit className="h-4 w-4 mr-2" />
-                            Edit Listing
-                          </DropdownMenuItem>
-                          {hasShop && !product.is_shop_visible && product.status === 'active' && (
-                            <DropdownMenuItem 
-                              onClick={() => handleAddToShop(product.id)}
-                            >
-                              <Upload className="h-4 w-4 mr-2" />
-                              Add to Shop
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuItem 
-                            onClick={() => handleToggleStatus(product.id, product.status)}
-                          >
-                            {product.status === 'active' ? 'Deactivate' : 'Activate'}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem 
-                            onClick={() => handleDeleteListing(product.id)}
-                            className="text-red-600 focus:text-red-600"
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete Listing
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Price</TableHead>
+                    <TableHead className="text-right">Stock</TableHead>
+                    <TableHead>Stock Status</TableHead>
+                    <TableHead>List Status</TableHead>
+                    <TableHead>Swap</TableHead>
+                    <TableHead>Date Added</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredProducts.map((product) => (
+                    <TableRow key={product.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center overflow-hidden">
+                            {product.main_image?.url ? (
+                              <img 
+                                src={product.main_image.url} 
+                                alt={product.name}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <Tag className="h-5 w-5 text-muted-foreground" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium truncate">{product.name}</div>
+                            <div className="text-sm text-muted-foreground line-clamp-1">
+                              {product.short_description}
+                            </div>
+                            {product.media_count > 0 && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {product.media_count} image{product.media_count !== 1 ? 's' : ''}
+                              </div>
+                            )}
+                            {getVariantSummary(product)}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">
+                          {getCategoryName(product)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {formatPrice(product.price)}
+                        {product.compare_price && (
+                          <div className="text-xs text-muted-foreground line-through">
+                            {formatPrice(product.compare_price)}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className={product.total_sku_quantity === 0 ? 'text-red-600 font-medium' : ''}>
+                          {product.total_sku_quantity}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {getStockStatusBadge(product)}
+                      </TableCell>
+                      <TableCell>
+                        {getStatusBadge(product.status)}
+                        {product.is_draft && (
+                          <Badge variant="outline" className="ml-1">Draft</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {product.has_swap ? (
+                          <Badge variant="default" className="bg-green-600">
+                            Swap Available
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">No Swap</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {formatDate(product.created_at)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" className="h-8 w-8 p-0">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => handleViewListing(product.id)}>
+                              <Eye className="h-4 w-4 mr-2" />
+                              View Listing
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleEditListing(product.id)}>
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit Listing
+                            </DropdownMenuItem>
+                            {hasShop && product.is_active && (
+                              <DropdownMenuItem 
+                                onClick={() => handleAddToShop(product.id)}
+                              >
+                                <Upload className="h-4 w-4 mr-2" />
+                                Add to Shop
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem 
+                              onClick={() => handleToggleStatus(product.id, product.status)}
+                            >
+                              {product.status === 'active' ? 'Deactivate' : 'Activate'}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={() => handleDeleteListing(product.id)}
+                              className="text-red-600 focus:text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Listing
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
-
-
     </div>
   );
 }
 
 // ================================
-// Default component - UI ONLY
+// Default component
 // ================================
 export default function PersonalListings({ loaderData }: Route.ComponentProps) {
-  const user = loaderData;
   return (
-    <UserProvider user={user}>
+    <UserProvider user={loaderData.user}>
       <SidebarLayout>
-        <PersonalListingsContent />
+        <PersonalListingsContent loaderData={loaderData} />
       </SidebarLayout>
     </UserProvider>
   );
