@@ -1,5 +1,6 @@
 from asyncio.log import logger
 from email import parser
+from django.http import JsonResponse
 import json
 import re
 import time
@@ -11551,54 +11552,154 @@ class RefundViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])
     def create_refund(self, request):
-        """Buyer creates a new refund request"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+        """
+        Simple view-based refund creation endpoint
+        """
         try:
-            user = User.objects.get(id=user_id)
-            order_uuid = request.data.get('order')
+            # Get user ID from headers
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return JsonResponse({
+                    'error': 'User ID required'
+                }, status=400)
             
-            if not order_uuid:
-                return Response({"error": "Order ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return JsonResponse({
+                    'error': 'User not found'
+                }, status=404)
             
-            # Check if order exists and belongs to user
-            order = get_object_or_404(Order, order=order_uuid, user=user)
+            # Parse refund data from form data
+            # DRF's MultiPartParser exposes fields in request.data; Django exposes in request.POST
+            refund_data_str = request.data.get('refund_data') or request.POST.get('refund_data')
+            if not refund_data_str:
+                return JsonResponse({
+                    'error': 'Refund data required'
+                }, status=400)
             
-            # Check if refund already exists for this order
-            existing_refund = Refund.objects.filter(order=order, requested_by=user).first()
+            try:
+                refund_data = json.loads(refund_data_str)
+            except json.JSONDecodeError:
+                return JsonResponse({
+                    'error': 'Invalid refund data format'
+                }, status=400)
+            
+            # Validate required fields
+            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'total_refund_amount']
+            for field in required_fields:
+                if not refund_data.get(field):
+                    return JsonResponse({
+                        'error': f'{field.replace("_", " ").title()} is required'
+                    }, status=400)
+            
+            # Get order
+            try:
+                order = Order.objects.get(order=refund_data['order_id'], user=user)
+            except Order.DoesNotExist:
+                return JsonResponse({
+                    'error': 'Order not found or does not belong to user'
+                }, status=404)
+            
+            # Check if refund already exists
+            existing_refund = Refund.objects.filter(
+                order=order, 
+                requested_by=user,
+                status__in=['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
+            ).first()
+            
             if existing_refund:
-                return Response({
-                    "error": "Refund request already exists for this order",
-                    "refund_id": str(existing_refund.refund)
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return JsonResponse({
+                    'error': 'A refund request for this order is already in progress',
+                    'refund_id': str(existing_refund.refund),
+                    'request_number': existing_refund.request_number
+                }, status=400)
             
-            # Create refund
-            refund_data = {
-                'order': order.order,
-                'requested_by': user.id,
-                'reason': request.data.get('reason'),
-                'preferred_refund_method': request.data.get('preferred_refund_method'),
-                'total_refund_amount': request.data.get('total_refund_amount'),
-                'customer_note': request.data.get('customer_note', ''),
-                'status': 'pending'
-            }
-            
-            serializer = RefundCreateSerializer(data=refund_data)
-            if serializer.is_valid():
-                refund = serializer.save()
-                return Response({
-                    "message": "Refund request created successfully",
-                    "refund_id": str(refund.refund),
-                    "request_number": refund.request_number
-                }, status=status.HTTP_201_CREATED)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Start transaction
+            with transaction.atomic():
+                # Create refund
+                refund = Refund.objects.create(
+                    order=order,
+                    requested_by=user,
+                    reason=refund_data['reason'],
+                    preferred_refund_method=refund_data['preferred_refund_method'],
+                    total_refund_amount=Decimal(refund_data['total_refund_amount']),
+                    customer_note=refund_data.get('customer_note', ''),
+                    refund_category=refund_data.get('refund_category', 'return_item'),
+                    status='pending'
+                )
+                
+                # Save will auto-generate request_number
+                refund.save()
+                
+                # Create payment method details if provided
+                wallet_details = refund_data.get('wallet_details')
+                if wallet_details:
+                    RefundWallet.objects.create(
+                        refund=refund,
+                        provider=wallet_details.get('provider', ''),
+                        account_name=wallet_details.get('account_name', ''),
+                        account_number=wallet_details.get('account_number', ''),
+                        contact_number=wallet_details.get('contact_number', '')
+                    )
+                
+                bank_details = refund_data.get('bank_details')
+                if bank_details:
+                    RefundBank.objects.create(
+                        refund=refund,
+                        bank_name=bank_details.get('bank_name', ''),
+                        account_name=bank_details.get('account_name', ''),
+                        account_number=bank_details.get('account_number', ''),
+                        account_type=bank_details.get('account_type', ''),
+                        branch=bank_details.get('branch', '')
+                    )
+                
+                remittance_details = refund_data.get('remittance_details')
+                if remittance_details:
+                    RefundRemittance.objects.create(
+                        refund=refund,
+                        provider=remittance_details.get('provider', ''),
+                        first_name=remittance_details.get('first_name', ''),
+                        last_name=remittance_details.get('last_name', ''),
+                        contact_number=remittance_details.get('contact_number', ''),
+                        address=remittance_details.get('address', ''),
+                        city=remittance_details.get('city', ''),
+                        province=remittance_details.get('province', ''),
+                        zip_code=remittance_details.get('zip_code', ''),
+                        valid_id_type=remittance_details.get('valid_id_type', ''),
+                        valid_id_number=remittance_details.get('valid_id_number', '')
+                    )
+                
+                # Handle uploaded files
+                for key, file in request.FILES.items():
+                    if key.startswith('evidence_'):
+                        file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
+                        RefundMedias.objects.create(
+                            refund=refund,
+                            file_data=file,
+                            file_type=file_type
+                        )
+                
+                # Handle selected items (store in customer_note for reference)
+                selected_items = []
+                for key, value in request.POST.items():
+                    if key.startswith('selected_item_'):
+                        selected_items.append(value)
+                
+                if selected_items:
+                    refund.customer_note += f"\n\nSelected Checkout IDs: {', '.join(selected_items)}"
+                    refund.save()
+                
+                return JsonResponse({
+                    'message': 'Refund request created successfully',
+                    'refund_id': str(refund.refund),
+                    'request_number': refund.request_number
+                }, status=201)
+                
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return JsonResponse({
+                'error': f'Failed to create refund: {str(e)}'
+            }, status=500)
     
     @action(detail=True, methods=['get'])
     def get_my_refund(self, request, pk=None):
@@ -13760,6 +13861,7 @@ class DisputeViewSet(viewsets.ViewSet):
             
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
+        
 class ArrangeShipment(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_order_details(self, request, pk=None):
@@ -14069,6 +14171,8 @@ class ArrangeShipment(viewsets.ViewSet):
                 "success": False,
                 "message": f"Error submitting offer: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
         
 class RiderOrdersActive(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='order-details/(?P<order_id>[^/.]+)')
@@ -14539,3 +14643,174 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "delivered_at": delivery.delivered_at.isoformat(),
             }
         })
+
+
+
+
+class CreateRefundView(APIView):
+    def post(self, request):
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            with transaction.atomic():
+                # Get required fields
+                order_id = request.data.get('order')
+                reason = request.data.get('reason')
+                preferred_refund_method = request.data.get('preferred_refund_method')
+                refund_category = request.data.get('refund_category', 'return_item')
+                total_refund_amount = request.data.get('total_refund_amount')
+                
+                if not all([order_id, reason, preferred_refund_method, total_refund_amount]):
+                    return Response(
+                        {'error': 'Missing required fields'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Validate order
+                try:
+                    order = Order.objects.get(order=order_id, user=user)
+                except Order.DoesNotExist:
+                    return Response(
+                        {'error': 'Order not found or does not belong to user'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
+                # Check if refund already exists for this order
+                existing_refund = Refund.objects.filter(
+                    order=order, 
+                    requested_by=user,
+                    status__in=['pending', 'approved', 'negotiation', 'under_review']
+                ).first()
+                
+                if existing_refund:
+                    return Response(
+                        {'error': 'A refund request for this order is already in progress'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Create refund
+                refund = Refund.objects.create(
+                    order=order,
+                    requested_by=user,
+                    reason=reason,
+                    preferred_refund_method=preferred_refund_method,
+                    refund_category=refund_category,
+                    total_refund_amount=Decimal(total_refund_amount),
+                    customer_note=request.data.get('customer_note', ''),
+                    status='pending'
+                )
+                
+                # Handle payment method details
+                refund_method_type = preferred_refund_method.lower()
+                
+                if 'wallet' in refund_method_type:
+                    # Create e-wallet details
+                    RefundWallet.objects.create(
+                        refund=refund,
+                        provider=request.data.get('wallet_provider', ''),
+                        account_name=request.data.get('wallet_account_name', ''),
+                        account_number=request.data.get('wallet_account_number', ''),
+                        contact_number=request.data.get('wallet_contact_number', '')
+                    )
+                elif 'bank' in refund_method_type:
+                    # Create bank details
+                    RefundBank.objects.create(
+                        refund=refund,
+                        bank_name=request.data.get('bank_name', ''),
+                        account_name=request.data.get('bank_account_name', ''),
+                        account_number=request.data.get('bank_account_number', ''),
+                        account_type=request.data.get('bank_account_type', ''),
+                        branch=request.data.get('bank_branch', '')
+                    )
+                elif 'moneyback' in refund_method_type or 'remittance' in refund_method_type:
+                    # Create remittance details
+                    RefundRemittance.objects.create(
+                        refund=refund,
+                        provider=request.data.get('remittance_provider', ''),
+                        first_name=request.data.get('remittance_first_name', ''),
+                        last_name=request.data.get('remittance_last_name', ''),
+                        contact_number=request.data.get('remittance_contact_number', ''),
+                        address=request.data.get('remittance_address', ''),
+                        city=request.data.get('remittance_city', ''),
+                        province=request.data.get('remittance_province', ''),
+                        zip_code=request.data.get('remittance_zip_code', ''),
+                        valid_id_type=request.data.get('remittance_valid_id_type', ''),
+                        valid_id_number=request.data.get('remittance_valid_id_number', '')
+                    )
+                
+                # Handle evidence files
+                for key in request.FILES:
+                    if key.startswith('evidence_'):
+                        file = request.FILES[key]
+                        file_type = file.content_type.split('/')[0]  # image or video
+                        
+                        RefundMedias.objects.create(
+                            refund=refund,
+                            file_data=file,
+                            file_type=file_type
+                        )
+                
+                # Add selected item IDs to notes
+                selected_items = []
+                for key in request.data:
+                    if key.startswith('selected_item_'):
+                        selected_items.append(request.data[key])
+                
+                if selected_items:
+                    refund.customer_note += f"\nSelected items: {', '.join(selected_items)}"
+                    refund.save()
+                
+                # Send notification to seller
+                self._notify_seller(refund)
+                
+                return Response({
+                    'message': 'Refund request created successfully',
+                    'refund_id': str(refund.refund),
+                    'request_number': refund.request_number
+                }, status=status.HTTP_201_CREATED)
+                
+        except Exception as e:
+            print(f"Error creating refund: {str(e)}")
+            return Response(
+                {'error': f'Failed to create refund request: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    # def _notify_seller(self, refund):
+    #     """Send notification to seller about refund request"""
+    #     try:
+    #         # Get seller from order items
+    #         from notifications.models import Notification
+    #         from .models import Checkout
+            
+    #         checkouts = Checkout.objects.filter(order=refund.order)
+    #         if not checkouts.exists():
+    #             return
+            
+    #         # Get shop from first checkout item
+    #         first_checkout = checkouts.first()
+    #         if first_checkout.cart_item and first_checkout.cart_item.product:
+    #             shop = first_checkout.cart_item.product.shop
+    #             if shop and shop.customer and shop.customer.customer:
+    #                 seller = shop.customer.customer
+                    
+    #                 # Create notification for seller
+    #                 Notification.objects.create(
+    #                     user=seller,
+    #                     title='New Refund Request',
+    #                     type='refund_request',
+    #                     message=f'Customer has requested a refund for order #{refund.order.order}',
+    #                     is_read=False
+    #                 )
+    #     except Exception as e:
+    #         print(f"Error notifying seller: {str(e)}")
+
+
+    

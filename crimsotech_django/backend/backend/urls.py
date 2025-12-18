@@ -57,6 +57,7 @@ router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment
 router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-orders-active')
 
 
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),

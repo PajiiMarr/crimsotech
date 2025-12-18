@@ -710,6 +710,19 @@ export default function ViewOrder({ loaderData }: any) {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>Order Actions</DropdownMenuLabel>
+                      {orderDetails.order.status === "to_receive" ||
+                      orderDetails.order.status === "completed" ? (
+                        <DropdownMenuItem
+                          onClick={() =>
+                            navigate(
+                              `/request-refund-return/${orderDetails.order.id}`
+                            )
+                          }
+                        >
+                          <RotateCcw className="w-4 h-4 mr-2" />
+                          Request Refund
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuItem onClick={handlePrint}>
                         <Printer className="w-4 h-4 mr-2" />
                         Print Order Details

@@ -630,18 +630,9 @@ class RefundCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Refund
         fields = ['order', 'reason', 'preferred_refund_method', 
-                  'total_refund_amount', 'customer_note', 'requested_by']
+                  'total_refund_amount', 'customer_note', 'requested_by', 'refund_category']
         
         
-class RefundWalletSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = RefundWallet
-        fields = '__all__'
-
-class RefundBankSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = RefundBank
-        fields = '__all__'
 
 class RefundRemittanceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -653,63 +644,48 @@ class UserPaymentMethodSerializer(serializers.ModelSerializer):
         model = UserPaymentMethod
         fields = '__all__'
 
+class RefundMediasSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundMedias
+        fields = ['file_data', 'file_type']
+
+class RefundWalletSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundWallet
+        fields = ['provider', 'account_name', 'account_number', 'contact_number']
+
+class RefundBankSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundBank
+        fields = ['bank_name', 'account_name', 'account_number', 'account_type', 'branch']
+
+class RefundRemittanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundRemittance
+        fields = ['provider', 'first_name', 'last_name', 'contact_number', 'address', 
+                 'city', 'province', 'zip_code', 'valid_id_type', 'valid_id_number']
+
 class RefundSerializer(serializers.ModelSerializer):
     wallet_details = RefundWalletSerializer(read_only=True)
     bank_details = RefundBankSerializer(read_only=True)
     remittance_details = RefundRemittanceSerializer(read_only=True)
-    payment_details = serializers.SerializerMethodField()
-    
-    # === ADD THESE PROPERTIES ===
-    requires_return = serializers.BooleanField(read_only=True)
-    is_partial_refund = serializers.BooleanField(read_only=True)
-    refund_category_display = serializers.CharField(
-        source='get_refund_category_display', 
-        read_only=True
-    )
-    # ============================
+    media = RefundMediasSerializer(many=True, read_only=True)
     
     class Meta:
         model = Refund
-        fields = '__all__'
-        read_only_fields = [
-            'refund', 'request_number', 'requested_at', 'processed_at',
-            'dispute_filed_at', 'resolved_at', 'negotiation_deadline',
-            'approved_at', 'return_deadline', 'refund_category'  # Add refund_category here
+        fields = [
+            'refund', 'request_number', 'order', 'requested_by', 'processed_by',
+            'reason', 'status', 'payment_status', 'refund_category',
+            'requested_at', 'logistic_service', 'tracking_number',
+            'preferred_refund_method', 'final_refund_method', 'total_refund_amount',
+            'processed_at', 'approved_at', 'return_deadline', 'buyer_notified_at',
+            'customer_note', 'seller_response', 'seller_suggested_method',
+            'seller_suggested_amount', 'seller_suggested_reason', 'negotiation_deadline',
+            'dispute_filed_by', 'dispute_filed_at', 'dispute_reason', 'admin_decision',
+            'admin_response', 'resolved_at', 'wallet_details', 'bank_details',
+            'remittance_details', 'media'
         ]
-    
-    def get_payment_details(self, obj):
-        """Get the payment details based on selected method"""
-        try:
-            if 'wallet' in obj.preferred_refund_method.lower():
-                return RefundWalletSerializer(obj.wallet_details).data
-            elif 'bank' in obj.preferred_refund_method.lower():
-                return RefundBankSerializer(obj.bank_details).data
-            elif 'money back' in obj.preferred_refund_method.lower() or 'remittance' in obj.preferred_refund_method.lower():
-                return RefundRemittanceSerializer(obj.remittance_details).data
-        except:
-            return None
-    
-    # === OPTIONAL: Add validation for refund creation ===
-    def validate_preferred_refund_method(self, value):
-        """Validate that preferred_refund_method is one of the allowed options"""
-        allowed_methods = [
-            'Return Item & Refund to Wallet',
-            'Return Item & Bank Transfer',
-            'Return Item & Store Voucher',
-            'Return & Replacement',
-            'Return Item & Money Back',
-            'Keep Item & Partial Refund to Wallet',
-            'Keep Item & Partial Bank Transfer',
-            'Keep Item & Partial Store Voucher',
-            'Keep Item & Partial Money Back'
-        ]
-        
-        if value not in allowed_methods:
-            raise serializers.ValidationError(
-                f"Invalid refund method. Allowed methods: {', '.join(allowed_methods)}"
-            )
-        return value
-
+        read_only_fields = ['request_number', 'requested_at', 'refund']
 
 class ReturnWaybillSerializer(serializers.ModelSerializer):
     """Serializer for ReturnWaybill model"""
