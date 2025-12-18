@@ -163,10 +163,18 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
   switch(backendStatus) {
     case 'pending':
       return 'pending';
+    case 'processing':
+      return 'in_progress';
+    case 'shipped':
+      return 'to_ship';
+    case 'delivered':
+      return 'to_receive';
     case 'completed':
       return 'completed';
     case 'cancelled':
       return 'cancelled';
+    case 'refunded':
+      return 'return_refund';
     // Add more mappings as needed
     default:
       return 'pending';
@@ -616,7 +624,7 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => navigate(`/view-order/${item.order_id}`)}
+                          onClick={() => navigate(`/view-order/${item.order_id}`)}  // Changed this line
                           className="h-6 px-2 text-xs"
                         >
                           <Eye className="w-3 h-3 mr-1" />

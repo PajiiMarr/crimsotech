@@ -11132,6 +11132,154 @@ class PurchasesBuyer(viewsets.ViewSet):
                 {'error': 'Internal server error', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def retrieve(self, request, pk=None):
+        """
+        Get a single order by ID
+        """
+        user_id = request.headers.get("X-User-Id")
+        if not user_id:
+            return Response(
+                {"error": "User ID required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            order = Order.objects.get(order=pk, user=user)
+        except Order.DoesNotExist:
+            return Response(
+                {"error": "Order not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get payment and delivery for this order
+        payment = Payment.objects.filter(order_id=order.order).first()
+        delivery = Delivery.objects.filter(order_id=order.order).first()
+        
+        # Get delivery address
+        delivery_address = None
+        if order.shipping_address:
+            delivery_address = order.shipping_address.get_full_address()
+        elif order.delivery_address_text:
+            delivery_address = order.delivery_address_text
+        
+        # Get order items
+        items_data = []
+        for checkout in order.checkout_set.all():
+            if checkout.cart_item and checkout.cart_item.product:
+                product = checkout.cart_item.product
+                
+                # Get product media (images)
+                product_images = []
+                for media in product.productmedia_set.all():
+                    if media.file_data:
+                        try:
+                            url = media.file_data.url
+                            if request:
+                                url = request.build_absolute_uri(url)
+                            product_images.append({
+                                'id': str(media.id),
+                                'url': url,
+                                'file_type': media.file_type
+                            })
+                        except ValueError:
+                            # If file doesn't exist, skip it
+                            continue
+                
+                # Get primary image (first image)
+                primary_image = product_images[0] if product_images else None
+                
+                # Check if user has reviewed this product
+                has_reviewed = False
+                try:
+                    # First check if user has a Customer profile
+                    customer_profile = Customer.objects.get(customer=user)
+                    has_reviewed = Review.objects.filter(
+                        customer=customer_profile,
+                        product=product
+                    ).exists()
+                except Customer.DoesNotExist:
+                    # User doesn't have a customer profile yet
+                    has_reviewed = False
+                
+                item_data = {
+                    'checkout_id': str(checkout.id),
+                    'cart_item_id': str(checkout.cart_item.id) if checkout.cart_item else None,
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'product_description': product.description,
+                    'product_condition': product.condition,
+                    'product_status': product.status,
+                    'shop_id': str(product.shop.id) if product.shop else None,
+                    'shop_name': product.shop.name if product.shop else None,
+                    'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
+                    'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
+                    'quantity': checkout.quantity,
+                    'price': str(product.price),
+                    'subtotal': str(checkout.total_amount),
+                    'status': order.status,  # Use order status for all items
+                    'remarks': checkout.remarks,
+                    'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                    'product_images': product_images,
+                    'primary_image': primary_image,
+                    'voucher_applied': {
+                        'id': str(checkout.voucher.id),
+                        'name': checkout.voucher.name,
+                        'code': checkout.voucher.code
+                    } if checkout.voucher else None,
+                    'can_review': not has_reviewed and order.status == 'delivered'  # Using order.status here
+                }
+                items_data.append(item_data)
+            else:
+                # Handle case where cart_item or product might be null
+                item_data = {
+                    'checkout_id': str(checkout.id),
+                    'cart_item_id': None,
+                    'product_id': None,
+                    'product_name': 'Item no longer available',
+                    'product_description': '',
+                    'product_condition': '',
+                    'product_status': '',
+                    'shop_id': None,
+                    'shop_name': 'Unknown Shop',
+                    'shop_picture': None,
+                    'seller_username': None,
+                    'quantity': checkout.quantity,
+                    'price': '0.00',
+                    'subtotal': str(checkout.total_amount),
+                    'status': order.status,  # Use order status
+                    'remarks': checkout.remarks,
+                    'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                    'product_images': [],
+                    'primary_image': None,
+                    'voucher_applied': None,
+                    'can_review': False
+                }
+                items_data.append(item_data)
+        
+        order_data = {
+            'order_id': str(order.order),
+            'status': order.status,
+            'total_amount': str(order.total_amount),
+            'payment_method': order.payment_method,
+            'delivery_method': order.delivery_method,
+            'delivery_address': delivery_address,
+            'created_at': order.created_at.isoformat(),
+            'payment_status': payment.status if payment else None,
+            'delivery_status': delivery.status if delivery else None,
+            'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+            'items': items_data
+        }
+        
+        return Response(order_data)
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
