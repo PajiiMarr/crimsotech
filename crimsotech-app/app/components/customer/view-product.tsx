@@ -8,7 +8,8 @@ import {
   ChevronRight,
   ShoppingBagIcon,
   MapPin,
-  Store
+  Store,
+  RefreshCw // Add this import
 } from "lucide-react";
 
 import { useEffect, useState } from "react";
@@ -177,11 +178,18 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const [addingToCart, setAddingToCart] = useState(false);
   const [cartError, setCartError] = useState<string | null>(null);
   const [currentSKU, setCurrentSKU] = useState<SKU | null>(null);
+  const [startingSwap, setStartingSwap] = useState(false); // Add this state
+  const [swapError, setSwapError] = useState<string | null>(null); // Add this state
 
   const user = loaderData?.user;
 
   // Check if product has variants
   const hasVariants = product?.variants && product.variants.length > 0;
+
+  // Check if product/SKU is available for swap
+  const isAvailableForSwap = hasVariants
+    ? (currentSKU && currentSKU.allow_swap)
+    : (product?.open_for_swap || false);
 
   // Find matching SKU when selections change (only if product has variants)
   useEffect(() => {
@@ -401,6 +409,95 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
       setCartError("An error occurred while adding to cart");
     } finally {
       setAddingToCart(false);
+    }
+  };
+
+  // Add this function to handle swap initiation
+  const handleStartSwap = async () => {
+    if (!product || !user?.id) {
+      setSwapError("Please login to start a swap");
+      return;
+    }
+
+    // For variant products, validate all options are selected
+    if (hasVariants) {
+      const allSelected = product.variants!.every(g => selectedOptions[g.id]);
+      if (!allSelected) {
+        setSwapError("Please select all variant options to swap");
+        return;
+      }
+
+      if (!currentSKU) {
+        setSwapError("Please select valid variant options to swap");
+        return;
+      }
+
+      // Check if selected SKU allows swap
+      if (!currentSKU.allow_swap) {
+        setSwapError("This variant is not available for swap");
+        return;
+      }
+    } else {
+      // For non-variant products, check product-level swap
+      if (!product.open_for_swap) {
+        setSwapError("This product is not available for swap");
+        return;
+      }
+    }
+
+    setStartingSwap(true);
+    setSwapError(null);
+
+    try {
+      const payload: any = {
+        user_id: user.id,
+        product_id: product.id,
+        quantity,
+      };
+
+      // Include SKU ID if product has variants
+      if (hasVariants && currentSKU) {
+        payload.sku_id = currentSKU.id;
+      }
+
+      // Include variant selections if product has variants
+      if (hasVariants && Object.keys(selectedOptions).length > 0) {
+        payload.variant_selection = selectedOptions;
+      }
+
+      // Include swap details
+      if (hasVariants && currentSKU) {
+        payload.swap_type = currentSKU.swap_type;
+        payload.minimum_additional_payment = currentSKU.minimum_additional_payment;
+        payload.maximum_additional_payment = currentSKU.maximum_additional_payment;
+        payload.accepted_categories = currentSKU.accepted_categories || [];
+      } else if (product) {
+        payload.swap_type = product.swap_type;
+        payload.minimum_additional_payment = product.minimum_additional_payment;
+        payload.maximum_additional_payment = product.maximum_additional_payment;
+        payload.accepted_categories = product.accepted_categories || [];
+      }
+
+      // Note: You'll need to create this endpoint in your backend
+      // For now, we'll just show a message
+      // const response = await AxiosInstance.post("/swap/initiate/", payload);
+
+      // if (response.data.success) {
+      //   alert("Swap initiated! You'll be redirected to the swap interface.");
+      //   // Navigate to swap interface or show swap modal
+      //   // navigate(`/swap/${response.data.swap_id}`);
+      // } else {
+      //   setSwapError(response.data.error || "Failed to initiate swap");
+      // }
+
+      // For now, show a success message
+      alert("Swap functionality coming soon! You would be redirected to select items to trade with this product.");
+
+    } catch (err: any) {
+      console.error(err);
+      setSwapError("An error occurred while initiating swap: " + (err.message || "Unknown error"));
+    } finally {
+      setStartingSwap(false);
     }
   };
 
@@ -654,10 +751,30 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               <ShoppingBagIcon className="h-4 w-4 mr-1.5" />
               {addingToCart ? "Adding..." : displayStock <= 0 ? "Out of Stock" : "Add to Cart"}
             </Button>
+
+            {/* Swap Button - Only show if available for swap */}
+            {isAvailableForSwap && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full border-green-600 text-green-600 hover:bg-green-50 h-9 text-sm"
+                onClick={handleStartSwap}
+                disabled={startingSwap || displayStock <= 0}
+              >
+                <RefreshCw className="h-4 w-4 mr-1.5" />
+                {startingSwap ? "Starting Swap..." : "Swap This Item"}
+              </Button>
+            )}
             
             {cartError && (
               <div className="text-xs text-red-500 bg-red-50 p-1.5 rounded">
                 {cartError}
+              </div>
+            )}
+
+            {swapError && (
+              <div className="text-xs text-red-500 bg-red-50 p-1.5 rounded">
+                {swapError}
               </div>
             )}
           </div>
@@ -759,7 +876,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         </div>
       </div>
 
-      {/* Swap Options */}
+      {/* Swap Options - Show detailed swap info */}
       {(hasVariants 
         ? (currentSKU && currentSKU.allow_swap)
         : (product.open_for_swap)
@@ -794,6 +911,18 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                     {currentSKU.swap_description}
                   </div>
                 )}
+                {currentSKU?.accepted_categories && currentSKU.accepted_categories.length > 0 && (
+                  <div>
+                    <span className="font-medium">Accepted Categories:</span>{" "}
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {currentSKU.accepted_categories.map((cat) => (
+                        <span key={cat.id} className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+                          {cat.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -812,6 +941,18 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                 {product.swap_description && (
                   <div className="mt-2 p-3 bg-gray-50 rounded">
                     {product.swap_description}
+                  </div>
+                )}
+                {product.accepted_categories && product.accepted_categories.length > 0 && (
+                  <div>
+                    <span className="font-medium">Accepted Categories:</span>{" "}
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {product.accepted_categories.map((cat) => (
+                        <span key={cat.id} className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+                          {cat.name}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
               </>

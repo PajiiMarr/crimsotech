@@ -51,6 +51,7 @@ interface DataTableProps<TData, TValue> {
       placeholder: string
     }
   }
+  isLoading?: boolean
   defaultSorting?: SortingState
   // getRowLink?: (row: TData) => string 
 }
