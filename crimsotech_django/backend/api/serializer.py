@@ -746,7 +746,7 @@ class ReturnWaybillSerializer(serializers.ModelSerializer):
 class DisputeEvidenceSerializer(serializers.ModelSerializer):
     """Serializer for dispute evidence"""
     file_url = serializers.SerializerMethodField()
-    uploaded_by_name = serializers.CharField(source='uploaded_by.get_full_name', read_only=True)
+    uploaded_by_name = serializers.SerializerMethodField()
     
     class Meta:
         model = DisputeEvidence
@@ -755,6 +755,13 @@ class DisputeEvidenceSerializer(serializers.ModelSerializer):
             'file', 'file_url', 'created_at'
         ]
         read_only_fields = ['created_at']
+
+    def get_uploaded_by_name(self, obj):
+        user = getattr(obj, 'uploaded_by', None)
+        if not user:
+            return None
+        name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+        return name or getattr(user, 'username', None) or str(getattr(user, 'id', ''))
     
     def get_file_url(self, obj):
         request = self.context.get('request')
@@ -766,9 +773,9 @@ class DisputeEvidenceSerializer(serializers.ModelSerializer):
 class DisputeRequestSerializer(serializers.ModelSerializer):
     """Serializer for dispute requests"""
     evidence = DisputeEvidenceSerializer(many=True, read_only=True)
-    filed_by_name = serializers.CharField(source='filed_by.get_full_name', read_only=True)
+    filed_by_name = serializers.SerializerMethodField()
     order_number = serializers.CharField(source='order.order', read_only=True)
-    refund_request_number = serializers.CharField(source='refund.request_number', read_only=True, allow_null=True)
+    refund_request_number = serializers.SerializerMethodField()
     
     class Meta:
         model = DisputeRequest
@@ -782,20 +789,188 @@ class DisputeRequestSerializer(serializers.ModelSerializer):
             'filed_by', 'created_at', 'resolved_at', 'status', 'outcome',
             'admin_note', 'awarded_amount'
         ]
-    
-    def create(self, validated_data):
-        # Auto-set filed_by to current user
-        validated_data['filed_by'] = self.context['request'].user
-        return super().create(validated_data)
+
+    def get_filed_by_name(self, obj):
+        user = getattr(obj, 'filed_by', None)
+        if not user:
+            return None
+        name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+        return name or getattr(user, 'username', None) or str(getattr(user, 'id', ''))
+
+    def get_refund_request_number(self, obj):
+        refund = getattr(obj, 'refund', None)
+        return getattr(refund, 'request_number', None) if refund else None
 
 
 class DisputeRequestCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating dispute requests (with validation)"""
     class Meta:
         model = DisputeRequest
-        fields = ['order', 'refund', 'filed_by', 'reason', 'description']
+        fields = ['order', 'refund', 'reason', 'description']
     
     def validate(self, data):
         # Validation is handled in the ViewSet, so we skip it here
         # to avoid issues with request.user not being set
+        return data
+
+    def create(self, validated_data):
+        filed_by = self.context.get('filed_by')
+        if not filed_by:
+            raise serializers.ValidationError({'filed_by': 'filed_by is required'})
+        validated_data['filed_by'] = filed_by
+        return super().create(validated_data)
+    
+
+
+class DisputeEvidenceSerializer(serializers.ModelSerializer):
+    uploaded_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DisputeEvidence
+        fields = ['id', 'dispute', 'uploaded_by', 'file', 'file_url', 'created_at']
+        read_only_fields = ['id', 'uploaded_by', 'created_at']
+
+    def get_file_url(self, obj):
+        if obj.file:
+            return obj.file.url
+        return None
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['uploaded_by'] = request.user
+        return super().create(validated_data)
+
+
+class DisputeRequestSerializer(serializers.ModelSerializer):
+    filed_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    filed_by_name = serializers.SerializerMethodField()
+    filed_by_entity = serializers.SerializerMethodField()
+    order_details = serializers.SerializerMethodField()
+    evidence = DisputeEvidenceSerializer(many=True, read_only=True)
+    can_be_updated = serializers.SerializerMethodField()
+    can_be_cancelled = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DisputeRequest
+        fields = [
+            'id', 'order', 'order_details', 'filed_by', 'refund',
+            'filed_by_name', 'filed_by_entity',
+            'reason', 'description', 'status', 'outcome',
+            'awarded_amount', 'admin_note', 'evidence',
+            'created_at', 'resolved_at', 'can_be_updated', 'can_be_cancelled'
+        ]
+        read_only_fields = [
+            'id', 'filed_by', 'status', 'outcome', 'awarded_amount',
+            'admin_note', 'created_at', 'resolved_at'
+        ]
+
+    def get_filed_by_name(self, obj):
+        user = getattr(obj, 'filed_by', None)
+        if not user:
+            return None
+        name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+        return name or getattr(user, 'username', None) or str(getattr(user, 'id', ''))
+
+    def get_filed_by_entity(self, obj):
+        """Return who filed the dispute relative to the order: buyer or seller."""
+        try:
+            order_user_id = getattr(getattr(obj, 'order', None), 'user_id', None)
+            filed_by_id = getattr(obj, 'filed_by_id', None)
+            if not order_user_id or not filed_by_id:
+                return None
+            return 'buyer' if str(filed_by_id) == str(order_user_id) else 'seller'
+        except Exception:
+            return None
+
+    def get_order_details(self, obj):
+        # You might want to add more order details here
+        return {
+            'order_id': str(obj.order.id),
+            'order_date': obj.order.created_at,
+            'total_amount': str(obj.order.total_amount) if hasattr(obj.order, 'total_amount') else None
+        }
+
+    def get_can_be_updated(self, obj):
+        # Only allow updates if status is 'filed'
+        return obj.status == 'filed'
+
+    def get_can_be_cancelled(self, obj):
+        # Allow cancellation if not completed/rejected/cancelled
+        return obj.status in ['filed', 'under_review']
+
+    def validate(self, data):
+        request = self.context.get('request')
+        
+        # Check if order exists and belongs to user
+        if 'order' in data:
+            order = data['order']
+            
+            # You might want to add additional validation
+            # For example, check if dispute window is still open
+            # or if order is eligible for dispute
+            
+            # Check if a dispute already exists for this order
+            existing_dispute = DisputeRequest.objects.filter(
+                order=order,
+                status__in=['filed', 'under_review', 'processing']
+            ).exists()
+            
+            if existing_dispute:
+                raise serializers.ValidationError(
+                    "An active dispute already exists for this order"
+                )
+
+        return data
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['filed_by'] = request.user
+        
+        # Set initial status
+        validated_data['status'] = 'filed'
+        
+        return super().create(validated_data)
+
+
+class DisputeUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DisputeRequest
+        fields = ['reason', 'description']
+    
+    def validate(self, data):
+        if self.instance and self.instance.status != 'filed':
+            raise serializers.ValidationError(
+                "Dispute can only be updated while in 'Filed' status"
+            )
+        return data
+
+
+class DisputeStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=DisputeRequest.DISPUTE_STATUS_CHOICES)
+    admin_note = serializers.CharField(required=False, allow_blank=True)
+    
+    def validate_status(self, value):
+        # Add status transition validation if needed
+        return value
+
+
+class DisputeOutcomeSerializer(serializers.Serializer):
+    outcome = serializers.ChoiceField(choices=DisputeRequest.DISPUTE_OUTCOME_CHOICES)
+    awarded_amount = serializers.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        required=False,
+        min_value=0
+    )
+    admin_note = serializers.CharField(required=False, allow_blank=True)
+    
+    def validate(self, data):
+        if data.get('outcome') in ['buyer_wins', 'partial_refund']:
+            if 'awarded_amount' not in data or not data['awarded_amount']:
+                raise serializers.ValidationError({
+                    'awarded_amount': 'Awarded amount is required for this outcome'
+                })
         return data

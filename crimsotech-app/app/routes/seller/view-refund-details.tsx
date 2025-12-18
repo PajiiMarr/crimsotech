@@ -1,6 +1,6 @@
 import { UserProvider as ClientUserProvider } from '~/components/providers/user-role-provider';
 import { Link, useLoaderData, data, useNavigate } from 'react-router';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '~/hooks/use-toast';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '~/components/ui/card';
@@ -19,6 +19,25 @@ import {
   DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '~/components/ui/avatar';
+import { Input } from '~/components/ui/input';
+import { Label } from '~/components/ui/label';
+import { Textarea } from '~/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '~/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '~/components/ui/dialog';
 
 import {
   ArrowLeft, FileText, MapPin, Package, Truck, CreditCard,
@@ -59,6 +78,14 @@ interface RefundDetails {
   customer_note?: string | null;
   tracking_number?: string | null;
   logistic_service?: string | null;
+  refund_category?: 'return_item' | 'keep_item';
+  buyer_notified_at?: string | null;
+  approved_at?: string | null;
+  return_deadline?: string | null;
+  buyer_return_deadline?: string | null;
+  dispute_reason?: string | null;
+  dispute_description?: string | null;
+  dispute_filed_at?: string | null;
 
   shop?: {
     id?: string;
@@ -153,7 +180,101 @@ type OrderItem = {
       options?: Array<{ id: string; title: string }>;
     }>;
   } | null;
+  cart?: any;
 };
+
+// Refund Method Interface and Data
+interface RefundMethod {
+  id: string;
+  label: string;
+  description: string;
+  icon: any;
+  type: 'return_item' | 'keep_item' | 'replacement';
+  subType: 'wallet' | 'bank' | 'voucher' | 'replace' | 'moneyback';
+}
+
+const refundMethods: RefundMethod[] = [
+  {
+    id: 'rejected-completely',
+    label: 'Reject Completely',
+    description: 'Reject the refund request completely with no alternative',
+    icon: XCircle,
+    type: 'return_item',
+    subType: 'wallet'
+  },
+  {
+    id: 'wallet-return',
+    label: 'Return Item & Refund to Wallet',
+    description: 'Return the item and get refund to your e-wallet',
+    icon: Wallet,
+    type: 'return_item',
+    subType: 'wallet'
+  },
+  {
+    id: 'bank-return',
+    label: 'Return Item & Bank Transfer',
+    description: 'Return the item and get refund via bank transfer',
+    icon: CreditCard,
+    type: 'return_item',
+    subType: 'bank'
+  },
+  {
+    id: 'voucher-return',
+    label: 'Return Item & Store Voucher',
+    description: 'Return the item and receive a store voucher',
+    icon: Tag,
+    type: 'return_item',
+    subType: 'voucher'
+  },
+  {
+    id: 'replace',
+    label: 'Return & Replacement',
+    description: 'Return the item and get a replacement',
+    icon: RefreshCw,
+    type: 'replacement',
+    subType: 'replace'
+  },
+  {
+    id: 'moneyback-return',
+    label: 'Return Item & Money Back',
+    description: 'Return the item and get cash via remittance',
+    icon: Wallet,
+    type: 'return_item',
+    subType: 'moneyback'
+  },
+  {
+    id: 'wallet-keep',
+    label: 'Keep Item & Partial Refund to Wallet',
+    description: 'Keep the item and get partial refund to e-wallet',
+    icon: Wallet,
+    type: 'keep_item',
+    subType: 'wallet'
+  },
+  {
+    id: 'bank-keep',
+    label: 'Keep Item & Partial Bank Transfer',
+    description: 'Keep the item and get partial refund via bank',
+    icon: CreditCard,
+    type: 'keep_item',
+    subType: 'bank'
+  },
+  {
+    id: 'voucher-keep',
+    label: 'Keep Item & Partial Store Voucher',
+    description: 'Keep the item and get partial store voucher',
+    icon: Tag,
+    type: 'keep_item',
+    subType: 'voucher'
+  },
+  {
+    id: 'moneyback-keep',
+    label: 'Keep Item & Partial Money Back',
+    description: 'Keep the item and get partial cash via remittance',
+    icon: Wallet,
+    type: 'keep_item',
+    subType: 'moneyback'
+  }
+];
 
 // Status Configuration for Seller View
 const STATUS_CONFIG = {
@@ -326,13 +447,63 @@ export function meta() {
   return [{ title: 'View Refund Details' }];
 }
 
+// Helper to build API URLs
+function apiUrlFor(path: string) {
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
+  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+// Helper to process SKU selection
+function getSelectedSku(item: OrderItem) {
+  const optionMap = (item.product?.variants || []).reduce((acc: Record<string,string>, v: any) => {
+    (v.options || []).forEach((opt: any) => acc[opt.id] = opt.title);
+    return acc;
+  }, {} as Record<string,string>);
+
+  const qty = Number(item.checkout_quantity) || 1;
+  const unitPriceFromTotal = item.checkout_total_amount && qty > 0 ? Number(item.checkout_total_amount) / qty : null;
+  const unitPrice = unitPriceFromTotal ?? (item.product?.price ? Number(item.product.price) : null);
+
+  let selectedSku: any = null;
+  const cart = item.cart;
+  const preferredOptionIds = cart?.selected_option_ids || cart?.option_ids || cart?.selected_options || null;
+  const selectedSkuId = cart?.sku_id || cart?.selected_sku_id || null;
+
+  if (selectedSkuId && item.product?.skus) {
+    selectedSku = item.product.skus.find((s: any) => String(s.id) === String(selectedSkuId));
+  }
+
+  if (!selectedSku && preferredOptionIds && Array.isArray(preferredOptionIds) && preferredOptionIds.length && item.product?.skus) {
+    selectedSku = item.product.skus.find((s: any) => {
+      const skuIds = (s.option_ids || []).map((x: any) => String(x));
+      return skuIds.length === preferredOptionIds.length && skuIds.sort().join(',') === preferredOptionIds.map(String).sort().join(',');
+    });
+  }
+
+  if (!selectedSku && unitPrice != null && item.product?.skus) {
+    selectedSku = item.product.skus.find((s: any) => s.price != null && Number(s.price) === Number(unitPrice));
+  }
+
+  if (!selectedSku && item.product?.skus) {
+    selectedSku = item.product.skus.find((s: any) => s.price != null && Number(s.price) === Number(item.product?.price));
+  }
+
+  if (!selectedSku && item.product?.skus) {
+    selectedSku = item.product.skus[0];
+  }
+
+  const labelIds = Array.isArray(selectedSku?.option_ids) ? selectedSku.option_ids : (selectedSku?.option_ids ? [selectedSku.option_ids] : []);
+  const labels = labelIds.map((id: any) => optionMap[id] || id).filter(Boolean);
+  const label = labels.length ? labels.join(' • ') : (selectedSku?.sku_code || 'SKU');
+
+  return { selectedSku, label, unitPrice };
+}
+
 export async function loader({ request, context, params }: { request: Request; context: any; params?: Record<string, string | undefined> }) {
-  // Session+role checks
   try {
     const { registrationMiddleware } = await import('~/middleware/registration.server');
     await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
     const { requireRole } = await import('~/middleware/role-require.server');
-    // Only require customer role; customers may own a shop
     await requireRole(request, undefined, ['isCustomer'] as any);
   } catch (err) {
     console.error('Loader middleware error', err);
@@ -357,12 +528,9 @@ export async function loader({ request, context, params }: { request: Request; c
   const shopId =
     url.searchParams.get('shop_id') || (typeof shopIdFromSession === 'string' ? shopIdFromSession : undefined);
 
-  // If shop_id supplied via URL, persist to session for following pages
   const { commitSession } = await import('~/sessions.server');
   if (shopId && typeof shopIdFromSession !== 'string') {
     session.set('shopId', shopId);
-    // Debug log
-    console.debug('Persisting shopId to session from view-refund-details loader', { shopId });
   }
 
   if (!refundId) {
@@ -373,16 +541,14 @@ export async function loader({ request, context, params }: { request: Request; c
     throw new Response('shop_id is required', { status: 400 });
   }
 
-  // Basic validation and debug
   if (/\./.test(refundId)) {
     throw new Response('Invalid refund identifier', { status: 400 });
   }
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-  const endpoint = `${API_BASE_URL}/return-refund/${refundId}/get_refund_details/?shop_id=${encodeURIComponent(shopId)}`;
-  console.debug('Seller view-refund-details loader', { refundId, shopId, endpoint });
-
+  const endpoint = `${API_BASE_URL}/return-refund/${refundId}/get_refund_details/?shop_id=${encodeURIComponent(String(shopId))}`;
+  
   const res = await fetch(endpoint, {
     method: 'GET',
     headers: {
@@ -400,12 +566,12 @@ export async function loader({ request, context, params }: { request: Request; c
 
   const refundRaw: RefundDetails = await res.json();
 
-  // Normalize any relative media URLs returned by backend to absolute URLs using API_BASE_URL
   function toAbsolute(u?: string | null): string | null {
     if (!u) return null;
     if (/^https?:\/\//i.test(u)) return u;
-    if (u.startsWith('/')) return `${API_BASE_URL}${u}`;
-    return `${API_BASE_URL}/${u}`;
+    // Assume media files are served at /media/
+    const path = u.startsWith('/') ? u : `/media/${u}`;
+    return `http://127.0.0.1:8000${path}`;
   }
 
   const refund: RefundDetails = {
@@ -423,11 +589,11 @@ export async function loader({ request, context, params }: { request: Request; c
   };
 
   const user = {
+    id: userId,
     isAdmin: false,
     isCustomer: true,
     isRider: false,
     isModerator: false,
-    user_id: userId,
   };
 
   return data(
@@ -436,14 +602,97 @@ export async function loader({ request, context, params }: { request: Request; c
   );
 }
 
-// Status-specific UI components for seller
-function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, onAction, actionLoading }: any) {
+function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, user, onAction, actionLoading }: any) {
   const statusConfig = STATUS_CONFIG.pending;
   const StatusIcon = statusConfig.icon;
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [suggestedMethod, setSuggestedMethod] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { toast } = useToast();
+
+  const handleRejectSubmit = async () => {
+    if (!rejectReason.trim()) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please enter a reason for rejection',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    if (!suggestedMethod) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please select a suggested refund method',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const refundId = refund?.refund || refund?.id;
+      if (!refundId) {
+        toast({
+          title: 'Error',
+          description: 'Missing refund ID',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
+      const response = await fetch(`${API_BASE_URL}/return-refund/${refundId}/reject_refund/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': user?.id || ''
+        },
+        body: JSON.stringify({
+          seller_suggested_reason: rejectReason,
+          seller_suggested_method: suggestedMethod,
+          status: 'negotiation'
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || error.message || 'Failed to submit rejection');
+      }
+
+      toast({
+        title: 'Success',
+        description: 'Rejection sent. Buyer will see your counter-offer in the negotiation tab.',
+      });
+
+      setShowRejectModal(false);
+      setRejectReason('');
+      setSuggestedMethod('');
+
+      // Navigate to negotiation tab
+      navigate(
+        `/seller/view-refund-details/${encodeURIComponent(String(refundId))}?shop_id=${encodeURIComponent(
+          String(shopId ?? ''),
+        )}&tab=negotiation`,
+        {
+        state: { scrollToNegotiation: true }
+        },
+      );
+    } catch (error: any) {
+      console.error('Error submitting rejection:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to submit rejection',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Left Column */}
       <div className="lg:col-span-2 space-y-6">
         <Card className="border">
           <CardHeader className="pb-3">
@@ -462,7 +711,6 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Status Message */}
             <Alert className="bg-yellow-50 border-yellow-200">
               <Clock className="h-4 w-4 text-yellow-600" />
               <AlertTitle className="text-yellow-800">Action Required: Review Request</AlertTitle>
@@ -471,7 +719,6 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
               </AlertDescription>
             </Alert>
 
-            {/* Customer Information */}
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
                 <User className="h-4 w-4" />
@@ -500,7 +747,6 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
               )}
             </div>
 
-            {/* Request Details */}
             <div>
               <h3 className="text-sm font-medium mb-3">Request Details</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -533,7 +779,6 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
           </CardContent>
         </Card>
 
-        {/* Items Section */}
         <Card>
           <CardHeader>
             <CardTitle>Items Requested for Return</CardTitle>
@@ -545,60 +790,28 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
             ) : (
               <div className="space-y-4">
                 {refund.order_items.map((it: OrderItem, idx: number) => {
-                  // Precompute selected SKU and unit price for this item
-                  const optionMap = (it.product?.variants || []).reduce((acc: Record<string,string>, v: any) => {
-                    (v.options || []).forEach((opt: any) => acc[opt.id] = opt.title);
-                    return acc;
-                  }, {} as Record<string,string>);
-
-                  const qty = Number(it.checkout_quantity) || 1;
-                  const unitPriceFromTotal = it.checkout_total_amount && qty > 0 ? Number(it.checkout_total_amount) / qty : null;
-                  const unitPrice = unitPriceFromTotal ?? (it.product?.price ? Number(it.product.price) : null);
-
-                  let selectedSku: any = null;
-                  const cart = (it as any).cart;
-                  const preferredOptionIds = cart?.selected_option_ids || cart?.option_ids || cart?.selected_options || null;
-                  const selectedSkuId = cart?.sku_id || cart?.selected_sku_id || null;
-
-                  if (selectedSkuId && it.product?.skus) {
-                    selectedSku = it.product.skus.find((s: any) => String(s.id) === String(selectedSkuId));
-                  }
-
-                  if (!selectedSku && preferredOptionIds && Array.isArray(preferredOptionIds) && preferredOptionIds.length && it.product?.skus) {
-                    selectedSku = it.product.skus.find((s: any) => {
-                      const skuIds = (s.option_ids || []).map((x: any) => String(x));
-                      return skuIds.length === preferredOptionIds.length && skuIds.sort().join(',') === preferredOptionIds.map(String).sort().join(',');
-                    });
-                  }
-
-                  if (!selectedSku && unitPrice != null && it.product?.skus) {
-                    selectedSku = it.product.skus.find((s: any) => s.price != null && Number(s.price) === Number(unitPrice));
-                  }
-
-                  if (!selectedSku && it.product?.skus) {
-                    selectedSku = it.product.skus.find((s: any) => s.price != null && Number(s.price) === Number(it.product?.price));
-                  }
-
-                  if (!selectedSku && it.product?.skus) {
-                    selectedSku = it.product.skus[0];
-                  }
-
-                  const labelIds = Array.isArray(selectedSku?.option_ids) ? selectedSku.option_ids : (selectedSku?.option_ids ? [selectedSku.option_ids] : []);
-                  const labels = labelIds.map((id: any) => optionMap[id] || id).filter(Boolean);
-                  const label = labels.length ? labels.join(' • ') : (selectedSku?.sku_code || 'SKU');
+                  const { selectedSku, label, unitPrice } = getSelectedSku(it);
 
                   return (
                     <div key={it.checkout_id || String(idx)} className="rounded-lg border p-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex items-start gap-3">
                           <div className="w-16 h-16 flex-shrink-0 rounded bg-gray-100 flex items-center justify-center">
-                            <Package className="h-6 w-6 text-gray-400" />
+                            {selectedSku?.image ? (
+                              <img
+                                src={selectedSku.image}
+                                alt={it.product?.name || 'Product'}
+                                className="w-full h-full object-cover rounded"
+                              />
+                            ) : (
+                              <Package className="h-6 w-6 text-gray-400" />
+                            )}
                           </div>
                           <div>
                             <div className="font-medium">{it.product?.name || 'Product'}</div>
                             <div className="text-sm text-muted-foreground line-clamp-1">{it.product?.description || ''}</div>
 
-                            {selectedSku ? (
+                            {selectedSku && (
                               <div className="mt-2 text-sm text-gray-700">
                                 <div>
                                   <div className="text-xs text-muted-foreground">Variant</div>
@@ -606,7 +819,7 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
                                   <div className="text-xs text-gray-500 mt-1">{selectedSku.sku_code ? `SKU: ${selectedSku.sku_code}` : null}</div>
                                 </div>
                               </div>
-                            ) : null}
+                            )}
 
                             <div className="flex items-center gap-2 mt-1">
                               <Badge variant="outline" className="text-xs">
@@ -629,9 +842,7 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
         </Card>
       </div>
 
-      {/* Right Column - Actions & Timeline */}
       <div className="space-y-6">
-        {/* Quick Actions */}
         <Card className="border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Quick Actions</CardTitle>
@@ -640,7 +851,11 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
             <Button
               size="sm"
               className="w-full bg-green-600 hover:bg-green-700 h-8 text-xs"
-              onClick={() => onAction?.('approve')}
+              onClick={async () => {
+                if (!onAction) return;
+                if (!window.confirm('Approve this refund request?')) return;
+                onAction('approve');
+              }}
               disabled={actionLoading}
             >
               <CheckCircle className="h-3 w-3 mr-1.5" />
@@ -666,14 +881,7 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
               variant="outline"
               size="sm"
               className="w-full h-8 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-              onClick={() => {
-                const id = refund?.refund || refund?.id;
-                if (!id) {
-                  console.warn('Missing refund id');
-                  return;
-                }
-                navigate(`/seller/refund/reject/${id}?shop_id=${shopId}`);
-              }}
+              onClick={() => setShowRejectModal(true)}
             >
               <XCircle className="h-3 w-3 mr-1.5" />
               Reject Request
@@ -700,7 +908,6 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
           </CardContent>
         </Card>
 
-        {/* Timeline */}
         <Card className="border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Request Timeline</CardTitle>
@@ -732,7 +939,6 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
           </CardContent>
         </Card>
 
-        {/* Information */}
         <Card className="border border-blue-100 bg-blue-50">
           <CardContent className="p-4">
             <div className="flex items-start gap-2">
@@ -747,155 +953,269 @@ function PendingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, on
           </CardContent>
         </Card>
       </div>
+
+      {/* Reject Modal Dialog */}
+      <Dialog open={showRejectModal} onOpenChange={setShowRejectModal}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-600" />
+              Reject Refund Request
+            </DialogTitle>
+            <DialogDescription>
+              Provide a reason and suggest an alternative refund method. The buyer will see your counter-offer in the negotiation tab.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Rejection Reason */}
+            <div className="space-y-2">
+              <Label htmlFor="reject-reason" className="text-sm font-medium">
+                Reason for Rejection *
+              </Label>
+              <Textarea
+                id="reject-reason"
+                placeholder="Explain why you're rejecting this refund request. Be clear and professional."
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                className="min-h-[100px] resize-none"
+              />
+              <p className="text-xs text-gray-500">
+                {rejectReason.length}/500 characters
+              </p>
+            </div>
+
+            {/* Suggested Refund Method */}
+            <div className="space-y-2">
+              <Label htmlFor="suggest-method" className="text-sm font-medium">
+                Suggested Refund Method *
+              </Label>
+              <Select value={suggestedMethod} onValueChange={setSuggestedMethod}>
+                <SelectTrigger id="suggest-method">
+                  <SelectValue placeholder="Select an alternative refund method" />
+                </SelectTrigger>
+                <SelectContent>
+                  {refundMethods.map((method) => (
+                    <SelectItem key={method.id} value={method.id}>
+                      {method.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500">
+                Suggest an alternative method the buyer might accept
+              </p>
+            </div>
+
+            {/* Selected Method Preview */}
+            {suggestedMethod && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-xs text-blue-600 font-medium mb-2">Selected Method:</p>
+                {(() => {
+                  const selectedMethod = refundMethods.find(m => m.id === suggestedMethod);
+                  if (!selectedMethod) return null;
+                  const IconComponent = selectedMethod.icon;
+                  return (
+                    <div className="flex items-start gap-2">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                        <IconComponent className="h-4 w-4 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">{selectedMethod.label}</p>
+                        <p className="text-xs text-gray-600">{selectedMethod.description}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Info Alert */}
+            <Alert className="bg-yellow-50 border-yellow-200">
+              <AlertTriangle className="h-4 w-4 text-yellow-600" />
+              <AlertTitle className="text-yellow-800">Negotiation Process</AlertTitle>
+              <AlertDescription className="text-yellow-700 text-xs">
+                Your rejection with the suggested method will be sent to the buyer. They can accept your offer or counter-offer again.
+              </AlertDescription>
+            </Alert>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowRejectModal(false);
+                setRejectReason('');
+                setSuggestedMethod('');
+              }}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-red-600 hover:bg-red-700"
+              onClick={handleRejectSubmit}
+              disabled={isSubmitting || !rejectReason.trim() || !suggestedMethod}
+            >
+              {isSubmitting ? 'Sending...' : 'Send Counter-Offer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, user }: any) {
+function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, user, onAction, waybillData }: any) {
   const statusConfig = STATUS_CONFIG.approved;
   const StatusIcon = statusConfig.icon;
   const [showWaybill, setShowWaybill] = useState(false);
-  const [waybillData, setWaybillData] = useState<any>(null);
-  const [generatingWaybill, setGeneratingWaybill] = useState(false);
+  const [isNotifying, setIsNotifying] = useState(false);
 
-  const generateReturnWaybill = async () => {
+  const handleNotifyBuyer = async () => {
     const id = refund?.refund || refund?.id;
     if (!id) {
       console.warn('Missing refund id');
       return;
     }
-
-    setGeneratingWaybill(true);
+    
+    setIsNotifying(true);
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      const response = await fetch(`${API_BASE_URL}/return-refund/${id}/create_return_waybill/`, {
+      const response = await fetch(apiUrlFor(`/return-refund/${id}/notify_buyer/`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-User-Id': user.user_id,
+          'X-User-Id': user.id,
           'X-Shop-Id': shopId,
         },
-        credentials: 'include',
       });
-
+      
       if (response.ok) {
         const data = await response.json();
-        setWaybillData(data.waybill);
-        setShowWaybill(true);
+        if (onAction) {
+          onAction('notified', data);
+        } else {
+          window.location.reload();
+        }
       } else {
-        console.error('Failed to generate waybill');
+        console.error('Failed to notify buyer');
       }
     } catch (error) {
-      console.error('Error generating waybill:', error);
+      console.error('Error:', error);
     } finally {
-      setGeneratingWaybill(false);
+      setIsNotifying(false);
     }
   };
 
-  const printWaybill = async () => {
+  const handleMarkToProcess = async () => {
     const id = refund?.refund || refund?.id;
     if (!id) {
       console.warn('Missing refund id');
       return;
     }
-
+    
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      const response = await fetch(`${API_BASE_URL}/return-refund/${id}/print_waybill/`, {
+      const response = await fetch(apiUrlFor(`/return-refund/${id}/mark_to_process/`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-User-Id': user.user_id,
+          'X-User-Id': user.id,
           'X-Shop-Id': shopId,
         },
-        credentials: 'include',
       });
-
+      
       if (response.ok) {
         const data = await response.json();
-        // Open print dialog with the printable data
-        const printWindow = window.open('', '_blank');
-        if (printWindow) {
-          printWindow.document.write(`
-            <html>
-              <head>
-                <title>Return Waybill - ${data.printable_data.waybill_number}</title>
-                <style>
-                  body { font-family: Arial, sans-serif; margin: 20px; }
-                  .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-                  .waybill-info { display: flex; justify-content: space-between; margin-bottom: 20px; }
-                  .info-section { flex: 1; padding: 10px; }
-                  .info-section h3 { margin-top: 0; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
-                  .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                  .items-table th, .items-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-                  .items-table th { background-color: #f5f5f5; }
-                  .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-                </style>
-              </head>
-              <body>
-                <div class="header">
-                  <h1>Return Waybill</h1>
-                  <h2>Waybill #${data.printable_data.waybill_number}</h2>
-                </div>
-                
-                <div class="waybill-info">
-                  <div class="info-section">
-                    <h3>Sender Information</h3>
-                    <p><strong>Customer:</strong> ${data.printable_data.customer_info?.name || 'N/A'}</p>
-                    <p><strong>Address:</strong> ${data.printable_data.customer_info?.address || 'N/A'}</p>
-                    <p><strong>Phone:</strong> ${data.printable_data.customer_info?.phone || 'N/A'}</p>
+        if (data.waybill_printable) {
+          const printWindow = window.open('', '_blank');
+          if (printWindow) {
+            printWindow.document.write(`
+              <html>
+                <head>
+                  <title>Return Waybill - ${data.waybill_printable.waybill_number}</title>
+                  <style>
+                    body { font-family: Arial, sans-serif; margin: 20px; }
+                    .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+                    .waybill-info { display: flex; justify-content: space-between; margin-bottom: 20px; }
+                    .info-section { flex: 1; padding: 10px; }
+                    .info-section h3 { margin-top: 0; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+                    .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                    .items-table th, .items-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+                    .items-table th { background-color: #f5f5f5; }
+                    .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
+                  </style>
+                </head>
+                <body>
+                  <div class="header">
+                    <h1>Return Waybill</h1>
+                    <h2>Waybill #${data.waybill_printable.waybill_number}</h2>
+                  </div>
+                  
+                  <div class="waybill-info">
+                    <div class="info-section">
+                      <h3>Sender Information</h3>
+                      <p><strong>Customer:</strong> ${data.waybill_printable.customer_info?.name || 'N/A'}</p>
+                      <p><strong>Address:</strong> ${data.waybill_printable.customer_info?.address || 'N/A'}</p>
+                      <p><strong>Phone:</strong> ${data.waybill_printable.customer_info?.phone || 'N/A'}</p>
+                    </div>
+                    
+                    <div class="info-section">
+                      <h3>Receiver Information</h3>
+                      <p><strong>Shop:</strong> ${data.waybill_printable.shop_info?.name || 'N/A'}</p>
+                      <p><strong>Address:</strong> ${data.waybill_printable.shop_info?.address || 'N/A'}</p>
+                      <p><strong>Phone:</strong> ${data.waybill_printable.shop_info?.phone || 'N/A'}</p>
+                    </div>
                   </div>
                   
                   <div class="info-section">
-                    <h3>Receiver Information</h3>
-                    <p><strong>Shop:</strong> ${data.printable_data.shop_info?.name || 'N/A'}</p>
-                    <p><strong>Address:</strong> ${data.printable_data.shop_info?.address || 'N/A'}</p>
-                    <p><strong>Phone:</strong> ${data.printable_data.shop_info?.phone || 'N/A'}</p>
+                    <h3>Return Details</h3>
+                    <p><strong>Order Number:</strong> ${data.waybill_printable.order_number || 'N/A'}</p>
+                    <p><strong>Refund ID:</strong> ${data.waybill_printable.refund_id || 'N/A'}</p>
+                    <p><strong>Status:</strong> ${data.waybill_printable.status || 'N/A'}</p>
+                    <p><strong>Created:</strong> ${new Date(data.waybill_printable.created_at).toLocaleDateString()}</p>
                   </div>
-                </div>
-                
-                <div class="info-section">
-                  <h3>Return Details</h3>
-                  <p><strong>Order Number:</strong> ${data.printable_data.order_number || 'N/A'}</p>
-                  <p><strong>Refund ID:</strong> ${data.printable_data.refund_id || 'N/A'}</p>
-                  <p><strong>Status:</strong> ${data.printable_data.status || 'N/A'}</p>
-                  <p><strong>Created:</strong> ${new Date(data.printable_data.created_at).toLocaleDateString()}</p>
-                </div>
-                
-                <table class="items-table">
-                  <thead>
-                    <tr>
-                      <th>Item</th>
-                      <th>Quantity</th>
-                      <th>Description</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${data.printable_data.return_items?.map((item: any) => `
+                  
+                  <table class="items-table">
+                    <thead>
                       <tr>
-                        <td>${item.name || 'N/A'}</td>
-                        <td>${item.quantity || 'N/A'}</td>
-                        <td>${item.description || 'N/A'}</td>
+                        <th>Item</th>
+                        <th>Quantity</th>
+                        <th>Description</th>
                       </tr>
-                    `).join('') || '<tr><td colspan="3">No items found</td></tr>'}
-                  </tbody>
-                </table>
-                
-                <div class="footer">
-                  <p>Generated on ${new Date(data.print_date).toLocaleString()}</p>
-                  <p>Printed by: ${data.printed_by || 'N/A'}</p>
-                </div>
-              </body>
-            </html>
-          `);
-          printWindow.document.close();
-          printWindow.print();
+                    </thead>
+                    <tbody>
+                      ${data.waybill_printable.return_items?.map((item: any) => `
+                        <tr>
+                          <td>${item.name || 'N/A'}</td>
+                          <td>${item.quantity || 'N/A'}</td>
+                          <td>${item.description || 'N/A'}</td>
+                        </tr>
+                      `).join('') || '<tr><td colspan="3">No items found</td></tr>'}
+                    </tbody>
+                  </table>
+                  
+                  <div class="footer">
+                    <p>Generated on ${new Date(data.waybill_printable.print_date).toLocaleString()}</p>
+                    <p>Printed by: ${data.waybill_printable.printed_by || 'N/A'}</p>
+                  </div>
+                </body>
+              </html>
+            `);
+            printWindow.document.close();
+            printWindow.print();
+          }
+        }
+        
+        if (onAction) {
+          onAction('marked_to_process', data);
+        } else {
+          window.location.reload();
         }
       } else {
-        console.error('Failed to get printable waybill');
+        console.error('Failed to start processing');
       }
     } catch (error) {
-      console.error('Error printing waybill:', error);
+      console.error('Error:', error);
     }
   };
 
@@ -933,7 +1253,6 @@ function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, u
               </AlertDescription>
             </Alert>
 
-            {/* Return Instructions */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <h3 className="text-sm font-medium text-blue-800 mb-3">Return Instructions</h3>
               <div className="space-y-3">
@@ -966,7 +1285,6 @@ function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, u
               </div>
             </div>
 
-            {/* Customer Information */}
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-4">
               <h3 className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
                 <User className="h-4 w-4" />
@@ -995,7 +1313,6 @@ function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, u
               )}
             </div>
 
-            {/* Customer Communication */}
             {refund.seller_response && (
               <div className="border rounded-lg p-4">
                 <h3 className="text-sm font-medium mb-2">Your Response to Customer</h3>
@@ -1007,7 +1324,6 @@ function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, u
           </CardContent>
         </Card>
 
-        {/* Items Section */}
         <Card>
           <CardHeader>
             <CardTitle>Items Requested for Return</CardTitle>
@@ -1019,60 +1335,28 @@ function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, u
             ) : (
               <div className="space-y-4">
                 {refund.order_items.map((it: OrderItem, idx: number) => {
-                  // Precompute selected SKU and unit price for this item (same logic as pending view)
-                  const optionMap = (it.product?.variants || []).reduce((acc: Record<string,string>, v: any) => {
-                    (v.options || []).forEach((opt: any) => acc[opt.id] = opt.title);
-                    return acc;
-                  }, {} as Record<string,string>);
-
-                  const qty = Number(it.checkout_quantity) || 1;
-                  const unitPriceFromTotal = it.checkout_total_amount && qty > 0 ? Number(it.checkout_total_amount) / qty : null;
-                  const unitPrice = unitPriceFromTotal ?? (it.product?.price ? Number(it.product.price) : null);
-
-                  let selectedSku: any = null;
-                  const cart = (it as any).cart;
-                  const preferredOptionIds = cart?.selected_option_ids || cart?.option_ids || cart?.selected_options || null;
-                  const selectedSkuId = cart?.sku_id || cart?.selected_sku_id || null;
-
-                  if (selectedSkuId && it.product?.skus) {
-                    selectedSku = it.product.skus.find((s: any) => String(s.id) === String(selectedSkuId));
-                  }
-
-                  if (!selectedSku && preferredOptionIds && Array.isArray(preferredOptionIds) && preferredOptionIds.length && it.product?.skus) {
-                    selectedSku = it.product.skus.find((s: any) => {
-                      const skuIds = (s.option_ids || []).map((x: any) => String(x));
-                      return skuIds.length === preferredOptionIds.length && skuIds.sort().join(',') === preferredOptionIds.map(String).sort().join(',');
-                    });
-                  }
-
-                  if (!selectedSku && unitPrice != null && it.product?.skus) {
-                    selectedSku = it.product.skus.find((s: any) => s.price != null && Number(s.price) === Number(unitPrice));
-                  }
-
-                  if (!selectedSku && it.product?.skus) {
-                    selectedSku = it.product.skus.find((s: any) => s.price != null && Number(s.price) === Number(it.product?.price));
-                  }
-
-                  if (!selectedSku && it.product?.skus) {
-                    selectedSku = it.product.skus[0];
-                  }
-
-                  const labelIds = Array.isArray(selectedSku?.option_ids) ? selectedSku.option_ids : (selectedSku?.option_ids ? [selectedSku.option_ids] : []);
-                  const labels = labelIds.map((id: any) => optionMap[id] || id).filter(Boolean);
-                  const label = labels.length ? labels.join(' • ') : (selectedSku?.sku_code || 'SKU');
+                  const { selectedSku, label, unitPrice } = getSelectedSku(it);
 
                   return (
                     <div key={it.checkout_id || String(idx)} className="rounded-lg border p-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex items-start gap-3">
                           <div className="w-16 h-16 flex-shrink-0 rounded bg-gray-100 flex items-center justify-center">
-                            <Package className="h-6 w-6 text-gray-400" />
+                            {selectedSku?.image ? (
+                              <img
+                                src={selectedSku.image}
+                                alt={it.product?.name || 'Product'}
+                                className="w-full h-full object-cover rounded"
+                              />
+                            ) : (
+                              <Package className="h-6 w-6 text-gray-400" />
+                            )}
                           </div>
                           <div>
                             <div className="font-medium">{it.product?.name || 'Product'}</div>
                             <div className="text-sm text-muted-foreground line-clamp-1">{it.product?.description || ''}</div>
 
-                            {selectedSku ? (
+                            {selectedSku && (
                               <div className="mt-2 text-sm text-gray-700">
                                 <div>
                                   <div className="text-xs text-muted-foreground">Variant</div>
@@ -1080,7 +1364,7 @@ function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, u
                                   <div className="text-xs text-gray-500 mt-1">{selectedSku.sku_code ? `SKU: ${selectedSku.sku_code}` : null}</div>
                                 </div>
                               </div>
-                            ) : null}
+                            )}
 
                             <div className="flex items-center gap-2 mt-1">
                               <Badge variant="outline" className="text-xs">
@@ -1109,304 +1393,27 @@ function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, u
             <CardTitle className="text-sm">Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {/* Notify Buyer Button - only show if buyer hasn't been notified yet */}
-            {!refund.buyer_notified_at && (
+            {!refund.buyer_notified_at ? (
               <Button
                 size="sm"
                 className="w-full h-8 text-xs bg-blue-600 hover:bg-blue-700"
-                onClick={async () => {
-                  const id = refund?.refund || refund?.id;
-                  if (!id) {
-                    console.warn('Missing refund id');
-                    return;
-                  }
-                  
-                  try {
-                    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-                    const response = await fetch(`${API_BASE_URL}/return-refund/${id}/notify_buyer/`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'X-User-Id': user.user_id,
-                        'X-Shop-Id': shopId,
-                      },
-                      credentials: 'include',
-                    });
-                    
-                    if (response.ok) {
-                      // Refresh the page or update state
-                      window.location.reload();
-                    } else {
-                      console.error('Failed to notify buyer');
-                    }
-                  } catch (error) {
-                    console.error('Error:', error);
-                  }
-                }}
+                onClick={handleNotifyBuyer}
+                disabled={isNotifying}
               >
                 <MessageSquare className="h-3 w-3 mr-1.5" />
-                Notify Buyer
+                {isNotifying ? 'Notifying...' : 'Notify Buyer'}
               </Button>
-            )}
-
-            {/* Generate Return Waybill Button */}
-            <Button
-              size="sm"
-              className="w-full h-8 text-xs bg-purple-600 hover:bg-purple-700"
-              onClick={generateReturnWaybill}
-              disabled={generatingWaybill}
-            >
-              <FileText className="h-3 w-3 mr-1.5" />
-              {generatingWaybill ? 'Generating...' : 'Generate Return Waybill'}
-            </Button>
-
-            {/* Show action buttons only after buyer has been notified */}
-            {refund.buyer_notified_at && (
+            ) : (
               <>
-                {/* Show action button based on refund category */}
-                {refund.refund_category === 'return_item' && (
-                  <Button
-                    size="sm"
-                    className="w-full h-8 text-xs bg-blue-600 hover:bg-blue-700"
-                    onClick={async () => {
-                      const id = refund?.refund || refund?.id;
-                      if (!id) {
-                        console.warn('Missing refund id');
-                        return;
-                      }
-                      
-                      try {
-                        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-                        const response = await fetch(`${API_BASE_URL}/return-refund/${id}/mark_to_process/`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'X-User-Id': user.user_id,
-                            'X-Shop-Id': shopId,
-                          },
-                          credentials: 'include',
-                        });
-                        
-                        if (response.ok) {
-                          const data = await response.json();
-                          
-                          // If waybill printable data is included, print the waybill
-                          if (data.waybill_printable) {
-                            const printWindow = window.open('', '_blank');
-                            if (printWindow) {
-                              printWindow.document.write(`
-                                <html>
-                                  <head>
-                                    <title>Return Waybill - ${data.waybill_printable.waybill_number}</title>
-                                    <style>
-                                      body { font-family: Arial, sans-serif; margin: 20px; }
-                                      .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-                                      .waybill-info { display: flex; justify-content: space-between; margin-bottom: 20px; }
-                                      .info-section { flex: 1; padding: 10px; }
-                                      .info-section h3 { margin-top: 0; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
-                                      .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                                      .items-table th, .items-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-                                      .items-table th { background-color: #f5f5f5; }
-                                      .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-                                    </style>
-                                  </head>
-                                  <body>
-                                    <div class="header">
-                                      <h1>Return Waybill</h1>
-                                      <h2>Waybill #${data.waybill_printable.waybill_number}</h2>
-                                    </div>
-                                    
-                                    <div class="waybill-info">
-                                      <div class="info-section">
-                                        <h3>Sender Information</h3>
-                                        <p><strong>Customer:</strong> ${data.waybill_printable.customer_info?.name || 'N/A'}</p>
-                                        <p><strong>Address:</strong> ${data.waybill_printable.customer_info?.address || 'N/A'}</p>
-                                        <p><strong>Phone:</strong> ${data.waybill_printable.customer_info?.phone || 'N/A'}</p>
-                                      </div>
-                                      
-                                      <div class="info-section">
-                                        <h3>Receiver Information</h3>
-                                        <p><strong>Shop:</strong> ${data.waybill_printable.shop_info?.name || 'N/A'}</p>
-                                        <p><strong>Address:</strong> ${data.waybill_printable.shop_info?.address || 'N/A'}</p>
-                                        <p><strong>Phone:</strong> ${data.waybill_printable.shop_info?.phone || 'N/A'}</p>
-                                      </div>
-                                    </div>
-                                    
-                                    <div class="info-section">
-                                      <h3>Return Details</h3>
-                                      <p><strong>Order Number:</strong> ${data.waybill_printable.order_number || 'N/A'}</p>
-                                      <p><strong>Refund ID:</strong> ${data.waybill_printable.refund_id || 'N/A'}</p>
-                                      <p><strong>Status:</strong> ${data.waybill_printable.status || 'N/A'}</p>
-                                      <p><strong>Created:</strong> ${new Date(data.waybill_printable.created_at).toLocaleDateString()}</p>
-                                    </div>
-                                    
-                                    <table class="items-table">
-                                      <thead>
-                                        <tr>
-                                          <th>Item</th>
-                                          <th>Quantity</th>
-                                          <th>Description</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        ${data.waybill_printable.return_items?.map((item: any) => `
-                                          <tr>
-                                            <td>${item.name || 'N/A'}</td>
-                                            <td>${item.quantity || 'N/A'}</td>
-                                            <td>${item.description || 'N/A'}</td>
-                                          </tr>
-                                        `).join('') || '<tr><td colspan="3">No items found</td></tr>'}
-                                      </tbody>
-                                    </table>
-                                    
-                                    <div class="footer">
-                                      <p>Generated on ${new Date(data.waybill_printable.print_date).toLocaleString()}</p>
-                                      <p>Printed by: ${data.waybill_printable.printed_by || 'N/A'}</p>
-                                    </div>
-                                  </body>
-                                </html>
-                              `);
-                              printWindow.document.close();
-                              printWindow.print();
-                            }
-                          }
-                          
-                          // Refresh the page
-                          window.location.reload();
-                        } else {
-                          console.error('Failed to notify buyer');
-                        }
-                      } catch (error) {
-                        console.error('Error:', error);
-                      }
-                    }}
-                  >
-                    <RefreshCw className="h-3 w-3 mr-1.5" />
-                    Notify Buyer to Process Return
-                  </Button>
-                )}
 
-                {refund.refund_category === 'keep_item' && (
-                  <Button
-                    size="sm"
-                    className="w-full h-8 text-xs bg-green-600 hover:bg-green-700"
-                    onClick={async () => {
-                      const id = refund?.refund || refund?.id;
-                      if (!id) {
-                        console.warn('Missing refund id');
-                        return;
-                      }
-                      
-                      try {
-                        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-                        const response = await fetch(`${API_BASE_URL}/return-refund/${id}/mark_to_process/`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'X-User-Id': user.user_id,
-                            'X-Shop-Id': shopId,
-                          },
-                          credentials: 'include',
-                        });
-                        
-                        if (response.ok) {
-                          const data = await response.json();
-                          
-                          // If waybill printable data is included, print the waybill
-                          if (data.waybill_printable) {
-                            const printWindow = window.open('', '_blank');
-                            if (printWindow) {
-                              printWindow.document.write(`
-                                <html>
-                                  <head>
-                                    <title>Return Waybill - ${data.waybill_printable.waybill_number}</title>
-                                    <style>
-                                      body { font-family: Arial, sans-serif; margin: 20px; }
-                                      .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-                                      .waybill-info { display: flex; justify-content: space-between; margin-bottom: 20px; }
-                                      .info-section { flex: 1; padding: 10px; }
-                                      .info-section h3 { margin-top: 0; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
-                                      .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                                      .items-table th, .items-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-                                      .items-table th { background-color: #f5f5f5; }
-                                      .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-                                    </style>
-                                  </head>
-                                  <body>
-                                    <div class="header">
-                                      <h1>Return Waybill</h1>
-                                      <h2>Waybill #${data.waybill_printable.waybill_number}</h2>
-                                    </div>
-                                    
-                                    <div class="waybill-info">
-                                      <div class="info-section">
-                                        <h3>Sender Information</h3>
-                                        <p><strong>Customer:</strong> ${data.waybill_printable.customer_info?.name || 'N/A'}</p>
-                                        <p><strong>Address:</strong> ${data.waybill_printable.customer_info?.address || 'N/A'}</p>
-                                        <p><strong>Phone:</strong> ${data.waybill_printable.customer_info?.phone || 'N/A'}</p>
-                                      </div>
-                                      
-                                      <div class="info-section">
-                                        <h3>Receiver Information</h3>
-                                        <p><strong>Shop:</strong> ${data.waybill_printable.shop_info?.name || 'N/A'}</p>
-                                        <p><strong>Address:</strong> ${data.waybill_printable.shop_info?.address || 'N/A'}</p>
-                                        <p><strong>Phone:</strong> ${data.waybill_printable.shop_info?.phone || 'N/A'}</p>
-                                      </div>
-                                    </div>
-                                    
-                                    <div class="info-section">
-                                      <h3>Return Details</h3>
-                                      <p><strong>Order Number:</strong> ${data.waybill_printable.order_number || 'N/A'}</p>
-                                      <p><strong>Refund ID:</strong> ${data.waybill_printable.refund_id || 'N/A'}</p>
-                                      <p><strong>Status:</strong> ${data.waybill_printable.status || 'N/A'}</p>
-                                      <p><strong>Created:</strong> ${new Date(data.waybill_printable.created_at).toLocaleDateString()}</p>
-                                    </div>
-                                    
-                                    <table class="items-table">
-                                      <thead>
-                                        <tr>
-                                          <th>Item</th>
-                                          <th>Quantity</th>
-                                          <th>Description</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        ${data.waybill_printable.return_items?.map((item: any) => `
-                                          <tr>
-                                            <td>${item.name || 'N/A'}</td>
-                                            <td>${item.quantity || 'N/A'}</td>
-                                            <td>${item.description || 'N/A'}</td>
-                                          </tr>
-                                        `).join('') || '<tr><td colspan="3">No items found</td></tr>'}
-                                      </tbody>
-                                    </table>
-                                    
-                                    <div class="footer">
-                                      <p>Generated on ${new Date(data.waybill_printable.print_date).toLocaleString()}</p>
-                                      <p>Printed by: ${data.waybill_printable.printed_by || 'N/A'}</p>
-                                    </div>
-                                  </body>
-                                </html>
-                              `);
-                              printWindow.document.close();
-                              printWindow.print();
-                            }
-                          }
-                          
-                          // Refresh the page
-                          window.location.reload();
-                        } else {
-                          console.error('Failed to start processing');
-                        }
-                      } catch (error) {
-                        console.error('Error:', error);
-                      }
-                    }}
-                  >
-                    <RefreshCw className="h-3 w-3 mr-1.5" />
-                    Start Processing Refund
-                  </Button>
-                )}
+                <Button
+                  size="sm"
+                  className="w-full h-8 text-xs bg-green-600 hover:bg-green-700"
+                  onClick={handleMarkToProcess}
+                >
+                  <RefreshCw className="h-3 w-3 mr-1.5" />
+                  Notify Seller
+                </Button>
                 
                 <Button
                   size="sm"
@@ -1470,108 +1477,184 @@ function ApprovedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, u
           </CardContent>
         </Card>
 
-        {/* Return Waybill Display */}
         {showWaybill && waybillData && (
-          <Card className="border border-purple-200 bg-purple-50">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-purple-600" />
-                  Return Waybill Generated
-                </CardTitle>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setShowWaybill(false)}
-                  className="h-8 w-8 p-0"
-                >
-                  <XCircle className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <h4 className="text-sm font-medium text-purple-800 mb-2">Waybill Information</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Waybill Number:</span>
-                      <span className="font-medium">{waybillData.waybill_number}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Status:</span>
-                      <Badge variant="outline" className="text-xs capitalize">
-                        {waybillData.status?.replace('_', ' ')}
-                      </Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Created:</span>
-                      <span>{formatDate(waybillData.created_at)}</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="text-sm font-medium text-purple-800 mb-2">Shipping Information</h4>
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <span className="text-gray-600">From:</span>
-                      <p className="font-medium">{waybillData.customer_info?.name}</p>
-                      <p className="text-xs text-gray-500">{waybillData.customer_info?.address}</p>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">To:</span>
-                      <p className="font-medium">{waybillData.shop_info?.name}</p>
-                      <p className="text-xs text-gray-500">{waybillData.shop_info?.address}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
+        <Card className="border border-purple-200 bg-purple-50">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <FileText className="h-5 w-5 text-purple-600" />
+                Return Waybill Generated
+              </CardTitle>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowWaybill(false)}
+                className="h-8 w-8 p-0"
+              >
+                <XCircle className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <h4 className="text-sm font-medium text-purple-800 mb-2">Return Items</h4>
-                <div className="space-y-2">
-                  {waybillData.return_items?.map((item: any, index: number) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-white rounded border">
-                      <div className="flex items-center gap-3">
-                        <Package className="h-4 w-4 text-gray-400" />
-                        <div>
-                          <p className="text-sm font-medium">{item.name}</p>
-                          <p className="text-xs text-gray-500">{item.description}</p>
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="text-xs">
-                        Qty: {item.quantity}
-                      </Badge>
-                    </div>
-                  )) || (
-                    <p className="text-sm text-gray-500">No items listed</p>
-                  )}
+                <h4 className="text-sm font-medium text-purple-800 mb-2">Waybill Information</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Waybill Number:</span>
+                    <span className="font-medium">{waybillData.waybill_number}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Status:</span>
+                    <Badge variant="outline" className="text-xs capitalize">
+                      {waybillData.status?.replace('_', ' ')}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Created:</span>
+                    <span>{formatDate(waybillData.created_at)}</span>
+                  </div>
                 </div>
               </div>
-
-              <div className="flex gap-2 pt-4">
-                <Button
-                  size="sm"
-                  onClick={printWaybill}
-                  className="flex-1"
-                >
-                  <Printer className="h-4 w-4 mr-2" />
-                  Print Waybill
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setShowWaybill(false)}
-                  className="flex-1"
-                >
-                  Close
-                </Button>
+              
+              <div>
+                <h4 className="text-sm font-medium text-purple-800 mb-2">Shipping Information</h4>
+                <div className="space-y-2 text-sm">
+                  <div>
+                    <span className="text-gray-600">From:</span>
+                    <p className="font-medium">{waybillData.customer_info?.name}</p>
+                    <p className="text-xs text-gray-500">{waybillData.customer_info?.address}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">To:</span>
+                    <p className="font-medium">{waybillData.shop_info?.name}</p>
+                    <p className="text-xs text-gray-500">{waybillData.shop_info?.address}</p>
+                  </div>
+                </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            </div>
 
+            <div>
+              <h4 className="text-sm font-medium text-purple-800 mb-2">Return Items</h4>
+              <div className="space-y-2">
+                {waybillData.return_items?.map((item: any, index: number) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-white rounded border">
+                    <div className="flex items-center gap-3">
+                      <Package className="h-4 w-4 text-gray-400" />
+                      <div>
+                        <p className="text-sm font-medium">{item.name}</p>
+                        <p className="text-xs text-gray-500">{item.description}</p>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="text-xs">
+                      Qty: {item.quantity}
+                    </Badge>
+                  </div>
+                )) || (
+                  <p className="text-sm text-gray-500">No items listed</p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-4">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const printWindow = window.open('', '_blank');
+                  if (printWindow && waybillData) {
+                    printWindow.document.write(`
+                      <html>
+                        <head>
+                          <title>Return Waybill - ${waybillData.waybill_number}</title>
+                          <style>
+                            body { font-family: Arial, sans-serif; margin: 20px; }
+                            .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+                            .waybill-info { display: flex; justify-content: space-between; margin-bottom: 20px; }
+                            .info-section { flex: 1; padding: 10px; }
+                            .info-section h3 { margin-top: 0; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+                            .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                            .items-table th, .items-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+                            .items-table th { background-color: #f5f5f5; }
+                            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
+                          </style>
+                        </head>
+                        <body>
+                          <div class="header">
+                            <h1>Return Waybill</h1>
+                            <h2>Waybill #${waybillData.waybill_number}</h2>
+                          </div>
+                          
+                          <div class="waybill-info">
+                            <div class="info-section">
+                              <h3>Sender Information</h3>
+                              <p><strong>Customer:</strong> ${waybillData.customer_info?.name || 'N/A'}</p>
+                              <p><strong>Address:</strong> ${waybillData.customer_info?.address || 'N/A'}</p>
+                              <p><strong>Phone:</strong> ${waybillData.customer_info?.phone || 'N/A'}</p>
+                            </div>
+                            
+                            <div class="info-section">
+                              <h3>Receiver Information</h3>
+                              <p><strong>Shop:</strong> ${waybillData.shop_info?.name || 'N/A'}</p>
+                              <p><strong>Address:</strong> ${waybillData.shop_info?.address || 'N/A'}</p>
+                              <p><strong>Phone:</strong> ${waybillData.shop_info?.phone || 'N/A'}</p>
+                            </div>
+                          </div>
+                          
+                          <div class="info-section">
+                            <h3>Return Details</h3>
+                            <p><strong>Order Number:</strong> ${waybillData.order_number || 'N/A'}</p>
+                            <p><strong>Refund ID:</strong> ${waybillData.refund_id || 'N/A'}</p>
+                            <p><strong>Status:</strong> ${waybillData.status || 'N/A'}</p>
+                            <p><strong>Created:</strong> ${new Date(waybillData.created_at).toLocaleDateString()}</p>
+                          </div>
+                          
+                          <table class="items-table">
+                            <thead>
+                              <tr>
+                                <th>Item</th>
+                                <th>Quantity</th>
+                                <th>Description</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${waybillData.return_items?.map((item: any) => `
+                                <tr>
+                                  <td>${item.name || 'N/A'}</td>
+                                  <td>${item.quantity || 'N/A'}</td>
+                                  <td>${item.description || 'N/A'}</td>
+                                </tr>
+                              `).join('') || '<tr><td colspan="3">No items found</td></tr>'}
+                            </tbody>
+                          </table>
+                          
+                          <div class="footer">
+                            <p>Generated on ${new Date().toLocaleString()}</p>
+                            <p>Printed by: ${waybillData.printed_by || 'N/A'}</p>
+                          </div>
+                        </body>
+                      </html>
+                    `);
+                    printWindow.document.close();
+                    printWindow.print();
+                  }
+                }}
+                className="flex-1"
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Print Waybill
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowWaybill(false)}
+                className="flex-1"
+              >
+                Close
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
         <Card className="border border-green-100 bg-green-50">
           <CardContent className="p-4">
             <div className="flex items-start gap-3">
@@ -1665,25 +1748,11 @@ function CompletedStatusUI({ refund, formatDate, formatMoney, navigate, shopId }
 
                   {refund.approved_at && (
                     <div className="flex items-center gap-2">
-                      <Calendar className="h-4 w-4 text-gray-500" />
-                      <span className="text-sm">Approved: {formatDate(refund.approved_at)}</span>
-                    </div>
-                  )}
-
-                  {refund.return_deadline && (
-                    <div className="flex items-center gap-2">
-                      <Clock className="h-4 w-4 text-gray-500" />
-                      <span className="text-sm">Return Deadline: {formatDate(refund.return_deadline)}</span>
-                    </div>
-                  )}
-
-                  {/* Approval and return timeline */}
-                  {refund.approved_at && (
-                    <div className="flex items-center gap-2">
                       <CheckCircle className="h-4 w-4 text-gray-500" />
                       <span className="text-sm">Approved: {formatDate(refund.approved_at)}</span>
                     </div>
                   )}
+
                   {refund.return_deadline && (
                     <div className="flex items-center gap-2">
                       <Calendar className="h-4 w-4 text-gray-500" />
@@ -1759,93 +1828,189 @@ function CompletedStatusUI({ refund, formatDate, formatMoney, navigate, shopId }
   );
 }
 
-// Add other status UI components as needed (negotiation, waiting, to_verify, to_process, dispute, rejected, cancelled)
-// For brevity, I'll show a generic fallback for other statuses
-
-function ToVerifyStatusUI({ refund, formatDate, formatMoney, navigate, shopId, statusConfig, onAction }: any) {
+function ToVerifyStatusUI({ refund, formatDate, formatMoney, navigate, shopId, statusConfig, onAction, actionLoading }: any) {
   const StatusIcon = statusConfig?.icon || PackageCheck;
-
   const refundId = refund?.refund || refund?.id;
+  const [verificationNotes, setVerificationNotes] = useState('');
+  const [showVerificationDialog, setShowVerificationDialog] = useState(false);
+  const [verificationResult, setVerificationResult] = useState<'approved' | 'rejected'>('approved');
+
+  const handleVerifyItem = async () => {
+    if (!refundId) return;
+    
+    await onAction('verify_item', { 
+      refundId, 
+      verification_result: verificationResult,
+      verification_notes: verificationNotes 
+    });
+    
+    setShowVerificationDialog(false);
+    setVerificationNotes('');
+  };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2 space-y-6">
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <PackageCheck className="h-5 w-5" />
-                Refund Request #{refund.request_number}
-              </CardTitle>
-              <Badge variant="outline" className={statusConfig?.color + " text-xs"}>
-                <StatusIcon className="h-3 w-3 mr-1" />
-                {statusConfig?.label}
-              </Badge>
-            </div>
-            <CardDescription>
-              Order #{refund.order_info?.order_number} • {statusConfig?.description}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <Alert className={statusConfig?.color.replace('hover:bg-', 'bg-').replace(' text-', ' border-')}>
-              <StatusIcon className="h-4 w-4" />
-              <AlertTitle>{statusConfig?.label}</AlertTitle>
-              <AlertDescription>{statusConfig?.description}</AlertDescription>
-            </Alert>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Verification Actions</CardTitle>
-                <CardDescription>Accept or reject the returned items</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex flex-col gap-2">
-                  <Button
-                    size="sm"
-                    className="w-full bg-green-600 hover:bg-green-700"
-                    onClick={() => onAction('verify_item', { refundId, verification_result: 'approved' })}
-                  >
-                    <CheckSquare className="h-3 w-3 mr-2" />
-                    Accept Return (Verify)
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full border-red-200 text-red-600"
-                    onClick={() => onAction('verify_item', { refundId, verification_result: 'rejected' })}
-                  >
-                    <XCircle className="h-3 w-3 mr-2" />
-                    Reject Return
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="space-y-6">
-        <Card className="border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Return Summary</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Refund Amount:</span>
-                <span className="font-medium text-green-600">{formatMoney(refund.total_refund_amount)}</span>
+    <>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          <Card className="border">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <PackageCheck className="h-5 w-5" />
+                  Refund Request #{refund.request_number}
+                </CardTitle>
+                <Badge variant="outline" className={statusConfig?.color + " text-xs"}>
+                  <StatusIcon className="h-3 w-3 mr-1" />
+                  {statusConfig?.label}
+                </Badge>
               </div>
-            </div>
-            <Separator className="my-2" />
-            <div className="flex justify-between font-medium">
-              <span>Status:</span>
-              <Badge className={statusConfig?.color}>{statusConfig?.label}</Badge>
-            </div>
-          </CardContent>
-        </Card>
+              <CardDescription>
+                Order #{refund.order_info?.order_number} • {statusConfig?.description}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <Alert className={statusConfig?.color.replace('hover:bg-', 'bg-').replace(' text-', ' border-')}>
+                <StatusIcon className="h-4 w-4" />
+                <AlertTitle>{statusConfig?.label}</AlertTitle>
+                <AlertDescription>{statusConfig?.description}</AlertDescription>
+              </Alert>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Item Verification Required</CardTitle>
+                  <CardDescription>
+                    Please verify the condition of the returned items and decide whether to accept or reject them.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 className="text-sm font-medium text-blue-800 mb-2">Verification Guidelines</h4>
+                    <ul className="text-sm text-blue-700 space-y-1">
+                      <li>• Check if all items match the return request</li>
+                      <li>• Verify item condition matches original photos</li>
+                      <li>• Ensure all accessories and packaging are included</li>
+                      <li>• Look for signs of damage or excessive wear</li>
+                    </ul>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <Button
+                      size="lg"
+                      className="w-full bg-green-600 hover:bg-green-700"
+                      onClick={() => {
+                        setVerificationResult('approved');
+                        setShowVerificationDialog(true);
+                      }}
+                      disabled={actionLoading}
+                    >
+                      <CheckSquare className="h-4 w-4 mr-2" />
+                      Accept Return (Verify)
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="w-full border-red-200 text-red-600 hover:bg-red-50"
+                      onClick={() => {
+                        setVerificationResult('rejected');
+                        setShowVerificationDialog(true);
+                      }}
+                      disabled={actionLoading}
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Reject Return
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-6">
+          <Card className="border">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Return Summary</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Refund Amount:</span>
+                  <span className="font-medium text-green-600">{formatMoney(refund.total_refund_amount)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Items to Verify:</span>
+                  <span className="font-medium">{refund.order_items?.length || 0}</span>
+                </div>
+              </div>
+              <Separator className="my-2" />
+              <div className="flex justify-between font-medium">
+                <span>Status:</span>
+                <Badge className={statusConfig?.color}>{statusConfig?.label}</Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-purple-100 bg-purple-50">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-2">
+                <Info className="h-4 w-4 text-purple-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-purple-800">Verification Deadline</p>
+                  <p className="text-xs text-purple-700 mt-1">
+                    Please complete verification within 3 days of receiving the items.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
-    </div>
+
+      <Dialog open={showVerificationDialog} onOpenChange={setShowVerificationDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {verificationResult === 'approved' ? 'Accept Return' : 'Reject Return'}
+            </DialogTitle>
+            <DialogDescription>
+              {verificationResult === 'approved' 
+                ? 'Add any notes about the item condition (optional)'
+                : 'Please explain why the return is being rejected'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="verification-notes">Verification Notes</Label>
+              <Input
+                id="verification-notes"
+                placeholder={
+                  verificationResult === 'approved' 
+                    ? 'Item condition notes...'
+                    : 'Reason for rejection...'
+                }
+                value={verificationNotes}
+                onChange={(e) => setVerificationNotes(e.target.value)}
+              />
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowVerificationDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleVerifyItem}
+              className={verificationResult === 'approved' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}
+              disabled={actionLoading}
+            >
+              {actionLoading ? 'Processing...' : verificationResult === 'approved' ? 'Accept Return' : 'Reject Return'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1899,8 +2064,6 @@ function RejectedStatusUI({ refund, formatDate, formatMoney, navigate, shopId, s
             </div>
           </CardContent>
         </Card>
-
-        {/* Navigates to the file-dispute page for customers/sellers to file disputes */}
       </div>
 
       <div className="space-y-6">
@@ -1956,7 +2119,6 @@ function GenericStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
               <AlertDescription>{statusConfig?.description}</AlertDescription>
             </Alert>
 
-            {/* Main content would go here */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card>
                 <CardHeader className="pb-3">
@@ -2043,10 +2205,12 @@ function GenericStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
   );
 }
 
-function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, user }: any) {
+function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, user, onAction }: any) {
   const { toast } = useToast();
   const statusConfig = STATUS_CONFIG.to_process;
   const StatusIcon = statusConfig.icon;
+
+  const refundId = refund?.refund || refund?.id;
 
   const [paymentMethod, setPaymentMethod] = useState('');
   const [walletProvider, setWalletProvider] = useState('');
@@ -2108,17 +2272,15 @@ function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, 
 
     try {
       setIsSubmitting(true);
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
       const refundId = refund?.refund || refund?.id;
       
-      const response = await fetch(`${API_BASE_URL}/return-refund/${refundId}/process_refund/`, {
+      const response = await fetch(apiUrlFor(`/return-refund/${refundId}/process_refund/`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-User-Id': user.user_id,
+          'X-User-Id': user.id,
           'X-Shop-Id': shopId,
         },
-        credentials: 'include',
         body: JSON.stringify({
           payment_method_details: paymentData,
           final_refund_method: refundMethod,
@@ -2127,7 +2289,11 @@ function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, 
 
       if (response.ok) {
         toast({ title: 'Success', description: 'Refund processed successfully' });
-        window.location.reload();
+        if (onAction) {
+          onAction('processed', await response.json());
+        } else {
+          window.location.reload();
+        }
       } else {
         const error = await response.text();
         toast({ title: 'Error', description: error || 'Failed to process refund' });
@@ -2168,7 +2334,6 @@ function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, 
               </AlertDescription>
             </Alert>
 
-            {/* Refund Summary */}
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <h3 className="text-sm font-medium text-gray-800 mb-3">Refund Summary</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2191,44 +2356,41 @@ function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, 
               </div>
             </div>
 
-            {/* Payment Method Details Form */}
             <div className="bg-white border border-gray-200 rounded-lg p-4">
               <h3 className="text-sm font-medium text-gray-800 mb-4">Enter Payment Details</h3>
               
               {refundMethod === 'wallet' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">E-Wallet Provider</label>
-                    <select
-                      value={walletProvider}
-                      onChange={(e) => setWalletProvider(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select Provider</option>
-                      <option value="gcash">GCash</option>
-                      <option value="paymaya">PayMaya</option>
-                      <option value="coins.ph">Coins.ph</option>
-                      <option value="other">Other</option>
-                    </select>
+                    <Label htmlFor="wallet-provider">E-Wallet Provider</Label>
+                    <Select value={walletProvider} onValueChange={setWalletProvider}>
+                      <SelectTrigger id="wallet-provider">
+                        <SelectValue placeholder="Select Provider" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gcash">GCash</SelectItem>
+                        <SelectItem value="paymaya">PayMaya</SelectItem>
+                        <SelectItem value="coins.ph">Coins.ph</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">Account Name</label>
-                    <input
-                      type="text"
+                    <Label htmlFor="wallet-account-name">Account Name</Label>
+                    <Input
+                      id="wallet-account-name"
                       value={walletAccountName}
                       onChange={(e) => setWalletAccountName(e.target.value)}
                       placeholder="Full name on the account"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">Account Number/Phone</label>
-                    <input
-                      type="text"
+                    <Label htmlFor="wallet-account-number">Account Number/Phone</Label>
+                    <Input
+                      id="wallet-account-number"
                       value={walletAccountNumber}
                       onChange={(e) => setWalletAccountNumber(e.target.value)}
                       placeholder="Mobile number or account number"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
@@ -2237,39 +2399,37 @@ function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, 
               {refundMethod === 'bank_transfer' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">Bank Name</label>
-                    <select
-                      value={bankName}
-                      onChange={(e) => setBankName(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select Bank</option>
-                      <option value="bdo">Banco de Oro (BDO)</option>
-                      <option value="bpi">Bank of the Philippine Islands (BPI)</option>
-                      <option value="metrobank">Metrobank</option>
-                      <option value="unionbank">UnionBank</option>
-                      <option value="landbank">Land Bank of the Philippines</option>
-                      <option value="other">Other</option>
-                    </select>
+                    <Label htmlFor="bank-name">Bank Name</Label>
+                    <Select value={bankName} onValueChange={setBankName}>
+                      <SelectTrigger id="bank-name">
+                        <SelectValue placeholder="Select Bank" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="bdo">Banco de Oro (BDO)</SelectItem>
+                        <SelectItem value="bpi">Bank of the Philippine Islands (BPI)</SelectItem>
+                        <SelectItem value="metrobank">Metrobank</SelectItem>
+                        <SelectItem value="unionbank">UnionBank</SelectItem>
+                        <SelectItem value="landbank">Land Bank of the Philippines</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">Account Name</label>
-                    <input
-                      type="text"
+                    <Label htmlFor="bank-account-name">Account Name</Label>
+                    <Input
+                      id="bank-account-name"
                       value={bankAccountName}
                       onChange={(e) => setBankAccountName(e.target.value)}
                       placeholder="Full name on the account"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">Account Number</label>
-                    <input
-                      type="text"
+                    <Label htmlFor="bank-account-number">Account Number</Label>
+                    <Input
+                      id="bank-account-number"
                       value={bankAccountNumber}
                       onChange={(e) => setBankAccountNumber(e.target.value)}
                       placeholder="Bank account number"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
@@ -2278,28 +2438,27 @@ function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, 
               {refundMethod === 'remittance' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">Remittance Provider</label>
-                    <select
-                      value={remittanceProvider}
-                      onChange={(e) => setRemittanceProvider(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select Provider</option>
-                      <option value="western_union">Western Union</option>
-                      <option value="moneygram">MoneyGram</option>
-                      <option value="palawan">Palawan Express</option>
-                      <option value="cebuana">Cebuana Lhuillier</option>
-                      <option value="other">Other</option>
-                    </select>
+                    <Label htmlFor="remittance-provider">Remittance Provider</Label>
+                    <Select value={remittanceProvider} onValueChange={setRemittanceProvider}>
+                      <SelectTrigger id="remittance-provider">
+                        <SelectValue placeholder="Select Provider" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="western_union">Western Union</SelectItem>
+                        <SelectItem value="moneygram">MoneyGram</SelectItem>
+                        <SelectItem value="palawan">Palawan Express</SelectItem>
+                        <SelectItem value="cebuana">Cebuana Lhuillier</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">Full Name</label>
-                    <input
-                      type="text"
+                    <Label htmlFor="remittance-full-name">Full Name</Label>
+                    <Input
+                      id="remittance-full-name"
                       value={remittanceFullName}
                       onChange={(e) => setRemittanceFullName(e.target.value)}
                       placeholder="Full name for pickup"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
@@ -2387,6 +2546,17 @@ function ToProcessStatusUI({ refund, formatDate, formatMoney, navigate, shopId, 
 function WaitingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, statusConfig, onAction }: any) {
   const StatusIcon = statusConfig?.icon || Clock;
 
+  const refundId = refund?.refund || refund?.id;
+
+  const handleMarkAsReceived = async () => {
+    const id = refund?.refund || refund?.id;
+    if (!id) {
+      console.warn('Missing refund id');
+      return;
+    }
+    await onAction('mark_as_received', id);
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 space-y-6">
@@ -2413,7 +2583,6 @@ function WaitingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
               <AlertDescription>{statusConfig?.description}</AlertDescription>
             </Alert>
 
-            {/* Return Tracking */}
             {refund.tracking_number && (
               <Card>
                 <CardHeader className="pb-3">
@@ -2433,20 +2602,21 @@ function WaitingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
                       <p className="text-sm font-medium font-mono">{refund.tracking_number}</p>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => window.open(`https://track.example.com/${refund.tracking_number}`, '_blank')}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-2" />
-                    Track Shipment
-                  </Button>
+                  {refund.tracking_number && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => window.open(`https://track.example.com/${refund.tracking_number}`, '_blank')}
+                    >
+                      <ExternalLink className="h-3 w-3 mr-2" />
+                      Track Shipment
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             )}
 
-            {/* Items to be Returned */}
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm">Items to be Returned</CardTitle>
@@ -2457,37 +2627,30 @@ function WaitingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
                   <div className="text-sm text-muted-foreground">No items found.</div>
                 ) : (
                   <div className="space-y-4">
-                    {refund.order_items.map((item: any) => {
-                      const sku = item.product?.skus?.[0];
-                      const variantLabel = sku?.option_ids?.map((id: string) => {
-                        const variant = item.product?.variants?.find((v: any) => 
-                          v.options.some((opt: any) => opt.id === id)
-                        );
-                        if (variant) {
-                          const option = variant.options.find((opt: any) => opt.id === id);
-                          return option?.title;
-                        }
-                        return null;
-                      }).filter(Boolean).join(' • ');
+                    {refund.order_items.map((item: any, idx: number) => {
+                      const { selectedSku, label } = getSelectedSku(item as OrderItem);
 
                       return (
-                        <div key={item.id} className="rounded-lg border p-4">
+                        <div key={item.id || idx} className="rounded-lg border p-4">
                           <div className="flex items-start justify-between gap-4">
                             <div className="flex items-start gap-3">
                               <div className="w-16 h-16 flex-shrink-0 rounded bg-gray-100 flex items-center justify-center">
-                                <img
-                                  src={sku?.image || '/crimsonity.png'}
-                                  alt={item.product.name}
-                                  className="w-full h-full object-cover rounded"
-                                />
+                                {selectedSku?.image ? (
+                                  <img
+                                    src={selectedSku.image}
+                                    alt={item.product?.name}
+                                    className="w-full h-full object-cover rounded"
+                                  />
+                                ) : (
+                                  <Package className="h-6 w-6 text-gray-400" />
+                                )}
                               </div>
                               <div>
                                 <div className="font-medium">{item.product?.name || 'Product'}</div>
-                                {variantLabel && (
+                                {label && (
                                   <div className="mt-1 text-sm text-gray-700">
                                     <div className="text-xs text-muted-foreground">Variant</div>
-                                    <div className="font-medium">{variantLabel}</div>
-                                    <div className="text-xs text-gray-500">{sku?.sku_code ? `SKU: ${sku.sku_code}` : null}</div>
+                                    <div className="font-medium">{label}</div>
                                   </div>
                                 )}
                                 <div className="flex items-center gap-2 mt-1">
@@ -2509,122 +2672,11 @@ function WaitingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
                 )}
               </CardContent>
             </Card>
-
-            {/* Return Waybill */}
-            {refund.waybill && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    Return Waybill
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Waybill Number</p>
-                      <p className="text-sm font-mono">{refund.waybill.waybill_number}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Status</p>
-                      <Badge variant="outline" className="text-xs">{refund.waybill.status}</Badge>
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => {
-                      const printWindow = window.open('', '_blank');
-                      if (printWindow) {
-                        printWindow.document.write(`
-                          <html>
-                            <head>
-                              <title>Return Waybill - ${refund.waybill.waybill_number}</title>
-                              <style>
-                                body { font-family: Arial, sans-serif; margin: 20px; }
-                                .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-                                .waybill-info { display: flex; justify-content: space-between; margin-bottom: 20px; }
-                                .info-section { flex: 1; padding: 10px; }
-                                .info-section h3 { margin-top: 0; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
-                                .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                                .items-table th, .items-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-                                .items-table th { background-color: #f5f5f5; }
-                                .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-                              </style>
-                            </head>
-                            <body>
-                              <div class="header">
-                                <h1>Return Waybill</h1>
-                                <h2>Waybill #${refund.waybill.waybill_number}</h2>
-                              </div>
-                              
-                              <div class="waybill-info">
-                                <div class="info-section">
-                                  <h3>Sender Information</h3>
-                                  <p><strong>Customer:</strong> ${refund.waybill.customer_info?.name || 'N/A'}</p>
-                                  <p><strong>Address:</strong> ${refund.waybill.customer_info?.address || 'N/A'}</p>
-                                  <p><strong>Phone:</strong> ${refund.waybill.customer_info?.phone || 'N/A'}</p>
-                                </div>
-                                
-                                <div class="info-section">
-                                  <h3>Receiver Information</h3>
-                                  <p><strong>Shop:</strong> ${refund.waybill.shop_info?.name || 'N/A'}</p>
-                                  <p><strong>Address:</strong> ${refund.waybill.shop_info?.address || 'N/A'}</p>
-                                  <p><strong>Phone:</strong> ${refund.waybill.shop_info?.phone || 'N/A'}</p>
-                                </div>
-                              </div>
-                              
-                              <div class="info-section">
-                                <h3>Return Details</h3>
-                                <p><strong>Order Number:</strong> ${refund.order_info?.order_number || 'N/A'}</p>
-                                <p><strong>Refund ID:</strong> ${refund.refund || 'N/A'}</p>
-                                <p><strong>Status:</strong> ${refund.waybill.status || 'N/A'}</p>
-                                <p><strong>Created:</strong> ${new Date(refund.waybill.created_at).toLocaleDateString()}</p>
-                              </div>
-                              
-                              <table class="items-table">
-                                <thead>
-                                  <tr>
-                                    <th>Item</th>
-                                    <th>Quantity</th>
-                                    <th>Description</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  ${refund.waybill.return_items?.map((item: any) => `
-                                    <tr>
-                                      <td>${item.name || 'N/A'}</td>
-                                      <td>${item.quantity || 'N/A'}</td>
-                                      <td>${item.description || 'N/A'}</td>
-                                    </tr>
-                                  `).join('') || '<tr><td colspan="3">No items found</td></tr>'}
-                                </tbody>
-                              </table>
-                              
-                              <div class="footer">
-                                <p>Generated on ${new Date().toLocaleString()}</p>
-                              </div>
-                            </body>
-                          </html>
-                        `);
-                        printWindow.document.close();
-                        printWindow.print();
-                      }
-                    }}
-                  >
-                    <Printer className="h-3 w-3 mr-2" />
-                    Print Waybill
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
           </CardContent>
         </Card>
       </div>
 
       <div className="space-y-6">
-        {/* Action Card */}
         <Card className="border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Actions</CardTitle>
@@ -2633,7 +2685,7 @@ function WaitingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
             <Button
               size="sm"
               className="w-full bg-green-600 hover:bg-green-700"
-              onClick={() => onAction('mark_as_received', refund.refund)}
+              onClick={() => onAction && onAction('mark_as_received', refundId)}
             >
               <PackageCheck className="h-3 w-3 mr-2" />
               Confirm Item Received
@@ -2650,7 +2702,6 @@ function WaitingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
           </CardContent>
         </Card>
 
-        {/* Return Summary */}
         <Card className="border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Return Summary</CardTitle>
@@ -2705,7 +2756,6 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Left Column */}
       <div className="lg:col-span-2 space-y-6">
         <Card className="border">
           <CardHeader className="pb-3">
@@ -2732,7 +2782,6 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
               </AlertDescription>
             </Alert>
 
-            {/* Dispute Details */}
             <Card className="border-orange-200 bg-orange-50">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm flex items-center gap-2">
@@ -2766,7 +2815,6 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
               </CardContent>
             </Card>
 
-            {/* Main content */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card>
                 <CardHeader className="pb-3">
@@ -2809,7 +2857,6 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
               </Card>
             </div>
 
-            {/* Evidence Section */}
             {refund.evidence && refund.evidence.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
@@ -2842,9 +2889,7 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
         </Card>
       </div>
 
-      {/* Right Column */}
       <div className="space-y-6">
-        {/* Action Card */}
         <Card className="border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Actions</CardTitle>
@@ -2870,7 +2915,6 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
           </CardContent>
         </Card>
 
-        {/* Status Timeline */}
         <Card className="border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Status Timeline</CardTitle>
@@ -2924,7 +2968,6 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
   );
 }
 
-// Map status to UI components
 const STATUS_UI_COMPONENTS = {
   pending: PendingStatusUI,
   negotiation: GenericStatusUI,
@@ -2944,271 +2987,234 @@ export default function ViewRefundDetails() {
   const { toast } = useToast();
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Make refund stateful so we can update status locally after actions (approve, etc.)
   const [refund, setRefund] = useState(initialRefund);
   useEffect(() => setRefund(initialRefund), [initialRefund]);
 
-  // Computed refund id (business uuid preferred)
   const refundId = refund?.refund || refund?.id;
 
-  // Action handler for status changes (approve, etc.)
-  async function handleAction(action: string, payload?: any) {
+  const [waybillData, setWaybillData] = useState<any>(null);
+
+  const handleAction = useCallback(async (action: string, payload?: any) => {
     if (!action) return;
-    if (action === 'approve') {
-      try {
-        setActionLoading(true);
-        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-        const refundIdRaw = refund?.refund || refund?.id;
-        if (!refundIdRaw) {
-          toast({ title: 'Error', description: 'Refund id missing' });
-          setActionLoading(false);
+    
+    try {
+      setActionLoading(true);
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      
+      let endpoint = '';
+      let method = 'POST';
+      let body: any = null;
+
+      switch (action) {
+        case 'approve':
+          endpoint = `/return-refund/${encodeURIComponent(String(refundId))}/approve_refund/`;
+          body = JSON.stringify({ notes: payload?.notes || 'Approved by seller' });
+          break;
+        case 'mark_as_received':
+          endpoint = `/return-refund/${encodeURIComponent(String(payload || refundId))}/mark_as_received/`;
+          break;
+        case 'verify_item':
+          endpoint = `/return-refund/${encodeURIComponent(String(payload?.refundId || refundId))}/verify_item/`;
+          body = JSON.stringify({ 
+            verification_result: payload.verification_result,
+            verification_notes: payload.verification_notes || ''
+          });
+          break;
+        case 'generate_waybill':
+          // Handled in the state update switch below
+          break;
+        case 'notified':
+        case 'marked_to_process':
+        case 'processed':
+          // These are handled in child components
           return;
-        }
-        const refundId = String(refundIdRaw);
-        const endpoint = `${API_BASE_URL}/return-refund/${encodeURIComponent(refundId)}/approve_refund/`;
-
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-User-Id': user.user_id,
-            'X-Shop-Id': shopId,
-          },
-          credentials: 'include',
-          body: JSON.stringify({ notes: payload?.notes || 'Approved by seller' }),
-        });
-
-        const text = await res.text();
-        if (!res.ok) {
-          // Try parse JSON error if possible
-          try {
-            const json = JSON.parse(text);
-            throw new Error(json.message || JSON.stringify(json));
-          } catch (e) {
-            throw new Error(text || 'Failed to approve');
-          }
-        }
-
-        // Parse success response
-        let data = null;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          data = null;
-        }
-
-        // Update local refund state to include approved and deadline timestamps (use server response when available)
-        const nowIso = (new Date()).toISOString();
-        setRefund((r: any) => ({
-          ...(r || {}),
-          status: (data && data.status) || 'approved',
-          processed_at: (data && data.processed_at) || nowIso,
-          approved_at: (data && data.approved_at) || nowIso,
-          return_deadline: (data && data.return_deadline) || null,
-        }));
-
-        // Show confirmation toast
-        toast({ title: 'Approved request!', description: 'Refund request approved', variant: 'default' });
-
-      } catch (e: any) {
-        toast({ title: 'Error', description: e?.message || String(e) });
-      } finally {
-        setActionLoading(false);
-      }
-    } else if (action === 'mark_as_received') {
-      try {
-        setActionLoading(true);
-        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-        const refundId = payload;
-        if (!refundId) {
-          toast({ title: 'Error', description: 'Refund id missing' });
-          setActionLoading(false);
+        default:
+          console.warn('Unknown action:', action);
           return;
-        }
-        const endpoint = `${API_BASE_URL}/return-refund/${encodeURIComponent(refundId)}/mark_as_received/`;
-
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-User-Id': user.user_id,
-            'X-Shop-Id': shopId,
-          },
-          credentials: 'include',
-        });
-
-        const text = await res.text();
-        if (!res.ok) {
-          try {
-            const json = JSON.parse(text);
-            throw new Error(json.message || JSON.stringify(json));
-          } catch (e) {
-            throw new Error(text || 'Failed to mark as received');
-          }
-        }
-
-        let data = null;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          data = null;
-        }
-
-        // Update local refund state
-        setRefund((r: any) => ({
-          ...(r || {}),
-          status: (data && data.status) || 'to_verify',
-        }));
-
-        toast({ title: 'Item received!', description: 'Item marked as received for verification', variant: 'default' });
-
-      } catch (e: any) {
-        toast({ title: 'Error', description: e?.message || String(e) });
-      } finally {
-        setActionLoading(false);
       }
-    } else if (action === 'verify_item') {
+
+      const res = await fetch(apiUrlFor(endpoint), {
+        method,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-User-Id': user.id,
+          'X-Shop-Id': shopId,
+        },
+        body,
+      });
+
+      const text = await res.text();
+      if (!res.ok) {
+        try {
+          const json = JSON.parse(text);
+          throw new Error(json.message || JSON.stringify(json));
+        } catch (e) {
+          throw new Error(text || `Failed to ${action}`);
+        }
+      }
+
+      let data = null;
       try {
-        setActionLoading(true);
-        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-        const refundId = payload?.refundId || (refund?.refund || refund?.id);
-        const result = payload?.verification_result;
-        const notes = payload?.verification_notes || '';
-        if (!refundId || !result) {
-          toast({ title: 'Error', description: 'Missing verification data' });
-          setActionLoading(false);
-          return;
-        }
-        const endpoint = `${API_BASE_URL}/return-refund/${encodeURIComponent(refundId)}/verify_item/`;
-
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-User-Id': user.user_id,
-            'X-Shop-Id': shopId,
-          },
-          credentials: 'include',
-          body: JSON.stringify({ verification_result: result, verification_notes: notes }),
-        });
-
-        const text = await res.text();
-        if (!res.ok) {
-          try {
-            const json = JSON.parse(text);
-            throw new Error(json.message || JSON.stringify(json));
-          } catch (e) {
-            throw new Error(text || 'Failed to verify item');
-          }
-        }
-
-        let data = null;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          data = null;
-        }
-
-        setRefund((r: any) => ({
-          ...(r || {}),
-          status: (data && data.status) || (result === 'approved' ? 'to_process' : 'rejected'),
-        }));
-
-        toast({
-          title: result === 'approved' ? 'Item verified' : 'Return rejected',
-          description: result === 'approved' ? 'Moved to processing' : 'Moved to rejected',
-          variant: 'default',
-        });
-
-      } catch (e: any) {
-        toast({ title: 'Error', description: e?.message || String(e) });
-      } finally {
-        setActionLoading(false);
+        data = JSON.parse(text);
+      } catch (e) {
+        data = null;
       }
-    } else if (action === 'file_dispute') {
-      try {
-        setActionLoading(true);
-        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-        const refundId = payload?.refundId || (refund?.refund || refund?.id);
-        const reason = payload?.dispute_reason || 'Dispute filed by seller';
-        if (!refundId) {
-          toast({ title: 'Error', description: 'Refund id missing' });
-          setActionLoading(false);
-          return;
-        }
-        const endpoint = `${API_BASE_URL}/return-refund/${encodeURIComponent(refundId)}/file_dispute/`;
 
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-User-Id': user.user_id,
-            'X-Shop-Id': shopId,
-          },
-          credentials: 'include',
-          body: JSON.stringify({ dispute_reason: reason }),
-        });
-
-        const text = await res.text();
-        if (!res.ok) {
-          try {
-            const json = JSON.parse(text);
-            throw new Error(json.message || JSON.stringify(json));
-          } catch (e) {
-            throw new Error(text || 'Failed to file dispute');
+      // Update local state based on action
+      switch (action) {
+        case 'approve':
+          const nowIso = new Date().toISOString();
+          setRefund((r: any) => ({
+            ...(r || {}),
+            status: data?.status || 'approved',
+            processed_at: data?.processed_at || nowIso,
+            approved_at: data?.approved_at || nowIso,
+            return_deadline: data?.return_deadline || null,
+          }));
+          toast({ title: 'Approved request!', description: 'Refund request approved' });
+          break;
+        case 'generate_waybill':
+          const wbResponse = await fetch(apiUrlFor(`/return-refund/${payload?.refundId || refundId}/create_return_waybill/`), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-User-Id': user.id,
+              'X-Shop-Id': shopId,
+            },
+          });
+          if (wbResponse.ok) {
+            const wbData = await wbResponse.json();
+            setWaybillData(wbData.waybill || wbData);
+            toast({ title: 'Waybill generated', description: 'Return waybill created successfully' });
+          } else {
+            throw new Error('Failed to generate waybill');
           }
-        }
-
-        let data = null;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          data = null;
-        }
-
-        setRefund((r: any) => ({
-          ...(r || {}),
-          status: (data && data.status) || 'dispute',
-        }));
-
-        toast({ title: 'Dispute filed', description: 'Refund moved to dispute', variant: 'default' });
-
-      } catch (e: any) {
-        toast({ title: 'Error', description: e?.message || String(e) });
-      } finally {
-        setActionLoading(false);
+          break;
+        case 'verify_item':
+          setRefund((r: any) => ({
+            ...(r || {}),
+            status: data?.status || (payload.verification_result === 'approved' ? 'to_process' : 'rejected'),
+          }));
+          toast({
+            title: payload.verification_result === 'approved' ? 'Item verified' : 'Return rejected',
+            description: payload.verification_result === 'approved' ? 'Moved to processing' : 'Moved to rejected',
+          });
+          break;
       }
+
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || String(e) });
+    } finally {
+      setActionLoading(false);
     }
+  }, [refundId, user.id, shopId, toast]);
 
-  }
+  const handleChildAction = useCallback(async (action: string, data?: any) => {
+    if (action === 'notified' || action === 'marked_to_process' || action === 'processed') {
+      // Refresh the page for these actions
+      window.location.reload();
+    }
+  }, []);
 
   const status = refund.status || 'pending';
   const statusConfig = STATUS_CONFIG[status];
   const StatusIcon = statusConfig?.icon || Clock;
   const StatusSpecificUI = STATUS_UI_COMPONENTS[status] || GenericStatusUI;
 
-  const backTo = `/seller/seller-return-refund-cancel?shop_id=${encodeURIComponent(shopId)}`;
+  const backTo = shopId ? `/seller/seller-return-refund-cancel?shop_id=${encodeURIComponent(String(shopId))}` : '/seller/seller-return-refund-cancel';
 
   const handlePrint = () => {
     window.print();
   };
 
-  const handleCopyRequestNumber = () => {
-    navigator.clipboard.writeText(refund.request_number || '');
-    toast({
-      title: 'Copied!',
-      description: 'Request number copied to clipboard',
-    });
+  const handleDownloadWaybill = () => {
+    if (!waybillData) {
+      toast({ title: 'No waybill', description: 'Waybill not generated yet' });
+      return;
+    }
+    const printWindow = window.open('', '_blank');
+    if (printWindow && waybillData) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Return Waybill - ${waybillData.waybill_number}</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; }
+              .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+              .waybill-info { display: flex; justify-content: space-between; margin-bottom: 20px; }
+              .info-section { flex: 1; padding: 10px; }
+              .info-section h3 { margin-top: 0; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+              .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+              .items-table th, .items-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+              .items-table th { background-color: #f5f5f5; }
+              .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Return Waybill</h1>
+              <h2>Waybill #${waybillData.waybill_number}</h2>
+            </div>
+            
+            <div class="waybill-info">
+              <div class="info-section">
+                <h3>Sender Information</h3>
+                <p><strong>Customer:</strong> ${waybillData.customer_info?.name || 'N/A'}</p>
+                <p><strong>Address:</strong> ${waybillData.customer_info?.address || 'N/A'}</p>
+                <p><strong>Phone:</strong> ${waybillData.customer_info?.phone || 'N/A'}</p>
+              </div>
+              
+              <div class="info-section">
+                <h3>Receiver Information</h3>
+                <p><strong>Shop:</strong> ${waybillData.shop_info?.name || 'N/A'}</p>
+                <p><strong>Address:</strong> ${waybillData.shop_info?.address || 'N/A'}</p>
+                <p><strong>Phone:</strong> ${waybillData.shop_info?.phone || 'N/A'}</p>
+              </div>
+            </div>
+            
+            <div class="info-section">
+              <h3>Return Details</h3>
+              <p><strong>Order Number:</strong> ${waybillData.order_number || 'N/A'}</p>
+              <p><strong>Refund ID:</strong> ${waybillData.refund_id || 'N/A'}</p>
+              <p><strong>Status:</strong> ${waybillData.status || 'N/A'}</p>
+              <p><strong>Created:</strong> ${new Date(waybillData.created_at).toLocaleDateString()}</p>
+            </div>
+            
+            <table class="items-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Quantity</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${waybillData.return_items?.map((item: any) => `
+                  <tr>
+                    <td>${item.name || 'N/A'}</td>
+                    <td>${item.quantity || 'N/A'}</td>
+                    <td>${item.description || 'N/A'}</td>
+                  </tr>
+                `).join('') || '<tr><td colspan="3">No items found</td></tr>'}
+              </tbody>
+            </table>
+            
+            <div class="footer">
+              <p>Generated on ${new Date().toLocaleString()}</p>
+              <p>Printed by: ${waybillData.printed_by || 'N/A'}</p>
+            </div>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+    }
   };
 
   return (
     <ClientUserProvider user={user ?? null}>
       <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
-        {/* Header */}
         <div className="flex items-center justify-between">
           <Button
             variant="ghost"
@@ -3230,7 +3236,6 @@ export default function ViewRefundDetails() {
 
         <Separator />
 
-        {/* Main Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4">
             <div>
@@ -3267,9 +3272,9 @@ export default function ViewRefundDetails() {
                   <Printer className="w-4 h-4 mr-2" />
                   Print Details
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleCopyRequestNumber}>
-                  <Copy className="w-4 h-4 mr-2" />
-                  Copy Request Number
+                <DropdownMenuItem onClick={handleDownloadWaybill}>
+                  <Download className="w-4 h-4 mr-2" />
+                  Download Waybill
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => navigate(`/order/${refund.order_info?.order_id}`)}>
@@ -3285,7 +3290,6 @@ export default function ViewRefundDetails() {
           </div>
         </div>
 
-        {/* Status-Specific UI */}
         <StatusSpecificUI
           refund={refund}
           formatDate={formatDate}
@@ -3294,11 +3298,17 @@ export default function ViewRefundDetails() {
           shopId={shopId}
           user={user}
           statusConfig={statusConfig}
-          onAction={handleAction}
+          onAction={(action: string, payload?: any) => {
+            if (action === 'notified' || action === 'marked_to_process' || action === 'processed') {
+              handleChildAction(action, payload);
+            } else {
+              handleAction(action, payload);
+            }
+          }}
           actionLoading={actionLoading}
+          waybillData={waybillData}
         />
 
-        {/* Tabs for Additional Information (Evidence only) */}
         <Tabs defaultValue="evidence" className="w-full">
           <TabsList className="grid w-full grid-cols-1 lg:w-auto lg:inline-flex">
             <TabsTrigger value="evidence">Evidence</TabsTrigger>

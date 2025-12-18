@@ -62,43 +62,75 @@ export default function FileDisputeClient({ loaderData }: Route.ComponentProps) 
     };
   }, [files]);
 
-  const fetchRefund = useCallback(async () => {
-    if (!refundId || !userId) {
-      setInitialLoading(false);
-      return;
-    }
-    try {
-      const getHeaders: Record<string, string> = { Accept: 'application/json' };
-      if (userId) getHeaders['X-User-Id'] = userId;
+const fetchRefund = useCallback(async () => {
+  if (!refundId || !userId) {
+    setInitialLoading(false);
+    return;
+  }
+  try {
+    const getHeaders: Record<string, string> = { Accept: 'application/json' };
+    if (userId) getHeaders['X-User-Id'] = userId;
 
-      const res = await fetch(`${API_BASE_URL}/return-refund/${encodeURIComponent(refundId)}/get_my_refund/`, {
-        method: 'GET',
-        headers: getHeaders as HeadersInit,
-        credentials: 'include',
-      });
-      
+    const res = await fetch(`${API_BASE_URL}/return-refund/${encodeURIComponent(refundId)}/get_my_refund/`, {
+      method: 'GET',
+      headers: getHeaders as HeadersInit,
+      credentials: 'include',
+    });
     
-      
-      if (!res.ok) throw new Error(`Failed to load refund (${res.status})`);
-      
-      const data = await res.json();
-      console.log('Refund data received:', data);
-      setRefundData(data);
-      setOrderId(data?.order_info?.order_id || data?.order || null);
-      setOrderNumber(data?.order_info?.order_number || data?.order || null);
-      if (!data?.order_info?.order_id && !data?.order) {
-        console.warn('Missing order_info in refund response:', { order_info: data?.order_info, order: data?.order, refund: data });
-      }
-    } catch (e: any) {
+    if (!res.ok) throw new Error(`Failed to load refund (${res.status})`);
+    
+    const data = await res.json();
+    console.log('Refund data received:', data);
+    console.log('Available order fields:', {
+      order_info: data?.order_info,
+      order: data?.order,
+      order_id: data?.order_info?.order_id,
+      id: data?.order_info?.id,
+      all_keys: Object.keys(data || {}),
+      order_info_keys: data?.order_info ? Object.keys(data.order_info) : null
+    });
+    
+    setRefundData(data);
+    
+    // Try different ways to get the order ID
+    const orderIdentifier = 
+      data?.order_info?.id ||      // Direct order id
+      data?.order_info?.order?.id || // Nested order object
+      data?.order ||               // Direct order reference
+      data?.order_id ||            // Direct order_id field
+      null;
+    
+    console.log('Order identifier found:', orderIdentifier);
+    setOrderId(orderIdentifier);
+    
+    // For display purposes, try to get order number
+    const orderNumber = 
+      data?.order_info?.order_number ||
+      data?.order_number ||
+      data?.order_info?.order?.order_number ||
+      null;
+    
+    setOrderNumber(orderNumber);
+    
+    if (!orderIdentifier) {
+      console.warn('No order identifier found in refund response:', data);
       toast({
-        title: 'Error',
-        description: e?.message || 'Unable to load refund',
+        title: 'Warning',
+        description: 'Could not find associated order information',
         variant: 'destructive',
       });
-    } finally {
-      setInitialLoading(false);
     }
-  }, [refundId, userId, API_BASE_URL, toast, navigate]);
+  } catch (e: any) {
+    console.error('Error fetching refund:', e);
+    toast({
+      title: 'Error',
+      description: e?.message || 'Unable to load refund',
+      variant: 'destructive',
+    });
+  } finally {
+    setInitialLoading(false);
+  }
+}, [refundId, userId, API_BASE_URL, toast]);
 
   useEffect(() => {
     fetchRefund();
@@ -225,7 +257,7 @@ export default function FileDisputeClient({ loaderData }: Route.ComponentProps) 
           description: 'Please sign in again',
           variant: 'destructive',
         });
-        navigate('/login', { state: { returnTo: `/seller/file-dispute/${refundId}` } });
+        navigate('/login', { state: { returnTo: `/customer/file-dispute/${refundId}` } });
         return;
       }
 
@@ -307,7 +339,11 @@ export default function FileDisputeClient({ loaderData }: Route.ComponentProps) 
         setUploadingFiles(false);
       }
 
-      navigate(`/seller/view-refund-details/${refundId}?status=dispute`);
+      if (isCustomer) {
+        navigate(`/view-customer-return-cancel/${refundId}?status=dispute`);
+      } else {
+        navigate(`/view-refund-details/${refundId}?status=dispute`);
+      }
     } catch (e: any) {
       toast({
         title: 'Error',

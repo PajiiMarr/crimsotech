@@ -11549,6 +11549,48 @@ class RefundViewSet(viewsets.ViewSet):
             return Response(serializer.data)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+    # Add this to your RefundViewSet class
+    @action(detail=True, methods=['post'])
+    def update_tracking(self, request, pk=None):
+        """
+        Update tracking for return
+        """
+        try:
+            # Get user
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return Response({"error": "User ID required"}, status=400)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=404)
+            
+            # Get tracking data
+            logistic_service = request.data.get('logistic_service')
+            tracking_number = request.data.get('tracking_number')
+            
+            if not logistic_service:
+                return Response({"error": "logistic_service is required"}, status=400)
+            if not tracking_number:
+                return Response({"error": "tracking_number is required"}, status=400)
+            
+            # Update tracking
+            refund.logistic_service = logistic_service
+            refund.tracking_number = tracking_number
+            
+            # Change status to indicate return is on the way
+            refund.status = 'to_verify'
+            refund.save()
+            
+            return Response({
+                "message": "Tracking updated successfully",
+                "status": refund.status
+            })
+            
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
     
     @action(detail=False, methods=['post'])
     def create_refund(self, request):
@@ -11718,6 +11760,10 @@ class RefundViewSet(viewsets.ViewSet):
             # Authorize: buyer who requested it, shop owner for the related order, or admin
             authorized = False
             if refund.requested_by and str(refund.requested_by.id) == str(user.id):
+                authorized = True
+
+            # Admin / moderator can view any refund
+            if getattr(user, 'is_admin', False) or getattr(user, 'is_moderator', False):
                 authorized = True
             # Check seller ownership (via order items -> product.shop)
             try:
@@ -12145,43 +12191,49 @@ class RefundViewSet(viewsets.ViewSet):
             
             # Wallet details
             if hasattr(refund, 'wallet_details'):
+                wd = refund.wallet_details
+                created_at = getattr(wd, 'created_at', None)
                 payment_methods['wallet'] = {
-                    'id': str(refund.wallet_details.id),
-                    'provider': refund.wallet_details.provider,
-                    'account_name': refund.wallet_details.account_name,
-                    'account_number': refund.wallet_details.account_number,
-                    'contact_number': refund.wallet_details.contact_number,
-                    'created_at': refund.wallet_details.created_at.isoformat() if refund.wallet_details.created_at else None,
+                    'id': str(wd.id),
+                    'provider': wd.provider,
+                    'account_name': wd.account_name,
+                    'account_number': wd.account_number,
+                    'contact_number': wd.contact_number,
+                    'created_at': created_at.isoformat() if created_at else None,
                 }
             
             # Bank details
             if hasattr(refund, 'bank_details'):
+                bd = refund.bank_details
+                created_at = getattr(bd, 'created_at', None)
                 payment_methods['bank'] = {
-                    'id': str(refund.bank_details.id),
-                    'bank_name': refund.bank_details.bank_name,
-                    'account_name': refund.bank_details.account_name,
-                    'account_number': refund.bank_details.account_number,
-                    'account_type': refund.bank_details.account_type,
-                    'branch': refund.bank_details.branch,
-                    'created_at': refund.bank_details.created_at.isoformat() if refund.bank_details.created_at else None,
+                    'id': str(bd.id),
+                    'bank_name': bd.bank_name,
+                    'account_name': bd.account_name,
+                    'account_number': bd.account_number,
+                    'account_type': bd.account_type,
+                    'branch': bd.branch,
+                    'created_at': created_at.isoformat() if created_at else None,
                 }
             
             # Remittance details
             if hasattr(refund, 'remittance_details'):
+                rd = refund.remittance_details
+                created_at = getattr(rd, 'created_at', None)
                 payment_methods['remittance'] = {
-                    'id': str(refund.remittance_details.id),
-                    'provider': refund.remittance_details.provider,
-                    'first_name': refund.remittance_details.first_name,
-                    'last_name': refund.remittance_details.last_name,
-                    'full_name': f"{refund.remittance_details.first_name} {refund.remittance_details.last_name}",
-                    'contact_number': refund.remittance_details.contact_number,
-                    'address': refund.remittance_details.address,
-                    'city': refund.remittance_details.city,
-                    'province': refund.remittance_details.province,
-                    'zip_code': refund.remittance_details.zip_code,
-                    'valid_id_type': refund.remittance_details.valid_id_type,
-                    'valid_id_number': refund.remittance_details.valid_id_number,
-                    'created_at': refund.remittance_details.created_at.isoformat() if refund.remittance_details.created_at else None,
+                    'id': str(rd.id),
+                    'provider': rd.provider,
+                    'first_name': rd.first_name,
+                    'last_name': rd.last_name,
+                    'full_name': f"{rd.first_name} {rd.last_name}",
+                    'contact_number': rd.contact_number,
+                    'address': rd.address,
+                    'city': rd.city,
+                    'province': rd.province,
+                    'zip_code': rd.zip_code,
+                    'valid_id_type': rd.valid_id_type,
+                    'valid_id_number': rd.valid_id_number,
+                    'created_at': created_at.isoformat() if created_at else None,
                 }
             
             data['payment_method_details'] = payment_methods
@@ -12507,9 +12559,9 @@ class RefundViewSet(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
     
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post', 'patch'])
     def reject_refund(self, request, pk=None):
-        """Seller rejects a refund request"""
+        """Seller rejects a refund request with negotiation counter-offer"""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -12525,16 +12577,40 @@ class RefundViewSet(viewsets.ViewSet):
             if refund.status != 'pending':
                 return Response({"error": "Can only reject pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
             
-            refund.status = 'rejected'
+            # Get rejection details from request
+            seller_suggested_reason = request.data.get('seller_suggested_reason')
+            seller_suggested_method = request.data.get('seller_suggested_method')
+            status_override = request.data.get('status', 'negotiation')
+            
+            # Validate required fields
+            if not seller_suggested_reason:
+                return Response(
+                    {"error": "seller_suggested_reason is required"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not seller_suggested_method:
+                return Response(
+                    {"error": "seller_suggested_method is required"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update refund with negotiation details
+            refund.status = status_override  # Usually 'negotiation'
             refund.processed_by = user
-            refund.seller_response = request.data.get('reason', 'Rejected by seller')
+            refund.seller_suggested_reason = seller_suggested_reason
+            refund.seller_suggested_method = seller_suggested_method
+            refund.seller_response = f"Seller counter-offer: {seller_suggested_reason}"
             refund.save()
             
             return Response({
-                "message": "Refund rejected",
+                "message": "Counter-offer sent to buyer",
                 "refund_id": str(refund.refund),
-                "status": refund.status
-            })
+                "status": refund.status,
+                "seller_suggested_reason": refund.seller_suggested_reason,
+                "seller_suggested_method": refund.seller_suggested_method,
+                "negotiation_deadline": refund.negotiation_deadline
+            }, status=status.HTTP_200_OK)
             
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -14813,4 +14889,613 @@ class CreateRefundView(APIView):
     #         print(f"Error notifying seller: {str(e)}")
 
 
+
+
+
+
+class DisputeRequestViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for handling dispute requests with header-based authentication
+    """
+    queryset = DisputeRequest.objects.all()
     
+    def get_serializer_class(self):
+        if self.action == 'update':
+            return DisputeUpdateSerializer
+        elif self.action == 'update_status':
+            return DisputeStatusUpdateSerializer
+        elif self.action == 'set_outcome':
+            return DisputeOutcomeSerializer
+        return DisputeRequestSerializer
+    
+    def _get_user_from_header(self, request):
+        """Extract user from X-User-Id header"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return None
+        
+        try:
+            return User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return None
+    
+    def _is_admin_user(self, user):
+        """Check if user is admin/staff (you can customize this)"""
+        # Adjust based on your user model
+        return user.is_staff or user.is_superuser if user else False
+    
+    def list(self, request, *args, **kwargs):
+        """
+        List disputes - users see their own, admins see all
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Filter based on user role
+        if self._is_admin_user(user):
+            queryset = self.get_queryset()
+        else:
+            queryset = self.get_queryset().filter(filed_by=user)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve a specific dispute
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        instance = self.get_object()
+        
+        # Check if user can view this dispute
+        if not self._is_admin_user(user) and instance.filed_by != user:
+            return Response(
+                {'error': 'You do not have permission to view this dispute'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new dispute request
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Check if order exists and belongs to user
+            order_id = request.data.get('order')
+            if not order_id:
+                return Response(
+                    {'error': 'Order ID is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                order = Order.objects.get(id=order_id)
+                # Verify order belongs to user (add your logic here)
+                if order.user != user and not self._is_admin_user(user):
+                    return Response(
+                        {'error': 'Order does not belong to user'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except Order.DoesNotExist:
+                return Response(
+                    {'error': 'Order not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if dispute already exists for this order
+            existing_dispute = DisputeRequest.objects.filter(
+                order=order,
+                status__in=['filed', 'under_review', 'processing']
+            ).exists()
+            
+            if existing_dispute:
+                return Response(
+                    {'error': 'An active dispute already exists for this order'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            # Add filed_by to the data
+            data = serializer.validated_data
+            data['filed_by'] = user
+            data['order'] = order
+            
+            dispute = DisputeRequest.objects.create(**data)
+            
+            return Response(
+                DisputeRequestSerializer(dispute, context={'request': request}).data,
+                status=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    def update(self, request, *args, **kwargs):
+        """
+        Update dispute (only allowed in 'filed' status)
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        instance = self.get_object()
+        
+        # Check if user owns the dispute
+        if instance.filed_by != user:
+            return Response(
+                {'error': 'You do not have permission to update this dispute'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if dispute can be updated
+        if instance.status != 'filed':
+            return Response(
+                {'error': 'Dispute can only be updated while in "Filed" status'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        
+        return Response(serializer.data)
+    
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete dispute (only allowed in 'filed' status for users)
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        instance = self.get_object()
+        
+        # Check if user owns the dispute or is admin
+        if not self._is_admin_user(user) and instance.filed_by != user:
+            return Response(
+                {'error': 'You do not have permission to delete this dispute'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Users can only delete if in 'filed' status
+        if not self._is_admin_user(user) and instance.status != 'filed':
+            return Response(
+                {'error': 'You can only delete disputes in "Filed" status'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @action(detail=True, methods=['post'])
+    def add_evidence(self, request, pk=None):
+        """
+        Add evidence to a dispute
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        dispute = self.get_object()
+        
+        # Check if user owns the dispute
+        if dispute.filed_by != user:
+            return Response(
+                {'error': 'You do not have permission to add evidence to this dispute'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if evidence can be added (not in final states)
+        if dispute.status in ['completed', 'rejected', 'cancelled']:
+            return Response(
+                {'error': 'Cannot add evidence to a closed dispute'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = DisputeEvidenceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Add dispute and user to the evidence
+        evidence = serializer.save(
+            dispute=dispute,
+            uploaded_by=user
+        )
+        
+        return Response(
+            DisputeEvidenceSerializer(evidence).data,
+            status=status.HTTP_201_CREATED
+        )
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """
+        Cancel a dispute
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        dispute = self.get_object()
+        
+        # Check if user owns the dispute
+        if dispute.filed_by != user:
+            return Response(
+                {'error': 'You do not have permission to cancel this dispute'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if dispute can be cancelled
+        if dispute.status not in ['filed', 'under_review']:
+            return Response(
+                {'error': 'Dispute cannot be cancelled in its current status'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        dispute.status = 'cancelled'
+        dispute.resolved_at = timezone.now()
+        dispute.save()
+        
+        return Response(
+            DisputeRequestSerializer(dispute, context={'request': request}).data
+        )
+    
+    @action(detail=True, methods=['post'])
+    def update_status(self, request, pk=None):
+        """
+        Update dispute status (admin only)
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if user is admin
+        if not self._is_admin_user(user):
+            return Response(
+                {'error': 'Only admin users can update dispute status'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        dispute = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        data = serializer.validated_data
+        
+        # Update status and admin note
+        dispute.status = data['status']
+        if 'admin_note' in data:
+            dispute.admin_note = data.get('admin_note', '')
+        
+        # Set resolved_at if moving to a final state
+        if data['status'] in ['completed', 'rejected', 'cancelled']:
+            dispute.resolved_at = timezone.now()
+        
+        dispute.save()
+        
+        return Response(
+            DisputeRequestSerializer(dispute, context={'request': request}).data
+        )
+    
+    @action(detail=True, methods=['post'])
+    def set_outcome(self, request, pk=None):
+        """
+        Set dispute outcome (admin only)
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if user is admin
+        if not self._is_admin_user(user):
+            return Response(
+                {'error': 'Only admin users can set dispute outcomes'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        dispute = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        data = serializer.validated_data
+        
+        with transaction.atomic():
+            # Update dispute outcome
+            dispute.outcome = data['outcome']
+            dispute.awarded_amount = data.get('awarded_amount')
+            
+            if 'admin_note' in data:
+                if dispute.admin_note:
+                    dispute.admin_note += f"\n\n{data['admin_note']}"
+                else:
+                    dispute.admin_note = data['admin_note']
+            
+            # Auto-update status based on outcome
+            if data['outcome'] in ['buyer_wins', 'partial_refund', 'seller_wins']:
+                dispute.status = 'processing'
+            elif data['outcome'] in ['dismissed', 'withdrawn']:
+                dispute.status = 'completed'
+                dispute.resolved_at = timezone.now()
+            
+            dispute.save()
+            
+            # Create refund if needed
+            if data['outcome'] in ['buyer_wins', 'partial_refund'] and data.get('awarded_amount'):
+                refund = self._create_refund(dispute, data['awarded_amount'], user)
+                dispute.refund = refund
+                dispute.save()
+        
+        return Response(
+            DisputeRequestSerializer(dispute, context={'request': request}).data
+        )
+    
+    def _create_refund(self, dispute, amount, user):
+        """
+        Helper method to create refund for dispute outcome
+        """
+        # You'll need to implement your refund creation logic here
+        # This is a placeholder - adjust based on your Refund model
+        
+        refund_data = {
+            'order': dispute.order,
+            'amount': amount,
+            'status': 'pending',
+            'reason': f'Dispute resolution: {dispute.get_outcome_display()}',
+            'processed_by': user
+        }
+        
+        # Assuming you have a Refund model
+        try:
+            from .models import Refund  # Import your Refund model
+            refund = Refund.objects.create(**refund_data)
+            return refund
+        except ImportError:
+            # If Refund model doesn't exist, return None
+            return None
+    
+    @action(detail=False, methods=['get'])
+    def my_disputes(self, request):
+        """
+        Get disputes filed by the current user
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        disputes = self.get_queryset().filter(filed_by=user)
+        page = self.paginate_queryset(disputes)
+        
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(disputes, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def pending(self, request):
+        """
+        Get pending disputes (admin only)
+        """
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if user is admin
+        if not self._is_admin_user(user):
+            return Response(
+                {'error': 'Only admin users can view pending disputes'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        pending_disputes = self.get_queryset().filter(
+            status__in=['filed', 'under_review', 'processing']
+        )
+        page = self.paginate_queryset(pending_disputes)
+        
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(pending_disputes, many=True)
+        return Response(serializer.data)
+
+
+class DisputeEvidenceViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing dispute evidence with header-based authentication
+    """
+    queryset = DisputeEvidence.objects.all()
+    serializer_class = DisputeEvidenceSerializer
+    
+    def _get_user_from_header(self, request):
+        """Extract user from X-User-Id header"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return None
+        
+        try:
+            return User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return None
+    
+    def _is_admin_user(self, user):
+        """Check if user is admin/staff"""
+        return user.is_staff or user.is_superuser if user else False
+    
+    def list(self, request, *args, **kwargs):
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Users can only see evidence for their own disputes
+        # Admins can see all evidence
+        if self._is_admin_user(user):
+            queryset = self.get_queryset()
+        else:
+            queryset = self.get_queryset().filter(
+                Q(uploaded_by=user) | Q(dispute__filed_by=user)
+            )
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    def retrieve(self, request, *args, **kwargs):
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        instance = self.get_object()
+        
+        # Check if user can view this evidence
+        if not self._is_admin_user(user) and instance.uploaded_by != user and instance.dispute.filed_by != user:
+            return Response(
+                {'error': 'You do not have permission to view this evidence'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+    
+    def create(self, request, *args, **kwargs):
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get dispute_id from request data
+        dispute_id = request.data.get('dispute')
+        if not dispute_id:
+            return Response(
+                {'error': 'Dispute ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            dispute = DisputeRequest.objects.get(id=dispute_id)
+            
+            # Check if user owns the dispute
+            if dispute.filed_by != user:
+                return Response(
+                    {'error': 'You do not have permission to add evidence to this dispute'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check if evidence can be added
+            if dispute.status in ['completed', 'rejected', 'cancelled']:
+                return Response(
+                    {'error': 'Cannot add evidence to a closed dispute'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            # Add user to the evidence
+            evidence = serializer.save(
+                dispute=dispute,
+                uploaded_by=user
+            )
+            
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+            
+        except DisputeRequest.DoesNotExist:
+            return Response(
+                {'error': 'Dispute not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    def destroy(self, request, *args, **kwargs):
+        user = self._get_user_from_header(request)
+        if not user:
+            return Response(
+                {'error': 'User ID required in X-User-Id header'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        instance = self.get_object()
+        
+        # Check if user can delete the evidence
+        if not self._is_admin_user(user) and instance.uploaded_by != user:
+            return Response(
+                {'error': 'You do not have permission to delete this evidence'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if dispute is in a state that allows evidence deletion
+        if instance.dispute.status in ['completed', 'rejected', 'cancelled']:
+            return Response(
+                {'error': 'Cannot delete evidence from a closed dispute'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)

@@ -478,8 +478,7 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
     const qs = new URLSearchParams();
     if (shopId) qs.set('shop_id', shopId);
     // Use relative navigation so it still works with a basename / nested hosting.
-    navigate(
-`/seller/view-refund-details/${encodeURIComponent(requestId)}${
+    navigate(`/seller/view-refund-details/${encodeURIComponent(requestId)}${
     qs.toString() ? `?${qs.toString()}` : ''
   }`
 );

@@ -42,6 +42,8 @@ export default [
     route("request-refund-return/:id", "routes/customer/request-refund-return.tsx"),
     route('view-order/:orderId', 'routes/customer/view-order.tsx'),
     route('shop/:shopId', 'routes/customer/view-shop.tsx'),
+    route('process-return', 'routes/customer/process-return.tsx'),
+    route('file-dispute/:refundId', 'routes/customer/file-dispute.tsx'),
 
     //customer-seller
     route('view-customer-return-cancel/:returnId', 'routes/customer/view-customer-return-cancel.tsx'),
@@ -92,8 +94,10 @@ export default [
         route('vouchers', 'routes/admin/vouchers.tsx'),
         route('refunds', 'routes/admin/refunds.tsx'),
         route('users', 'routes/admin/users.tsx'),
-        route('team', 'routes/admin/team.tsx'),
+        route('team', 'routes/admin/team.tsx'), 
         route('reports', 'routes/admin/reports.tsx'),
+        route('dispute', 'routes/admin/dispute.tsx'),
+        route('dispute/:disputeId', 'routes/admin/view-details.tsx'),
         
     ]),
     ...prefix("moderator", [

@@ -66,6 +66,7 @@ const menuItems = [
       { title: "Team", url: "/admin/team", icon: Users, roles: ["admin"] },
       { title: "Reports", url: "/admin/reports", icon: FileText, roles: ["admin"] },
       { title: "Activity Log", url: "/admin/activity-log", icon: FileText, roles: ["admin"] },
+      { title: "Disputes", url: "/admin/dispute", icon: FileText, roles: ["admin"] },
     ]
   },
   {

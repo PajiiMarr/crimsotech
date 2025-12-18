@@ -20,6 +20,7 @@ from api.views import *
 from rest_framework.routers import DefaultRouter
 from django.conf.urls.static import static
 from django.conf import settings
+from api.dispute_views import DisputeRequestViewSet
 
 router = DefaultRouter()
 router.register(r'verify', VerifyNumber, basename='verify')
@@ -52,7 +53,7 @@ router.register(r'return-refund', RefundViewSet, basename='return-refund')
 router.register(r'order-sucessful', OrderSuccessfull, basename='order-successful')
 router.register(r'refund-payment', RefundPaymentMethodViewSet, basename='refundpayment')
 router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
-router.register(r'disputes', DisputeViewSet, basename='dispute')
+router.register(r'disputes', DisputeRequestViewSet, basename='dispute')
 router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment')
 router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-orders-active')
 
@@ -66,6 +67,7 @@ urlpatterns = [
     path('api/customer-favorites/', CustomerFavoritesView.as_view(), name='customer-favorites'),
     path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
     path('api/shops/<uuid:shop_id>/', ViewShopAPIView.as_view(), name='view-shop'),
+    
   
 
     

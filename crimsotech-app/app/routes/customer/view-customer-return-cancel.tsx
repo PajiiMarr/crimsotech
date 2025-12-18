@@ -1561,6 +1561,116 @@ function NegotiationStatusUI({ refundData, formatDate, formatCurrency, navigate,
   );
 }
 
+function RejectedStatusUI({ refundData, formatDate, formatCurrency, navigate }: any) {
+  const statusConfig = STATUS_CONFIG.rejected;
+  const StatusIcon = statusConfig.icon;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="lg:col-span-2 space-y-4">
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <RotateCcw className="h-4 w-4" />
+                Refund Request #{refundData.request_number}
+              </CardTitle>
+              <Badge variant="outline" className={statusConfig.color + " text-xs"}>
+                <StatusIcon className="h-3 w-3 mr-1" />
+                {statusConfig.label}
+              </Badge>
+            </div>
+            <CardDescription className="text-xs">
+              Order #{getOrderNumber(refundData)} • Updated {formatDate(refundData.rejected_at || refundData.updated_at || refundData.requested_at)}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Alert className="bg-red-50 border-red-200">
+              <XCircle className="h-4 w-4 text-red-600" />
+              <AlertTitle className="text-red-800">Offer Rejected</AlertTitle>
+              <AlertDescription className="text-red-700">
+                You rejected the seller’s offer. You can contact the seller or file a dispute if needed.
+              </AlertDescription>
+            </Alert>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground">Requested Amount</p>
+                <p className="font-medium text-sm">{formatCurrency(refundData.total_refund_amount)}</p>
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground">Preferred Method</p>
+                <p className="font-medium text-sm capitalize">{refundData.preferred_refund_method || 'Not specified'}</p>
+              </div>
+            </div>
+
+            {refundData.seller_suggested_method && (
+              <div className="border rounded p-3">
+                <p className="text-sm font-medium mb-2">Last Seller Offer</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Suggested Method</p>
+                    <p className="font-medium">{refundData.seller_suggested_method}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Suggested Amount</p>
+                    <p className="font-medium text-green-600">
+                      {refundData.seller_suggested_amount ? formatCurrency(refundData.seller_suggested_amount) : '—'}
+                    </p>
+                  </div>
+                </div>
+                {refundData.seller_suggested_reason && (
+                  <div className="mt-2">
+                    <p className="text-xs text-muted-foreground">Seller’s Reason</p>
+                    <p className="text-sm text-gray-700">{refundData.seller_suggested_reason}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="space-y-4">
+        <Card className="border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Actions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-8 text-xs"
+              onClick={() => navigate(`/chat/seller/${getShopId(refundData)}`)}
+            >
+              <MessageSquare className="h-3 w-3 mr-1.5" />
+              Contact Seller
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => navigate(`/file-dispute/${refundData.refund}`)}
+            >
+              <AlertTriangle className="h-3 w-3 mr-1.5" />
+              File Dispute
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => navigate(`/orders/${getOrderNumber(refundData)}`)}
+            >
+              <Eye className="h-3 w-3 mr-1.5" />
+              View Order
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, user }: any) {
   const statusConfig = refundData.status === 'to_process' ? STATUS_CONFIG.to_process : STATUS_CONFIG.approved;
   const [showReturnDetails, setShowReturnDetails] = useState(false);
@@ -2108,39 +2218,11 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
               </Alert>
             )}
 
-            {/* Show Process Return button only for return-type refunds */}
             {refundData.refund_category !== 'keep_item' && !showReturnDetails && (
               <Button
                 size="sm"
                 className="w-full h-8 text-xs"
-                onClick={async () => {
-                  const refundId = refundData?.refund;
-                  if (!refundId || typeof refundId !== 'string' || refundId === 'undefined' || refundId.length !== 36) {
-                    alert('Invalid refund ID. Please refresh the page and try again.');
-                    return;
-                  }
-                  
-                  try {
-                    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-                    const response = await fetch(`${API_BASE_URL}/return-refund/${refundId}/start_return_process/`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'X-User-Id': user.id,
-                      },
-                      credentials: 'include',
-                    });
-                    if (response.ok) {
-                      const data = await response.json();
-                      setCurrentStatus(data.status);
-                      setShowReturnDetails(true);
-                    } else {
-                      console.error('Failed to start return process');
-                    }
-                  } catch (error) {
-                    console.error('Error starting return process:', error);
-                  }
-                }}
+                onClick={() => navigate(`/process-return?refundId=${refundData?.refund}`)}
                 disabled={!refundData.buyer_notified_at}
               >
                 <Calendar className="h-3 w-3 mr-1.5" />
@@ -2173,8 +2255,15 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
   );
 }
 
-function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate }: any) {
+function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate, user }: any) {
   const statusConfig = STATUS_CONFIG.dispute;
+  const filedById = refundData?.dispute_filed_by;
+  const youFiled = filedById && user?.id && String(filedById) === String(user.id);
+  const filedByText = youFiled
+    ? 'You filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.'
+    : (user?.isCustomer
+        ? 'The shop filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.'
+        : 'The buyer filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.');
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -2202,7 +2291,7 @@ function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate }: a
               <AlertTriangle className="h-4 w-4 text-orange-600" />
               <AlertTitle className="text-orange-800">Dispute Filed</AlertTitle>
               <AlertDescription className="text-orange-700">
-                The shop owner has filed a dispute for this refund request. Our team will review the dispute and get back to you within 48 hours.
+                {filedByText}
               </AlertDescription>
             </Alert>
 
@@ -2367,7 +2456,7 @@ const STATUS_UI_COMPONENTS = {
   to_process: ApprovedStatusUI, // Use approved UI since it has product list and return instructions
   dispute: DisputeStatusUI, // Custom UI for dispute status
   completed: CompletedStatusUI,
-  rejected: PendingStatusUI, // Use pending UI for now, update later
+  rejected: RejectedStatusUI,
   cancelled: PendingStatusUI, // Use pending UI for now, update later
 };
 
@@ -2377,9 +2466,9 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
   const params = useParams<{ returnId: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  
-  // Use the status from the refund data
-  const currentStatus = refundData?.status as keyof typeof STATUS_CONFIG || 'pending';
+
+  // Use the status from the *state* (so UI updates after actions)
+  const currentStatus = (refundData?.status as keyof typeof STATUS_CONFIG) || 'pending';
 
   const formatDate = (dateString: string) => {
     if (!dateString) return 'N/A';
@@ -2510,14 +2599,20 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
       }
       
       const data = await res.json();
-      
+
       // Update local state
-      setRefundData((prev: any) => ({
-        ...prev,
-        status: data.status || prev.status,
-        seller_response: data.message || prev.seller_response,
-        approved_at: data.approved_at || prev.approved_at,
-      }));
+      setRefundData((prev: any) => {
+        const inferredAcceptStatus = prev?.refund_category === 'keep_item' ? 'to_process' : 'approved';
+        const nextStatus = data.status || (action === 'reject' ? 'rejected' : inferredAcceptStatus);
+
+        return {
+          ...prev,
+          status: nextStatus,
+          seller_response: data.message || prev.seller_response,
+          approved_at: data.approved_at || prev.approved_at,
+          rejected_at: data.rejected_at || prev.rejected_at,
+        };
+      });
       
       toast({ 
         title: 'Response submitted', 
@@ -2575,9 +2670,10 @@ export default function ViewReturnRequest({ loaderData }: Route.ComponentProps) 
   };
 
   const refundId = refundDataState?.refund || params.returnId;
-  const statusConfig = STATUS_CONFIG[currentStatus];
+  const stateStatus = (refundDataState?.status as keyof typeof STATUS_CONFIG) || currentStatus;
+  const statusConfig = STATUS_CONFIG[stateStatus];
   const StatusIcon = statusConfig?.icon || Clock;
-  const StatusSpecificUI = STATUS_UI_COMPONENTS[currentStatus] || PendingStatusUI;
+  const StatusSpecificUI = STATUS_UI_COMPONENTS[stateStatus] || PendingStatusUI;
 
   // Loading / Error state: show a friendly message and permit retry (instead of an indefinite spinner)
   if (!refundDataState) {
