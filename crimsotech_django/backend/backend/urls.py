@@ -50,6 +50,9 @@ router.register(r'purchases-buyer', PurchasesBuyer, basename='purchases-buyer') 
 router.register(r'shipping-address', ShippingAddressViewSet, basename='shipping-address')  # Add this line
 router.register(r'return-refund', RefundViewSet, basename='return-refund')
 router.register(r'order-sucessful', OrderSuccessfull, basename='order-successful')
+router.register(r'refund-payment', RefundPaymentMethodViewSet, basename='refundpayment')
+router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
+router.register(r'disputes', DisputeViewSet, basename='dispute')
 router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment')
 router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-orders-active')
 
