@@ -99,6 +99,9 @@ export default [
     ...prefix("rider", [
         index("routes/rider/home.tsx"),
         route('pendings', 'routes/rider/pendings.tsx'),
+        route('stats', 'routes/rider/stats.tsx'),
+        route('orders/active', 'routes/rider/active-orders.tsx'),
+        route('orders/active/:orderId', 'routes/rider/active-orders/active-orders-details.tsx'),
     ]),
 ] satisfies RouteConfig;
 

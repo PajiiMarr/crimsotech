@@ -24,6 +24,10 @@ import hashlib
 import os
 from django.db.models import Count, Avg, Sum, Q, F, Case, When, Value, Exists, OuterRef
 from datetime import datetime, time, timedelta
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+
+
 
 
 
@@ -12812,3 +12816,472 @@ class ArrangeShipment(viewsets.ViewSet):
                 "message": f"Error submitting offer: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
+class RiderOrdersActive(viewsets.ViewSet):
+    @action(detail=False, methods=['get'], url_path='order-details/(?P<order_id>[^/.]+)')
+    def order_details(self, request, order_id=None):
+        """
+        Get detailed information about a specific order.
+        
+        Parameters:
+        - order_id: UUID of the order to retrieve details for
+        
+        Returns:
+        - Order details including delivery, payment, and related information
+        """
+        try:
+            # Validate that order_id is a valid UUID
+            order_uuid = uuid.UUID(order_id)
+        except (ValueError, AttributeError):
+            return Response(
+                {"error": "Invalid order ID format. Must be a valid UUID."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get the order with related data efficiently using select_related/prefetch_related
+        # Note: 'delivery' is not a direct field on Order model, it's a reverse relation
+        order = get_object_or_404(
+            Order.objects.select_related(
+                'user',
+                'shipping_address'
+            ),
+            order=order_uuid
+        )
+
+        # Get related data efficiently
+        # Delivery is a reverse relation, so we use filter() and select_related() on Delivery model
+        delivery = Delivery.objects.filter(order=order).select_related('rider__rider').first()
+        
+        # Get payment for this order
+        payment = Payment.objects.filter(order=order).first()
+        
+        # Get checkout items for this order with related product data
+        checkout_items = Checkout.objects.filter(order=order).select_related(
+            'cart_item__product__shop',
+            'cart_item__product__customer__customer'
+        )
+
+        # Build the response data
+        order_data = {
+            "order_id": str(order.order),
+            "order_status": order.status,
+            "total_amount": str(order.total_amount),
+            "payment_method": order.payment_method,
+            "delivery_method": order.delivery_method,
+            "created_at": order.created_at,
+            "updated_at": order.updated_at,
+            "customer": {
+                "id": str(order.user.id),
+                "name": f"{order.user.first_name} {order.user.last_name}",
+                "contact_number": order.user.contact_number,
+                "email": order.user.email
+            } if order.user else None,
+            "shipping_address": {
+                "recipient_name": order.shipping_address.recipient_name,
+                "recipient_phone": order.shipping_address.recipient_phone,
+                "full_address": order.shipping_address.get_full_address(),
+                "city": order.shipping_address.city,
+                "province": order.shipping_address.province,
+                "barangay": order.shipping_address.barangay,
+                "zip_code": order.shipping_address.zip_code
+            } if order.shipping_address else None,
+            "delivery": {
+                "id": str(delivery.id) if delivery else None,
+                "status": delivery.status if delivery else None,
+                "rider_id": str(delivery.rider.rider.id) if delivery and delivery.rider else None,
+                "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery and delivery.rider else None,
+                "rider_contact": delivery.rider.rider.contact_number if delivery and delivery.rider else None,
+                "picked_at": delivery.picked_at if delivery else None,
+                "delivered_at": delivery.delivered_at if delivery else None,
+                "created_at": delivery.created_at if delivery else None
+            } if delivery else None,
+            "payment": {
+                "id": str(payment.id) if payment else None,
+                "status": payment.status if payment else None,
+                "amount": str(payment.amount) if payment else None,
+                "method": payment.method if payment else None,
+                "transaction_date": payment.transaction_date if payment else None
+            } if payment else None,
+            "items": [
+                {
+                    "checkout_id": str(item.id),
+                    "product_id": str(item.cart_item.product.id) if item.cart_item and item.cart_item.product else None,
+                    "product_name": item.cart_item.product.name if item.cart_item and item.cart_item.product else None,
+                    "shop_name": item.cart_item.product.shop.name if item.cart_item and item.cart_item.product and item.cart_item.product.shop else None,
+                    "shop_id": str(item.cart_item.product.shop.id) if item.cart_item and item.cart_item.product and item.cart_item.product.shop else None,
+                    "seller_name": f"{item.cart_item.product.customer.customer.first_name} {item.cart_item.product.customer.customer.last_name}" if item.cart_item and item.cart_item.product and item.cart_item.product.customer and item.cart_item.product.customer.customer else None,
+                    "quantity": item.quantity,
+                    "unit_price": str(item.cart_item.product.price) if item.cart_item and item.cart_item.product else None,
+                    "total": str(item.total_amount) if item.total_amount else None,
+                    "remarks": item.remarks
+                }
+                for item in checkout_items
+                if item.cart_item and item.cart_item.product
+            ]
+        }
+
+        return Response(order_data, status=status.HTTP_200_OK)
+    
+    
+    def _get_rider(self, request):
+        """Get rider instance from authenticated user"""
+        try:
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return None
+            
+            # Try to find the rider by user ID
+            return Rider.objects.get(rider_id=user_id)
+        except (Rider.DoesNotExist, ValueError):
+            return None
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """
+        Get metrics for rider dashboard
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Current time for calculations
+        now = timezone.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_ago = now - timedelta(days=7)
+        
+        # Get all deliveries assigned to this rider
+        rider_deliveries = Delivery.objects.filter(rider=rider)
+        
+        # Count deliveries by status
+        status_counts = rider_deliveries.aggregate(
+            total=Count('id'),
+            pending=Count('id', filter=Q(status='pending')),
+            picked_up=Count('id', filter=Q(status='picked_up')),
+            delivered=Count('id', filter=Q(status='delivered'))
+        )
+        
+        # Calculate expected earnings from active orders
+        active_deliveries = rider_deliveries.filter(
+            status__in=['pending', 'picked_up']
+        )
+        
+        total_earnings = active_deliveries.aggregate(
+            total=Sum('order__total_amount')
+        )['total'] or 0
+        
+        # Calculate delivery time metrics
+        completed_deliveries = rider_deliveries.filter(
+            status='delivered',
+            picked_at__isnull=False,
+            delivered_at__isnull=False
+        )
+        
+        avg_delivery_time = completed_deliveries.annotate(
+            delivery_time=(
+                F('delivered_at') - F('picked_at')
+            )
+        ).aggregate(
+            avg_time=Avg('delivery_time')
+        )['avg_time']
+        
+        # Convert timedelta to minutes if exists
+        if avg_delivery_time:
+            avg_delivery_minutes = avg_delivery_time.total_seconds() / 60
+        else:
+            avg_delivery_minutes = 0
+        
+        # Calculate on-time deliveries (within 2 hours)
+        timely_deliveries = completed_deliveries.annotate(
+            delivery_time=(
+                F('delivered_at') - F('picked_at')
+            )
+        ).filter(
+            delivery_time__lte=timedelta(hours=2)
+        ).count()
+        
+        total_completed = completed_deliveries.count()
+        completion_rate = (
+            (timely_deliveries / total_completed * 100) 
+            if total_completed > 0 else 0
+        )
+        
+        # Get recent performance
+        today_deliveries = rider_deliveries.filter(
+            created_at__date=now.date()
+        ).count()
+        
+        week_earnings = rider_deliveries.filter(
+            status='delivered',
+            delivered_at__gte=week_ago
+        ).aggregate(
+            total=Sum('order__total_amount')
+        )['total'] or 0
+        
+        metrics = {
+            "success": True,
+            "metrics": {
+                "total_active_orders": status_counts['total'],
+                "pending_pickup": status_counts['pending'],
+                "in_transit": status_counts['picked_up'],
+                "completed_deliveries": status_counts['delivered'],
+                "expected_earnings": float(total_earnings),
+                "avg_delivery_time": round(avg_delivery_minutes, 1),
+                "completion_rate": round(completion_rate, 1),
+                "on_time_deliveries": timely_deliveries,
+                "late_deliveries": total_completed - timely_deliveries,
+                "today_deliveries": today_deliveries,
+                "week_earnings": float(week_earnings),
+                "has_data": status_counts['total'] > 0
+            }
+        }
+        
+        return Response(metrics)
+    
+    @action(detail=False, methods=['get'])
+    def get_deliveries(self, request):
+        """
+        Get active deliveries assigned to rider with pagination
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get query parameters
+        status_filter = request.GET.get('status', '')
+        page = int(request.GET.get('page', 1))
+        page_size = int(request.GET.get('page_size', 20))
+        search = request.GET.get('search', '')
+        
+        # Start with all deliveries for this rider
+        deliveries = Delivery.objects.filter(rider=rider)
+        
+        # Apply status filter
+        if status_filter and status_filter != 'all':
+            deliveries = deliveries.filter(status=status_filter)
+        
+        # Apply search filter
+        if search:
+            deliveries = deliveries.filter(
+                Q(order__order__icontains=search) |
+                Q(order__user__username__icontains=search) |
+                Q(order__user__first_name__icontains=search) |
+                Q(order__user__last_name__icontains=search)
+            )
+        
+        # Get total count
+        total_count = deliveries.count()
+        
+        # Calculate pagination
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        
+        # Get paginated deliveries with proper related fields
+        paginated_deliveries = deliveries.select_related(
+            'order',
+            'order__user',
+            'order__shipping_address'
+        )[start_idx:end_idx]
+        
+        # Format response data with null checks for shipping_address
+        deliveries_data = []
+        for delivery in paginated_deliveries:
+            order = delivery.order
+            
+            # Handle null shipping_address
+            shipping_address = order.shipping_address
+            shipping_address_data = None
+            if shipping_address:
+                shipping_address_data = {
+                    "id": str(shipping_address.id),
+                    "recipient_name": shipping_address.recipient_name,
+                    "recipient_phone": shipping_address.recipient_phone,
+                    "street": shipping_address.street,
+                    "barangay": shipping_address.barangay,
+                    "city": shipping_address.city,
+                    "province": shipping_address.province,
+                    "full_address": shipping_address.get_full_address(),
+                }
+            
+            # Calculate time elapsed
+            time_elapsed = timezone.now() - delivery.created_at
+            hours = int(time_elapsed.total_seconds() // 3600)
+            minutes = int((time_elapsed.total_seconds() % 3600) // 60)
+            
+            # Format delivery data
+            delivery_info = {
+                "id": str(delivery.id),
+                "order": {
+                    "order_id": str(order.order),
+                    "customer": {
+                        "id": str(order.user.id),
+                        "username": order.user.username or "",
+                        "first_name": order.user.first_name or "",
+                        "last_name": order.user.last_name or "",
+                        "contact_number": order.user.contact_number or "",
+                    },
+                    "shipping_address": shipping_address_data,
+                    "total_amount": float(order.total_amount),
+                    "payment_method": order.payment_method or "",
+                    "delivery_method": order.delivery_method or "",
+                    "status": order.status,
+                    "created_at": order.created_at.isoformat(),
+                },
+                "status": delivery.status,
+                "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
+                "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                "created_at": delivery.created_at.isoformat(),
+                "updated_at": delivery.updated_at.isoformat(),
+                "time_elapsed": f"{hours}h {minutes}m",
+                "is_late": hours > 2 and delivery.status == 'pending',
+            }
+            deliveries_data.append(delivery_info)
+        
+        # Get pending orders (orders without rider assignment)
+        # Only include orders with shipping_address to avoid errors
+        pending_orders = Order.objects.filter(
+            status__in=['pending', 'processing'],
+            delivery__isnull=True,
+            shipping_address__isnull=False  # Only include orders with shipping address
+        )[:5]  # Limit to 5 for dashboard
+        
+        pending_orders_data = []
+        for order in pending_orders:
+            if order.shipping_address:  # Double check
+                pending_orders_data.append({
+                    "order_id": str(order.order),
+                    "customer": order.shipping_address.recipient_name,
+                    "address": order.shipping_address.get_full_address(),
+                    "amount": float(order.total_amount),
+                    "created_at": order.created_at.isoformat(),
+                })
+        
+        response = {
+            "success": True,
+            "deliveries": deliveries_data,
+            "pending_orders": pending_orders_data,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": (total_count + page_size - 1) // page_size,
+            },
+            "filters": {
+                "status": status_filter if status_filter else "all",
+                "search": search,
+            }
+        }
+        
+        return Response(response)
+    
+    @action(detail=False, methods=['post'])
+    def pickup_order(self, request):
+        """
+        Rider picks up an order
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        delivery_id = request.data.get('delivery_id')
+        if not delivery_id:
+            return Response(
+                {"success": False, "error": "Delivery ID required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Update status check to 'pending_offer' or include both
+            delivery = Delivery.objects.get(
+                id=delivery_id,
+                rider=rider,
+                status__in=['pending', 'pending_offer']  # Check for both statuses
+            )
+        except Delivery.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Delivery not found or not available for pickup"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update delivery status
+        delivery.status = 'picked_up'
+        delivery.picked_at = timezone.now()
+        delivery.updated_at = timezone.now()
+        delivery.save()
+        
+        # Update order status
+        order = delivery.order
+        order.status = 'shipped'
+        order.updated_at = timezone.now()
+        order.save()
+        
+        return Response({
+            "success": True,
+            "message": "Order picked up successfully",
+            "delivery": {
+                "id": str(delivery.id),
+                "status": delivery.status,
+                "picked_at": delivery.picked_at.isoformat(),
+            }
+        })
+
+
+    @action(detail=False, methods=['post'])
+    def deliver_order(self, request):
+        """
+        Rider delivers an order
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        delivery_id = request.data.get('delivery_id')
+        if not delivery_id:
+            return Response(
+                {"success": False, "error": "Delivery ID required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            delivery = Delivery.objects.get(
+                id=delivery_id,
+                rider=rider,
+                status='picked_up'
+            )
+        except Delivery.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Delivery not found or not ready for delivery"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update delivery status
+        delivery.status = 'delivered'
+        delivery.delivered_at = timezone.now()
+        delivery.updated_at = timezone.now()
+        delivery.save()
+        
+        # Update order status
+        order = delivery.order
+        order.status = 'delivered'
+        order.updated_at = timezone.now()
+        order.save()
+        
+        return Response({
+            "success": True,
+            "message": "Order delivered successfully",
+            "delivery": {
+                "id": str(delivery.id),
+                "status": delivery.status,
+                "delivered_at": delivery.delivered_at.isoformat(),
+            }
+        })
