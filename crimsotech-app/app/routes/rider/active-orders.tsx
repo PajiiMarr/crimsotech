@@ -622,7 +622,7 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                       className="w-full justify-start"
                       asChild
                     >
-                      <Link to={`/riders/orders/${delivery.order.order_id}`}>
+                      <Link to={`/rider/orders/${delivery.order.order_id}`}>
                         <Navigation className="w-4 h-4 mr-2" />
                         View Details
                       </Link>

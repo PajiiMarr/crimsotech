@@ -137,6 +137,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = await getSession(request.headers.get('Cookie'));
   const userId = session.get('userId');
 
+  console.log(userId)
+
   if (!userId) {
     throw new Response('Unauthorized', { status: 401 });
   }

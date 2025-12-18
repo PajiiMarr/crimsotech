@@ -19,7 +19,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 "use client";
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { useToast } from '~/hooks/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '~/components/ui/card';
 import { Button } from '~/components/ui/button';
