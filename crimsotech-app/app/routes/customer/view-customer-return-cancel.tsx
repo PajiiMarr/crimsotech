@@ -479,6 +479,15 @@ interface RefundResponse {
   dispute_filed_at?: string;
   dispute_reason?: string;
   resolved_at?: string;
+
+  // DisputeRequest fields (separate table)
+  dispute_request?: {
+    id: string;
+    status: string;
+    created_at?: string;
+    resolved_at?: string | null;
+    reason?: string | null;
+  } | null;
   
   // Evidence
   evidence: Array<{
@@ -1676,6 +1685,21 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
   const [showReturnDetails, setShowReturnDetails] = useState(false);
   const [currentStatus, setCurrentStatus] = useState(refundData.status);
 
+  const disputeRequestStatus = refundData?.dispute_request?.status as string | undefined;
+  const fromDispute = Boolean(disputeRequestStatus);
+  const disputeStatusLabel = disputeRequestStatus
+    ? ({
+        filed: 'Filed',
+        under_review: 'Under Review',
+        approved: 'Approved',
+        processing: 'Processing',
+        completed: 'Completed',
+        rejected: 'Rejected',
+        cancelled: 'Cancelled',
+      } as Record<string, string>)[String(disputeRequestStatus)] || disputeRequestStatus
+    : null;
+  const disputeProcessingFlow = fromDispute && refundData.status === 'to_process';
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Left Column */}
@@ -1705,15 +1729,23 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
                 <CheckCircle className="h-4 w-4 text-green-600" />
               )}
               <AlertTitle className={refundData.status === 'to_process' ? "text-blue-800" : "text-green-800"}>
-                {refundData.status === 'to_process' ? 'Return Processing Started!' : 'Refund Request Approved!'}
+                {disputeProcessingFlow
+                  ? 'Seller Processing Your Refund'
+                  : (refundData.status === 'to_process' ? 'Return Processing Started!' : 'Refund Request Approved!')}
               </AlertTitle>
               <AlertDescription className={refundData.status === 'to_process' ? "text-blue-700" : "text-green-700"}>
-                {refundData.status === 'to_process' 
-                  ? 'Your return is being processed. Please complete the return steps below.'
-                  : refundData.refund_category === 'keep_item'
-                  ? 'Your partial refund request has been approved. The refund will be processed to your selected method.'
-                  : 'Your refund request has been approved. Please prepare the item for return within 7 days.'
-                }
+                {disputeProcessingFlow
+                  ? (
+                      <span>
+                        Seller is processing your refund now. You don’t need to do any return steps for this dispute-approved refund.
+                        {disputeStatusLabel ? ` Dispute status: ${disputeStatusLabel}.` : ''}
+                      </span>
+                    )
+                  : (refundData.status === 'to_process'
+                      ? 'Your return is being processed. Please complete the return steps below.'
+                      : refundData.refund_category === 'keep_item'
+                        ? 'Your partial refund request has been approved. The refund will be processed to your selected method.'
+                        : 'Your refund request has been approved. Please prepare the item for return within 7 days.')}
               </AlertDescription>
             </Alert>
 
@@ -1721,7 +1753,10 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
             <div>
               <p className="text-sm font-medium text-gray-800 mb-3 flex items-center gap-2">
                 <Package className="h-4 w-4" />
-                {refundData.refund_category === 'keep_item' ? 'Items for Partial Refund' : 'Items to Return'} ({refundData.order_items?.length || 0})
+                {disputeProcessingFlow
+                  ? 'Refund Items'
+                  : (refundData.refund_category === 'keep_item' ? 'Items for Partial Refund' : 'Items to Return')}
+                {' '}({refundData.order_items?.length || 0})
               </p>
               <div className="space-y-3">
                 {refundData.order_items?.map((item: RefundItem) => {
@@ -1787,7 +1822,7 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
             </div>
 
             {/* Return Instructions and Waybill - Show only after Process Return is clicked */}
-            {showReturnDetails && refundData.refund_category !== 'keep_item' && (
+            {showReturnDetails && refundData.refund_category !== 'keep_item' && !disputeProcessingFlow && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <h3 className="text-sm font-medium text-blue-800 mb-3 flex items-center gap-2">
                   <Package className="h-4 w-4" />
@@ -2207,6 +2242,22 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
             <CardTitle className="text-sm">Next Steps</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
+            {disputeProcessingFlow && (
+              <Card className="border border-blue-100 bg-blue-50">
+                <CardContent className="p-3">
+                  <div className="flex items-start gap-2">
+                    <Info className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-blue-800">Seller is processing your refund</p>
+                      <p className="text-xs text-blue-700 mt-1">
+                        {disputeStatusLabel ? `Dispute status: ${disputeStatusLabel}. ` : ''}No action is required from you right now.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Show alert if seller hasn't notified buyer */}
             {!refundData.buyer_notified_at && refundData.status === 'approved' && (
               <Alert className="bg-amber-50 border-amber-200">
@@ -2218,7 +2269,7 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
               </Alert>
             )}
 
-            {refundData.refund_category !== 'keep_item' && !showReturnDetails && (
+            {refundData.refund_category !== 'keep_item' && !showReturnDetails && !disputeProcessingFlow && (
               <Button
                 size="sm"
                 className="w-full h-8 text-xs"
@@ -2257,13 +2308,29 @@ function ApprovedStatusUI({ refundData, formatDate, formatCurrency, navigate, us
 
 function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate, user }: any) {
   const statusConfig = STATUS_CONFIG.dispute;
+  const disputeRequestStatus = refundData?.dispute_request?.status as string | undefined;
+  const disputeApproved = disputeRequestStatus === 'approved';
+  const disputeStatusLabel = disputeRequestStatus
+    ? ({
+        filed: 'Filed',
+        under_review: 'Under Review',
+        approved: 'Approved',
+        processing: 'Processing',
+        completed: 'Completed',
+        rejected: 'Rejected',
+        cancelled: 'Cancelled',
+      } as Record<string, string>)[disputeRequestStatus] || disputeRequestStatus
+    : null;
+
   const filedById = refundData?.dispute_filed_by;
   const youFiled = filedById && user?.id && String(filedById) === String(user.id);
-  const filedByText = youFiled
-    ? 'You filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.'
-    : (user?.isCustomer
-        ? 'The shop filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.'
-        : 'The buyer filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.');
+  const filedByText = disputeApproved
+    ? "The admin approved your request. Seller will be notified and will be requested to process the refund."
+    : youFiled
+      ? 'You filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.'
+      : (user?.isCustomer
+          ? 'The shop filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.'
+          : 'The buyer filed a dispute for this refund request. Our team will review it and get back to you within 48 hours.');
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -2278,7 +2345,7 @@ function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate, use
               </CardTitle>
               <Badge variant="outline" className={statusConfig.color + " text-xs"}>
                 <statusConfig.icon className="h-3 w-3 mr-1" />
-                {statusConfig.label}
+                {disputeStatusLabel || statusConfig.label}
               </Badge>
             </div>
             <CardDescription className="text-xs">
@@ -2363,7 +2430,7 @@ function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate, use
             <div className="flex justify-between font-bold text-sm">
               <span>Status:</span>
               <span className={statusConfig.color.replace('hover:bg-', 'bg-') + " px-2 py-1 rounded text-xs"}>
-                {statusConfig.label}
+                {disputeStatusLabel || statusConfig.label}
               </span>
             </div>
           </CardContent>
@@ -2380,7 +2447,9 @@ function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate, use
               </div>
               <div>
                 <p className="text-sm font-medium">{getShopName(refundData)}</p>
-                <p className="text-xs text-gray-700">Dispute under review</p>
+                <p className="text-xs text-gray-700">
+                  Dispute status: {disputeStatusLabel || 'N/A'}
+                </p>
               </div>
             </div>
             <Button
@@ -2426,9 +2495,13 @@ function DisputeStatusUI({ refundData, formatDate, formatCurrency, navigate, use
             <div className="flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 text-orange-600 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-medium text-orange-800">Dispute in Progress</p>
+                <p className="text-sm font-medium text-orange-800">
+                  {disputeApproved ? 'Dispute Approved' : 'Dispute in Progress'}
+                </p>
                 <p className="text-xs text-orange-700 mt-1">
-                  Our team is reviewing the dispute filed by the seller. You'll be notified once a decision is made.
+                  {disputeApproved
+                    ? "The admin approved your request. Seller will be notified and will be requested to process the refund."
+                    : "Our team is reviewing the dispute. You'll be notified once a decision is made."}
                 </p>
                 <Button
                   variant="link"

@@ -87,6 +87,14 @@ interface RefundDetails {
   dispute_description?: string | null;
   dispute_filed_at?: string | null;
 
+  dispute_request?: {
+    id: string;
+    status: string;
+    created_at?: string | null;
+    resolved_at?: string | null;
+    reason?: string | null;
+  } | null;
+
   shop?: {
     id?: string;
     name?: string;
@@ -2751,8 +2759,39 @@ function WaitingStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
   );
 }
 
-function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, statusConfig, onAction }: any) {
+function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, statusConfig, onAction, actionLoading }: any) {
   const StatusIcon = statusConfig?.icon || AlertTriangle;
+
+  const disputeStatusRaw = refund?.dispute_request?.status as string | undefined;
+  const disputeStatusLabel = (() => {
+    if (!disputeStatusRaw) return 'Under Review';
+    const v = String(disputeStatusRaw).toLowerCase();
+    if (v === 'filed') return 'Filed';
+    if (v === 'under_review' || v === 'underreview') return 'Under Review';
+    if (v === 'approved') return 'Approved';
+    if (v === 'processing') return 'Processing';
+    if (v === 'completed') return 'Completed';
+    if (v === 'rejected') return 'Rejected';
+    if (v === 'cancelled' || v === 'canceled') return 'Cancelled';
+    return disputeStatusRaw;
+  })();
+
+  const disputeNote = (() => {
+    const v = String(disputeStatusRaw || '').toLowerCase();
+    if (v === 'approved') {
+      return 'Admin approved the dispute. Please proceed with the required refund/return processing steps.';
+    }
+    if (v === 'rejected') {
+      return 'Admin rejected the dispute. You will be notified of any next steps if required.';
+    }
+    if (v === 'completed') {
+      return 'This dispute has been completed.';
+    }
+    if (v === 'cancelled' || v === 'canceled') {
+      return 'This dispute has been cancelled.';
+    }
+    return 'This dispute is under admin review. You will be notified once a decision is made.';
+  })();
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2776,9 +2815,9 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
           <CardContent className="space-y-6">
             <Alert className={statusConfig?.color.replace('hover:bg-', 'bg-').replace(' text-', ' border-')}>
               <StatusIcon className="h-4 w-4" />
-              <AlertTitle>Dispute Filed</AlertTitle>
+              <AlertTitle>Dispute Status: {disputeStatusLabel}</AlertTitle>
               <AlertDescription>
-                A dispute has been filed for this refund request. The case is under admin review.
+                {disputeNote}
               </AlertDescription>
             </Alert>
 
@@ -2791,6 +2830,10 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Dispute Request Status</p>
+                    <p className="text-sm font-medium">{disputeStatusLabel}</p>
+                  </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Dispute Reason</p>
                     <p className="text-sm font-medium">
@@ -2898,6 +2941,15 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
             <Button
               size="sm"
               className="w-full"
+              disabled={Boolean(actionLoading) || String(refund?.dispute_request?.status || '').toLowerCase() === 'processing'}
+              onClick={() => onAction?.('proceed_dispute_processing')}
+            >
+              <ArrowRight className="h-3 w-3 mr-2" />
+              Proceed to process
+            </Button>
+            <Button
+              size="sm"
+              className="w-full"
               onClick={() => navigate(`/seller/chat/customer/${refund.requested_by}`)}
             >
               <MessageCircle className="h-3 w-3 mr-2" />
@@ -2955,9 +3007,9 @@ function DisputeStatusUI({ refund, formatDate, formatMoney, navigate, shopId, st
             <div className="flex items-start gap-2">
               <ShieldAlert className="h-4 w-4 text-orange-600 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-medium text-orange-800">Dispute Resolution</p>
+                <p className="text-sm font-medium text-orange-800">Dispute Resolution: {disputeStatusLabel}</p>
                 <p className="text-xs text-orange-700 mt-1">
-                  This dispute is under admin review. You will be notified once a decision is made.
+                  {disputeNote}
                 </p>
               </div>
             </div>
@@ -3009,6 +3061,9 @@ export default function ViewRefundDetails() {
         case 'approve':
           endpoint = `/return-refund/${encodeURIComponent(String(refundId))}/approve_refund/`;
           body = JSON.stringify({ notes: payload?.notes || 'Approved by seller' });
+          break;
+        case 'proceed_dispute_processing':
+          endpoint = `/return-refund/${encodeURIComponent(String(refundId))}/proceed_dispute_processing/`;
           break;
         case 'mark_as_received':
           endpoint = `/return-refund/${encodeURIComponent(String(payload || refundId))}/mark_as_received/`;
@@ -3073,6 +3128,28 @@ export default function ViewRefundDetails() {
             return_deadline: data?.return_deadline || null,
           }));
           toast({ title: 'Approved request!', description: 'Refund request approved' });
+          break;
+        case 'proceed_dispute_processing':
+          setRefund((r: any) => ({
+            ...(r || {}),
+            status: data?.refund_status || 'to_process',
+            dispute_request: r?.dispute_request
+              ? { ...(r.dispute_request || {}), status: 'processing' }
+              : {
+                  id: data?.id || 'unknown',
+                  status: 'processing',
+                  created_at: data?.created_at || null,
+                  resolved_at: data?.resolved_at || null,
+                  reason: data?.reason || null,
+                },
+          }));
+          toast({ title: 'Proceeding', description: 'Dispute marked as processing.' });
+          navigate(
+            `/seller/seller-return-refund-cancel?${new URLSearchParams({
+              ...(shopId ? { shop_id: String(shopId) } : {}),
+              tab: 'to_process',
+            }).toString()}`,
+          );
           break;
         case 'generate_waybill':
           const wbResponse = await fetch(apiUrlFor(`/return-refund/${payload?.refundId || refundId}/create_return_waybill/`), {

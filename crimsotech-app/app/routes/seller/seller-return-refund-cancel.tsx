@@ -355,7 +355,11 @@ export default function SellerReturnRefundCancel({ loaderData }: Route.Component
 
   const [itemsState, setItemsState] = useState<ReturnItem[]>(initialReturnItems);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<string>('all');
+
+  const tabFromUrl = searchParams.get('tab') || 'all';
+  const tabIds = new Set(STATUS_TABS.map((t) => t.id));
+  const initialTab = tabIds.has(tabFromUrl) ? tabFromUrl : 'all';
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
 
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 

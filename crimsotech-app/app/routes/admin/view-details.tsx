@@ -125,11 +125,64 @@ export default function AdminViewDisputeDetails({ loaderData }: Route.ComponentP
   const [refundError, setRefundError] = useState<string | null>(null);
   const [shopDetails, setShopDetails] = useState<Record<string, ShopDetails>>({});
   const [error, setError] = useState<string | null>(null);
+  const [resolveLoading, setResolveLoading] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
 
   const apiBase = useMemo(() => {
     const raw = (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8000";
     return raw.replace(/\/+$/, "");
   }, []);
+
+  const resolveDispute = async (admin_decision: "approved" | "rejected") => {
+    const refundId = dispute?.refund;
+    if (!refundId) {
+      alert("No refund id found on this dispute.");
+      return;
+    }
+
+    const defaultMsg = admin_decision === "approved" ? "Approved" : "Rejected";
+    const admin_response = window.prompt("Admin response (required):", defaultMsg);
+    if (!admin_response) return;
+
+    try {
+      setResolveLoading(true);
+      setResolveError(null);
+
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      };
+      const userId = user?.user_id || user?.id;
+      if (userId) headers["X-User-Id"] = String(userId);
+
+      const res = await fetch(
+        `${apiBase}/return-refund/${encodeURIComponent(String(refundId))}/resolve_dispute/`,
+        {
+          method: "POST",
+          headers,
+          credentials: "include",
+          body: JSON.stringify({ admin_decision, admin_response }),
+        },
+      );
+
+      if (!res.ok) {
+        let message = `Failed to resolve dispute (${res.status})`;
+        try {
+          const payload = await res.json();
+          message = payload?.error || payload?.detail || message;
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      window.location.reload();
+    } catch (e: any) {
+      setResolveError(e?.message || "Failed to resolve dispute");
+    } finally {
+      setResolveLoading(false);
+    }
+  };
 
   useEffect(() => {
     const run = async () => {
@@ -255,7 +308,7 @@ export default function AdminViewDisputeDetails({ loaderData }: Route.ComponentP
                 <CardHeader>
                   <CardTitle>Dispute Details</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2 text-sm">
+                <CardContent className="space-y-3 text-sm">
                   <div className="flex justify-between"><span className="text-gray-600">Dispute ID</span><span className="font-medium">{dispute?.id}</span></div>
                   <div className="flex justify-between"><span className="text-gray-600">Order ID</span><span className="font-medium">{dispute?.order || "N/A"}</span></div>
                   <div className="flex justify-between"><span className="text-gray-600">Order Number</span><span className="font-medium">{dispute?.order_number || "N/A"}</span></div>
@@ -443,6 +496,31 @@ export default function AdminViewDisputeDetails({ loaderData }: Route.ComponentP
                       ))}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Actions</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {resolveError ? <div className="text-sm text-red-600">{resolveError}</div> : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="default"
+                      disabled={resolveLoading || !dispute?.refund}
+                      onClick={() => resolveDispute("approved")}
+                    >
+                      {resolveLoading ? "Working…" : "Approve"}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      disabled={resolveLoading || !dispute?.refund}
+                      onClick={() => resolveDispute("rejected")}
+                    >
+                      {resolveLoading ? "Working…" : "Reject"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </div>

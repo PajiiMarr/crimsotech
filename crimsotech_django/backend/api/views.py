@@ -11773,6 +11773,23 @@ class RefundViewSet(viewsets.ViewSet):
             # Base serialized data
             data = RefundSerializer(refund).data
 
+            # Attach dispute request info (if any)
+            try:
+                dispute_request = DisputeRequest.objects.filter(refund=refund).order_by('-created_at').first()
+            except Exception:
+                dispute_request = None
+
+            if dispute_request:
+                data['dispute_request'] = {
+                    'id': str(dispute_request.id),
+                    'status': dispute_request.status,
+                    'created_at': dispute_request.created_at,
+                    'resolved_at': dispute_request.resolved_at,
+                    'reason': dispute_request.reason,
+                }
+            else:
+                data['dispute_request'] = None
+
             # Attach evidence media URLs
             medias = RefundMedias.objects.filter(refund=refund)
             evidence = []
@@ -12159,6 +12176,23 @@ class RefundViewSet(viewsets.ViewSet):
 
             # Base refund data
             data = RefundSerializer(refund).data
+
+            # Attach dispute request info (if any)
+            try:
+                dispute_request = DisputeRequest.objects.filter(refund=refund).order_by('-created_at').first()
+            except Exception:
+                dispute_request = None
+
+            if dispute_request:
+                data['dispute_request'] = {
+                    'id': str(dispute_request.id),
+                    'status': dispute_request.status,
+                    'created_at': dispute_request.created_at,
+                    'resolved_at': dispute_request.resolved_at,
+                    'reason': dispute_request.reason,
+                }
+            else:
+                data['dispute_request'] = None
             
             # include shop summary in response
             data['shop'] = {
@@ -12405,6 +12439,57 @@ class RefundViewSet(viewsets.ViewSet):
             data['preferred_refund_method'] = refund.preferred_refund_method
 
             return Response(data)
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def proceed_dispute_processing(self, request, pk=None):
+        """Seller marks the related dispute request as processing.
+
+        This is used by the seller UI "Proceed to process" button in the dispute view.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            refund = get_object_or_404(Refund, refund=pk)
+
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+
+            dispute_request = DisputeRequest.objects.filter(refund=refund).order_by('-created_at').first()
+            if not dispute_request:
+                return Response({"error": "No dispute request found for this refund"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Only allow moving to processing once the dispute was approved.
+            if dispute_request.status != 'processing' and dispute_request.status != 'approved':
+                return Response(
+                    {"error": f"Cannot proceed to processing from status '{dispute_request.status}'"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if dispute_request.status != 'processing':
+                dispute_request.status = 'processing'
+                dispute_request.save()
+
+            # Move refund out of dispute and into processing stage for seller workflow
+            # (seller UI uses `to_process` as the processing tab)
+            if getattr(refund, 'status', None) == 'dispute':
+                refund.status = 'to_process'
+                refund.save(update_fields=['status'])
+
+            return Response({
+                'id': str(dispute_request.id),
+                'status': dispute_request.status,
+                'created_at': dispute_request.created_at,
+                'resolved_at': dispute_request.resolved_at,
+                'reason': dispute_request.reason,
+                'refund_status': refund.status,
+            })
 
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
