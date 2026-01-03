@@ -14569,6 +14569,12 @@ class RefundViewSet(viewsets.ViewSet):
                             except Exception:
                                 return Response({"error": "Invalid counter refund amount"}, status=status.HTTP_400_BAD_REQUEST)
 
+                        # If counter type is 'return', ensure a return address already exists; require seller to call set_return_address first
+                        if counter_type == 'return':
+                            existing_ra = getattr(refund, 'return_address', None)
+                            if not existing_ra:
+                                return Response({"error": "Return address required for return-type counter offers. Use set_return_address endpoint."}, status=status.HTTP_400_BAD_REQUEST)
+
                         # Create counter request (method may be empty, notes carry the seller message)
                         CounterRefundRequest.objects.create(
                             refund_id=refund,
@@ -14651,6 +14657,12 @@ class RefundViewSet(viewsets.ViewSet):
                     except Exception:
                         # ignore invalid amounts
                         pass
+
+                # If seller provided a counter type (return|keep), apply it to the refund
+                if getattr(cr, 'counter_refund_type', None):
+                    ctype = str(cr.counter_refund_type).lower()
+                    if ctype in ('return', 'keep'):
+                        refund.refund_type = ctype
 
                 refund.status = 'approved'
                 refund.processed_by = user
@@ -14758,9 +14770,23 @@ class RefundViewSet(viewsets.ViewSet):
                         return Response({"error": "Proof required before completing refund"}, status=status.HTTP_400_BAD_REQUEST)
 
                 if set_status == 'processing':
-                    # require proofs for return-type refunds when moving to processing, but allow keep-type to enter processing without proofs
+                    # For processing: generally require proofs for return-type refunds, but allow keep-type to enter processing without proofs.
+                    # Additionally, if a DisputeRequest exists and has been approved by an admin, allow processing without proofs
+                    # and promote the refund status from 'dispute' to 'approved' so buyers see the processing UI.
+                    try:
+                        dispute = DisputeRequest.objects.get(refund_id=refund)
+                    except DisputeRequest.DoesNotExist:
+                        dispute = None
+
                     if refund.refund_type == 'return' and not RefundProof.objects.filter(refund=refund).exists():
-                        return Response({"error": "Proof required before processing refund"}, status=status.HTTP_400_BAD_REQUEST)
+                        # If there's no approved dispute, proofs are required
+                        if not dispute or str(dispute.status).lower() != 'approved':
+                            return Response({"error": "Proof required before processing refund"}, status=status.HTTP_400_BAD_REQUEST)
+
+                    # If a dispute was approved, promote refund.status if it's still 'dispute'
+                    if dispute and str(dispute.status).lower() == 'approved':
+                        if str(refund.status).lower() == 'dispute':
+                            refund.status = 'approved'
 
             if final_method:
                 refund.final_refund_method = final_method
@@ -14833,7 +14859,7 @@ class RefundViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['post'])
     def set_return_address(self, request, pk=None):
         """
-        SELLER VIEW: Set or update a return address for a return-type refund and notify the buyer.
+        SELLER VIEW: Set or update a return address for a refund (used for return-type refunds, or to provision an address before negotiating a return) and notify the buyer.
         This will create or update the ReturnAddress object linked to the Refund and set buyer_notified_at.
         """
         user_id = request.headers.get('X-User-Id')
@@ -14854,14 +14880,12 @@ class RefundViewSet(viewsets.ViewSet):
             if err:
                 return err
 
-            if refund.refund_type != 'return':
-                return Response({"error": "Return address can only be set for return-type refunds"}, status=status.HTTP_400_BAD_REQUEST)
-
             # Allow setting return address when refund is still pending (approve after address provided)
             if refund.status not in ['pending', 'approved']:
                 return Response({"error": "Can only set return address on pending or approved refunds"}, status=status.HTTP_400_BAD_REQUEST)
 
             payload = request.data or {}
+            notify_buyer = payload.get('notify_buyer', True)
             required = ['recipient_name', 'contact_number', 'country', 'province', 'city', 'barangay', 'street', 'zip_code']
             missing = [f for f in required if not payload.get(f)]
             if missing:
@@ -14904,23 +14928,24 @@ class RefundViewSet(viewsets.ViewSet):
                     created_by=user
                 )
 
-            # Mark buyer notified timestamp and persist
-            refund.buyer_notified_at = timezone.now()
+            # Only notify buyer and auto-approve if the request wants notification
+            if notify_buyer:
+                refund.buyer_notified_at = timezone.now()
 
-            # If refund was still pending, approve it now because seller confirmed return address
-            if refund.status == 'pending':
-                refund.status = 'approved'
-                refund.processed_by = user
-                refund.processed_at = timezone.now()
-                # If there's an existing return request, mark it approved as well
-                try:
-                    rr = refund.return_request
-                    rr.status = 'approved'
-                    rr.updated_by = user
-                    rr.updated_at = timezone.now()
-                    rr.save()
-                except ReturnRequestItem.DoesNotExist:
-                    pass
+                # If refund was still pending, approve it now because seller confirmed return address
+                if refund.status == 'pending':
+                    refund.status = 'approved'
+                    refund.processed_by = user
+                    refund.processed_at = timezone.now()
+                    # If there's an existing return request, mark it approved as well
+                    try:
+                        rr = refund.return_request
+                        rr.status = 'approved'
+                        rr.updated_by = user
+                        rr.updated_at = timezone.now()
+                        rr.save()
+                    except ReturnRequestItem.DoesNotExist:
+                        pass
 
             refund.save()
 
@@ -16624,6 +16649,32 @@ class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
             if resolved_user:
                 dispute.processed_by = resolved_user
             dispute.save(update_fields=['status', 'processed_by', 'resolved_at', 'admin_notes'])
+            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def acknowledge(self, request, pk=None):
+        """Buyer acknowledgement endpoint: mark dispute resolved and set refund.status to 'completed'"""
+        try:
+            dispute = self.get_object()
+            refund = getattr(dispute, 'refund_id', None)
+
+            # Update refund to completed when buyer acknowledges a rejected dispute
+            if refund:
+                # Only move forward if refund is currently 'dispute' or not already completed
+                if str(refund.status).lower() == 'dispute':
+                    refund.status = 'completed'
+                    refund.processed_at = timezone.now()
+                    # Buyer acknowledgement should mark payment as completed
+                    refund.refund_payment_status = 'completed'
+                    refund.save(update_fields=['status', 'processed_at', 'refund_payment_status'])
+
+            # Mark dispute as resolved and set resolved_at
+            dispute.status = 'resolved'
+            dispute.resolved_at = timezone.now()
+            dispute.save(update_fields=['status', 'resolved_at'])
+
             return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

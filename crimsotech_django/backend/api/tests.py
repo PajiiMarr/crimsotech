@@ -341,6 +341,8 @@ class RefundProofTests(TestCase):
         self.assertEqual(str(cr.status), 'accepted')
         self.assertEqual(str(self.refund.status), 'approved')
         self.assertEqual(str(self.refund.final_refund_method), 'bank')
+        # The counter type should be applied to the refund
+        self.assertEqual(str(self.refund.refund_type), 'keep')
 
     def test_buyer_rejects_counter_offer(self):
         # Seller creates a counter offer
@@ -360,6 +362,87 @@ class RefundProofTests(TestCase):
         self.assertEqual(str(cr.status), 'rejected')
         # Refund should remain in negotiation state
         self.assertEqual(str(self.refund.status), 'negotiation')
+
+    def test_buyer_accepts_counter_offer_with_return_type(self):
+        # Seller sets a return address first
+        set_url = f"/api/return-refund/{self.refund.refund_id}/set_return_address/"
+        set_payload = {
+            'recipient_name': 'Seller',
+            'contact_number': '09123456789',
+            'country': 'PH',
+            'province': 'P',
+            'city': 'C',
+            'barangay': 'B',
+            'street': 'S',
+            'zip_code': '1000',
+        }
+        res_set = self.client.post(set_url, set_payload, format='json', HTTP_X_USER_ID=str(self.seller.id))
+        self.assertEqual(res_set.status_code, 200)
+
+        # Seller creates a counter offer with return type (no address in negotiate payload)
+        url = f"/api/return-refund/{self.refund.refund_id}/seller_respond_to_refund/"
+        res = self.client.post(url, {'action': 'negotiate', 'counter_refund_method': 'return:bank', 'counter_refund_type': 'return', 'counter_notes': 'Please return the item'}, format='json', HTTP_X_USER_ID=str(self.seller.id), HTTP_X_SHOP_ID=str(self.shop.id))
+        self.assertEqual(res.status_code, 200)
+        from .models import CounterRefundRequest, ReturnAddress
+        cr = CounterRefundRequest.objects.filter(refund_id=self.refund).order_by('-requested_at').first()
+        self.assertIsNotNone(cr)
+
+        # Ensure return address exists
+        ra = getattr(self.refund, 'return_address', None)
+        self.assertIsNotNone(ra)
+        self.assertEqual(str(ra.contact_number), '09123456789')
+
+        # Buyer accepts the counter offer
+        url2 = f"/api/return-refund/{self.refund.refund_id}/respond_to_negotiation/"
+        res2 = self.client.post(url2, {'action': 'accept', 'reason': 'Accepting return offer'}, format='json', HTTP_X_USER_ID=str(self.buyer.id))
+        self.assertEqual(res2.status_code, 200)
+        self.refund.refresh_from_db()
+        cr.refresh_from_db()
+        self.assertEqual(str(cr.status), 'accepted')
+        self.assertEqual(str(self.refund.status), 'approved')
+        self.assertEqual(str(self.refund.final_refund_method), 'return:bank')
+        # Refund type should be set to 'return'
+        self.assertEqual(str(self.refund.refund_type), 'return')
+
+    def test_seller_negotiate_return_requires_return_address(self):
+        url = f"/api/return-refund/{self.refund.refund_id}/seller_respond_to_refund/"
+        # No return address provided
+        res = self.client.post(url, {'action': 'negotiate', 'counter_refund_method': 'return:bank', 'counter_refund_type': 'return', 'counter_notes': 'Please return the item'}, format='json', HTTP_X_USER_ID=str(self.seller.id), HTTP_X_SHOP_ID=str(self.shop.id))
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('Return address required', res.data.get('error', ''))
+
+    def test_seller_negotiate_return_with_address_creates_return_address(self):
+        # Use the dedicated set_return_address endpoint to create an address, then negotiate
+        set_url = f"/api/return-refund/{self.refund.refund_id}/set_return_address/"
+        set_payload = {
+            'recipient_name': 'Seller',
+            'contact_number': '09123456789',
+            'country': 'PH',
+            'province': 'P',
+            'city': 'C',
+            'barangay': 'B',
+            'street': 'S',
+            'zip_code': '1000',
+        }
+        res_set = self.client.post(set_url, set_payload, format='json', HTTP_X_USER_ID=str(self.seller.id))
+        self.assertEqual(res_set.status_code, 200)
+
+        # Now negotiate
+        url = f"/api/return-refund/{self.refund.refund_id}/seller_respond_to_refund/"
+        payload = {
+            'action': 'negotiate',
+            'counter_refund_method': 'return:bank',
+            'counter_refund_type': 'return',
+            'counter_notes': 'Please return the item'
+        }
+        res = self.client.post(url, payload, format='json', HTTP_X_USER_ID=str(self.seller.id), HTTP_X_SHOP_ID=str(self.shop.id))
+        self.assertEqual(res.status_code, 200)
+        from .models import ReturnAddress, CounterRefundRequest
+        ra = getattr(self.refund, 'return_address', None)
+        self.assertIsNotNone(ra)
+        cr = CounterRefundRequest.objects.filter(refund_id=self.refund).order_by('-requested_at').first()
+        self.assertIsNotNone(cr)
+        self.assertEqual(str(cr.counter_refund_type), 'return')
 
 
 class DisputeWorkflowTests(TestCase):
@@ -398,6 +481,40 @@ class DisputeWorkflowTests(TestCase):
         res = self.client.post(url, format='json', HTTP_X_USER_ID=str(self.admin.username))
         self.assertEqual(res.status_code, 200)
         self.dispute.refresh_from_db()
+
+    def test_seller_can_process_refund_after_admin_approved_dispute(self):
+        # Seller and shop
+        seller = User.objects.create(username='seller2', email='seller2@example.com')
+        Customer.objects.create(customer=seller)
+        shop = Shop.objects.create(name='Seller Shop 2', province='P', city='C', barangay='B', street='S', customer=seller.customer)
+        # Product, cart, checkout to link order->shop
+        product = Product.objects.create(name='P1', description='d', quantity=1, price=10.0, status='active', condition='New', shop=shop, customer=seller.customer)
+        from .models import CartItem, Checkout
+        cart = CartItem.objects.create(product=product, user=self.buyer, quantity=1)
+        Checkout.objects.create(order=self.order, cart_item=cart, quantity=1, total_amount=10.0, status='completed')
+
+        # Create a return-type refund currently in 'dispute' and with return_request rejected
+        r = Refund.objects.create(
+            reason='Return dispute',
+            buyer_preferred_refund_method='wallet',
+            refund_type='return',
+            status='dispute',
+            order_id=self.order,
+            requested_by=self.buyer
+        )
+        from .models import ReturnRequestItem, DisputeRequest
+        ReturnRequestItem.objects.create(refund_id=r, return_method='courier', status='rejected', return_deadline=timezone.now())
+        # Admin resolved dispute in favor of buyer
+        d = DisputeRequest.objects.create(refund_id=r, requested_by=self.buyer, reason='Missing', status='approved', processed_by=self.admin, resolved_at=timezone.now())
+
+        # Seller attempts to process refund (no proofs) - should be allowed because dispute is approved
+        url = f"/api/return-refund/{r.refund_id}/process_refund/"
+        res = self.client.post(url, {'final_refund_method': 'wallet', 'set_status': 'processing'}, format='json', HTTP_X_USER_ID=str(seller.id), HTTP_X_SHOP_ID=str(shop.id))
+        self.assertIn(res.status_code, [200, 201])
+        r.refresh_from_db()
+        self.assertEqual(r.refund_payment_status, 'processing')
+        self.assertEqual(str(r.status), 'approved')
+
         self.assertIsNotNone(self.dispute.processed_by)
         self.assertEqual(self.dispute.processed_by.id, self.admin.id)
 
@@ -435,3 +552,27 @@ class DisputeWorkflowTests(TestCase):
         self.dispute.refresh_from_db()
         self.assertIsNotNone(self.dispute.processed_by)
         self.assertEqual(self.dispute.processed_by.id, self.admin.id)
+
+    def test_buyer_acknowledge_dispute_marks_refund_completed(self):
+        # Create a refund currently in 'dispute' with an admin-rejected dispute
+        r = Refund.objects.create(
+            reason='Dispute reject',
+            buyer_preferred_refund_method='wallet',
+            refund_type='keep',
+            status='dispute',
+            order_id=self.order,
+            requested_by=self.buyer
+        )
+        d = DisputeRequest.objects.create(refund_id=r, requested_by=self.buyer, reason='Rejected', status='rejected')
+
+        url = f"/api/disputes/{d.id}/acknowledge/"
+        res = self.client.post(url, format='json', HTTP_X_USER_ID=str(self.buyer.id))
+        self.assertEqual(res.status_code, 200)
+
+        r.refresh_from_db()
+        d.refresh_from_db()
+        self.assertEqual(str(r.status), 'completed')
+        # Payment status should be completed after buyer acknowledgement
+        self.assertEqual(str(r.refund_payment_status), 'completed')
+        # Dispute should be marked resolved
+        self.assertEqual(str(d.status), 'resolved')

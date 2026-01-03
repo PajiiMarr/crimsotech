@@ -960,6 +960,69 @@ function ToVerifyStatusUI({ refund }: { refund: RefundDetails }) {
   );
 }
 
+function ShippedStatusUI({ refund }: { refund: RefundDetails }) {
+  const rr = refund.return_request || (refund as any).return_request || null;
+  const medias = rr?.media || rr?.medias || [];
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+      <div className="flex items-start gap-3">
+        <Truck className="h-5 w-5 text-blue-600" />
+        <div className="flex-1">
+          <p className="font-medium text-blue-800">Item has been shipped</p>
+          <p className="text-sm text-blue-700">Waiting for the seller to receive the item.</p>
+
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {rr?.tracking_number && (
+              <div>
+                <p className="text-xs text-gray-600">Tracking Number</p>
+                <p className="font-medium">{rr.tracking_number}</p>
+              </div>
+            )}
+
+            {rr?.logistic_service && (
+              <div>
+                <p className="text-xs text-gray-600">Shipping Service</p>
+                <p className="font-medium">{rr.logistic_service}</p>
+              </div>
+            )}
+
+            {rr?.shipped_at && (
+              <div>
+                <p className="text-xs text-gray-600">Shipped At</p>
+                <p className="font-medium">{formatDate(rr.shipped_at)}</p>
+              </div>
+            )}
+
+            {rr?.notes && (
+              <div className="sm:col-span-2">
+                <p className="text-xs text-gray-600">Notes</p>
+                <p className="text-sm text-gray-700">{rr.notes}</p>
+              </div>
+            )}
+          </div>
+
+          {medias && medias.length > 0 && (
+            <div className="mt-3">
+              <p className="text-xs text-gray-600">Uploaded files</p>
+              <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {medias.map((m: any, idx: number) => (
+                  <a key={m.id || idx} href={m.file_url || m.file_data || '#'} target="_blank" rel="noreferrer" className="block rounded overflow-hidden bg-gray-100 border">
+                    {m.file_type && m.file_type.startsWith('image/') ? (
+                      <img src={m.file_url || m.file_data} alt={`Return media ${idx + 1}`} className="w-full h-20 object-cover" />
+                    ) : (
+                      <div className="w-full h-20 flex items-center justify-center text-gray-500">{m.file_type?.split('/')[1]?.toUpperCase() || 'FILE'}</div>
+                    )}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReceivedStatusUI({ refund }: { refund: RefundDetails }) {
   return (
     <div className="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -994,7 +1057,7 @@ function ToProcessStatusUI({ refund }: { refund: RefundDetails }) {
   );
 }
 
-function DisputeStatusUI({ refund }: { refund: RefundDetails }) {
+function DisputeStatusUI({ refund, onProceed, actionLoading }: { refund: RefundDetails; onProceed?: () => Promise<any> | void; actionLoading?: boolean }) {
   // Prefer `dispute` (backend related_name) but tolerate older `dispute_request` if present
   const dr = ((refund as any).dispute || (refund as any).dispute_request) || null;
   const created = dr?.created_at || (refund.dispute_filed_at || null);
@@ -1009,6 +1072,92 @@ function DisputeStatusUI({ refund }: { refund: RefundDetails }) {
             <p className="font-medium text-orange-800">Dispute Filed</p>
             <p className="text-sm text-orange-700 mt-1">A dispute has been filed for this refund. An administrator will review the case shortly.</p>
             {created && <p className="text-xs text-gray-500 mt-2">Filed at: {formatDate(String(created))}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If dispute has been approved by admin and the return request was previously rejected,
+  // inform the seller and provide a button to proceed with refund processing.
+  if (dr && String((dr.status || '').trim()).toLowerCase() === 'approved' && String(refund.return_request?.status || '').toLowerCase() === 'rejected') {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-800">Dispute Approved</p>
+            <p className="text-sm text-amber-700 mt-1">The dispute filed by the buyer has been approved by the admin. Please proceed to refund.</p>
+            {created && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at || created))}</p>}
+
+            <div className="mt-4">
+              <Button size="sm" onClick={async () => {
+                try {
+                  if (!onProceed) return;
+                  const conf = window.confirm('Proceed to start refund processing?');
+                  if (!conf) return;
+                  await onProceed();
+                } catch (e) {
+                  console.error('Proceed to refund failed', e);
+                }
+              }} disabled={Boolean(actionLoading)}>
+                {actionLoading ? 'Processing…' : 'Proceed to refund'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If admin rejected the dispute and refund is rejected, show a specific seller UI
+  if (dr && String((dr.status || '').trim()).toLowerCase() === 'rejected' && String(refund.status || '').toLowerCase() === 'rejected') {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-red-800">Dispute Rejected</p>
+            <p className="text-sm text-red-700 mt-1">The dispute filed by the buyer has been rejected by the administrator. The refund remains rejected.</p>
+            {dr?.processed_by && (
+              <p className="text-xs text-gray-500 mt-2">Processed by: <strong>{(dr as any).processed_by?.username || (dr as any).processed_by?.email || 'Admin'}</strong></p>
+            )}
+            {dr?.resolved_at && <p className="text-xs text-gray-500">Resolved at: {formatDate(String(dr.resolved_at))}</p>}
+            {((dr as any).admin_notes) && (
+              <div className="mt-3 p-3 bg-white border rounded text-sm text-gray-700">
+                <div className="text-xs text-gray-500">Admin notes</div>
+                <div className="mt-1">{(dr as any).admin_notes}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If admin rejected the dispute but the refund still shows 'dispute', show seller-facing rejected message
+  if (dr && String((dr.status || '').trim()).toLowerCase() === 'rejected' && String(refund.status || '').toLowerCase() === 'dispute') {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-red-800">Dispute Rejected</p>
+            <p className="text-sm text-red-700 mt-1">The administrator has rejected the dispute for this refund. The refund remains in dispute; please follow internal procedures or contact support if further action is needed.</p>
+
+            {dr?.processed_by && (
+              <p className="text-xs text-gray-500 mt-2">Processed by: <strong>{(dr as any).processed_by?.username || (dr as any).processed_by?.email || 'Admin'}</strong></p>
+            )}
+
+            {dr?.resolved_at && <p className="text-xs text-gray-500">Resolved at: {formatDate(String(dr.resolved_at))}</p>}
+
+            {((dr as any).admin_notes) && (
+              <div className="mt-3 p-3 bg-white border rounded text-sm text-gray-700">
+                <div className="text-xs text-gray-500">Admin notes</div>
+                <div className="mt-1">{(dr as any).admin_notes}</div>
+              </div>
+            )}
+
           </div>
         </div>
       </div>
@@ -1033,13 +1182,33 @@ function DisputeStatusUI({ refund }: { refund: RefundDetails }) {
 function CompletedStatusUI({ refund }: { refund: RefundDetails }) {
   const processedBy = (refund as any).processed_by || null;
   const processedByName = typeof processedBy === 'string' ? processedBy : (processedBy?.username || processedBy?.id || '—');
+  const dr = (refund as any).dispute || (refund as any).dispute_request || null;
+  const isResolved = dr && String((dr.status || '').trim()).toLowerCase() === 'resolved';
+
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-      <div className="flex items-center gap-3">
-        <CheckSquare className="h-5 w-5 text-emerald-600" />
+      <div className="flex items-start gap-3">
+        <CheckSquare className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
         <div className="flex-1">
           <p className="font-medium text-emerald-800">Refund Completed</p>
           <p className="text-sm text-emerald-700">Refund completed on {formatDate(refund.processed_at)} by {processedByName}.</p>
+
+          {isResolved && (
+            <div className="mt-3 p-3 bg-white border rounded text-sm text-gray-700">
+              <div className="text-sm font-medium text-emerald-800">Resolved After Dispute</div>
+              <div className="text-xs text-gray-500 mt-1">This refund was completed after an administrative review of the dispute.</div>
+              {dr?.processed_by && (
+                <div className="text-xs text-gray-500 mt-2">Processed by: <strong>{(dr as any).processed_by?.username || (dr as any).processed_by?.email || 'Admin'}</strong></div>
+              )}
+              {dr?.resolved_at && (
+                <div className="text-xs text-gray-500">Resolved at: {formatDate(String(dr.resolved_at))}</div>
+              )}
+              {(dr as any)?.admin_notes && (
+                <div className="mt-2 p-2 bg-gray-50 rounded text-sm text-gray-700">{(dr as any).admin_notes}</div>
+              )}
+            </div>
+          )}
+
           <div className="mt-3 text-sm text-gray-700 grid grid-cols-2 gap-2">
             <div>Amount: <strong>{formatMoney(refund.total_refund_amount)}</strong></div>
             <div>Method: <strong>{refund.final_refund_method || refund.preferred_refund_method || '—'}</strong></div>
@@ -2002,7 +2171,7 @@ function RejectModal({
 }
 
 // Counter Offer Modal component
-function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, fetchLatestRefund }: { show: boolean; setShow: (s: boolean) => void; refund?: RefundDetails | undefined; userId: string | number; shopId?: string | undefined; setRefund: (r: RefundDetails) => void; fetchLatestRefund: () => Promise<void> }) {
+function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, fetchLatestRefund, openReturnAddressDialog }: { show: boolean; setShow: (s: boolean) => void; refund?: RefundDetails | undefined; userId: string | number; shopId?: string | undefined; setRefund: (r: RefundDetails) => void; fetchLatestRefund: () => Promise<void>; openReturnAddressDialog?: (prefill?: any) => void; }) {
   const { toast } = useToast();
   // Provide both Return and Keep grouped options similar to customer selection
   const METHODS = ['wallet', 'bank', 'remittance', 'voucher'];
@@ -2165,159 +2334,196 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
   };
 
   return (
-    <Dialog open={show} onOpenChange={setShow}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <div className="p-4 border rounded bg-white shadow-sm mt-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2">
             <MessageCircle className="h-5 w-5 text-blue-600" />
-            Make Counter Offer
-          </DialogTitle>
-          <DialogDescription>
-            Propose a refund method to the buyer. Choices default to buyer's preferred method.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="mt-4 space-y-3">
-          <div>
-            <Label className="text-sm">Choose Refund Method & Type</Label>
-            <select aria-label="Choose refund type and method" className="mt-1 block w-full rounded-md border p-2" value={methodWithType} onChange={(e) => setMethodWithType(e.target.value)}>
-              <optgroup label="Return Item">
-                {METHODS.map(m => (
-                  <option key={`return:${m}`} value={`return:${m}`}>{typeLabel('return', m)}</option>
-                ))}
-              </optgroup>
-              <optgroup label="Keep Item (Partial)">
-                {METHODS.map(m => (
-                  <option key={`keep:${m}`} value={`keep:${m}`}>{typeLabel('keep', m)}</option>
-                ))}
-              </optgroup>
-            </select>
-          </div>
-
-          <div>
-            <Label className="text-sm">Notes (optional)</Label>
-            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </div>
-
-          {(selectedType === 'keep' || selectedType === 'return') && (
             <div>
-              <Label className="text-sm">Proposed Refund Amount</Label>
-
-              <div className="mt-1 flex items-center gap-3">
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={counterAmount}
-                  onChange={(e) => setCounterAmount(e.target.value)}
-                  placeholder={refund?.order_info?.total_amount ? `Max ${formatMoney(refund.order_info.total_amount)}` : 'Amount (e.g., 100.00)'}
-                />
-
-                {/* Quick action: show buyer requested amount and allow using it */}
-                <div className="flex items-center gap-2">
-                  <div className="text-xs text-gray-500">Buyer requested:</div>
-                  <div className="text-sm font-medium">{formatMoney(getRequestedAmount(refund || null))}</div>
-                  <Button size="sm" variant="outline" onClick={() => setCounterAmount(String(Number(getRequestedAmount(refund || null)).toFixed(2)))} className="h-8">Use buyer amount</Button>
-                  <Button size="sm" variant="ghost" onClick={() => {
-                    const full = (refund && refund.order_info && refund.order_info.total_amount != null) ? Number(refund.order_info.total_amount) : getRequestedAmount(refund || null);
-                    setCounterAmount(String(Number(full).toFixed(2)));
-                  }} className="h-8">Full refund</Button>
-                </div>
-              </div>
-
-              <p className="text-xs text-gray-500 mt-2">Enter the amount you propose to refund if buyer keeps the item or returns it. Must be positive and not exceed order total.</p>
+              <div className="font-medium">Make Counter Offer</div>
+              <div className="text-sm text-gray-500">Propose a refund method to the buyer. Choices default to buyer's preferred method.</div>
             </div>
-          )}
-
-          <div className="mt-2 text-sm text-gray-600">
-            <div className="font-medium">Preview</div>
-            <div className="text-sm text-gray-700 mt-1">{selectedLabel}{selectedType === 'keep' && counterAmount ? (` — Amount: ${formatMoney(Number(counterAmount))}`) : null}</div>
           </div>
         </div>
+        <div>
+          <Button variant="ghost" size="sm" onClick={() => setShow(false)}>Close</Button>
+        </div>
+      </div>
 
-        <DialogFooter className="mt-6 sm:flex-row flex-col gap-2">
-          <div className="flex gap-2 w-full">
-            <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={() => setShow(false)}>Cancel</Button>
-            <Button size="sm" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700" onClick={submit} disabled={isSubmitting} aria-label="Send counter offer">
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                <>
-                  <MessageCircle className="h-4 w-4 mr-2" />
-                  Send Offer
-                </>
-              )}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-
-function ReturnAddressSection({
-  showReturnAddressSection,
-  setShowReturnAddressSection,
-  refund,
-  returnAddressForm,
-  handleReturnAddressChange,
-  addrSubmitting,
-  handleSubmitReturnAddress
-}: {
-  showReturnAddressSection: boolean;
-  setShowReturnAddressSection: (show: boolean) => void;
-  refund: RefundDetails;
-  returnAddressForm: any;
-  handleReturnAddressChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
-  addrSubmitting: boolean;
-  handleSubmitReturnAddress: () => Promise<void>;
-}) {
-  return (
-    <Dialog open={showReturnAddressSection} onOpenChange={setShowReturnAddressSection}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Provide Return Address</DialogTitle>
-          <DialogDescription>Enter the address where the buyer should ship the item. Submitting will confirm the approval.</DialogDescription>
-        </DialogHeader>
-
-        {refund?.return_address && (
+      {refund?.return_address && (
+        <div className="mt-3">
           <div className="mt-3 p-3 bg-gray-50 border rounded">
             <p className="text-sm font-medium">Current Return Address</p>
             <p className="text-sm text-gray-700">{refund.return_address.recipient_name} — {refund.return_address.contact_number}</p>
             <p className="text-sm text-gray-700">{refund.return_address.street}, {refund.return_address.barangay}, {refund.return_address.city}, {refund.return_address.province} {refund.return_address.zip_code}, {refund.return_address.country}</p>
             {refund.return_address.notes && <p className="text-sm text-gray-600 mt-1">{refund.return_address.notes}</p>}
+            <div className="mt-2 flex justify-end">
+              <Button size="sm" variant="outline" onClick={() => { if (openReturnAddressDialog) openReturnAddressDialog(refund.return_address); }}>Edit</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 space-y-3">
+        <div>
+          <Label className="text-sm">Choose Refund Method & Type</Label>
+          <select aria-label="Choose refund type and method" className="mt-1 block w-full rounded-md border p-2" value={methodWithType} onChange={(e) => setMethodWithType(e.target.value)}>
+            <optgroup label="Return Item">
+              {METHODS.map(m => (
+                <option key={`return:${m}`} value={`return:${m}`}>{typeLabel('return', m)}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Keep Item (Partial)">
+              {METHODS.map(m => (
+                <option key={`keep:${m}`} value={`keep:${m}`}>{typeLabel('keep', m)}</option>
+              ))}
+            </optgroup>
+          </select>
+        </div>
+
+        <div>
+          <Label className="text-sm">Notes (optional)</Label>
+          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+
+        {(selectedType === 'keep' || selectedType === 'return') && (
+          <div>
+            <Label className="text-sm">Proposed Refund Amount</Label>
+
+            <div className="mt-1 flex items-center gap-3">
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={counterAmount}
+                onChange={(e) => setCounterAmount(e.target.value)}
+                placeholder={refund?.order_info?.total_amount ? `Max ${formatMoney(refund.order_info.total_amount)}` : 'Amount (e.g., 100.00)'}
+              />
+
+              {/* Quick action: show buyer requested amount and allow using it */}
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-gray-500">Buyer requested:</div>
+                <div className="text-sm font-medium">{formatMoney(getRequestedAmount(refund || null))}</div>
+                <Button size="sm" variant="outline" onClick={() => setCounterAmount(String(Number(getRequestedAmount(refund || null)).toFixed(2)))} className="h-8">Use buyer amount</Button>
+                <Button size="sm" variant="ghost" onClick={() => {
+                  const full = (refund && refund.order_info && refund.order_info.total_amount != null) ? Number(refund.order_info.total_amount) : getRequestedAmount(refund || null);
+                  setCounterAmount(String(Number(full).toFixed(2)));
+                }} className="h-8">Full refund</Button>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500 mt-2">Enter the amount you propose to refund if buyer keeps the item or returns it. Must be positive and not exceed order total.</p>
           </div>
         )}
 
-        <div className="mt-4 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Input name="recipient_name" value={returnAddressForm.recipient_name} onChange={handleReturnAddressChange} placeholder="Recipient name" />
-            <Input name="contact_number" value={returnAddressForm.contact_number} onChange={handleReturnAddressChange} placeholder="Contact number" />
-            <Input name="country" value={returnAddressForm.country} onChange={handleReturnAddressChange} placeholder="Country" />
-            <Input name="province" value={returnAddressForm.province} onChange={handleReturnAddressChange} placeholder="Province" />
-            <Input name="city" value={returnAddressForm.city} onChange={handleReturnAddressChange} placeholder="City" />
-            <Input name="barangay" value={returnAddressForm.barangay} onChange={handleReturnAddressChange} placeholder="Barangay" />
-            <Input name="street" value={returnAddressForm.street} onChange={handleReturnAddressChange} placeholder="Street" />
-            <Input name="zip_code" value={returnAddressForm.zip_code} onChange={handleReturnAddressChange} placeholder="Zip code" />
-          </div>
-
-          <Textarea name="notes" value={returnAddressForm.notes} onChange={handleReturnAddressChange} placeholder="Notes (optional)" />
+        <div className="mt-2 text-sm text-gray-600">
+          <div className="font-medium">Preview</div>
+          <div className="text-sm text-gray-700 mt-1">{selectedLabel}{selectedType === 'keep' && counterAmount ? (` — Amount: ${formatMoney(Number(counterAmount))}`) : null}</div>
         </div>
 
-        <DialogFooter>
-          <div className="flex items-center justify-end gap-2 w-full">
-            <Button variant="outline" onClick={() => setShowReturnAddressSection(false)}>Cancel</Button>
-            <Button onClick={handleSubmitReturnAddress} disabled={addrSubmitting}>{addrSubmitting ? 'Saving...' : 'Confirm and Send to Buyer'}</Button>
+        {/* If user selected a return-type counter but no return address exists, prompt them to add one first */}
+        {selectedType === 'return' && !refund?.return_address ? (
+          <div className="mt-3 p-3 rounded border-l-4 border-yellow-400 bg-yellow-50 flex items-start justify-between">
+            <div>
+              <div className="font-medium">Return address required</div>
+              <div className="text-sm text-gray-700 mt-1">You must provide a return address before sending a return-type counter-offer.</div>
+            </div>
+            <div className="ml-4 flex-shrink-0">
+              <Button size="sm" onClick={() => { if (openReturnAddressDialog) openReturnAddressDialog(refund?.return_address); }}>Provide Return Address</Button>
+            </div>
           </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        ) : null}
+
+      </div>
+
+      <div className="mt-4 flex gap-2">
+        <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={submit} disabled={isSubmitting || (selectedType === 'return' && !refund?.return_address)} aria-label="Send counter offer">
+          {isSubmitting ? (
+            <span className="inline-flex items-center">
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Sending...
+            </span>
+          ) : (
+            <span className="inline-flex items-center">
+              <MessageCircle className="h-4 w-4 mr-2" />
+              Send Offer
+            </span>
+          )}
+        </Button>
+      </div>
+    </div>
   );
 }
+
+
+function CurrentReturnAddress({ refund, onEdit }: { refund: RefundDetails; onEdit?: () => void }) {
+  const ra = refund?.return_address;
+  if (!ra) return null;
+  return (
+    <div className="p-3 border rounded bg-white">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm font-medium">Return Address</p>
+          <p className="text-sm text-gray-700">{ra.recipient_name} — {ra.contact_number}</p>
+          <p className="text-sm text-gray-700">{ra.street}, {ra.barangay}, {ra.city}, {ra.province} {ra.zip_code}, {ra.country}</p>
+          {ra.notes && <p className="text-sm text-gray-600 mt-1">{ra.notes}</p>}
+        </div>
+        <div>
+          <Button size="sm" variant="outline" onClick={() => { if (onEdit) onEdit(); }}>Edit</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReturnAddressSection({
+  refund,
+  returnAddressForm,
+  handleReturnAddressChange,
+  addrSubmitting,
+  handleSubmitReturnAddress,
+  onClose
+}: {
+  refund: RefundDetails;
+  returnAddressForm: any;
+  handleReturnAddressChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  addrSubmitting: boolean;
+  handleSubmitReturnAddress: () => Promise<void>;
+  onClose: () => void;
+}) {
+  return (
+    <div className="p-4" role="region" aria-label="Return address form">
+      <div>
+        <h3 className="text-lg font-medium">Provide Return Address</h3>
+        <p className="text-sm text-muted-foreground">Enter the address where the buyer should ship the item. Submitting will confirm the approval.</p>
+      </div>
+
+      {refund?.return_address && (
+        <div className="mt-3 p-3 bg-gray-50 border rounded">
+          <p className="text-sm font-medium">Current Return Address</p>
+          <p className="text-sm text-gray-700">{refund.return_address.recipient_name} — {refund.return_address.contact_number}</p>
+          <p className="text-sm text-gray-700">{refund.return_address.street}, {refund.return_address.barangay}, {refund.return_address.city}, {refund.return_address.province} {refund.return_address.zip_code}, {refund.return_address.country}</p>
+          {refund.return_address.notes && <p className="text-sm text-gray-600 mt-1">{refund.return_address.notes}</p>}
+        </div>
+      )}
+
+      <div className="mt-4 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Input name="recipient_name" value={returnAddressForm.recipient_name} onChange={handleReturnAddressChange} placeholder="Recipient name" />
+          <Input name="contact_number" value={returnAddressForm.contact_number} onChange={handleReturnAddressChange} placeholder="Contact number" />
+          <Input name="country" value={returnAddressForm.country} onChange={handleReturnAddressChange} placeholder="Country" />
+          <Input name="province" value={returnAddressForm.province} onChange={handleReturnAddressChange} placeholder="Province" />
+          <Input name="city" value={returnAddressForm.city} onChange={handleReturnAddressChange} placeholder="City" />
+          <Input name="barangay" value={returnAddressForm.barangay} onChange={handleReturnAddressChange} placeholder="Barangay" />
+          <Input name="street" value={returnAddressForm.street} onChange={handleReturnAddressChange} placeholder="Street" />
+          <Input name="zip_code" value={returnAddressForm.zip_code} onChange={handleReturnAddressChange} placeholder="Zip code" />
+        </div>
+
+        <Textarea name="notes" value={returnAddressForm.notes} onChange={handleReturnAddressChange} placeholder="Notes (optional)" />
+      </div>
+    </div>
+  );
+} 
 
 // ========== META & LOADER ==========
 
@@ -2454,7 +2660,7 @@ export default function ViewRefundDetails() {
   }, [serverProofCount, (selectedProofFiles || []).length]);
   
   // Return address modal state
-  const [showReturnAddressSection, setShowReturnAddressSection] = useState(false);
+  const [showReturnAddressModal, setShowReturnAddressModal] = useState(false);
   const [returnAddressForm, setReturnAddressForm] = useState({
     recipient_name: '',
     contact_number: '',
@@ -2466,6 +2672,34 @@ export default function ViewRefundDetails() {
     zip_code: '',
     notes: ''
   });
+
+  // Saved addresses for this seller/shop
+  const [savedAddresses, setSavedAddresses] = useState<any[]>([]);
+  const [addressesLoading, setAddressesLoading] = useState(false);
+  const [selectedSavedAddressId, setSelectedSavedAddressId] = useState<string | null>(null);
+  const fetchSavedAddresses = useCallback(async () => {
+    try {
+      setAddressesLoading(true);
+      const apiUrl = apiUrlFor('/return-address/');
+      const res = await fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'X-User-Id': String(user.id),
+          'X-Shop-Id': String(shopId),
+        },
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => []);
+        setSavedAddresses(Array.isArray(data) ? data : []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch saved addresses', e);
+    } finally {
+      setAddressesLoading(false);
+    }
+  }, [shopId, user.id]);
   const [addrSubmitting, setAddrSubmitting] = useState(false);
   // When set, indicates that after saving the return address we should automatically submit the pending counter offer
   const [pendingCounterOffer, setPendingCounterOffer] = useState(false);
@@ -2484,8 +2718,17 @@ export default function ViewRefundDetails() {
         notes: prefill.notes || ''
       });
     }
-    setShowReturnAddressSection(true);
+    setShowReturnAddressModal(true);
   };
+
+  useEffect(() => {
+    if (showReturnAddressModal) {
+      try { fetchSavedAddresses(); } catch (e) { /* ignore */ }
+    } else {
+      // Clear selection when the modal closes
+      setSelectedSavedAddressId(null);
+    }
+  }, [showReturnAddressModal, fetchSavedAddresses]);
 
   const handleReturnAddressChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -2501,6 +2744,7 @@ export default function ViewRefundDetails() {
 
     try {
       setAddrSubmitting(true);
+      const payloadToSend = { ...returnAddressForm, notify_buyer: pendingCounterOffer ? false : true };
       const response = await fetch(apiUrlFor(`/return-refund/${encodeURIComponent(String(idToUse))}/set_return_address/`), {
         method: 'POST',
         headers: {
@@ -2509,7 +2753,7 @@ export default function ViewRefundDetails() {
           'X-Shop-Id': String(shopId),
         },
         credentials: 'include',
-        body: JSON.stringify(returnAddressForm)
+        body: JSON.stringify(payloadToSend)
       });
 
       if (response.ok) {
@@ -2527,25 +2771,37 @@ export default function ViewRefundDetails() {
           await fetchLatestRefund();
         }
 
-        toast({ title: 'Success', description: 'Return address saved and buyer notified' });
-        setShowReturnAddressSection(false);
+        // Refresh saved addresses list so newly-created address appears
+        try { await fetchSavedAddresses(); } catch (e) { /* ignore */ }
 
-        // Navigate to To Process tab after saving
-        try {
-          const targetUrl = `/seller/seller-return-refund-cancel?shop_id=${encodeURIComponent(String(shopId || ''))}&tab=to-process`;
-          navigate(targetUrl, { state: { message: 'Return address provided' } });
-          setTimeout(() => {
-            try {
-              if (!window.location.pathname.includes('/seller/seller-return-refund-cancel')) {
-                window.location.href = targetUrl;
+        const notified = !pendingCounterOffer;
+        toast({ title: 'Success', description: notified ? 'Return address saved and buyer notified' : 'Return address saved' });
+        setShowReturnAddressModal(false);
+        setSelectedSavedAddressId(null);
+
+        // If this address was added while composing a counter offer, keep user on the same page and
+        // keep the inline counter visible so they can continue. Otherwise navigate to To Process as before.
+        if (pendingCounterOffer) {
+          setPendingCounterOffer(false);
+          // Ensure counter form is visible
+          try { setShowCounterOffer(true); } catch (e) { /* ignore */ }
+        } else {
+          try {
+            const targetUrl = `/seller/seller-return-refund-cancel?shop_id=${encodeURIComponent(String(shopId || ''))}&tab=to-process`;
+            navigate(targetUrl, { state: { message: 'Return address provided' } });
+            setTimeout(() => {
+              try {
+                if (!window.location.pathname.includes('/seller/seller-return-refund-cancel')) {
+                  window.location.href = targetUrl;
+                }
+              } catch (err) {
+                console.warn('Fallback navigation failed', err);
               }
-            } catch (err) {
-              console.warn('Fallback navigation failed', err);
-            }
-          }, 300);
+            }, 300);
 
-        } catch (e) {
-          // ignore navigation errors
+          } catch (e) {
+            // ignore navigation errors
+          }
         }
       } else {
         const text = await response.text().catch(() => 'Failed to save return address');
@@ -3397,7 +3653,12 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
           // For return-type refunds: allow providing an address when missing; otherwise show a small inline note
           (refund?.refund_type === 'return') ? (
             refund.return_address ? (
-              <div className="text-sm text-gray-600">Return address provided • {formatDate(refund.return_address?.created_at)}</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm text-gray-600">Return address provided • {formatDate(refund.return_address?.created_at)}</div>
+                <div>
+                  <Button size="sm" variant="outline" onClick={() => setShowReturnAddressModal(true)}>Add Address</Button>
+                </div>
+              </div>
             ) : (
               <Button
                 onClick={() => openReturnAddressDialog(refund.return_address)}
@@ -3597,13 +3858,17 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
   const renderStatusUI = useMemo(() => {
     if (!refund) return null;
 
+    // If the return_request shows 'shipped', show a specific Shipped UI with tracking and files
+    if (refund.return_request?.status === 'shipped' && String(refund.status || '').toLowerCase() === 'approved') return <ShippedStatusUI refund={refund} />;
+
     // If the return_request shows 'received', show a specific Received UI prompting inspection
     if (refund.return_request?.status === 'received') return <ReceivedStatusUI refund={refund} />;
 
     // If payment completed for an approved refund, show Completed UI immediately (covers both keep and return)
     const _paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
     const _status = String(refund.status || '').toLowerCase();
-    if (_status === 'approved' && _paymentStatus === 'completed') return <CompletedStatusUI refund={refund} />;
+    const drSeller = (refund as any).dispute || (refund as any).dispute_request || null;
+  if ((_status === 'completed' && (!drSeller || String((drSeller.status || '').trim()).toLowerCase() === 'resolved')) || (_status === 'approved' && _paymentStatus === 'completed')) return <CompletedStatusUI refund={refund} />;
 
     // Decide if the refund is already ready to process (ensures correct UI after refresh)
     const _rtype = String(refund.refund_type || '').toLowerCase();
@@ -3630,7 +3895,7 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
       case 'waiting': return <WaitingStatusUI refund={refund} />;
       case 'to_verify': return <ToVerifyStatusUI refund={refund} />;
       case 'to_process': return <ProcessingRefundUI refund={refund} onProcess={handleProcessRefund} onSetPaymentStatus={handleSetPaymentStatus} autoOpenDetails={autoOpenProcessing} />;
-      case 'dispute': return <DisputeStatusUI refund={refund} />;
+      case 'dispute': return <DisputeStatusUI refund={refund} onProceed={async () => { setShowProcessingNow(true); await handleSetPaymentStatus('processing'); }} actionLoading={actionLoading} />;
       case 'completed': return <CompletedStatusUI refund={refund} />;
       case 'rejected': return <SellerRejectedStatusUI refund={refund} />;
       case 'cancelled': return null;
@@ -3657,6 +3922,77 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
           <div className="lg:col-span-2 space-y-4">
             {/* Status-specific UI */}
             {renderStatusUI}
+
+            {/* Current return address (visible first when present) */}
+            {refund?.return_address && !(String(refund.refund_type || '').toLowerCase() === 'keep' && status === 'pending') && (
+              <div className="mt-3">
+                <CurrentReturnAddress refund={refund} onEdit={() => setShowReturnAddressModal(true)} />
+              </div>
+            )}
+
+            {/* Inline Counter Offer form (shows after clicking Make Offer) */}
+            {showCounterOffer && (
+              <CounterOfferModal
+                show={showCounterOffer}
+                setShow={setShowCounterOffer}
+                refund={refund}
+                userId={user.id}
+                shopId={shopId}
+                setRefund={setRefund}
+                fetchLatestRefund={fetchLatestRefund}
+                openReturnAddressDialog={(prefill) => { setPendingCounterOffer(true); openReturnAddressDialog(prefill); }}
+              />
+            )}
+
+            {/* Return Address Dialog (opens as a modal) */}
+            <Dialog open={showReturnAddressModal} onOpenChange={setShowReturnAddressModal}>
+              <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Provide Return Address</DialogTitle>
+                  <DialogDescription>Enter the address where the buyer should ship the item. Submitting will confirm the approval.</DialogDescription>
+                </DialogHeader>
+
+                    <div className="py-2 space-y-4">
+                  {/* Saved addresses (allow picking one) */}
+                  {addressesLoading ? (
+                    <div className="text-sm text-gray-500">Loading saved addresses...</div>
+                  ) : (
+                    savedAddresses.length > 0 ? (
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Saved Return Addresses</div>
+                        <div className="grid grid-cols-1 gap-2">
+                          {savedAddresses.map((addr) => (
+                            <div key={addr.id} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') { setReturnAddressForm({ recipient_name: addr.recipient_name || '', contact_number: addr.contact_number || '', country: addr.country || 'Philippines', province: addr.province || '', city: addr.city || '', barangay: addr.barangay || '', street: addr.street || '', zip_code: addr.zip_code || '', notes: addr.notes || '' }); setSelectedSavedAddressId(String(addr.id)); setTimeout(() => { const el = document.querySelector('input[name="recipient_name"]') as HTMLInputElement; if (el) el.focus(); }, 50); } }} onClick={() => { setReturnAddressForm({ recipient_name: addr.recipient_name || '', contact_number: addr.contact_number || '', country: addr.country || 'Philippines', province: addr.province || '', city: addr.city || '', barangay: addr.barangay || '', street: addr.street || '', zip_code: addr.zip_code || '', notes: addr.notes || '' }); setSelectedSavedAddressId(String(addr.id)); setTimeout(() => { const el = document.querySelector('input[name="recipient_name"]') as HTMLInputElement; if (el) el.focus(); }, 50); }} className={`p-3 border rounded cursor-pointer hover:bg-gray-100 ${selectedSavedAddressId === String(addr.id) ? 'bg-blue-50 border-blue-200' : 'bg-gray-50'}`}>
+                              <div>
+                                <div className="text-sm font-medium">{addr.recipient_name} — {addr.contact_number}</div>
+                                <div className="text-sm text-gray-700">{addr.street}, {addr.barangay}, {addr.city}, {addr.province} {addr.zip_code}, {addr.country}</div>
+                                {addr.notes && <div className="text-sm text-gray-600 mt-1">{addr.notes}</div>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500">No saved addresses found.</div>
+                    )
+                  )}
+
+                  <ReturnAddressSection
+                    refund={refund}
+                    returnAddressForm={returnAddressForm}
+                    handleReturnAddressChange={handleReturnAddressChange}
+                    addrSubmitting={addrSubmitting}
+                    handleSubmitReturnAddress={handleSubmitReturnAddress}
+                    onClose={() => setShowReturnAddressModal(false)}
+                  />
+                </div>
+
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowReturnAddressModal(false)}>Cancel</Button>
+                  <Button onClick={handleSubmitReturnAddress} disabled={addrSubmitting}>Save</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog> 
 
             {/* Request Details */}
             <RequestDetailsSection refund={refund} />
@@ -3720,27 +4056,8 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
           handleRejectSubmit={handleRejectSubmit}
         />
 
-        {/* Counter Offer Modal */}
-        <CounterOfferModal
-          show={showCounterOffer}
-          setShow={setShowCounterOffer}
-          refund={refund}
-          userId={user.id}
-          shopId={shopId}
-          setRefund={setRefund}
-          fetchLatestRefund={fetchLatestRefund}
-        />
 
-        {/* Inline Return Address Section (shown as step 2 when seller clicks Approve on return refunds) */}
-        <ReturnAddressSection
-          showReturnAddressSection={showReturnAddressSection}
-          setShowReturnAddressSection={setShowReturnAddressSection}
-          refund={refund}
-          returnAddressForm={returnAddressForm}
-          handleReturnAddressChange={handleReturnAddressChange}
-          addrSubmitting={addrSubmitting}
-          handleSubmitReturnAddress={handleSubmitReturnAddress}
-        />
+
 
         {/* Complete Refund Confirmation Modal */}
         <Dialog open={showProcessConfirmation} onOpenChange={setShowProcessConfirmation}>

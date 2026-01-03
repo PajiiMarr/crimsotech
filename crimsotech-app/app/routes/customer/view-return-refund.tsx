@@ -648,9 +648,14 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
   // Processing applies to:
   // - Return items: when return_request.status is 'approved' and payment is 'processing'
   // - Keep items: when refund.status is 'approved' and payment is 'processing'
+  const dr = (refund as any).dispute || (refund as any).dispute_request || null;
   const isProcessing = (
+    // Return items normally require return_request to be approved
     (isReturnItem && rrStatus === 'approved' && payStatus === 'processing' && String(refund.status || '').toLowerCase() === 'approved') ||
-    (isKeepItem && payStatus === 'processing' && String(refund.status || '').toLowerCase() === 'approved')
+    // Keep items show processing when payment_status is processing
+    (isKeepItem && payStatus === 'processing' && String(refund.status || '').toLowerCase() === 'approved') ||
+    // Special case: dispute approved by admin can trigger processing even if return_request is rejected
+    (dr && String((dr.status || '').trim()).toLowerCase() === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'processing')
   );
   
   return (
@@ -663,7 +668,7 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
             <div className="mt-3">
               <ToProcessStatusUI refund={refund} formatCurrency={formatCurrency} />
             </div>
-          ) : (payStatus === 'completed' && String(refund.status || '').toLowerCase() === 'approved') ? (
+          ) : ((payStatus === 'completed' && String(refund.status || '').toLowerCase() === 'approved') || String(refund.status || '').toLowerCase() === 'completed') ? (
             <div className="mt-3">
               <PaymentCompletedUI refund={refund} formatCurrency={formatCurrency} />
             </div>
@@ -1335,7 +1340,99 @@ function PaymentCompletedUI({ refund, formatCurrency }: { refund: RefundDetail; 
   );
 }
 
-function DisputeStatusUI({ refund }: { refund: RefundDetail }) {
+function DisputeStatusUI({ refund, formatCurrency, user }: { refund: RefundDetail; formatCurrency: (a: number | string) => string; user?: any }) {
+  // Use whichever dispute shape is present
+  const dr = (refund as any).dispute || (refund as any).dispute_request || null;
+
+  // Special case: dispute approved by admin and return_request was previously rejected
+  if (dr && String((dr.status || '').trim()).toLowerCase() === 'approved' && String(refund.return_request?.status || '').toLowerCase() === 'rejected') {
+    return (
+      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <CheckCircle className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium text-emerald-800">Dispute Approved</p>
+            <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The seller has been requested to proceed with your refund — you will be notified once the refund is processed.</p>
+            {dr?.resolved_at && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at))}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show processing UI for disputes only if backend has already set refund to approved+processing
+  if (dr && String((dr.status || '').trim()).toLowerCase() === 'approved') {
+    const payStatus = String(refund.refund_payment_status || '').toLowerCase();
+    const refundStatus = String(refund.status || '').toLowerCase();
+
+    if (refundStatus === 'approved' && payStatus === 'processing') {
+      // Backend already set processing: show unified processing UI
+      return (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <CheckCircle className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-emerald-800">Dispute Approved</p>
+              <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The seller has been requested to proceed with your refund.</p>
+              {dr?.resolved_at && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at))}</p>}
+
+              <div className="mt-3">
+                <ToProcessStatusUI refund={refund} formatCurrency={formatCurrency} />
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Otherwise show a friendly approved message until processing starts
+    return (
+      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <CheckCircle className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium text-emerald-800">Dispute Approved</p>
+            <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The seller has been requested to proceed with your refund — you will be notified once the refund is processed.</p>
+            {dr?.resolved_at && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at))}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If admin rejected the dispute but refund still shows 'dispute', inform the buyer
+  if (dr && String((dr.status || '').trim()).toLowerCase() === 'rejected' && String(refund.status || '').toLowerCase() === 'dispute') {
+
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium text-red-800">Dispute Rejected</p>
+            <p className="text-sm text-red-700 mt-1">The administrator has rejected your dispute for this refund. The refund remains in dispute — if you believe this is a mistake, you can confirm you received this decision.</p>
+            {dr?.processed_by && (
+              <p className="text-xs text-gray-500 mt-2">Processed by: <strong>{(dr as any).processed_by?.username || (dr as any).processed_by?.email || 'Admin'}</strong></p>
+            )}
+            {dr?.resolved_at && <p className="text-xs text-gray-500">Resolved at: {formatDate(String(dr.resolved_at))}</p>}
+            {((dr as any).admin_notes) && (
+              <div className="mt-3 p-3 bg-white border rounded text-sm text-gray-700">
+                <div className="text-xs text-gray-500">Admin notes</div>
+                <div className="mt-1">{(dr as any).admin_notes}</div>
+              </div>
+            )}
+
+            <div className="mt-3 flex items-center gap-2">
+              <div className="text-xs text-gray-500">Use the actions card on the right to acknowledge this decision.</div>
+              <Button variant="outline" size="sm" onClick={() => window.alert('Contact support')}>
+                Contact Support
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
       <div className="flex items-center gap-3">
@@ -1352,18 +1449,38 @@ function DisputeStatusUI({ refund }: { refund: RefundDetail }) {
 }
 
 function CompletedStatusUI({ refund, formatCurrency }: { refund: RefundDetail; formatCurrency: (a: number | string) => string }) {
+  // Check if a dispute was associated and was resolved
+  const dr = (refund as any).dispute || (refund as any).dispute_request || null;
+  const isResolved = dr && String((dr.status || '').trim()).toLowerCase() === 'resolved';
+
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-      <div className="flex items-center gap-3">
-        <CheckSquare className="h-5 w-5 text-emerald-600" />
-        <div>
+      <div className="flex items-start gap-3">
+        <CheckSquare className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+        <div className="flex-1">
           <p className="font-medium text-emerald-800">Refund Completed</p>
-          <p className="text-sm text-emerald-700">
+          <p className="text-sm text-emerald-700 mt-1">
             Your refund has been successfully completed.
             {refund.total_refund_amount && (
               <span className="font-bold ml-2">{formatCurrency(refund.total_refund_amount)}</span>
             )}
           </p>
+
+          {isResolved && (
+            <div className="mt-3 p-3 bg-white border rounded text-sm text-gray-700">
+              <div className="text-sm font-medium text-emerald-800">Resolved After Dispute</div>
+              <div className="text-xs text-gray-500 mt-1">This refund was completed after an administrative review of the dispute.</div>
+              {dr?.processed_by && (
+                <div className="text-xs text-gray-500 mt-2">Processed by: <strong>{(dr as any).processed_by?.username || (dr as any).processed_by?.email || 'Admin'}</strong></div>
+              )}
+              {dr?.resolved_at && (
+                <div className="text-xs text-gray-500">Resolved at: {formatDate(String(dr.resolved_at))}</div>
+              )}
+              {(dr as any)?.admin_notes && (
+                <div className="mt-2 p-2 bg-gray-50 rounded text-sm text-gray-700">{(dr as any).admin_notes}</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -2277,6 +2394,89 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
   // UI message shown briefly after buyer submits return info
   const [detailsSubmittedMessage, setDetailsSubmittedMessage] = useState<string | null>(null);
 
+  // Acknowledgement state for dispute 'rejected' flow (moved up from DisputeStatusUI so it can be rendered in the Actions card)
+  const [ackLoading, setAckLoading] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  const handleAcknowledgeDispute = async (dr: any) => {
+    if (!dr || !dr.id) return;
+    setAckLoading(true);
+    try {
+      const rawBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+      const apiPrefix = rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`;
+      const ackUrl = `${apiPrefix}/disputes/${encodeURIComponent(String(dr.id))}/acknowledge/`;
+
+      // Helpful debug to diagnose double-/api/ issues reported in logs
+      console.debug('Acknowledge dispute URL:', ackUrl);
+
+      const res = await fetch(ackUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user?.user_id || ''),
+        },
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        // Parse response and update local refund status if returned by server
+        let json: any = null;
+        try { json = await res.json(); } catch (_) { json = null; }
+
+        // Server returns DisputeRequestSerializer which includes a limited `refund` field.
+        if (json && json.refund) {
+          // refresh full refund details from server to reflect canonical state
+          await fetchRefundDetails();
+          setAcknowledged(true);
+          toast({ title: 'Acknowledged', description: 'You have acknowledged the admin decision.', variant: 'success' });
+        } else {
+          // Server didn't include refund info; treat as acknowledged and mark locally
+          setAcknowledged(true);
+          toast({ title: 'Acknowledged', description: 'You have acknowledged the admin decision.', variant: 'success' });
+
+          // Fallback: mark completed locally so UI reflects the acknowledged state *and* mark dispute resolved if present
+          setRefund((prev) => {
+            if (!prev) return prev;
+            const dr = (prev as any).dispute || (prev as any).dispute_request || null;
+            let updatedRefund: any = { ...(prev as any), status: 'completed', refund_payment_status: 'completed' };
+            if (dr) {
+              const resolvedDr = { ...(dr as any), status: 'resolved', resolved_at: new Date().toISOString() };
+              updatedRefund.dispute = resolvedDr;
+              updatedRefund.dispute_request = resolvedDr;
+            }
+            console.debug('Locally updated refund after acknowledge fallback:', updatedRefund);
+            return updatedRefund as RefundDetail;
+          });
+        }
+      } else if (res.status === 404 || res.status === 405) {
+        // Server doesn't implement acknowledge — fallback to local ack
+        toast({ title: 'Acknowledged', description: 'Acknowledged locally (server did not support acknowledge).', variant: 'default' });
+        setAcknowledged(true);
+        // Also locally mark as completed (do not change payment status) and mark dispute resolved if present
+        setRefund((prev) => {
+          if (!prev) return prev;
+          const dr = (prev as any).dispute || (prev as any).dispute_request || null;
+          let updatedRefund: any = { ...(prev as any), status: 'completed', refund_payment_status: 'completed' };
+          if (dr) {
+            const resolvedDr = { ...(dr as any), status: 'resolved', resolved_at: new Date().toISOString() };
+            updatedRefund.dispute = resolvedDr;
+            updatedRefund.dispute_request = resolvedDr;
+          }
+          console.debug('Locally updated refund after 404/405 acknowledge fallback:', updatedRefund);
+          return updatedRefund as RefundDetail;
+        });
+      } else {
+        let msg = 'Failed to acknowledge';
+        try { const j = await res.json(); msg = j?.error || j?.detail || msg; } catch (_) {}
+        toast({ title: 'Error', description: msg, variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || 'Network error', variant: 'destructive' });
+    } finally {
+      setAckLoading(false);
+    }
+  };
+
   // Buyer accept-flow states: preview confirmation and add-account dialog
   const [showAcceptPreview, setShowAcceptPreview] = useState(false);
   const [acceptPreviewData, setAcceptPreviewData] = useState<any>(null);
@@ -2808,8 +3008,14 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
       case 'to_process':
         return <ToProcessStatusUI refund={refund} formatCurrency={formatCurrency} />;
       case 'dispute':
-        return <DisputeStatusUI refund={refund} />;
+        return <DisputeStatusUI refund={refund} formatCurrency={formatCurrency} user={user} />;
       case 'completed':
+        // Only show completed UI if there is no active dispute, or the dispute has been resolved
+        const drCompleted = (refund as any).dispute || (refund as any).dispute_request || null;
+        if (drCompleted && String((drCompleted.status || '').trim()).toLowerCase() !== 'resolved') {
+          // If a dispute exists and isn't resolved, show dispute UI instead of completed
+          return <DisputeStatusUI refund={refund} formatCurrency={formatCurrency} user={user} />;
+        }
         return <CompletedStatusUI refund={refund} formatCurrency={formatCurrency} />;
       case 'rejected':
         return <RejectedStatusUI refund={refund} formatCurrency={formatCurrency} />;
@@ -2827,9 +3033,11 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
     const isWaitingDerived = (status === 'waiting');
     const rrStatus = String(refund?.return_request?.status || '').toLowerCase();
     const payStatus = String(refund?.refund_payment_status || '').toLowerCase();
+    // Hide add-tracking action when a dispute was approved by admin (we don't want buyer to ship items after admin ruled in buyer's favor)
+    const dr = (refund as any).dispute || (refund as any).dispute_request || null;
     // Show Add/Update Tracking action only when refund is approved and the return hasn't moved to shipped/received/inspected
     // Also hide the action when the return is approved but the refund payment is processing or already completed
-    const showAddTrackingAction = ((status === 'approved' && (refund?.refund_category === 'return_item' || (refund as any)?.refund_type === 'return') && !['shipped','received','inspected'].includes(rrStatus) && !(rrStatus === 'approved' && ['processing','completed'].includes(payStatus)))) || isWaitingDerived;
+    const showAddTrackingAction = ((status === 'approved' && (refund?.refund_category === 'return_item' || (refund as any)?.refund_type === 'return') && !['shipped','received','inspected'].includes(rrStatus) && !(rrStatus === 'approved' && ['processing','completed'].includes(payStatus)) && !(dr && String(dr.status || '').toLowerCase() === 'approved'))) || isWaitingDerived;
 
     if (showAddTrackingAction) {
       return (
@@ -2916,6 +3124,45 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
               <p className="text-xs text-gray-500 mt-2">A seller counter-offer was rejected — you may file a dispute to escalate this case.</p>
             )}
           </div>
+        );
+      case 'dispute':
+        // Render actions when a dispute was processed by admin
+        const dr = (refund as any).dispute || (refund as any).dispute_request || null;
+
+        if (dr && String((dr.status || '').trim()).toLowerCase() === 'rejected' && String(refund.status || '').toLowerCase() === 'dispute') {
+          return (
+            <div>
+              <Button
+                className="w-full bg-blue-600 hover:bg-blue-700"
+                onClick={() => handleAcknowledgeDispute(dr)}
+                disabled={ackLoading || acknowledged}
+                size="sm"
+              >
+                {ackLoading ? 'Confirming…' : (acknowledged ? 'Acknowledged' : 'Confirm')}
+              </Button>
+
+              <Button
+                variant="outline"
+                className="w-full mt-2"
+                onClick={() => window.alert('Contact support')}
+                size="sm"
+              >
+                Contact Support
+              </Button>
+            </div>
+          );
+        }
+
+        return (
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => navigate('/return-refund')}
+            size="sm"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Requests
+          </Button>
         );
       default:
         return (

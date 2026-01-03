@@ -232,7 +232,7 @@ export default function AdminViewDisputeDetails({ loaderData }: Route.ComponentP
           setRefundLoading(true);
           setRefundError(null);
           const refundRes = await fetch(
-            `${apiBase}/return-refund/${encodeURIComponent(String(refundId))}/get_refund_details/`,
+            `${apiBase}/return-refund/${encodeURIComponent(String(refundId))}/get_admin_refund_details/`,
             {
               method: "GET",
               headers,
