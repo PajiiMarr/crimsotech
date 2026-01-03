@@ -20,7 +20,7 @@ from api.views import *
 from rest_framework.routers import DefaultRouter
 from django.conf.urls.static import static
 from django.conf import settings
-from api.dispute_views import DisputeRequestViewSet
+
 
 router = DefaultRouter()
 router.register(r'verify', VerifyNumber, basename='verify')
@@ -49,11 +49,12 @@ router.register(r'seller-order-list', SellerOrderList, basename='seller-order-li
 router.register(r'checkout-order', CheckoutOrder, basename='checkout-order')
 router.register(r'purchases-buyer', PurchasesBuyer, basename='purchases-buyer')  # Add this line
 router.register(r'shipping-address', ShippingAddressViewSet, basename='shipping-address')  # Add this line
+router.register(r'return-address', ReturnAddressViewSet, basename='return-address')
 router.register(r'return-refund', RefundViewSet, basename='return-refund')
+router.register(r'disputes', DisputeViewSet, basename='disputes')
+
 router.register(r'order-sucessful', OrderSuccessfull, basename='order-successful')
-router.register(r'refund-payment', RefundPaymentMethodViewSet, basename='refundpayment')
 router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
-router.register(r'disputes', DisputeRequestViewSet, basename='dispute')
 router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment')
 router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-orders-active')
 router.register(r'swap-products', SwapViewset, basename='swap-products')

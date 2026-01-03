@@ -90,7 +90,7 @@ const menuItems = [
     group: "My Account",
     children: [
       { title: "Purchases", url: "/purchases", icon: TicketCheck, roles: ["customer"] },
-      { title: "Product Return & Cancelled", url: "/customer-return-cancel", icon: TicketCheck, roles: ["customer"] },
+      { title: "Product Return & Cancelled", url: "/return-refund", icon: TicketCheck, roles: ["customer"] },
       { title: "Favorites", url: "/favorites", icon: Star, roles: ["customer"] },
       { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
       { title: "Trade", url: "/trade", icon: Handshake, roles: ["customer"] },

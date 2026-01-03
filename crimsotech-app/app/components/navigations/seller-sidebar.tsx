@@ -51,6 +51,7 @@ export default function SellerSidebar() {
       group: "Refund & Return",
       children: [
         { title: "Return/Refund/Cancel", url: "/seller/seller-return-refund-cancel", icon: RotateCcw },
+        { title: "Manage Return Address", url: "/seller/return-address", icon: RotateCcw },
       ],
     },
     {
