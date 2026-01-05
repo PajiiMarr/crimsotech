@@ -36,7 +36,8 @@ export default [
     route('order-review/:id', 'components/customer/order-review.tsx'),  
     route('notifications', 'routes/customer/notifications.tsx'),  
     route('arrange-shipment', 'components/customer/arrange-shipment.tsx'), 
-    route("customer-create-product", "routes/customer/customer-create-product.tsx"), 
+    route("customer-create-product", "routes/customer/customer-create-product.tsx"),
+    route("customer-create-gift", "routes/customer/customer-create-gift.tsx"), 
 
     //customer-buyer
     route('return-refund', 'routes/customer/return-refund.tsx'),  
@@ -77,6 +78,8 @@ export default [
         route("seller-earnings", "routes/seller/seller-earnings.tsx"), 
         route("seller-vouchers", "routes/seller/seller-vouchers.tsx"), 
         route("seller-notifications", "routes/seller/seller-notifications.tsx"), 
+        route("gift", "routes/seller/seller-gift.tsx"), 
+        route("seller-create-gift", "routes/seller/seller-create-gift.tsx"), 
 
 
         
