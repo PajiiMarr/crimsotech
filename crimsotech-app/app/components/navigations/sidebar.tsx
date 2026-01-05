@@ -92,7 +92,6 @@ const menuItems = [
       { title: "Purchases", url: "/purchases", icon: TicketCheck, roles: ["customer"] },
       { title: "Product Return & Cancelled", url: "/return-refund", icon: TicketCheck, roles: ["customer"] },
       { title: "Favorites", url: "/favorites", icon: Star, roles: ["customer"] },
-      { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
       { title: "Trade", url: "/trade", icon: Handshake, roles: ["customer"] },
       
       
@@ -104,13 +103,14 @@ const menuItems = [
       { title: "My products", url: "/personal-listing", icon: Package  , roles: ["customer"] },
       { title: "Order Lists", url: "/order-list", icon: ClipboardList, roles: ["customer"] },
       { title: "Return/Refund/Cancel", url: "/return-refund-cancel", icon: ClipboardList, roles: ["customer"] },
-      { title: "Subscription Plans", url: "/subscription-plan", icon: DollarSign, roles: ["customer"] },
+      { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
     ]
   },
 
    {
     group: "Settings",
     children: [
+      { title: "Subscription Plans", url: "/subscription-plan", icon: DollarSign, roles: ["customer"] },
       { title: "Notification", url: "/notifications", icon: Bell , roles: ["customer"] },
     ]
   },

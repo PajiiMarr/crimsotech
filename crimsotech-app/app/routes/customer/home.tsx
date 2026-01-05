@@ -3,7 +3,7 @@ import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider'
 import { useState, useEffect } from "react"
-import { Search, X, Heart, Handshake } from 'lucide-react'
+import { Search, X, Heart, Handshake, Gift } from 'lucide-react'
 import { Input } from '~/components/ui/input'
 import { useNavigate } from 'react-router'
 import AxiosInstance from '~/components/axios/Axios'
@@ -212,12 +212,17 @@ const CompactProductCard = ({
       onClick={handleClick}
       className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col relative"
     >
-      {product.open_for_swap && (
+      {product.price === 0 ? (
+        <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-emerald-50 border border-emerald-100 rounded-full flex items-center gap-2">
+          <Gift className="h-4 w-4 text-emerald-600" />
+          <span className="text-xs text-emerald-700 font-medium">FREE GIFT</span>
+        </div>
+      ) : product.open_for_swap ? (
         <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-indigo-50 border border-indigo-100 rounded-full flex items-center gap-2">
           <Handshake className="h-4 w-4 text-indigo-600" />
           <span className="text-xs text-indigo-700 font-medium">Open for Swap</span>
         </div>
-      )}
+      ) : null}
 
       <button
         onClick={handleFavoriteClick}
@@ -265,9 +270,11 @@ const CompactProductCard = ({
         
         <div className="mt-auto pt-1">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-bold text-gray-900">
-              ₱{product.price.toFixed(2)}
-            </span>
+              {product.price === 0 ? (
+                <span className="text-sm font-bold text-emerald-600">FREE GIFT</span>
+              ) : (
+                <span className="text-sm font-bold text-gray-900">₱{product.price.toFixed(2)}</span>
+              )}
           </div>
         </div>
       </div>
@@ -403,6 +410,8 @@ export default function Home({ loaderData }: any) {
   const [maxPrice, setMaxPrice] = useState<string>('');
   const [selectedCondition, setSelectedCondition] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+  // View mode: show all products or only gifts (price === 0)
+  const [viewMode, setViewMode] = useState<'all' | 'gifts'>('all');
 
   // Fetch favorites
   const fetchFavorites = async () => {
@@ -461,7 +470,10 @@ export default function Home({ loaderData }: any) {
     const matchesCategory = selectedCategory === '' || 
       (prodCatId && prodCatId === selectedCategory);
 
-    return matchesSearch && matchesMin && matchesMax && matchesCondition && matchesCategory;
+    // View mode filter: if 'gifts', only include products with zero price
+    const matchesView = viewMode === 'gifts' ? (Number(product.price || 0) === 0) : true;
+
+    return matchesSearch && matchesMin && matchesMax && matchesCondition && matchesCategory && matchesView;
   });
 
   return (
@@ -507,6 +519,21 @@ export default function Home({ loaderData }: any) {
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setViewMode('all')}
+                  className={`px-3 py-1 text-xs rounded ${viewMode === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setViewMode('gifts')}
+                  className={`px-3 py-1 text-xs rounded ${viewMode === 'gifts' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                >
+                  Gifts
+                </button>
               </div>
 
               <button

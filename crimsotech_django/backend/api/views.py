@@ -16679,3 +16679,1520 @@ class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+
+
+
+
+class SellerGifts(viewsets.ModelViewSet):
+    serializer_class = ProductSerializer
+    
+    @action(detail=False, methods=['get'], url_path='global-categories')    
+    def get_global_categories(self, request):
+        """
+        Fetch global categories (where shop_id is null/empty)
+        """
+        try:
+            # Fetch categories where shop is null (global categories)
+            global_categories = Category.objects.filter(shop__isnull=True).order_by('name')
+            
+            # Serialize the data
+            categories_data = []
+            for category in global_categories:
+                category_data = {
+                    "id": str(category.id),
+                    "name": category.name,
+                    "shop": None,  # Explicitly set to null since we're filtering for null shop
+                    "user": {
+                        "id": str(category.user.id),
+                        "username": category.user.username
+                    } if category.user else None,
+                }
+                categories_data.append(category_data)
+            
+            return Response({
+                "success": True,
+                "categories": categories_data,
+                "message": "Global categories retrieved successfully",
+                "total_count": len(categories_data),
+                "is_global": True
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch global categories",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+    @action(detail=False, methods=['post'], url_path='global-categories/predict')    
+    def predict_category(self, request):
+        """
+        Predict category for a product - FIXED VERSION with UUIDs
+        """
+        try:
+            import pandas as pd
+            import numpy as np
+            import tensorflow as tf
+            import joblib
+            import os
+            
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+            MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+            
+            print(f"Looking for models in: {MODEL_DIR}")
+
+            # Load the trained models
+            try:
+                category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+                scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+                model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
+                
+                # Load the EXACT feature columns used during training
+                feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
+                
+                print(f"✅ Models loaded successfully!")
+                print(f"Model expects {len(feature_columns)} features: {feature_columns}")
+
+                print(f"Model input shape: {model.input_shape}")
+                print(f"Model expects {model.input_shape[1]} features")
+                print(f"Loaded {len(feature_columns)} features from file")
+                
+            except FileNotFoundError as e:
+                print(f"❌ Model file not found: {str(e)}")
+                return Response(
+                    {'success': False, 'error': f'Model files not found. Please train the model first.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Extract data from request
+            data = request.data
+            
+            # Required fields from UI - price still required but will be set to 0
+            required_fields = ['name', 'description', 'quantity', 'price', 'condition']
+            
+            # Validate required fields
+            for field in required_fields:
+                if field not in data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Prepare item data - set price to 0
+            item_data = {
+                'name': str(data['name']),
+                'description': str(data['description']),
+                'quantity': int(data['quantity']),
+                'price': 0.0,  # SET PRICE TO 0
+                'condition': str(data['condition'])
+            }
+            
+            print(f"\n=== PREDICTION STARTED ===")
+            print(f"Product: {item_data['name']}")
+            print(f"Price: ${item_data['price']}, Quantity: {item_data['quantity']}")
+            
+            # ================================================
+            # CREATE FEATURES - EXACTLY AS DURING TRAINING
+            # ================================================
+            
+            # Initialize all features to 0
+            features = {col: 0 for col in feature_columns}
+            
+            # Basic numeric features - only if they're in feature_columns
+            price = item_data['price']  # This will be 0
+            quantity = item_data['quantity']
+            
+            # Set only the features that exist in feature_columns
+            if 'price' in feature_columns:
+                features['price'] = price
+            if 'quantity' in feature_columns:
+                features['quantity'] = quantity
+            if 'price_quantity_interaction' in feature_columns:
+                features['price_quantity_interaction'] = price * np.log1p(quantity + 1)
+            if 'log_price' in feature_columns:
+                features['log_price'] = np.log1p(price)
+            if 'price_per_unit' in feature_columns:
+                features['price_per_unit'] = price / (quantity + 1)
+            if 'price_to_quantity_ratio' in feature_columns:
+                features['price_to_quantity_ratio'] = price / (quantity + 1e-5)
+            if 'price_scaled' in feature_columns:
+                features['price_scaled'] = price / 10000  # Use same scaling as training
+            if 'quantity_scaled' in feature_columns:
+                features['quantity_scaled'] = quantity / 100  # Use same scaling as training
+            
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            
+            if 'condition_score' in feature_columns:
+                if 'new' in condition_lower:
+                    features['condition_score'] = 3
+                elif 'like new' in condition_lower:
+                    features['condition_score'] = 2
+                elif 'refurbished' in condition_lower:
+                    features['condition_score'] = 1
+                elif 'excellent' in condition_lower:
+                    features['condition_score'] = 0
+                elif 'good' in condition_lower:
+                    features['condition_score'] = -1
+                elif 'fair' in condition_lower:
+                    features['condition_score'] = -2
+                else:
+                    features['condition_score'] = 0
+            
+            # is_refurbished feature (if present)
+            if 'is_refurbished' in feature_columns:
+                features['is_refurbished'] = 1 if 'refurbished' in condition_lower else 0
+            
+            # Text features
+            name_lower = item_data['name'].lower()
+            desc_lower = item_data['description'].lower()
+            all_text = name_lower + ' ' + desc_lower
+            
+            if 'name_length' in feature_columns:
+                features['name_length'] = len(item_data['name'])
+            if 'desc_length' in feature_columns:
+                features['desc_length'] = len(item_data['description'])
+            if 'name_desc_ratio' in feature_columns:
+                desc_len = len(item_data['description'])
+                if desc_len > 0:
+                    features['name_desc_ratio'] = len(item_data['name']) / desc_len
+                else:
+                    features['name_desc_ratio'] = len(item_data['name'])
+            
+            # Keyword features - only for features that start with 'has_' AND are in feature_columns
+            for feature in feature_columns:
+                if feature.startswith('has_'):
+                    keyword = feature[4:]  # Remove 'has_' prefix
+                    features[feature] = 1 if keyword in all_text else 0
+            
+            # Price bins - only if they're in feature_columns (all will be 0 since price is 0)
+            if 'price_bin_0' in feature_columns:
+                features['price_bin_0'] = 1 if price < 100 else 0  # This will be 1
+            if 'price_bin_1' in feature_columns:
+                features['price_bin_1'] = 1 if 100 <= price < 500 else 0
+            if 'price_bin_2' in feature_columns:
+                features['price_bin_2'] = 1 if 500 <= price < 1000 else 0
+            if 'price_bin_3' in feature_columns:
+                features['price_bin_3'] = 1 if 1000 <= price < 2000 else 0
+            if 'price_bin_4' in feature_columns:
+                features['price_bin_4'] = 1 if price >= 2000 else 0
+            
+            # Category-specific features (these use category stats, so set to 0 for prediction)
+            if 'price_category_zscore' in feature_columns:
+                features['price_category_zscore'] = 0  # Can't compute without category
+            if 'quantity_category_zscore' in feature_columns:
+                features['quantity_category_zscore'] = 0  # Can't compute without category
+            if 'price_category_quartile' in feature_columns:
+                features['price_category_quartile'] = 2  # Default middle quartile
+            
+            # Additional simple text features
+            if 'name_word_count' in feature_columns:
+                features['name_word_count'] = len(item_data['name'].split())
+            if 'desc_word_count' in feature_columns:
+                features['desc_word_count'] = len(item_data['description'].split())
+            if 'keyword_count' in feature_columns:
+                # Count keyword features that are set to 1
+                keyword_features = [f for f in feature_columns if f.startswith('has_')]
+                features['keyword_count'] = sum(1 for f in keyword_features if features.get(f, 0) == 1)
+            if 'unique_keywords' in feature_columns:
+                # Same as keyword_count for prediction
+                keyword_features = [f for f in feature_columns if f.startswith('has_')]
+                features['unique_keywords'] = sum(1 for f in keyword_features if features.get(f, 0) == 1)
+            
+            # Brand mentions
+            for brand_feature in ['has_iphone', 'has_samsung', 'has_apple', 'has_sony']:
+                if brand_feature in feature_columns:
+                    brand_name = brand_feature[4:]  # Remove 'has_' prefix
+                    features[brand_feature] = 1 if brand_name in all_text else 0
+            
+            # New/Used flags
+            if 'is_new' in feature_columns:
+                features['is_new'] = 1 if 'new' in condition_lower else 0
+            if 'is_used' in feature_columns:
+                features['is_used'] = 1 if 'used' in condition_lower else 0
+            
+            print(f"\n=== FEATURE SUMMARY ===")
+            print(f"Total features created: {len(features)}")
+            print(f"Features expected: {len(feature_columns)}")
+            
+            # Create DataFrame with EXACTLY the expected features
+            X_item = pd.DataFrame([features])
+            
+            # Ensure we only have the expected features (remove extras, add missing)
+            for col in feature_columns:
+                if col not in X_item.columns:
+                    X_item[col] = 0
+            
+            # Remove any columns not in feature_columns
+            extra_cols = [col for col in X_item.columns if col not in feature_columns]
+            if extra_cols:
+                print(f"Removing extra columns: {extra_cols}")
+                X_item = X_item.drop(columns=extra_cols)
+            
+            # Reorder columns to match training order
+            X_item = X_item[feature_columns]
+            
+            print(f"DataFrame shape: {X_item.shape}")
+            print(f"Columns: {list(X_item.columns)}")
+            
+            # Show top non-zero features
+            non_zero = X_item.loc[:, (X_item != 0).any()].columns.tolist()
+            print(f"Non-zero features ({len(non_zero)}): {non_zero}")
+            
+            # ================================================
+            # SCALE AND PREDICT
+            # ================================================
+            
+            try:
+                X_scaled = scaler.transform(X_item)
+                print(f"Scaled successfully to shape: {X_scaled.shape}")
+            except Exception as e:
+                print(f"Scaling error: {e}, using raw features")
+                X_scaled = X_item.values.astype(np.float32)
+            
+            # Make prediction
+            prediction_probs = model.predict(X_scaled, verbose=0)
+            predicted_class = np.argmax(prediction_probs, axis=1)[0]
+            confidence = np.max(prediction_probs, axis=1)[0]
+            
+            # Convert predicted class to actual category label
+            predicted_label = category_le.inverse_transform([predicted_class])[0]
+            
+            print(f"\n✅ PREDICTION SUCCESSFUL!")
+            print(f"Predicted: {predicted_label}")
+            print(f"Confidence: {confidence:.2%}")
+            
+            # ================================================
+            # GET UUID FROM DATABASE (NEW CODE)
+            # ================================================
+            
+            # Try to find the category in the database
+            try:
+                # First, try to find the category by name (case-insensitive)
+                category_obj = Category.objects.filter(
+                    name__iexact=predicted_label,
+                    shop__isnull=True  # Only global categories
+                ).first()
+                
+                if category_obj:
+                    category_uuid = str(category_obj.id)
+                    category_name = category_obj.name
+                    print(f"✅ Found category in DB: {category_name} (UUID: {category_uuid})")
+                else:
+                    # If not found by exact name, try to find similar
+                    # You might need to adjust this based on your category naming
+                    similar_categories = Category.objects.filter(
+                        name__icontains=predicted_label,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if similar_categories:
+                        category_uuid = str(similar_categories.id)
+                        category_name = similar_categories.name
+                        print(f"✅ Found similar category in DB: {category_name} (UUID: {category_uuid})")
+                    else:
+                        # Fallback: get the first available global category
+                        first_category = Category.objects.filter(shop__isnull=True).first()
+                        if first_category:
+                            category_uuid = str(first_category.id)
+                            category_name = first_category.name
+                            print(f"⚠️  Category not found, using first available: {category_name}")
+                        else:
+                            # No categories in database
+                            category_uuid = None
+                            category_name = predicted_label
+                            print(f"❌ No categories found in database")
+                            
+            except Exception as db_error:
+                print(f"Database lookup error: {db_error}")
+                category_uuid = None
+                category_name = predicted_label
+            
+            # ================================================
+            # PREPARE RESPONSE WITH UUIDs
+            # ================================================
+            
+            # Get all category names from database (not just from model)
+            try:
+                all_categories_objs = Category.objects.filter(shop__isnull=True)
+                all_categories_list = []
+                
+                for cat in all_categories_objs:
+                    all_categories_list.append({
+                        'uuid': str(cat.id),
+                        'name': cat.name,
+                        'id': str(cat.id)  # Include both uuid and id for compatibility
+                    })
+            except Exception as e:
+                print(f"Error fetching categories from DB: {e}")
+                all_categories_list = list(category_le.classes_)
+            
+            # Prepare top 3 categories
+            top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
+            top_categories = []
+            
+            for idx in top_3_indices:
+                category_label = category_le.inverse_transform([idx])[0]
+                
+                # Try to find this category in DB for UUID
+                try:
+                    cat_obj = Category.objects.filter(
+                        name__iexact=category_label,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if cat_obj:
+                        category_uuid_for_alt = str(cat_obj.id)
+                        category_name_for_alt = cat_obj.name
+                    else:
+                        category_uuid_for_alt = None
+                        category_name_for_alt = category_label
+                        
+                except Exception:
+                    category_uuid_for_alt = None
+                    category_name_for_alt = category_label
+                
+                top_categories.append({
+                    'category_id': int(idx),  # Keep numeric ID for model reference
+                    'category_uuid': category_uuid_for_alt,  # Add UUID for database
+                    'category_name': category_name_for_alt,
+                    'confidence': float(prediction_probs[0][idx])
+                })
+            
+            # Get keywords found
+            keyword_cols = [col for col in feature_columns if col.startswith('has_')]
+            keywords_found = [col.replace('has_', '') for col in keyword_cols if features.get(col, 0) == 1]
+            
+            # Determine price range (will always be Ultra Budget since price is 0)
+            price_range = 'Ultra Budget'  # Since price is 0
+            
+            # Build the response
+            result = {
+                'success': True,
+                'predicted_category': {
+                    'category_id': int(predicted_class),  # Numeric ID from model
+                    'category_uuid': category_uuid,  # UUID from database
+                    'category_name': predicted_label,
+                    'confidence': float(confidence)
+                },
+                'alternative_categories': top_categories[1:] if len(top_categories) > 1 else [],
+                'all_categories': all_categories_list,
+                'feature_insights': {
+                    'keywords_found': keywords_found,
+                    'price_range': price_range,
+                    'price': float(price),
+                    'quantity': int(quantity),
+                    'condition': item_data['condition']
+                }
+            }
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"\n❌ PREDICTION ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            return Response(
+                {
+                    'success': False, 
+                    'error': f'Prediction failed: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+    def get_queryset(self):
+        # Get user_id from request data instead of authenticated user
+        user_id = self.request.data.get('customer_id')
+        if user_id:
+            try:
+                seller = Customer.objects.get(customer_id=user_id)
+                return Product.objects.filter(customer=seller).order_by('-created_at')
+            except Customer.DoesNotExist:
+                return Product.objects.none()
+        return Product.objects.none()
+
+    def create(self, request):
+        # Validate required fields for seller product creation
+        required_fields = ["name", "description", "quantity", "price", "condition", "shop", "customer_id"]
+        missing_fields = [f for f in required_fields if f not in request.data]
+
+        if missing_fields:
+            return Response({
+                "error": "Missing required fields",
+                "missing_fields": missing_fields
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the user ID from session (sent from frontend)
+        user_id = request.data.get("customer_id")
+        if not user_id:
+            return Response({"error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get seller using the user_id from session
+        try:
+            seller = Customer.objects.get(customer_id=user_id)
+        except Customer.DoesNotExist:
+            return Response({"error": "Seller not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        shop_id = request.data.get("shop")
+        
+        # Verify the shop belongs to the seller
+        try:
+            shop = Shop.objects.get(id=shop_id, customer=seller)
+        except Shop.DoesNotExist:
+            return Response({
+                "error": "Shop not found or does not belong to you"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if seller can add more products
+        if not seller.can_add_product():
+            return Response({
+                "error": f"Cannot add more than {seller.product_limit} products. Current count: {seller.current_product_count}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Prepare data with the seller from session user_id
+        # Create a shallow copy excluding file fields
+        product_data = {}
+        for key, value in request.data.items():
+            if not hasattr(value, 'file'):  # Skip file objects
+                product_data[key] = value
+        product_data['customer'] = seller.customer_id
+        
+        # Set price to 0 for gifts
+        product_data['price'] = 0.0
+        
+        # Handle category_admin_id for global categories
+        category_admin_id = request.data.get('category_admin_id')
+        if category_admin_id and category_admin_id != "none":
+            try:
+                category_admin = Category.objects.get(id=category_admin_id, shop__isnull=True)
+                product_data['category_admin'] = category_admin_id
+            except Category.DoesNotExist:
+                return Response({
+                    "error": "Invalid global category selected"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # If accepted_categories was sent as a JSON string, parse it into a list for the serializer
+        try:
+            import json
+            accepted_raw = product_data.get('accepted_categories')
+            if accepted_raw and isinstance(accepted_raw, str):
+                accepted_list = json.loads(accepted_raw)
+                try:
+                    product_data.setlist('accepted_categories', accepted_list)
+                except Exception:
+                    product_data['accepted_categories'] = accepted_list
+        except Exception as e:
+            print('Failed to parse accepted_categories:', e)
+
+        serializer = ProductCreateSerializer(data=product_data, context={'request': request})
+        if serializer.is_valid():
+            with transaction.atomic():
+                # Save product and catch validation errors cleanly
+                try:
+                    product = serializer.save()
+                except ValidationError as e:
+                    return Response({
+                        "error": "Validation failed",
+                        "details": str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Handle media files if any
+                media_files = request.FILES.getlist('media_files')
+                print(f"Number of media files received: {len(media_files)}")  # Debug
+                for i, media_file in enumerate(media_files):
+                    print(f"Media file {i}: name={media_file.name}, size={media_file.size}, type={media_file.content_type}")  # Debug
+                    try:
+                        product_media = ProductMedia.objects.create(
+                            product=product,
+                            file_data=media_file,
+                            file_type=media_file.content_type
+                        )
+                        print(f"Created ProductMedia: {product_media.id}, file saved to: {product_media.file_data}")  # Debug
+                    except Exception as e:
+                        print(f"Error creating ProductMedia: {e}")  # Debug
+
+                # Process variants JSON (if provided) to create Variants and VariantOptions
+                variants_raw = request.data.get('variants')
+                if variants_raw:
+                    try:
+                        import json
+                        variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+                        # Collect uploaded files per option_id to later apply to matching SKUs
+                        option_image_files = {}
+                        # Map payload option ids -> created VariantOptions DB id
+                        option_id_map = {}
+                        for g in variants_list:
+                            group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
+                            variant = Variants.objects.create(
+                                product=product,
+                                shop=shop,
+                                title=g.get('title') or ''
+                            )
+                            for opt in g.get('options', []):
+                                provided_option_id = opt.get('id') or str(uuid.uuid4())
+                                vopt = VariantOptions.objects.create(
+                                    variant=variant,
+                                    title=opt.get('title') or ''
+                                )
+                                # Record mapping from provided option id to the actual DB id (string)
+                                option_id_map[str(provided_option_id)] = str(vopt.id)
+
+                                file_key = f"variant_image_{group_id}_{provided_option_id}"
+                                # Debug: log presence of file key and available FILES keys
+                                try:
+                                    files_keys = list(request.FILES.keys())
+                                except Exception:
+                                    files_keys = []
+                                print(f"Looking for variant file key '{file_key}' in request.FILES. Available keys: {files_keys}")
+
+                                target_key = None
+                                if file_key in request.FILES:
+                                    target_key = file_key
+                                else:
+                                    # Fallback: try match by option_id suffix if group_id mismatch occurred
+                                    for k in files_keys:
+                                        if k.endswith(f"_{provided_option_id}") and k.startswith("variant_image_"):
+                                            target_key = k
+                                            print(f"Fallback matched variant image key '{k}' for option {provided_option_id}")
+                                            break
+
+                                if target_key:
+                                    try:
+                                        file_obj = request.FILES[target_key]
+                                        print(f"Queued variant image for option {provided_option_id} (db id {vopt.id}): name={getattr(file_obj, 'name', None)}, size={getattr(file_obj, 'size', None)}, content_type={getattr(file_obj, 'content_type', None)}")
+                                        # Store to map for assignment to SKUs later
+                                        # Keep both keys: the provided id and the actual DB id, so lookups using either work
+                                        option_image_files[str(provided_option_id)] = file_obj
+                                        option_image_files[str(vopt.id)] = file_obj
+                                    except Exception as e:
+                                        print('Failed to read variant image file', e)
+
+                        # Handle SKUs payload (per-variant combination config including swap)
+                        skus_raw = request.data.get('skus')
+                        if skus_raw:
+                            try:
+                                import json
+                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+                                from decimal import Decimal
+                                # Debug: list incoming file keys and prepare available explicit sku image keys (preserve order)
+                                try:
+                                    files_keys = list(request.FILES.keys())
+                                except Exception:
+                                    files_keys = []
+                                print(f"Incoming FILES keys: {files_keys}")
+                                sku_file_keys = [k for k in files_keys if k.startswith('sku_image_')]
+                                print(f"Detected sku_image keys (ordered): {sku_file_keys}")
+                                print(f"SKUs payload: {skus_list}")
+                                for s in skus_list:
+                                    # Map provided option ids to DB VariantOptions ids when possible
+                                    provided_oids = s.get('option_ids') or []
+                                    mapped_oids = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oids ]
+
+                                    sku = ProductSKU.objects.create(
+                                        product=product,
+                                        option_ids=mapped_oids,
+                                        option_map=s.get('option_map'),
+                                        price=Decimal('0.00'),  # SET SKU PRICE TO 0
+                                        compare_price=(Decimal(str(s.get('compare_price'))) if s.get('compare_price') not in (None, '') else None),
+                                        quantity=int(s.get('quantity') or 0),
+                                        length=(Decimal(str(s.get('length'))) if s.get('length') not in (None, '') else None),
+                                        width=(Decimal(str(s.get('width'))) if s.get('width') not in (None, '') else None),
+                                        height=(Decimal(str(s.get('height'))) if s.get('height') not in (None, '') else None),
+                                        weight=(Decimal(str(s.get('weight'))) if s.get('weight') not in (None, '') else None),
+                                        weight_unit=s.get('weight_unit') or 'g',
+                                        sku_code=s.get('sku_code') or '',
+                                        critical_trigger=s.get('critical_trigger') if s.get('critical_trigger') not in (None, '') else None,
+                                        allow_swap=bool(s.get('allow_swap', False)),
+                                        swap_type=s.get('swap_type') or 'direct_swap',
+                                        minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                        maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                        swap_description=s.get('swap_description') or '',
+                                    )
+
+                                    # Attach accepted categories if provided
+                                    accepted = s.get('accepted_categories') or []
+                                    if isinstance(accepted, str):
+                                        try:
+                                            import json
+                                            accepted = json.loads(accepted)
+                                        except Exception:
+                                            accepted = []
+                                    for cat_id in accepted:
+                                        try:
+                                            cat = Category.objects.get(id=cat_id)
+                                            sku.accepted_categories.add(cat)
+                                        except Exception:
+                                            pass
+
+                                    # Save SKU image if present in FILES keyed by provided sku id OR fallback to next available sku_image_* file key
+                                    provided_id = s.get('id')
+                                    print(f"Processing SKU: provided_id={provided_id}, option_ids={s.get('option_ids')}")
+                                    file_key = f"sku_image_{provided_id}" if provided_id else None
+                                    assigned = False
+                                    if file_key and file_key in request.FILES:
+                                        try:
+                                            sku.image = request.FILES[file_key]
+                                            sku.save()
+                                            assigned = True
+                                            print(f"SKU {sku.id} saved image from explicit key {file_key}: {sku.image.name}")
+                                        except Exception as e:
+                                            print('Failed to save sku image', e)
+                                    # Fallback: if explicit key not found, consume next sku_image_* from the FormData (preserve order)
+                                    if not assigned and sku_file_keys:
+                                        next_key = sku_file_keys.pop(0)
+                                        print(f"No explicit sku key for SKU {sku.id}; using next sku_image key {next_key}")
+                                        try:
+                                            sku.image = request.FILES[next_key]
+                                            sku.save()
+                                            assigned = True
+                                            print(f"SKU {sku.id} saved image from fallback key {next_key}: {sku.image.name}")
+                                        except Exception as e:
+                                            print('Failed to save sku image from fallback', e)
+                                    # Final fallback: map from option images by option_ids
+                                    if not assigned:
+                                        try:
+                                            provided_oid_list = s.get('option_ids') or []
+                                            # Prefer mapped DB option ids first, then the provided ids
+                                            mapped_oid_list = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oid_list ]
+                                            search_list = mapped_oid_list + [str(x) for x in provided_oid_list]
+                                            print(f"Attempting option->sku mapping using option_image_files keys: {list(option_image_files.keys())}; searching: {search_list}")
+                                            for oid in search_list:
+                                                f = option_image_files.get(str(oid))
+                                                if f:
+                                                    sku.image = f
+                                                    sku.save()
+                                                    print(f"SKU {sku.id} saved image from option {oid}: {sku.image.name}")
+                                                    break
+                                        except Exception as e:
+                                            print('Failed to map option image to sku', e)
+                            except Exception as e:
+                                print('Failed to parse skus payload:', e)
+                            else:
+                                # No SKUs provided - create simple SKU per option so images/quantities are stored
+                                try:
+                                    from decimal import Decimal
+                                    for g in variants_list:
+                                        for opt in g.get('options', []):
+                                            option_id = opt.get('id') or str(uuid.uuid4())
+                                            sku = ProductSKU.objects.create(
+                                                product=product,
+                                                option_ids=[option_id],
+                                                option_map={g.get('title') or 'Option': opt.get('title')},
+                                                price=Decimal('0.00'),  # SET SKU PRICE TO 0
+                                                quantity=int(opt.get('quantity') or 0),
+                                            )
+                                            f = option_image_files.get(str(option_id))
+                                            if f:
+                                                sku.image = f
+                                                sku.save()
+                                                print(f"Auto-created SKU {sku.id} for option {option_id} and saved image {sku.image.name}")
+                                except Exception as e:
+                                    print('Failed to auto-create SKUs from variants:', e)
+                        else:
+                            # No SKUs provided - create simple SKU per option so images/quantities are stored
+                            try:
+                                from decimal import Decimal
+                                for g in variants_list:
+                                    for opt in g.get('options', []):
+                                        option_id = opt.get('id') or str(uuid.uuid4())
+                                        # Use DB id mapping when available
+                                        mapped_option_id = option_id_map.get(str(option_id), str(option_id))
+                                        sku = ProductSKU.objects.create(
+                                            product=product,
+                                            option_ids=[mapped_option_id],
+                                            option_map={g.get('title') or 'Option': opt.get('title')},
+                                            price=Decimal('0.00'),  # SET SKU PRICE TO 0
+                                            quantity=int(opt.get('quantity') or 0),
+                                        )
+                                        # Try to get image by mapped id first, then provided id
+                                        f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(option_id))
+                                        if f:
+                                            sku.image = f
+                                            sku.save()
+                                            print(f"Auto-created SKU {sku.id} for option {option_id} (mapped {mapped_option_id}) and saved image {sku.image.name}")
+                            except Exception as e:
+                                print('Failed to auto-create SKUs from variants:', e)
+                    except Exception as e:
+                        print('Failed to parse variants payload:', e)
+
+                # Return same format as get_product_list
+                # Debug: list SKUs and their images
+                try:
+                    sku_debug = [{
+                        'id': str(s.id),
+                        'image': (s.image.name if s.image else None)
+                    } for s in product.skus.all()]
+                    print(f"Product {product.id} SKUs after creation: {sku_debug}")
+                except Exception as e:
+                    print('Failed to list skus after creation', e)
+
+                return Response({
+                    "success": True,
+                    "products": [
+                        {
+                            "id": str(product.id),
+                            "name": product.name,
+                            "description": product.description,
+                            "quantity": product.quantity,
+                            "price": str(product.price),  # This will be "0.00"
+                            "status": product.status,
+                            "upload_status": product.upload_status,
+                            "condition": product.condition,
+                            "shop": {
+                                "id": str(product.shop.id),
+                                "name": product.shop.name
+                            } if product.shop else None,
+                            "category_admin": {
+                                "id": str(product.category_admin.id),
+                                "name": product.category_admin.name
+                            } if product.category_admin else None,
+                            "category": {
+                                "id": str(product.category.id),
+                                "name": product.category.name
+                            } if product.category else None,
+                            "created_at": product.created_at.isoformat() if product.created_at else None,
+                            "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                        }
+                    ],
+                    "message": "Product created successfully",
+                    "data_source": "database",
+                    "product_limit_info": {
+                        "current_count": seller.current_product_count,
+                        "limit": seller.product_limit,
+                        "remaining": seller.product_limit - seller.current_product_count
+                    }
+                }, status=status.HTTP_201_CREATED)
+        else:
+            return Response({
+                "error": "Validation failed",
+                "details": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def list(self, request):
+        # For listing, we need to get user_id from request data or query params
+        user_id = request.data.get('customer_id') or request.query_params.get('customer_id')
+        
+        if not user_id:
+            return Response({
+                "error": "User ID is required"
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            seller = Customer.objects.get(customer_id=user_id)
+            # Prefetch variants and variant options to avoid N+1 queries
+            queryset = Product.objects.filter(customer=seller)\
+                .prefetch_related('variants_set__variantoptions_set')\
+                .order_by('-created_at')
+            
+            # Build response manually like in create method
+            products_data = []
+            for product in queryset:
+                # Build variants data
+                variants_data = []
+                # Get all variants for this product
+                for variant in product.variants_set.all():
+                    variant_data = {
+                        "id": str(variant.id),
+                        "title": variant.title,
+                        "options": []
+                    }
+                    # Get all options for this variant
+                    for option in variant.variantoptions_set.all():
+                        variant_data["options"].append({
+                            "id": str(option.id),
+                            "title": option.title,
+                            "quantity": option.quantity,
+                            "price": str(option.price)
+                        })
+                    variants_data.append(variant_data)
+                
+                product_data = {
+                    "id": str(product.id),
+                    "name": product.name,
+                    "description": product.description,
+                    "quantity": product.quantity,
+                    "price": str(product.price),  # This will show "0.00" for gifts
+                    "status": product.status,
+                    "upload_status": product.upload_status,
+                    "condition": product.condition,
+                    "shop": {
+                        "id": str(product.shop.id),
+                        "name": product.shop.name
+                    } if product.shop else None,
+                    "category_admin": {
+                        "id": str(product.category_admin.id),
+                        "name": product.category_admin.name
+                    } if product.category_admin else None,
+                    "category": {
+                        "id": str(product.category.id),
+                        "name": product.category.name
+                    } if product.category else None,
+                    "variants": variants_data,  # ADD VARIANTS HERE
+                    "created_at": product.created_at.isoformat() if product.created_at else None,
+                    "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                }
+                products_data.append(product_data)
+            
+            return Response({
+                "success": True,
+                "products": products_data,
+                "message": "Products retrieved successfully",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)
+        except Customer.DoesNotExist:
+            return Response({
+                "success": True,
+                "products": [],
+                "message": "No seller found for this user",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)
+
+
+class CustomerGiftViewSet(viewsets.ViewSet):
+    """
+    Comprehensive ViewSet for customer gift management 
+    (No shop required - for personal listings)
+    """
+    
+    @action(detail=False, methods=['get'])
+    def global_categories(self, request):
+        """Get all global categories (no shop) for customer gifts"""
+        try:
+            categories = Category.objects.filter(shop__isnull=True).order_by('name')
+            categories_data = []
+            
+            for category in categories:
+                categories_data.append({
+                    "id": str(category.id),
+                    "name": category.name,
+                    "shop": None,
+                    "user": {
+                        "id": str(category.user.id),
+                        "username": category.user.username
+                    } if category.user else None,
+                })
+            
+            return Response({
+                "success": True,
+                "categories": categories_data,
+                "message": "Global categories retrieved successfully",
+                "total_count": len(categories_data)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch global categories",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def create_gift(self, request):
+        """
+        Comprehensive gift creation for customers - handles everything:
+        - Basic gift info
+        - Categories (global only)
+        - Media files
+        - Variants & SKUs
+        - No price (always 0) and no swap features
+        - No shop required
+        """
+        try:
+            # Get user_id from headers or data
+            user_id = request.data.get('customer_id') or request.headers.get('X-User-Id')
+            
+            if not user_id:
+                return Response({
+                    "error": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get customer profile
+            try:
+                customer = Customer.objects.get(customer_id=user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "error": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check product limit (gifts count towards product limit)
+            if not customer.can_add_product():
+                return Response({
+                    "error": f"Cannot add more than {customer.product_limit} products. Current count: {customer.current_product_count}"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Prepare base gift data
+            gift_data = {}
+            
+            # Handle single values (fix duplicates from FormData)
+            single_value_fields = [
+                'name', 'description', 'condition', 'category_admin_id', 
+                'weight_unit', 'upload_status', 'status'
+            ]
+            
+            for field in single_value_fields:
+                value = request.data.get(field)
+                if isinstance(value, list) and len(value) > 0:
+                    gift_data[field] = value[0]  # Take first if list
+                elif value is not None:
+                    gift_data[field] = value
+            
+            # Handle numeric fields with validation
+            numeric_fields = ['quantity', 'length', 'width', 'height', 'weight', 'critical_stock']
+            for field in numeric_fields:
+                value = request.data.get(field)
+                if value:
+                    try:
+                        if isinstance(value, list) and len(value) > 0:
+                            gift_data[field] = float(value[0])
+                        else:
+                            gift_data[field] = float(value)
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Set customer and defaults
+            gift_data['customer'] = customer.customer_id
+            gift_data['upload_status'] = gift_data.get('upload_status', 'draft')
+            gift_data['status'] = gift_data.get('status', 'active')
+            
+            # Set price to 0 for gifts
+            gift_data['price'] = 0.0
+            
+            # Validate global category if provided
+            category_admin_id = gift_data.get('category_admin_id')
+            if category_admin_id and category_admin_id != "none":
+                try:
+                    Category.objects.get(id=category_admin_id, shop__isnull=True)
+                except Category.DoesNotExist:
+                    return Response({
+                        "error": "Invalid global category selected"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle shipping zones (for customer gifts if needed)
+            shipping_zones_raw = request.data.get('shipping_zones')
+            if shipping_zones_raw:
+                try:
+                    if isinstance(shipping_zones_raw, str):
+                        shipping_zones = json.loads(shipping_zones_raw)
+                    else:
+                        shipping_zones = shipping_zones_raw
+                    
+                    # Validate shipping zones
+                    valid_zones = []
+                    for zone in shipping_zones:
+                        if isinstance(zone, dict) and 'name' in zone:
+                            valid_zones.append({
+                                'name': zone.get('name'),
+                                'fee': float(zone.get('fee', 0)),
+                                'free_shipping': bool(zone.get('free_shipping', False))
+                            })
+                    
+                    if valid_zones:
+                        gift_data['shipping_zones'] = valid_zones
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
+            
+            # Create gift with transaction
+            with transaction.atomic():
+                serializer = ProductCreateSerializer(
+                    data=gift_data, 
+                    context={'request': request}
+                )
+                
+                if serializer.is_valid():
+                    # Create the gift (shop will be null for customer gifts)
+                    gift = serializer.save()
+                    
+                    # Handle media files
+                    media_files = request.FILES.getlist('media_files', [])
+                    for media_file in media_files:
+                        ProductMedia.objects.create(
+                            product=gift,
+                            file_data=media_file,
+                            file_type=media_file.content_type
+                        )
+                    
+                    # Handle variants and SKUs if provided
+                    variants_raw = request.data.get('variants')
+                    skus_raw = request.data.get('skus')
+                    
+                    if variants_raw:
+                        # Parse variants data
+                        try:
+                            variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+                            
+                            # Parse SKUs data
+                            skus_list = []
+                            if skus_raw:
+                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+                            
+                            # Process variants and SKUs (without swap features)
+                            self._create_variants_with_skus(
+                                product=gift,
+                                variants_data=variants_list,
+                                skus_data=skus_list,
+                                files=request.FILES
+                            )
+                        except Exception as e:
+                            print(f"Error processing variants/SKUs: {type(e)} - {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                            # Rollback transaction if variant creation fails
+                            raise ValidationError(f"Failed to create variants: {str(e)}")
+                    
+                    # Increment customer's product count
+                    customer.increment_product_count()
+                    
+                    # Return comprehensive success response
+                    return Response({
+                        "success": True,
+                        "gift": self._get_gift_detail_data(gift),
+                        "message": "Customer gift created successfully",
+                        "product_limit": {
+                            "current_count": customer.current_product_count,
+                            "limit": customer.product_limit,
+                            "remaining": customer.product_limit - customer.current_product_count
+                        }
+                    }, status=status.HTTP_201_CREATED)
+                else:
+                    return Response({
+                        "error": "Validation failed",
+                        "details": serializer.errors
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+        except ValidationError as e:
+            return Response({
+                "error": "Validation failed",
+                "details": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({
+                "error": "Gift creation failed",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _create_variants_with_skus(self, product, variants_data, skus_data, files):
+        from decimal import Decimal, InvalidOperation
+
+        """Helper method to create variants and SKUs for customer gifts (no swap features)"""
+        option_image_files = {}
+        option_id_map = {}
+        
+        print(f"Creating variants for gift {product.id}")
+        print(f"Variants data: {variants_data}")
+        print(f"SKUs data: {skus_data}")
+        print(f"Files keys: {list(files.keys())}")
+        
+        # Create variant groups and options
+        for variant_group in variants_data:
+            variant = Variants.objects.create(
+                product=product,
+                shop=None,  # Customer gifts have no shop
+                title=variant_group.get('title', '')
+            )
+            print(f"Created variant: {variant.id} - {variant.title}")
+            
+            for option in variant_group.get('options', []):
+                provided_option_id = option.get('id', str(uuid.uuid4()))
+                voption = VariantOptions.objects.create(
+                    variant=variant,
+                    title=option.get('title', '')
+                )
+                print(f"Created variant option: {voption.id} - {voption.title}")
+                
+                # Map provided ID to actual DB ID
+                option_id_map[str(provided_option_id)] = str(voption.id)
+                
+                # Store variant images if any
+                file_key = f"variant_image_{variant_group.get('id', '')}_{provided_option_id}"
+                if file_key in files:
+                    option_image_files[str(provided_option_id)] = files[file_key]
+                    option_image_files[str(voption.id)] = files[file_key]
+                    print(f"Stored variant image for option {provided_option_id}")
+        
+        # Create SKUs if provided
+        if skus_data:
+            print(f"Creating {len(skus_data)} SKUs")
+            for sku_data in skus_data:
+                provided_option_ids = sku_data.get('option_ids', [])
+                mapped_option_ids = [
+                    option_id_map.get(str(oid), str(oid)) 
+                    for oid in provided_option_ids
+                ]
+                
+                # Safe Decimal conversion helper function
+                def safe_decimal(value, default=None):
+                    if value is None or value == '':
+                        return default
+                    try:
+                        # Handle string or numeric values
+                        if isinstance(value, str):
+                            # Remove any whitespace and check if empty
+                            value = value.strip()
+                            if value == '':
+                                return default
+                            # Replace comma with dot for decimal separator
+                            value = value.replace(',', '.')
+                        return Decimal(str(value))
+                    except (ValueError, TypeError, InvalidOperation):
+                        print(f"Warning: Could not convert '{value}' to Decimal, using default: {default}")
+                        return default
+                
+                # Create SKU with safe conversions - price always 0 for gifts
+                sku = ProductSKU.objects.create(
+                    product=product,
+                    option_ids=mapped_option_ids,
+                    option_map=sku_data.get('option_map', {}),
+                    price=Decimal('0.00'),  # Gifts always have price 0
+                    compare_price=safe_decimal(sku_data.get('compare_price'), None),
+                    quantity=int(sku_data.get('quantity', 0)),
+                    length=safe_decimal(sku_data.get('length'), None),
+                    width=safe_decimal(sku_data.get('width'), None),
+                    height=safe_decimal(sku_data.get('height'), None),
+                    weight=safe_decimal(sku_data.get('weight'), None),
+                    weight_unit=sku_data.get('weight_unit', 'g'),
+                    sku_code=sku_data.get('sku_code', ''),
+                    critical_trigger=int(sku_data.get('critical_trigger')) if sku_data.get('critical_trigger') not in (None, '') else None,
+                    allow_swap=False,  # No swap for gifts
+                    swap_type='direct_swap',  # Default, not used
+                    minimum_additional_payment=Decimal('0.00'),  # No swap
+                    maximum_additional_payment=Decimal('0.00'),  # No swap
+                    swap_description='',  # No swap
+                )
+                print(f"Created SKU: {sku.id}")
+                
+                # Handle SKU images
+                sku_id = sku_data.get('id')
+                file_key = f"sku_image_{sku_id}" if sku_id else None
+                
+                if file_key and file_key in files:
+                    sku.image = files[file_key]
+                    sku.save()
+                    print(f"Added explicit image to SKU {sku.id}")
+                else:
+                    # Try to get image from option images
+                    for oid in provided_option_ids:
+                        if str(oid) in option_image_files:
+                            sku.image = option_image_files[str(oid)]
+                            sku.save()
+                            print(f"Added option image to SKU {sku.id}")
+                            break
+        else:
+            # Auto-create SKUs from variants if no SKUs provided
+            print("Auto-creating SKUs from variants")
+            for variant_group in variants_data:
+                for option in variant_group.get('options', []):
+                    provided_option_id = option.get('id', str(uuid.uuid4()))
+                    mapped_option_id = option_id_map.get(str(provided_option_id), str(provided_option_id))
+                    
+                    sku = ProductSKU.objects.create(
+                        product=product,
+                        option_ids=[mapped_option_id],
+                        option_map={variant_group.get('title', 'Option'): option.get('title', '')},
+                        price=Decimal('0.00'),  # Gifts always have price 0
+                        quantity=int(option.get('quantity', 0)),
+                        allow_swap=False,  # No swap for gifts
+                    )
+                    
+                    # Add image if available
+                    f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(provided_option_id))
+                    if f:
+                        sku.image = f
+                        sku.save()
+
+    def _get_gift_detail_data(self, gift):
+        """Get detailed gift data for response"""
+        # Get media files
+        media_files = []
+        for media in gift.productmedia_set.all():
+            media_files.append({
+                "id": str(media.id),
+                "file_data": media.file_data.url if media.file_data else None,
+                "file_type": media.file_type
+            })
+        
+        # Get SKUs
+        skus = []
+        for sku in gift.skus.all():
+            sku_data = {
+                "id": str(sku.id),
+                "option_ids": sku.option_ids,
+                "option_map": sku.option_map,
+                "sku_code": sku.sku_code,
+                "price": str(sku.price) if sku.price else None,  # Will be "0.00"
+                "compare_price": str(sku.compare_price) if sku.compare_price else None,
+                "quantity": sku.quantity,
+                "allow_swap": sku.allow_swap,  # Will always be False
+                "swap_type": sku.swap_type,
+                "minimum_additional_payment": str(sku.minimum_additional_payment) if sku.minimum_additional_payment else "0.00",
+                "maximum_additional_payment": str(sku.maximum_additional_payment) if sku.maximum_additional_payment else "0.00",
+                "swap_description": sku.swap_description,
+                "image": sku.image.url if sku.image else None,
+            }
+            skus.append(sku_data)
+        
+        # Get variants
+        variants = []
+        for variant in gift.variants_set.all():
+            variant_data = {
+                "id": str(variant.id),
+                "title": variant.title,
+                "options": []
+            }
+            
+            for option in variant.variantoptions_set.all():
+                option_data = {
+                    "id": str(option.id),
+                    "title": option.title,
+                }
+                variant_data["options"].append(option_data)
+            
+            variants.append(variant_data)
+        
+        return {
+            "id": str(gift.id),
+            "name": gift.name,
+            "description": gift.description,
+            "quantity": gift.quantity,
+            "price": str(gift.price),  # Will be "0.00"
+            "compare_price": str(gift.compare_price) if gift.compare_price else None,
+            "upload_status": gift.upload_status,
+            "status": gift.status,
+            "condition": gift.condition,
+            "category_admin": {
+                "id": str(gift.category_admin.id),
+                "name": gift.category_admin.name
+            } if gift.category_admin else None,
+            "media_files": media_files,
+            "skus": skus,
+            "variants": variants,
+            "dimensions": {
+                "length": str(gift.length) if gift.length else None,
+                "width": str(gift.width) if gift.width else None,
+                "height": str(gift.height) if gift.height else None,
+                "weight": str(gift.weight) if gift.weight else None,
+                "weight_unit": gift.weight_unit,
+            } if any([gift.length, gift.width, gift.height, gift.weight]) else None,
+            "created_at": gift.created_at.isoformat(),
+            "updated_at": gift.updated_at.isoformat(),
+        }
+    
+    @action(detail=False, methods=['post'])
+    def predict_category(self, request):
+        """
+        Predict category for a gift - Similar to product prediction but with price=0
+        """
+        try:
+            import pandas as pd
+            import numpy as np
+            import tensorflow as tf
+            import joblib
+            import os
+            
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+            MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+            
+            # Load models
+            try:
+                category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+                scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+                model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
+                feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
+                
+            except FileNotFoundError as e:
+                return Response(
+                    {'success': False, 'error': f'Model files not found. Please train the model first.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Extract data from request
+            data = request.data
+            
+            # Required fields - price not required since it's always 0 for gifts
+            required_fields = ['name', 'description', 'quantity', 'condition']
+            for field in required_fields:
+                if field not in data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Prepare item data - price always 0 for gifts
+            item_data = {
+                'name': str(data['name']),
+                'description': str(data['description']),
+                'quantity': int(data['quantity']),
+                'price': 0.0,  # Gifts always have price 0
+                'condition': str(data['condition'])
+            }
+            
+            # Initialize all features to 0
+            features = {col: 0 for col in feature_columns}
+            
+            # Basic numeric features
+            price = item_data['price']  # This will be 0
+            quantity = item_data['quantity']
+            
+            # Set only the features that exist in feature_columns
+            if 'price' in feature_columns:
+                features['price'] = price
+            if 'quantity' in feature_columns:
+                features['quantity'] = quantity
+            if 'price_quantity_interaction' in feature_columns:
+                features['price_quantity_interaction'] = price * np.log1p(quantity + 1)
+            if 'log_price' in feature_columns:
+                features['log_price'] = np.log1p(price)
+            if 'price_per_unit' in feature_columns:
+                features['price_per_unit'] = price / (quantity + 1)
+            if 'price_to_quantity_ratio' in feature_columns:
+                features['price_to_quantity_ratio'] = price / (quantity + 1e-5)
+            if 'price_scaled' in feature_columns:
+                features['price_scaled'] = price / 10000
+            if 'quantity_scaled' in feature_columns:
+                features['quantity_scaled'] = quantity / 100
+            
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            
+            if 'condition_score' in feature_columns:
+                if 'new' in condition_lower:
+                    features['condition_score'] = 3
+                elif 'like new' in condition_lower:
+                    features['condition_score'] = 2
+                elif 'refurbished' in condition_lower:
+                    features['condition_score'] = 1
+                elif 'excellent' in condition_lower:
+                    features['condition_score'] = 0
+                elif 'good' in condition_lower:
+                    features['condition_score'] = -1
+                elif 'fair' in condition_lower:
+                    features['condition_score'] = -2
+                else:
+                    features['condition_score'] = 0
+            
+            # is_refurbished feature (if present)
+            if 'is_refurbished' in feature_columns:
+                features['is_refurbished'] = 1 if 'refurbished' in condition_lower else 0
+            
+            # Text features
+            name_lower = item_data['name'].lower()
+            desc_lower = item_data['description'].lower()
+            all_text = name_lower + ' ' + desc_lower
+            
+            if 'name_length' in feature_columns:
+                features['name_length'] = len(item_data['name'])
+            if 'desc_length' in feature_columns:
+                features['desc_length'] = len(item_data['description'])
+            
+            # Keyword features
+            for feature in feature_columns:
+                if feature.startswith('has_'):
+                    keyword = feature[4:]  # Remove 'has_' prefix
+                    features[feature] = 1 if keyword in all_text else 0
+            
+            # Price bins (all will be 0 since price is 0)
+            if 'price_bin_0' in feature_columns:
+                features['price_bin_0'] = 1 if price < 100 else 0  # This will be 1
+            if 'price_bin_1' in feature_columns:
+                features['price_bin_1'] = 1 if 100 <= price < 500 else 0
+            if 'price_bin_2' in feature_columns:
+                features['price_bin_2'] = 1 if 500 <= price < 1000 else 0
+            if 'price_bin_3' in feature_columns:
+                features['price_bin_3'] = 1 if 1000 <= price < 2000 else 0
+            if 'price_bin_4' in feature_columns:
+                features['price_bin_4'] = 1 if price >= 2000 else 0
+            
+            # Additional features
+            if 'name_word_count' in feature_columns:
+                features['name_word_count'] = len(item_data['name'].split())
+            if 'desc_word_count' in feature_columns:
+                features['desc_word_count'] = len(item_data['description'].split())
+            
+            # Create DataFrame
+            X_item = pd.DataFrame([features])
+            
+            # Ensure we only have the expected features
+            for col in feature_columns:
+                if col not in X_item.columns:
+                    X_item[col] = 0
+            
+            # Remove any columns not in feature_columns
+            extra_cols = [col for col in X_item.columns if col not in feature_columns]
+            if extra_cols:
+                X_item = X_item.drop(columns=extra_cols)
+            
+            X_item = X_item[feature_columns]
+            
+            # Scale and predict
+            try:
+                X_scaled = scaler.transform(X_item)
+            except Exception as e:
+                X_scaled = X_item.values.astype(np.float32)
+            
+            # Make prediction
+            prediction_probs = model.predict(X_scaled, verbose=0)
+            predicted_class = np.argmax(prediction_probs, axis=1)[0]
+            confidence = np.max(prediction_probs, axis=1)[0]
+            
+            # Convert predicted class to actual category label
+            predicted_label = category_le.inverse_transform([predicted_class])[0]
+            
+            # Try to find the category in the database
+            try:
+                category_obj = Category.objects.filter(
+                    name__iexact=predicted_label,
+                    shop__isnull=True
+                ).first()
+                
+                if category_obj:
+                    category_uuid = str(category_obj.id)
+                    category_name = category_obj.name
+                else:
+                    # Fallback
+                    first_category = Category.objects.filter(shop__isnull=True).first()
+                    if first_category:
+                        category_uuid = str(first_category.id)
+                        category_name = first_category.name
+                    else:
+                        category_uuid = None
+                        category_name = predicted_label
+                        
+            except Exception as db_error:
+                category_uuid = None
+                category_name = predicted_label
+            
+            # Prepare response
+            result = {
+                'success': True,
+                'predicted_category': {
+                    'category_id': int(predicted_class),
+                    'category_uuid': category_uuid,
+                    'category_name': predicted_label,
+                    'confidence': float(confidence)
+                },
+                'feature_insights': {
+                    'condition': item_data['condition'],
+                    'price': 0,  # Gifts have price 0
+                    'quantity': int(quantity)
+                }
+            }
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"\n❌ PREDICTION ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            return Response(
+                {
+                    'success': False, 
+                    'error': f'Prediction failed: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
