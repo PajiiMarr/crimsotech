@@ -2868,10 +2868,7 @@ class Command(BaseCommand):
                         VariantOptions.objects.get_or_create(
                             variant=variant,
                             title=f"Option {j+1}",
-                            defaults={
-                                'quantity': 10,
-                                'price': product.price * Decimal('1.1')
-                            }
+                            defaults={}
                         )
         
         if variant_count > 0:
@@ -3608,14 +3605,14 @@ class Command(BaseCommand):
         # Create 20 orders with different statuses
         for i in range(20):
             user = random.choice(order_users)
-            status = random.choice(['completed', 'pending', 'cancelled'])
+            status = random.choice(['delivered', 'pending', 'cancelled'])
             
             order = Order.objects.create(
                 user=user,
                 status=status,
                 total_amount=Decimal('0'),  # Will be updated with checkouts
                 payment_method=random.choice(payment_methods),
-                delivery_address=f"{random.randint(100, 999)} Main Street, City {random.randint(1, 10)}",
+                delivery_address_text=f"{random.randint(100, 999)} Main Street, City {random.randint(1, 10)}",
                 created_at=timezone.now() - timedelta(days=random.randint(1, 30))
             )
             all_orders.append(order)
@@ -4047,19 +4044,17 @@ class Command(BaseCommand):
                 
                 # Create refund with realistic data
                 refund = Refund.objects.create(
-                    order=order,
+                    order_id=order,
                     requested_by=order.user,
                     reason=random.choice(refund_reasons),
                     status=status,
                     requested_at=timezone.now() - timedelta(days=random.randint(1, 90)),
                     logistic_service=random.choice(logistic_services) if status in ['approved', 'completed', 'waiting'] else None,
                     tracking_number=f"TRK{random.randint(1000000000, 9999999999)}" if status in ['approved', 'completed', 'waiting'] else None,
-                    preferred_refund_method=random.choice(refund_methods),
+                    buyer_preferred_refund_method=random.choice(refund_methods),
                     final_refund_method=random.choice(refund_methods) if status in ['approved', 'completed'] else None,
                     processed_at=timezone.now() - timedelta(days=random.randint(1, 30)) if status in ['approved', 'completed'] else None,
-                    processed_by=admin_user if status in ['approved', 'completed', 'rejected'] else None,
-                    preferred_refund_method_details=f"Account details for {random.choice(refund_methods)}",
-                    final_refund_method_details=f"Processed via {random.choice(refund_methods)}" if status in ['approved', 'completed'] else None
+                    processed_by=admin_user if status in ['approved', 'completed', 'rejected'] else None
                 )
                 
                 refunds_created.append(refund)
@@ -4068,7 +4063,7 @@ class Command(BaseCommand):
                 if random.random() < 0.6:  # 60% of refunds have media
                     self.create_refund_media(refund)
                 
-                self.stdout.write(f"   Created refund {refund.refund} with status: {status}")
+                self.stdout.write(f"   Created refund {refund.refund_id} with status: {status}")
             
             self.stdout.write(self.style.SUCCESS(f"✅ Created {len(refunds_created)} refund records"))
             return refunds_created
@@ -4091,7 +4086,7 @@ class Command(BaseCommand):
         # Create 1-3 media files per refund
         for _ in range(random.randint(1, 3)):
             media_type = random.choice(media_types)
-            RefundMedias.objects.create(
+            RefundMedia.objects.create(
                 refund=refund,
                 file_data=f"refunds/sample_{media_type['file_type']}_{random.randint(1, 10)}.jpg",
                 file_type=media_type['file_type']
@@ -4199,7 +4194,7 @@ class Command(BaseCommand):
                     requested_at=timezone.now() - timedelta(days=random.randint(1, 90)),
                     logistic_service=random.choice(logistic_services) if status in ['approved', 'completed', 'waiting'] else None,
                     tracking_number=f"TRK{random.randint(1000000000, 9999999999)}" if status in ['approved', 'completed', 'waiting'] else None,
-                    preferred_refund_method=random.choice(refund_methods),
+                    buyer_preferred_refund_method=random.choice(refund_methods),
                     final_refund_method=random.choice(refund_methods) if status in ['approved', 'completed'] else None,
                     processed_at=timezone.now() - timedelta(days=random.randint(1, 30)) if status in ['approved', 'completed'] else None,
                     processed_by=admin_user if status in ['approved', 'completed', 'rejected'] else None
@@ -4258,7 +4253,7 @@ class Command(BaseCommand):
                 )[0]
                 
                 Refund.objects.create(
-                    order=order,
+                    order_id=order,
                     requested_by=order.user,
                     reason=random.choice([
                         "Product damaged during shipping",
@@ -4269,8 +4264,8 @@ class Command(BaseCommand):
                     status=status,
                     requested_at=refund_date,
                     processed_at=refund_date + timedelta(days=random.randint(1, 14)) if status in ['completed', 'approved', 'rejected'] else None,
-                    preferred_refund_method=random.choice(['Bank Transfer', 'Credit Card Refund', 'E-wallet']),
-                    final_refund_method=random.choice(['Bank Transfer', 'Credit Card Refund', 'E-wallet']) if status in ['completed', 'approved'] else None
+                    buyer_preferred_refund_method=random.choice(['wallet', 'bank', 'remittance', 'voucher']),
+                    final_refund_method=random.choice(['wallet', 'bank', 'remittance', 'voucher']) if status in ['completed', 'approved'] else None
                     # REMOVED: preferred_refund_method_details and final_refund_method_details
                 )
 

@@ -88,6 +88,7 @@ import {
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { cn } from '~/lib/utils';
+import { useToast } from '~/hooks/use-toast';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -97,47 +98,35 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
-type DisputeStatus = 'filed' | 'under_review' | 'approved' | 'processing' | 'completed' | 'rejected' | 'cancelled';
-type DisputeOutcome = 'buyer_wins' | 'seller_wins' | 'partial_refund' | 'dismissed' | 'withdrawn' | null;
+type DisputeStatus = 'filed' | 'under_review' | 'approved' | 'rejected' | 'resolved';
+
+interface DisputeEvidenceItem {
+  id: string;
+  file_type?: string | null;
+  file_data?: string | null;
+  uploaded_by?: any;
+  created_at?: string | null;
+}
 
 interface Dispute {
   id: string;
-  orderId: string;
-  orderNumber: string;
-  orderDate: string;
-  orderTotal: number;
-  customer: {
-    id: string;
-    name: string;
-    email: string;
-    phone: string;
-    avatar: string | null;
-  };
-  seller: {
-    id: string;
-    name: string;
-    email: string;
-    shopName: string;
-  };
+  refund_id?: string | null;
+  requested_by?: { id?: string; username?: string; email?: string } | string | null;
+  requested_by_name?: string | null; // convenience
+  processed_by?: { id?: string; username?: string; email?: string } | string | null;
   reason: string;
-  reasonDisplay: string;
-  description: string;
   status: DisputeStatus;
-  outcome: DisputeOutcome;
-  awardedAmount: number | null;
-  adminNote: string | null;
-  evidenceCount: number;
-  createdAt: string;
-  updatedAt: string;
-  resolvedAt: string | null;
-  refund: {
-    id: string | null;
-    status: string | null;
-    amount: number | null;
+  admin_notes?: string | null;
+  evidences?: DisputeEvidenceItem[];
+  created_at?: string;
+  updated_at?: string;
+  resolved_at?: string | null;
+  // optional: linked refund summary
+  refund?: {
+    id?: string | null;
+    status?: string | null;
+    amount?: number | null;
   } | null;
-
-  filed_by_name?: string | null;
-  filed_by_entity?: 'buyer' | 'seller' | null;
 }
 
 interface DisputeStats {
@@ -145,10 +134,8 @@ interface DisputeStats {
   filed: number;
   under_review: number;
   approved: number;
-  processing: number;
-  completed: number;
   rejected: number;
-  cancelled: number;
+  resolved: number;
   averageResolutionTime: string;
   buyerWinRate: string;
 }
@@ -160,19 +147,25 @@ interface LoaderData {
 }
 
 // Helper function to fetch disputes from Django API
-async function fetchDisputesFromAPI() {
+async function fetchDisputesFromAPI(userId?: string) {
   try {
     // Assuming your Django API is running on localhost:8000
     // Adjust the URL as needed
+    const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+    if (userId) headers['X-User-Id'] = String(userId);
     const response = await fetch('http://localhost:8000/api/disputes/', {
-      headers: {
-        'X-User-Id': '1', // Replace with actual user ID from session
-        'Content-Type': 'application/json',
-      },
+      headers,
     });
     
     if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
+      const txt = await response.text().catch(() => '');
+      throw new Error(txt || `API request failed with status ${response.status}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const txt = await response.text().catch(() => '');
+      throw new Error(txt || 'Unexpected response content type');
     }
     
     const data = await response.json();
@@ -184,19 +177,25 @@ async function fetchDisputesFromAPI() {
 }
 
 // Helper function to fetch stats from Django API
-async function fetchStatsFromAPI() {
+async function fetchStatsFromAPI(userId?: string) {
   try {
+    const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+    if (userId) headers['X-User-Id'] = String(userId);
     const response = await fetch('http://localhost:8000/api/disputes/stats/', {
-      headers: {
-        'X-User-Id': '1', // Replace with actual user ID from session
-        'Content-Type': 'application/json',
-      },
+      headers,
     });
-    
+
     if (!response.ok) {
-      throw new Error(`API request failed with status ${response.status}`);
+      const txt = await response.text().catch(() => '');
+      throw new Error(txt || `API request failed with status ${response.status}`);
     }
-    
+
+    const ct = response.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const txt = await response.text().catch(() => '');
+      throw new Error(txt || 'Unexpected response content type');
+    }
+
     const data = await response.json();
     return data;
   } catch (error) {
@@ -206,10 +205,8 @@ async function fetchStatsFromAPI() {
       filed: 0,
       under_review: 0,
       approved: 0,
-      processing: 0,
-      completed: 0,
       rejected: 0,
-      cancelled: 0,
+      resolved: 0,
       averageResolutionTime: '0 days',
       buyerWinRate: '0%',
     };
@@ -232,9 +229,10 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   await requireRole(request, context, ["isAdmin"]);
 
   // Fetch data from Django API on server side
+  const userIdForApi = user?.id || user?.username || user?.email;
   const [initialDisputes, initialStats] = await Promise.all([
-    fetchDisputesFromAPI(),
-    fetchStatsFromAPI(),
+    fetchDisputesFromAPI(userIdForApi),
+    fetchStatsFromAPI(userIdForApi),
   ]);
 
   return { 
@@ -250,10 +248,8 @@ const StatusBadge = ({ status }: { status: DisputeStatus }) => {
     filed: { label: 'Filed', color: 'bg-blue-100 text-blue-800 hover:bg-blue-100' },
     under_review: { label: 'Under Review', color: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-100' },
     approved: { label: 'Approved', color: 'bg-green-100 text-green-800 hover:bg-green-100' },
-    processing: { label: 'Processing', color: 'bg-purple-100 text-purple-800 hover:bg-purple-100' },
-    completed: { label: 'Completed', color: 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100' },
     rejected: { label: 'Rejected', color: 'bg-red-100 text-red-800 hover:bg-red-100' },
-    cancelled: { label: 'Cancelled', color: 'bg-gray-100 text-gray-800 hover:bg-gray-100' },
+    resolved: { label: 'Resolved', color: 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100' },
   };
 
   return (
@@ -263,24 +259,7 @@ const StatusBadge = ({ status }: { status: DisputeStatus }) => {
   );
 };
 
-// Outcome badge component
-const OutcomeBadge = ({ outcome }: { outcome: DisputeOutcome }) => {
-  if (!outcome) return null;
 
-  const variants: Record<NonNullable<DisputeOutcome>, { label: string; color: string }> = {
-    buyer_wins: { label: 'Buyer Wins', color: 'bg-green-100 text-green-800 hover:bg-green-100' },
-    seller_wins: { label: 'Seller Wins', color: 'bg-blue-100 text-blue-800 hover:bg-blue-100' },
-    partial_refund: { label: 'Partial Refund', color: 'bg-purple-100 text-purple-800 hover:bg-purple-100' },
-    dismissed: { label: 'Dismissed', color: 'bg-gray-100 text-gray-800 hover:bg-gray-100' },
-    withdrawn: { label: 'Withdrawn', color: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-100' },
-  };
-
-  return (
-    <Badge className={cn("font-medium", variants[outcome].color)}>
-      {variants[outcome].label}
-    </Badge>
-  );
-};
 
 // Reason display component
 const ReasonDisplay = ({ reason }: { reason: string }) => {
@@ -302,10 +281,13 @@ const ReasonDisplay = ({ reason }: { reason: string }) => {
     'other': <HelpCircle className="h-4 w-4" />,
   };
 
+  const label = reasonMap[reason] ?? reason ?? 'Other';
+  const icon = iconMap[reason] ?? <FileText className="h-4 w-4" />;
+
   return (
     <div className="flex items-center gap-2">
-      {iconMap[reason]}
-      <span>{reasonMap[reason]}</span>
+      {icon}
+      <span>{label}</span>
     </div>
   );
 };
@@ -320,33 +302,38 @@ const columns: ColumnDef<Dispute>[] = [
     ),
   },
   {
-    accessorKey: "reason",
-    header: "Reason",
-    cell: ({ row }) => <ReasonDisplay reason={row.original.reason} />,
+    accessorKey: "refund_id",
+    header: "Refund ID",
+    cell: ({ row }: any) => {
+      const r = row.original.refund_id || row.original.refund || row.original.refundId || (row.original.refund && (row.original.refund.id || row.original.refund.refund_id));
+      const val = typeof r === 'object' ? (r.refund_id || r.id) : r;
+      return <div className="font-mono text-sm">{val ? String(val).substring(0, 8) + '...' : 'N/A'}</div>;
+    }
   },
   {
-    accessorKey: "description",
-    header: "Description",
-    cell: ({ row }) => (
-      <div className="text-sm max-w-xs truncate">{row.original.description || "N/A"}</div>
-    ),
+    accessorKey: "requested_by",
+    header: "Requested By",
+    cell: ({ row }: any) => {
+      const r = row.original.requested_by || row.original.requested_by_name || row.original.filed_by_name || row.original.filedByName;
+      if (!r) return <div>Unknown</div>;
+      if (typeof r === 'string') return <div className="font-medium">{r}</div>;
+      const name = (r.first_name && r.last_name) ? `${r.first_name} ${r.last_name}` : (r.username || r.email || r.id);
+      return <div className="font-medium">{name}</div>;
+    },
   },
   {
     accessorKey: "created_at",
     header: "Filed At",
     cell: ({ row }: any) => {
-      const value = row.original.created_at ?? row.original.createdAt;
+      const value = row.original.created_at ?? row.original.createdAt ?? row.original.requested_at ?? row.original.requestedAt;
       return <div className="text-sm">{value ? new Date(value).toLocaleString() : "N/A"}</div>;
     },
   },
   {
-    accessorKey: "filed_by_name",
-    header: "Filed By",
-    cell: ({ row }: any) => (
-      <div className="font-medium">{row.original.filed_by_name ?? row.original.filedByName ?? "Unknown"}</div>
-    ),
+    accessorKey: "reason",
+    header: "Reason",
+    cell: ({ row }) => <ReasonDisplay reason={row.original.reason} />,
   },
- 
   {
     accessorKey: "status",
     header: "Status",
@@ -378,50 +365,43 @@ const columns: ColumnDef<Dispute>[] = [
 
             <DropdownMenuItem
               onClick={async () => {
-                const refundId = dispute?.refund || dispute?.refund_id || dispute?.refundId;
-                if (!refundId) {
-                  alert("No refund id found on this dispute.");
-                  return;
-                }
-                const admin_response = window.prompt("Admin response (required):", "Approved in favor of buyer");
-                if (!admin_response) return;
-                await fetch(`http://localhost:8000/api/return-refund/${encodeURIComponent(refundId)}/resolve_dispute/`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "X-User-Id": "1",
-                  },
-                  body: JSON.stringify({ admin_decision: "approved", admin_response }),
-                });
-                window.location.reload();
-              }}
-            >
-              <CheckCircle className="mr-2 h-4 w-4" />
-              Approve
-            </DropdownMenuItem>
+                try {
+                  const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+                  const safeUserId = (window as any).__currentUserId || '';
+                  if (safeUserId) headers['X-User-Id'] = String(safeUserId);
 
-            <DropdownMenuItem
-              onClick={async () => {
-                const refundId = dispute?.refund || dispute?.refund_id || dispute?.refundId;
-                if (!refundId) {
-                  alert("No refund id found on this dispute.");
-                  return;
+                  const res = await fetch(`http://localhost:8000/api/disputes/${dispute.id}/start_review/`, {
+                    method: 'POST',
+                    headers,
+                  });
+
+                  if (!res.ok) {
+                    let msg = `Failed to start review (status ${res.status})`;
+                    try {
+                      const j = await res.json();
+                      msg = j?.error || j?.detail || msg;
+                    } catch (_) {}
+                    throw new Error(msg);
+                  }
+
+                  // success toast + navigate to details so admin can continue review
+                  if ((window as any).toast) {
+                    (window as any).toast({ title: 'Review started', description: 'Dispute marked as under review', variant: 'success' });
+                  }
+                  // Navigate to the dispute details view to continue the review
+                  window.location.href = `/admin/dispute/${dispute.id}`;
+                } catch (err) {
+                  console.error('Start review failed', err);
+                  if ((window as any).toast) {
+                    (window as any).toast({ title: 'Failed', description: err instanceof Error ? err.message : 'Failed to start review', variant: 'destructive' });
+                  } else {
+                    alert('Failed to start review.');
+                  }
                 }
-                const admin_response = window.prompt("Admin response (required):", "Rejected in favor of seller");
-                if (!admin_response) return;
-                await fetch(`http://localhost:8000/api/return-refund/${encodeURIComponent(refundId)}/resolve_dispute/`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "X-User-Id": "1",
-                  },
-                  body: JSON.stringify({ admin_decision: "rejected", admin_response }),
-                });
-                window.location.reload();
               }}
             >
-              <XCircle className="mr-2 h-4 w-4" />
-              Reject
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Start Review
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -462,24 +442,19 @@ const DisputeDetailDialog = ({ dispute, open, onOpenChange }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) => {
-  const [adminNote, setAdminNote] = useState(dispute.adminNote || '');
+  const [adminNote, setAdminNote] = useState(dispute.admin_notes || '');
   const [status, setStatus] = useState<DisputeStatus>(dispute.status);
-  const [outcome, setOutcome] = useState<string>(dispute.outcome || '');
-  const [awardedAmount, setAwardedAmount] = useState(dispute.awardedAmount?.toString() || '');
 
   const handleSave = async () => {
     try {
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      if ((window as any).__currentUserId) headers['X-User-Id'] = String((window as any).__currentUserId);
       const response = await fetch(`http://localhost:8000/api/disputes/${dispute.id}/`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': '1', // Replace with actual user ID
-        },
+        headers,
         body: JSON.stringify({
           status,
-          outcome: outcome || null,
-          awarded_amount: awardedAmount ? parseFloat(awardedAmount) : null,
-          admin_note: adminNote,
+          admin_notes: adminNote || null,
         }),
       });
 
@@ -534,44 +509,34 @@ const DisputeDetailDialog = ({ dispute, open, onOpenChange }: {
                     </div>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-gray-600">Description</Label>
-                    <p className="mt-1 text-sm">{dispute.description}</p>
-                  </div>
-                  <div>
                     <Label className="text-sm font-medium text-gray-600">Filed Date</Label>
                     <p className="mt-1 text-sm">
-                      {format(new Date(dispute.createdAt), 'PPpp')}
+                      {format(new Date(dispute.created_at || ''), 'PPpp')}
                     </p>
                   </div>
+                  {dispute.processed_by && (
+                    <div>
+                      <Label className="text-sm font-medium text-gray-600">Processed By</Label>
+                      <p className="mt-1 text-sm">{typeof dispute.processed_by === 'string' ? dispute.processed_by : (dispute.processed_by.username || dispute.processed_by.id)}</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-lg">Order Information</CardTitle>
+                  <CardTitle className="text-lg">Refund / Reference</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
-                    <Label className="text-sm font-medium text-gray-600">Order Number</Label>
-                    <p className="mt-1 font-medium">{dispute.orderNumber}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-gray-600">Order Date</Label>
-                    <p className="mt-1 text-sm">
-                      {format(new Date(dispute.orderDate), 'PP')}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-gray-600">Order Total</Label>
-                    <p className="mt-1 text-2xl font-bold text-green-600">
-                      ${dispute.orderTotal.toFixed(2)}
-                    </p>
+                    <Label className="text-sm font-medium text-gray-600">Refund ID</Label>
+                    <p className="mt-1 font-medium">{dispute.refund_id || 'N/A'}</p>
                   </div>
                   {dispute.refund && (
                     <div>
-                      <Label className="text-sm font-medium text-gray-600">Refund</Label>
+                      <Label className="text-sm font-medium text-gray-600">Refund Summary</Label>
                       <p className="mt-1 text-lg font-medium text-red-600">
-                        ${dispute.refund.amount?.toFixed(2)} ({dispute.refund.status})
+                        {dispute.refund.amount ? `$${dispute.refund.amount.toFixed(2)}` : 'N/A'} {dispute.refund.status ? `(${dispute.refund.status})` : ''}
                       </p>
                     </div>
                   )}
@@ -585,31 +550,7 @@ const DisputeDetailDialog = ({ dispute, open, onOpenChange }: {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <Label htmlFor="outcome">Outcome</Label>
-                    <Select value={outcome} onValueChange={setOutcome}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select outcome" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="buyer_wins">Buyer Wins</SelectItem>
-                        <SelectItem value="seller_wins">Seller Wins</SelectItem>
-                        <SelectItem value="partial_refund">Partial Refund</SelectItem>
-                        <SelectItem value="dismissed">Dismissed</SelectItem>
-                        <SelectItem value="withdrawn">Withdrawn</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="awardedAmount">Awarded Amount</Label>
-                    <Input
-                      id="awardedAmount"
-                      type="number"
-                      value={awardedAmount}
-                      onChange={(e) => setAwardedAmount(e.target.value)}
-                      placeholder="0.00"
-                    />
-                  </div>
+
                   <div>
                     <Label htmlFor="status">Status</Label>
                     <Select 
@@ -623,10 +564,8 @@ const DisputeDetailDialog = ({ dispute, open, onOpenChange }: {
                         <SelectItem value="filed">Filed</SelectItem>
                         <SelectItem value="under_review">Under Review</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
-                        <SelectItem value="processing">Processing</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                        <SelectItem value="resolved">Resolved</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -651,7 +590,7 @@ const DisputeDetailDialog = ({ dispute, open, onOpenChange }: {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <User className="h-5 w-5" />
-                    Customer
+                    Filed By
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -660,54 +599,20 @@ const DisputeDetailDialog = ({ dispute, open, onOpenChange }: {
                       <User className="h-6 w-6" />
                     </div>
                     <div>
-                      <h4 className="font-semibold">{dispute.customer.name}</h4>
-                      <p className="text-sm text-gray-600">Customer</p>
+                      <h4 className="font-semibold">{typeof dispute.requested_by === 'string' ? dispute.requested_by : (dispute.requested_by?.username || dispute.requested_by_name || dispute.requested_by?.id || 'User')}</h4>
+                      <p className="text-sm text-gray-600">Requester</p>
                     </div>
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 text-sm">
                       <Mail className="h-4 w-4" />
-                      <span>{dispute.customer.email}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <Phone className="h-4 w-4" />
-                      <span>{dispute.customer.phone}</span>
+                      <span>{typeof dispute.requested_by === 'object' ? (dispute.requested_by?.email || '') : ''}</span>
                     </div>
                   </div>
-                  <Button variant="outline" size="sm" className="w-full">
-                    View Customer Profile
-                  </Button>
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <ShoppingBag className="h-5 w-5" />
-                    Seller
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
-                      <ShoppingBag className="h-6 w-6 text-blue-600" />
-                    </div>
-                    <div>
-                      <h4 className="font-semibold">{dispute.seller.shopName}</h4>
-                      <p className="text-sm text-gray-600">{dispute.seller.name}</p>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Mail className="h-4 w-4" />
-                      <span>{dispute.seller.email}</span>
-                    </div>
-                  </div>
-                  <Button variant="outline" size="sm" className="w-full">
-                    View Seller Dashboard
-                  </Button>
-                </CardContent>
-              </Card>
+
             </div>
           </TabsContent>
 
@@ -716,34 +621,34 @@ const DisputeDetailDialog = ({ dispute, open, onOpenChange }: {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <FileText className="h-5 w-5" />
-                  Evidence ({dispute.evidenceCount})
+                  Evidence ({(dispute.evidences || []).length})
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {dispute.evidenceCount > 0 ? (
+                {(dispute.evidences || []).length > 0 ? (
                   <div className="space-y-4">
                     <div className="rounded-lg border p-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <h4 className="font-medium">Customer Evidence</h4>
-                          <p className="text-sm text-gray-600">Submitted {format(new Date(dispute.createdAt), 'PP')}</p>
+                          <h4 className="font-medium">Evidence</h4>
+                          <p className="text-sm text-gray-600">Submitted {format(new Date(dispute.created_at || ''), 'PP')}</p>
                         </div>
-                        <Button variant="outline" size="sm">
+                        <Button variant="outline" size="sm" onClick={() => window.alert('Download all not implemented')}>
                           <Download className="mr-2 h-4 w-4" />
                           Download All
                         </Button>
                       </div>
                       <div className="mt-4 grid grid-cols-3 gap-4">
-                        {[1, 2, 3].map((i) => (
-                          <div key={i} className="aspect-square rounded-lg border bg-gray-50 flex items-center justify-center">
-                            <FileText className="h-8 w-8 text-gray-400" />
+                        {(dispute.evidences || []).map((ev) => (
+                          <div key={ev.id} className="aspect-square rounded-lg border bg-gray-50 p-2 flex items-center justify-center">
+                            {ev.file_data ? (
+                              <a href={ev.file_data} target="_blank" rel="noreferrer" className="text-blue-600 underline">View</a>
+                            ) : (
+                              <FileText className="h-8 w-8 text-gray-400" />
+                            )}
                           </div>
                         ))}
                       </div>
-                    </div>
-                    <div className="rounded-lg border p-4">
-                      <h4 className="font-medium">Seller Response</h4>
-                      <p className="text-sm text-gray-600 mt-2">Awaiting response...</p>
                     </div>
                   </div>
                 ) : (
@@ -871,49 +776,96 @@ export default function DisputePage({ loaderData }: { loaderData: LoaderData }) 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedDispute, setSelectedDispute] = useState<Dispute | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const { toast } = useToast();
+
+  // Helper: determine if an id looks like a UUID
+  const isLikelyUUID = (id?: string | number) => {
+    if (!id) return false;
+    const s = String(id);
+    return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(s);
+  };
+
+  const getSafeUserId = (user: any) => {
+    if (!user) return '';
+    // Prefer a real UUID id if present
+    if (user.id && isLikelyUUID(user.id)) return user.id;
+    // Fallback to username or email if available
+    if (user.username) return user.username;
+    if (user.email) return user.email;
+    // Otherwise return id (may be numeric) — higher risk
+    return user.id || '';
+  };
 
   const fetchDisputes = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/api/disputes/', {
-        headers: {
-          'X-User-Id': '1', // Replace with actual user ID from session
-          'Content-Type': 'application/json',
-        },
-      });
-      
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      const safeUserId = getSafeUserId(loaderData?.user);
+      if (safeUserId) headers['X-User-Id'] = String(safeUserId);
+
+      const response = await fetch('/api/disputes/', { headers });
+
+      const ct = response.headers.get('content-type') || '';
+      // Prefer extracting JSON error details when possible, but avoid surfacing raw HTML
       if (!response.ok) {
-        throw new Error(`API request failed with status ${response.status}`);
+        let msg = `API request failed with status ${response.status}`;
+        try {
+          const j = await response.json();
+          msg = j?.error || j?.detail || msg;
+        } catch (_) {
+          // non-json response — keep generic message
+        }
+        throw new Error(msg);
       }
-      
+      if (!ct.includes('application/json')) {
+        throw new Error('Unexpected non-JSON response from server');
+      }
+
       const data = await response.json();
       setDisputes(data.results || data || []);
     } catch (error) {
       console.error('Failed to fetch disputes:', error);
+      if ((window as any).toast) (window as any).toast({ title: 'Failed to load disputes', description: error instanceof Error ? error.message : String(error), variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  };
+  }; 
 
   const fetchStats = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/disputes/stats/', {
-        headers: {
-          'X-User-Id': '1', // Replace with actual user ID from session
-          'Content-Type': 'application/json',
-        },
-      });
-      
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+      const safeUserId = getSafeUserId(loaderData?.user);
+      if (safeUserId) headers['X-User-Id'] = String(safeUserId);
+
+      const response = await fetch('/api/disputes/stats/', { headers });
+
+      const ct = response.headers.get('content-type') || '';
       if (!response.ok) {
-        throw new Error(`API request failed with status ${response.status}`);
+        let msg = `API request failed with status ${response.status}`;
+        try {
+          const j = await response.json();
+          msg = j?.error || j?.detail || msg;
+        } catch (_) {}
+        throw new Error(msg);
       }
-      
+      if (!ct.includes('application/json')) {
+        throw new Error('Unexpected non-JSON response from server');
+      }
+
       const data = await response.json();
       setStats(data);
     } catch (error) {
       console.error('Failed to fetch stats:', error);
     }
-  };
+  }; 
+
+  // expose refresh helper and current user so action handlers in column cells can refresh the list and send correct headers
+  useEffect(() => {
+    (window as any).refreshDisputes = fetchDisputes;
+    (window as any).toast = toast;
+    (window as any).__currentUserId = getSafeUserId(loaderData?.user);
+    return () => { delete (window as any).refreshDisputes; delete (window as any).toast; delete (window as any).__currentUserId; };
+  }, [toast, loaderData]);
 
   const handleViewDetails = (dispute: Dispute) => {
     setSelectedDispute(dispute);
@@ -923,10 +875,10 @@ export default function DisputePage({ loaderData }: { loaderData: LoaderData }) 
   const filteredDisputes = disputes.filter(dispute => {
     const matchesSearch = 
       dispute.id.toLowerCase().includes(search.toLowerCase()) ||
-      dispute.orderNumber.toLowerCase().includes(search.toLowerCase()) ||
-      dispute.customer.name.toLowerCase().includes(search.toLowerCase()) ||
-      dispute.customer.email.toLowerCase().includes(search.toLowerCase()) ||
-      dispute.seller.shopName.toLowerCase().includes(search.toLowerCase());
+      String(dispute.id || '').toLowerCase().includes(search.toLowerCase()) ||
+      String(dispute.refund_id || '').toLowerCase().includes(search.toLowerCase()) ||
+      String(dispute.reason || '').toLowerCase().includes(search.toLowerCase()) ||
+      String((typeof dispute.requested_by === 'string' ? dispute.requested_by : (dispute.requested_by?.username || dispute.requested_by_name || ''))).toLowerCase().includes(search.toLowerCase());
     
     const matchesStatus = statusFilter === 'all' || dispute.status === statusFilter;
     
@@ -1023,10 +975,8 @@ export default function DisputePage({ loaderData }: { loaderData: LoaderData }) 
                       <SelectItem value="filed">Filed</SelectItem>
                       <SelectItem value="under_review">Under Review</SelectItem>
                       <SelectItem value="approved">Approved</SelectItem>
-                      <SelectItem value="processing">Processing</SelectItem>
-                      <SelectItem value="completed">Completed</SelectItem>
                       <SelectItem value="rejected">Rejected</SelectItem>
-                      <SelectItem value="cancelled">Cancelled</SelectItem>
+                      <SelectItem value="resolved">Resolved</SelectItem>
                     </SelectContent>
                   </Select>
                   <SimpleDateRangeFilter />
@@ -1034,7 +984,7 @@ export default function DisputePage({ loaderData }: { loaderData: LoaderData }) 
                     // Export functionality
                     const csvContent = "data:text/csv;charset=utf-8," 
                       + filteredDisputes.map(d => 
-                        `${d.id},${d.orderNumber},${d.customer.name},${d.customer.email},${d.seller.shopName},${d.reason},${d.status},${d.orderTotal}`
+                        `${d.id},${d.refund_id || ''},${d.requested_by_name || d.requested_by || ''},${d.reason},${d.status || ''},${d.created_at || ''}`
                       ).join("\n");
                     const encodedUri = encodeURI(csvContent);
                     const link = document.createElement("a");
@@ -1078,18 +1028,22 @@ export default function DisputePage({ loaderData }: { loaderData: LoaderData }) 
                     Approved ({stats.approved})
                   </Button>
                   <Button 
-                    variant={statusFilter === 'processing' ? 'default' : 'outline'} 
+                    variant={statusFilter === 'filed' ? 'default' : 'outline'} 
                     size="sm"
-                    onClick={() => setStatusFilter('processing')}
+                    onClick={() => setStatusFilter('filed')}
+                    className="flex items-center gap-2"
                   >
-                    Processing ({stats.processing})
+                    <AlertCircle className="h-4 w-4" />
+                    Filed ({stats.filed})
                   </Button>
                   <Button 
-                    variant={statusFilter === 'completed' ? 'default' : 'outline'} 
+                    variant={statusFilter === 'resolved' ? 'default' : 'outline'} 
                     size="sm"
-                    onClick={() => setStatusFilter('completed')}
+                    onClick={() => setStatusFilter('resolved')}
+                    className="flex items-center gap-2"
                   >
-                    Completed ({stats.completed})
+                    <Check className="h-4 w-4" />
+                    Resolved ({stats.resolved})
                   </Button>
                   <Button 
                     variant={statusFilter === 'rejected' ? 'default' : 'outline'} 

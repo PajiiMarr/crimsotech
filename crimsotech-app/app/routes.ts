@@ -36,20 +36,23 @@ export default [
     route('order-review/:id', 'components/customer/order-review.tsx'),  
     route('notifications', 'routes/customer/notifications.tsx'),  
     route('arrange-shipment', 'components/customer/arrange-shipment.tsx'), 
-    route("customer-create-product", "routes/customer/customer-create-product.tsx"), 
+    route("customer-create-product", "routes/customer/customer-create-product.tsx"),
+    route("customer-create-gift", "routes/customer/customer-create-gift.tsx"), 
 
     //customer-buyer
-    route('return-refund-cancel', 'routes/customer/return-refund-cancel.tsx'),  
+    route('return-refund', 'routes/customer/return-refund.tsx'),  
+    route('view-return-refund/:refundId', 'routes/customer/view-return-refund.tsx'),  
+
     route("request-refund-return/:id", "routes/customer/request-refund-return.tsx"),
     route('view-order/:orderId', 'routes/customer/view-order.tsx'),
     route('shop/:shopId', 'routes/customer/view-shop.tsx'),
-    route('process-return', 'routes/customer/process-return.tsx'),
-    route('file-dispute/:refundId', 'routes/customer/file-dispute.tsx'),
+    // route('process-return', 'routes/customer/process-return.tsx'),
+    // route('file-dispute/:refundId', 'routes/customer/file-dispute.tsx'),
 
     //customer-seller
     route('view-customer-return-cancel/:returnId', 'routes/customer/view-customer-return-cancel.tsx'),
-    route('view-refund-request/:refundId', 'routes/customer/view-refund-request.tsx'),
-    route('customer-return-cancel', 'routes/customer/customer-return-cancel.tsx'),
+    // route('view-refund-request/:refundId', 'routes/customer/view-refund-request.tsx'),
+    // route('customer-return-cancel', 'routes/customer/customer-return-cancel.tsx'),
 
     // File dispute route
     route('file-dispute/:refundId', 'routes/seller/file-dispute.tsx'),
@@ -69,11 +72,14 @@ export default [
         route("seller-create-product", "routes/seller/seller-create-product.tsx"), 
         route("seller-order-list", "routes/seller/seller-order-list.tsx"), 
         route("seller-return-refund-cancel", "routes/seller/seller-return-refund-cancel.tsx"), 
+        route("return-address", "routes/seller/return-address.tsx"), 
         // Single route supports both param and query-based navigation in the loader
         route("view-refund-details/:refundId", "routes/seller/view-refund-details.tsx"),
         route("seller-earnings", "routes/seller/seller-earnings.tsx"), 
         route("seller-vouchers", "routes/seller/seller-vouchers.tsx"), 
         route("seller-notifications", "routes/seller/seller-notifications.tsx"), 
+        route("gift", "routes/seller/seller-gift.tsx"), 
+        route("seller-create-gift", "routes/seller/seller-create-gift.tsx"), 
 
 
         

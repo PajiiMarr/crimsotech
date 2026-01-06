@@ -16,7 +16,9 @@ from . models import *
 from . serializer import *
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.conf import settings
+from .serializer import DisputeRequestCreateSerializer, DisputeRequestSerializer, DisputeEvidenceSerializer
 import random
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
@@ -28,6 +30,7 @@ from datetime import datetime, time, timedelta
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+import uuid
 
 
 
@@ -10940,6 +10943,8 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
                 {"error": "Failed to update shipping address", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             ) 
+        
+
 class PurchasesBuyer(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def user_purchases(self, request):
@@ -11432,1715 +11437,6 @@ class ViewShopAPIView(APIView):
 
 
 
-class RefundViewSet(viewsets.ViewSet):
-    """
-    Refund Management API for buyers and sellers
-    """
-
-    def _resolve_seller_shop_for_refund(self, request, user, refund):
-        """Resolve and authorize the seller shop context for a refund.
-
-        Since `Order` does not have a direct `shop` FK in this codebase, we infer shop
-        through `Checkout -> CartItem -> Product -> Shop`.
-
-        Returns: (shop, error_response)
-        """
-        order = getattr(refund, 'order', None)
-        if not order:
-            return None, Response({"error": "Refund has no related order"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Accept shop id from header (preferred) and fall back to query/data
-        shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
-        try:
-            data_shop_id = getattr(request, 'data', {}).get('shop_id')
-        except Exception:
-            data_shop_id = None
-        shop_id = shop_id or data_shop_id
-
-        shop = None
-        if shop_id:
-            try:
-                shop = Shop.objects.get(id=shop_id)
-            except Shop.DoesNotExist:
-                return None, Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
-        else:
-            # Infer shop from order items; require unambiguous mapping
-            shop_ids = list(
-                Checkout.objects.filter(
-                    order=order,
-                    cart_item__product__shop__isnull=False,
-                ).values_list('cart_item__product__shop_id', flat=True).distinct()
-            )
-            if len(shop_ids) != 1:
-                return None, Response({"error": "Shop ID required"}, status=status.HTTP_400_BAD_REQUEST)
-            try:
-                shop = Shop.objects.get(id=shop_ids[0])
-            except Shop.DoesNotExist:
-                return None, Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        # Ownership check: Shop.customer.customer -> User
-        if not shop.customer or not getattr(shop.customer, 'customer', None) or str(shop.customer.customer.id) != str(user.id):
-            return None, Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
-
-        # Ensure the order actually contains items for this shop
-        if not Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists():
-            return None, Response({"error": "This refund does not belong to the provided shop"}, status=status.HTTP_403_FORBIDDEN)
-
-        return shop, None
-    
-    # ========== BUYER ENDPOINTS ==========
-    
-    @action(detail=False, methods=['get'])
-    def get_my_refunds(self, request):
-        """Get refunds for current user.
-
-        - Buyer: returns refunds requested by the user.
-        - Seller (when `X-Shop-Id`/`shop_id` is provided): returns refunds for orders
-          that include products from that shop.
-        """
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-
-            shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
-            if shop_id:
-                try:
-                    shop = Shop.objects.get(id=shop_id)
-                except Shop.DoesNotExist:
-                    return Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
-
-                if not shop.customer or not getattr(shop.customer, 'customer', None) or str(shop.customer.customer.id) != str(user.id):
-                    return Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
-
-                refunds = (
-                    Refund.objects.filter(order__checkout__cart_item__product__shop=shop)
-                    .distinct()
-                    .order_by('-requested_at')
-                )
-
-                status_filter = request.query_params.get('status')
-                if status_filter:
-                    refunds = refunds.filter(status=status_filter)
-
-                serializer = RefundSerializer(refunds, many=True)
-                return Response({
-                    'shop': {
-                        'id': str(shop.id),
-                        'name': shop.name,
-                        'is_suspended': shop.is_suspended,
-                    },
-                    'results': serializer.data,
-                })
-
-            # Buyer path
-            refunds = Refund.objects.filter(requested_by=user).order_by('-requested_at')
-            serializer = RefundSerializer(refunds, many=True)
-            return Response(serializer.data)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    # Add this to your RefundViewSet class
-    @action(detail=True, methods=['post'])
-    def update_tracking(self, request, pk=None):
-        """
-        Update tracking for return
-        """
-        try:
-            # Get user
-            user_id = request.headers.get('X-User-Id')
-            if not user_id:
-                return Response({"error": "User ID required"}, status=400)
-            
-            # Get refund
-            try:
-                refund = Refund.objects.get(refund=pk)
-            except Refund.DoesNotExist:
-                return Response({"error": "Refund not found"}, status=404)
-            
-            # Get tracking data
-            logistic_service = request.data.get('logistic_service')
-            tracking_number = request.data.get('tracking_number')
-            
-            if not logistic_service:
-                return Response({"error": "logistic_service is required"}, status=400)
-            if not tracking_number:
-                return Response({"error": "tracking_number is required"}, status=400)
-            
-            # Update tracking
-            refund.logistic_service = logistic_service
-            refund.tracking_number = tracking_number
-            
-            # Change status to indicate return is on the way
-            refund.status = 'to_verify'
-            refund.save()
-            
-            return Response({
-                "message": "Tracking updated successfully",
-                "status": refund.status
-            })
-            
-        except Exception as e:
-            return Response({"error": str(e)}, status=500)
-    
-    @action(detail=False, methods=['post'])
-    def create_refund(self, request):
-        """
-        Simple view-based refund creation endpoint
-        """
-        try:
-            # Get user ID from headers
-            user_id = request.headers.get('X-User-Id')
-            if not user_id:
-                return JsonResponse({
-                    'error': 'User ID required'
-                }, status=400)
-            
-            try:
-                user = User.objects.get(id=user_id)
-            except User.DoesNotExist:
-                return JsonResponse({
-                    'error': 'User not found'
-                }, status=404)
-            
-            # Parse refund data from form data
-            # DRF's MultiPartParser exposes fields in request.data; Django exposes in request.POST
-            refund_data_str = request.data.get('refund_data') or request.POST.get('refund_data')
-            if not refund_data_str:
-                return JsonResponse({
-                    'error': 'Refund data required'
-                }, status=400)
-            
-            try:
-                refund_data = json.loads(refund_data_str)
-            except json.JSONDecodeError:
-                return JsonResponse({
-                    'error': 'Invalid refund data format'
-                }, status=400)
-            
-            # Validate required fields
-            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'total_refund_amount']
-            for field in required_fields:
-                if not refund_data.get(field):
-                    return JsonResponse({
-                        'error': f'{field.replace("_", " ").title()} is required'
-                    }, status=400)
-            
-            # Get order
-            try:
-                order = Order.objects.get(order=refund_data['order_id'], user=user)
-            except Order.DoesNotExist:
-                return JsonResponse({
-                    'error': 'Order not found or does not belong to user'
-                }, status=404)
-            
-            # Check if refund already exists
-            existing_refund = Refund.objects.filter(
-                order=order, 
-                requested_by=user,
-                status__in=['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
-            ).first()
-            
-            if existing_refund:
-                return JsonResponse({
-                    'error': 'A refund request for this order is already in progress',
-                    'refund_id': str(existing_refund.refund),
-                    'request_number': existing_refund.request_number
-                }, status=400)
-            
-            # Start transaction
-            with transaction.atomic():
-                # Create refund
-                refund = Refund.objects.create(
-                    order=order,
-                    requested_by=user,
-                    reason=refund_data['reason'],
-                    preferred_refund_method=refund_data['preferred_refund_method'],
-                    total_refund_amount=Decimal(refund_data['total_refund_amount']),
-                    customer_note=refund_data.get('customer_note', ''),
-                    refund_category=refund_data.get('refund_category', 'return_item'),
-                    status='pending'
-                )
-                
-                # Save will auto-generate request_number
-                refund.save()
-                
-                # Create payment method details if provided
-                wallet_details = refund_data.get('wallet_details')
-                if wallet_details:
-                    RefundWallet.objects.create(
-                        refund=refund,
-                        provider=wallet_details.get('provider', ''),
-                        account_name=wallet_details.get('account_name', ''),
-                        account_number=wallet_details.get('account_number', ''),
-                        contact_number=wallet_details.get('contact_number', '')
-                    )
-                
-                bank_details = refund_data.get('bank_details')
-                if bank_details:
-                    RefundBank.objects.create(
-                        refund=refund,
-                        bank_name=bank_details.get('bank_name', ''),
-                        account_name=bank_details.get('account_name', ''),
-                        account_number=bank_details.get('account_number', ''),
-                        account_type=bank_details.get('account_type', ''),
-                        branch=bank_details.get('branch', '')
-                    )
-                
-                remittance_details = refund_data.get('remittance_details')
-                if remittance_details:
-                    RefundRemittance.objects.create(
-                        refund=refund,
-                        provider=remittance_details.get('provider', ''),
-                        first_name=remittance_details.get('first_name', ''),
-                        last_name=remittance_details.get('last_name', ''),
-                        contact_number=remittance_details.get('contact_number', ''),
-                        address=remittance_details.get('address', ''),
-                        city=remittance_details.get('city', ''),
-                        province=remittance_details.get('province', ''),
-                        zip_code=remittance_details.get('zip_code', ''),
-                        valid_id_type=remittance_details.get('valid_id_type', ''),
-                        valid_id_number=remittance_details.get('valid_id_number', '')
-                    )
-                
-                # Handle uploaded files
-                for key, file in request.FILES.items():
-                    if key.startswith('evidence_'):
-                        file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
-                        RefundMedias.objects.create(
-                            refund=refund,
-                            file_data=file,
-                            file_type=file_type
-                        )
-                
-                # Handle selected items (store in customer_note for reference)
-                selected_items = []
-                for key, value in request.POST.items():
-                    if key.startswith('selected_item_'):
-                        selected_items.append(value)
-                
-                if selected_items:
-                    refund.customer_note += f"\n\nSelected Checkout IDs: {', '.join(selected_items)}"
-                    refund.save()
-                
-                return JsonResponse({
-                    'message': 'Refund request created successfully',
-                    'refund_id': str(refund.refund),
-                    'request_number': refund.request_number
-                }, status=201)
-                
-        except Exception as e:
-            return JsonResponse({
-                'error': f'Failed to create refund: {str(e)}'
-            }, status=500)
-    
-    @action(detail=True, methods=['get'])
-    def get_my_refund(self, request, pk=None):
-        """Get detailed refund info for buyer (requester), seller (owner of shop), or admin"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            user = User.objects.get(id=user_id)
-            # Get refund by UUID (primary key is 'refund', not 'id')
-            try:
-                refund = Refund.objects.get(refund=pk)
-            except Refund.DoesNotExist:
-                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
-
-            # Authorize: buyer who requested it, shop owner for the related order, or admin
-            authorized = False
-            if refund.requested_by and str(refund.requested_by.id) == str(user.id):
-                authorized = True
-
-            # Admin / moderator can view any refund
-            if getattr(user, 'is_admin', False) or getattr(user, 'is_moderator', False):
-                authorized = True
-            # Check seller ownership (via order items -> product.shop)
-            try:
-                if refund.order and Checkout.objects.filter(
-                    order=refund.order,
-                    cart_item__product__shop__customer__customer=user,
-                ).exists():
-                    authorized = True
-            except Exception:
-                pass
-
-            if not authorized:
-                return Response({"error": "Not authorized to view this refund"}, status=status.HTTP_403_FORBIDDEN)
-
-            # Base serialized data
-            data = RefundSerializer(refund).data
-
-            # Attach dispute request info (if any)
-            try:
-                dispute_request = DisputeRequest.objects.filter(refund=refund).order_by('-created_at').first()
-            except Exception:
-                dispute_request = None
-
-            if dispute_request:
-                data['dispute_request'] = {
-                    'id': str(dispute_request.id),
-                    'status': dispute_request.status,
-                    'created_at': dispute_request.created_at,
-                    'resolved_at': dispute_request.resolved_at,
-                    'reason': dispute_request.reason,
-                }
-            else:
-                data['dispute_request'] = None
-
-            # Attach evidence media URLs
-            medias = RefundMedias.objects.filter(refund=refund)
-            evidence = []
-            for m in medias:
-                url = request.build_absolute_uri(m.file_data.url) if m.file_data else None
-                evidence.append({
-                    'id': str(m.refund_media),
-                    'url': url,
-                    'file_type': m.file_type,
-                })
-            data['evidence'] = evidence
-
-            # Attach enriched order and item info when available
-            if refund.order:
-                data['order_info'] = {
-                    'order_number': refund.order.order,
-                    'order_id': str(refund.order.order),
-                    'total_amount': float(refund.order.total_amount) if refund.order.total_amount else None,
-                    'payment_method': refund.order.payment_method if hasattr(refund.order, 'payment_method') else None,
-                    'delivery_address_text': refund.order.delivery_address_text or None,
-                }
-
-                # Order items (from Checkout entries related to this order)
-                order_items = []
-                try:
-                    checkouts = Checkout.objects.filter(order=refund.order).select_related('cart_item__product')
-                    for co in checkouts:
-                        cart = co.cart_item
-                        product = None
-                        if cart and cart.product:
-                            prod = cart.product
-                            product = {
-                                'id': str(prod.id),
-                                'name': prod.name,
-                                'price': float(prod.price) if prod.price is not None else None,
-                                'condition': prod.condition if hasattr(prod, 'condition') else None,
-                                'shop': {
-                                    'id': str(prod.shop.id) if prod.shop else None,
-                                    'name': prod.shop.name if prod.shop else None
-                                }
-                            }
-                        # Enrich product with SKUs and variants for buyer view
-                        skus = []
-                        if product and product.get('id'):
-                            try:
-                                prod_obj = Product.objects.get(id=product['id'])
-                                for sku in prod_obj.skus.all():
-                                    skus.append({
-                                        'id': str(sku.id),
-                                        'product_id': str(sku.product.id) if sku.product else None,
-                                        'image': request.build_absolute_uri(sku.image.url) if getattr(sku, 'image', None) else None,
-                                        'sku_code': sku.sku_code,
-                                        'price': float(sku.price) if sku.price is not None else None,
-                                        'option_ids': sku.option_ids or [],
-                                    })
-                            except Exception:
-                                skus = []
-
-                        variants_data = []
-                        if product and product.get('id'):
-                            try:
-                                prod_obj = Product.objects.get(id=product['id'])
-                                for v in Variants.objects.filter(product=prod_obj):
-                                    opts = []
-                                    for opt in VariantOptions.objects.filter(variant=v):
-                                        opts.append({
-                                            'id': str(opt.id),
-                                            'title': opt.title,
-                                            'variant_id': str(v.id),
-                                        })
-                                    variants_data.append({
-                                        'id': str(v.id),
-                                        'title': v.title,
-                                        'product_id': str(prod_obj.id),
-                                        'options': opts
-                                    })
-                            except Exception:
-                                variants_data = []
-
-                        order_items.append({
-                            'id': str(co.id),
-                            'product': dict(product or {}, skus=skus, variants=variants_data),
-                            'quantity': int(co.quantity or (cart.quantity if cart else 0)),
-                            'total_amount': float(co.total_amount) if co.total_amount is not None else None,
-                            'status': co.status,
-                        })
-                except Exception:
-                    order_items = []
-
-                data['order_items'] = order_items
-
-                # Aggregate shops involved in this refund/order
-                shops = {}
-                for it in order_items:
-                    p = it.get('product')
-                    if p and p.get('shop') and p['shop'].get('id'):
-                        shops[p['shop']['id']] = p['shop']
-                data['shops'] = list(shops.values())
-
-                # Delivery / shipping info
-                delivery = Delivery.objects.filter(order=refund.order).order_by('-created_at').first()
-                if delivery:
-                    data['delivery'] = {
-                        'id': str(delivery.id),
-                        'status': delivery.status,
-                        'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
-                        'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
-                        'tracking_number': refund.tracking_number or None,
-                        'rider_id': str(delivery.rider.id) if delivery.rider else None,
-                    }
-                else:
-                    data['delivery'] = None
-
-            # Include waybill information if exists
-            try:
-                waybill = refund.waybill
-                serializer = ReturnWaybillSerializer(waybill)
-                data['waybill'] = serializer.data
-            except ReturnWaybill.DoesNotExist:
-                data['waybill'] = None
-
-            # Helpful flags and status-driven fields
-            data['is_negotiation_expired'] = refund.is_negotiation_expired
-            data['evidence_count'] = refund.evidence_count if hasattr(refund, 'evidence_count') else len(evidence)
-
-            # Approval / return timestamps
-            data['approved_at'] = refund.approved_at.isoformat() if getattr(refund, 'approved_at', None) else None
-            data['buyer_notified_at'] = refund.buyer_notified_at.isoformat() if getattr(refund, 'buyer_notified_at', None) else None
-            data['return_deadline'] = refund.return_deadline.isoformat() if getattr(refund, 'return_deadline', None) else None
-
-            # Available actions for the current viewer/based on status
-            actions = []
-            st = refund.status
-            if st == 'pending':
-                actions = ['cancel_request']
-            elif st == 'negotiation':
-                actions = ['accept_offer', 'reject_offer']
-                # include seller offer details
-                data['seller_offer'] = {
-                    'method': refund.seller_suggested_method,
-                    'amount': float(refund.seller_suggested_amount) if refund.seller_suggested_amount is not None else None,
-                    'reason': refund.seller_suggested_reason,
-                    'deadline': refund.negotiation_deadline.isoformat() if refund.negotiation_deadline else None,
-                }
-            elif st == 'approved':
-                actions = ['prepare_return', 'contact_seller']
-            elif st == 'waiting':
-                actions = ['upload_tracking', 'contact_seller']
-            elif st == 'to_verify':
-                actions = ['await_verification', 'contact_seller']
-            elif st == 'to_process':
-                actions = ['await_processing']
-            elif st == 'dispute':
-                actions = ['await_admin']
-            else:
-                actions = []
-            data['available_actions'] = actions
-
-            return Response(data)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    @action(detail=True, methods=['post'])
-    def upload_evidence(self, request, pk=None):
-        """Buyer uploads evidence for refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
-            
-            files = request.FILES.getlist('files')
-            if not files:
-                return Response({"error": "No files uploaded"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            for file in files:
-                RefundMedias.objects.create(
-                    refund=refund,
-                    file_data=file,
-                    file_type=file.content_type
-                )
-            
-            return Response({
-                "message": f"{len(files)} evidence files uploaded successfully",
-                "evidence_count": len(files)
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def respond_to_negotiation(self, request, pk=None):
-        """Buyer responds to seller's negotiation offer"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
-            
-            if refund.status != 'negotiation':
-                return Response({"error": "This refund is not in negotiation"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            action = request.data.get('action')  # 'accept' or 'reject'
-            reason = request.data.get('reason', '')
-            
-            if action == 'accept':
-                # Accept seller's offer
-                refund.status = 'approved'
-                refund.final_refund_method = refund.seller_suggested_method
-                if refund.seller_suggested_amount:
-                    refund.total_refund_amount = refund.seller_suggested_amount
-                refund.customer_note = f"{refund.customer_note or ''}\nAccepted seller's offer: {reason}"
-                refund.save()
-                
-                return Response({
-                    "message": "Seller's offer accepted",
-                    "refund_id": str(refund.refund),
-                    "status": refund.status,
-                    "final_method": refund.final_refund_method,
-                    "amount": refund.total_refund_amount
-                })
-                
-            elif action == 'reject':
-                # Reject seller's offer, buyer can file dispute
-                refund.status = 'rejected'
-                refund.seller_response = f"Buyer rejected offer: {reason}"
-                refund.save()
-                
-                return Response({
-                    "message": "Seller's offer rejected",
-                    "refund_id": str(refund.refund),
-                    "status": refund.status,
-                    "note": "You can file a dispute if needed"
-                })
-            
-            else:
-                return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
-                
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    @action(detail=True, methods=['post'])
-    def cancel_refund(self, request, pk=None):
-        """Buyer cancels a pending refund request"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
-            if refund.status != 'pending':
-                return Response({"error": "Only pending refunds can be cancelled"}, status=status.HTTP_400_BAD_REQUEST)
-            refund.status = 'cancelled'
-            refund.save()
-            return Response({"message": "Refund cancelled", "refund_id": str(refund.refund), "status": refund.status})
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def file_dispute(self, request, pk=None):
-        """Buyer files a dispute after rejecting seller's offer"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
-            
-            if refund.status != 'rejected':
-                return Response({"error": "Can only file dispute for rejected refunds"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            dispute_reason = request.data.get('dispute_reason')
-            if not dispute_reason:
-                return Response({"error": "Dispute reason required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund.status = 'dispute'
-            refund.dispute_filed_by = user
-            refund.dispute_reason = dispute_reason
-            refund.save()
-            
-            return Response({
-                "message": "Dispute filed successfully",
-                "refund_id": str(refund.refund),
-                "status": refund.status,
-                "dispute_id": str(refund.refund)
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    # ========== SELLER ENDPOINTS ==========
-    
-    @action(detail=False, methods=['get'])
-    def get_shop_refunds(self, request):
-        """Seller gets all refunds for their shop. Accepts optional X-Shop-Id header or shop_id query param to restrict to a single shop."""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.get(id=user_id)
-
-            # Optional shop selector
-            shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
-            shop = None
-            if shop_id:
-                try:
-                    shop = Shop.objects.get(id=shop_id)
-                except Shop.DoesNotExist:
-                    return Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
-
-                # Verify ownership: Shop.customer.customer => User
-                if not shop.customer or not getattr(shop.customer, 'customer', None) or str(shop.customer.customer.id) != str(user.id):
-                    return Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
-
-                refunds = (
-                    Refund.objects.filter(order__checkout__cart_item__product__shop=shop)
-                    .distinct()
-                    .order_by('-requested_at')
-                )
-            else:
-                shops = Shop.objects.filter(customer__customer=user)
-                if not shops.exists():
-                    # Don't 404 — return empty results so frontend can handle gracefully
-                    print(f"get_shop_refunds: user {user.id} has no shops; returning empty results")
-                    return Response({'shop': None, 'results': []})
-                refunds = (
-                    Refund.objects.filter(order__checkout__cart_item__product__shop__in=shops)
-                    .distinct()
-                    .order_by('-requested_at')
-                )
-
-            # Filter by status if provided
-            status_filter = request.query_params.get('status')
-            if status_filter:
-                refunds = refunds.filter(status=status_filter)
-
-            # Debug: log counts for troubleshooting
-            try:
-                refunds_count = refunds.count()
-            except Exception:
-                refunds_count = 'unknown'
-            print(f"get_shop_refunds: user={user.id} shop_id={shop_id or 'none'} refunds_count={refunds_count}")
-
-            serializer = RefundSerializer(refunds, many=True)
-
-            # If shop was specified, return shop summary along with results for convenience
-            if shop:
-                print(f"get_shop_refunds: returning {len(serializer.data)} refunds for shop {shop.id}")
-                return Response({
-                    'shop': {
-                        'id': str(shop.id),
-                        'name': shop.name,
-                        'is_suspended': shop.is_suspended
-                    },
-                    'results': serializer.data
-                })
-
-            return Response({'shop': None, 'results': serializer.data})
-
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['get'])
-    def get_refund_details(self, request, pk=None):
-        """Seller gets detailed refund information (enriched payload)"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-
-            # Verify seller owns the shop for this refund/order
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-
-            # Base refund data
-            data = RefundSerializer(refund).data
-
-            # Attach dispute request info (if any)
-            try:
-                dispute_request = DisputeRequest.objects.filter(refund=refund).order_by('-created_at').first()
-            except Exception:
-                dispute_request = None
-
-            if dispute_request:
-                data['dispute_request'] = {
-                    'id': str(dispute_request.id),
-                    'status': dispute_request.status,
-                    'created_at': dispute_request.created_at,
-                    'resolved_at': dispute_request.resolved_at,
-                    'reason': dispute_request.reason,
-                }
-            else:
-                data['dispute_request'] = None
-            
-            # include shop summary in response
-            data['shop'] = {
-                'id': str(shop.id) if shop else None,
-                'name': shop.name if shop else None,
-                'is_suspended': shop.is_suspended if shop else False,
-            }
-
-            # Refund medias / evidence
-            medias = RefundMedias.objects.filter(refund=refund)
-            evidence = []
-            for m in medias:
-                evidence.append({
-                    'id': str(m.refund_media),
-                    'url': request.build_absolute_uri(m.file_data.url) if m.file_data else None,
-                    'file_type': m.file_type,
-                })
-            data['evidence'] = evidence
-
-            # Payment method details
-            payment_methods = {}
-            
-            # Wallet details
-            if hasattr(refund, 'wallet_details'):
-                wd = refund.wallet_details
-                created_at = getattr(wd, 'created_at', None)
-                payment_methods['wallet'] = {
-                    'id': str(wd.id),
-                    'provider': wd.provider,
-                    'account_name': wd.account_name,
-                    'account_number': wd.account_number,
-                    'contact_number': wd.contact_number,
-                    'created_at': created_at.isoformat() if created_at else None,
-                }
-            
-            # Bank details
-            if hasattr(refund, 'bank_details'):
-                bd = refund.bank_details
-                created_at = getattr(bd, 'created_at', None)
-                payment_methods['bank'] = {
-                    'id': str(bd.id),
-                    'bank_name': bd.bank_name,
-                    'account_name': bd.account_name,
-                    'account_number': bd.account_number,
-                    'account_type': bd.account_type,
-                    'branch': bd.branch,
-                    'created_at': created_at.isoformat() if created_at else None,
-                }
-            
-            # Remittance details
-            if hasattr(refund, 'remittance_details'):
-                rd = refund.remittance_details
-                created_at = getattr(rd, 'created_at', None)
-                payment_methods['remittance'] = {
-                    'id': str(rd.id),
-                    'provider': rd.provider,
-                    'first_name': rd.first_name,
-                    'last_name': rd.last_name,
-                    'full_name': f"{rd.first_name} {rd.last_name}",
-                    'contact_number': rd.contact_number,
-                    'address': rd.address,
-                    'city': rd.city,
-                    'province': rd.province,
-                    'zip_code': rd.zip_code,
-                    'valid_id_type': rd.valid_id_type,
-                    'valid_id_number': rd.valid_id_number,
-                    'created_at': created_at.isoformat() if created_at else None,
-                }
-            
-            data['payment_method_details'] = payment_methods
-
-            # Order summary and addresses
-            order = refund.order
-            if order:
-                shipping_address = None
-                if order.shipping_address:
-                    sa = order.shipping_address
-                    shipping_address = {
-                        'id': str(sa.id),
-                        'recipient_name': sa.recipient_name,
-                        'recipient_phone': sa.recipient_phone,
-                        'street': sa.street,
-                        'barangay': sa.barangay,
-                        'city': sa.city,
-                        'province': sa.province,
-                        'zip_code': sa.zip_code,
-                        'country': sa.country,
-                        'full_address': sa.get_full_address(),
-                    }
-
-                delivery_address_text = order.delivery_address_text or None
-
-                data['order_info'] = {
-                    'order_number': str(order.order),
-                    'order_id': str(order.order),
-                    'user_id': str(order.user.id) if order.user else None,
-                    'created_at': order.created_at.isoformat() if order.created_at else None,
-                    'payment_method': order.payment_method,
-                    'total_amount': float(order.total_amount) if order.total_amount is not None else None,
-                    'status': order.status,
-                    'delivery_method': order.delivery_method,
-                    'shipping_address': shipping_address,
-                    'delivery_address_text': delivery_address_text,
-                }
-
-                # Attach checkout / cart item based order items
-                order_items = []
-                checkouts = Checkout.objects.filter(
-                    order=order,
-                    cart_item__product__shop=shop,
-                ).select_related('cart_item__product')
-                for co in checkouts:
-                    cart = co.cart_item
-                    cart_data = None
-                    if cart:
-                        cart_data = {
-                            'id': str(cart.id),
-                            'added_at': cart.added_at.isoformat() if cart.added_at else None,
-                            'quantity': cart.quantity,
-                            'user_id': str(cart.user.id) if cart.user else None,
-                        }
-
-                    prod = None
-                    product_obj = None
-                    if cart and cart.product:
-                        product_obj = cart.product
-                    elif co.cart_item and co.cart_item.product:
-                        product_obj = co.cart_item.product
-
-                    product_data = None
-                    if product_obj:
-                        category = product_obj.category
-                        product_data = {
-                            'id': str(product_obj.id),
-                            'name': product_obj.name,
-                            'description': product_obj.description,
-                            'quantity': product_obj.quantity,
-                            'price': float(product_obj.price) if product_obj.price is not None else None,
-                            'condition': product_obj.condition,
-                            'category_id': str(category.id) if category else None,
-                            'category_name': category.name if category else None,
-                            'shop_id': str(product_obj.shop.id) if product_obj.shop else None,
-                            'shop_name': product_obj.shop.name if product_obj.shop else None,
-                        }
-
-                        # Product SKUs
-                        skus = []
-                        for sku in product_obj.skus.all():
-                            skus.append({
-                                'id': str(sku.id),
-                                'product_id': str(sku.product.id) if sku.product else None,
-                                'image': request.build_absolute_uri(sku.image.url) if getattr(sku, 'image', None) else None,
-                                'sku_code': sku.sku_code,
-                                'price': float(sku.price) if sku.price is not None else None,
-                                'option_ids': sku.option_ids or [],
-                            })
-                        product_data['skus'] = skus
-
-                        # Variants & options
-                        variants_data = []
-                        for v in Variants.objects.filter(product=product_obj):
-                            opts = []
-                            for opt in VariantOptions.objects.filter(variant=v):
-                                opts.append({
-                                    'id': str(opt.id),
-                                    'title': opt.title,
-                                    'variant_id': str(v.id),
-                                })
-                            variants_data.append({
-                                'id': str(v.id),
-                                'title': v.title,
-                                'product_id': str(product_obj.id),
-                                'options': opts
-                            })
-                        product_data['variants'] = variants_data
-
-                    order_items.append({
-                        'checkout_id': str(co.id),
-                        'checkout_status': co.status,
-                        'checkout_total_amount': float(co.total_amount) if co.total_amount is not None else None,
-                        'checkout_quantity': co.quantity,
-                        'cart': cart_data,
-                        'product': product_data,
-                        'remarks': co.remarks,
-                        'created_at': co.created_at.isoformat() if getattr(co, 'created_at', None) else None,
-                    })
-
-                data['order_items'] = order_items
-
-                # Delivery / latest tracking info
-                delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
-                if delivery:
-                    data['delivery'] = {
-                        'id': str(delivery.id),
-                        'status': delivery.status,
-                        'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
-                        'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
-                        'tracking_number': refund.tracking_number or None,
-                        'rider_id': str(delivery.rider.id) if delivery.rider else None,
-                    }
-                else:
-                    data['delivery'] = None
-
-            else:
-                data['order_info'] = None
-                data['order_items'] = []
-                data['delivery'] = None
-
-            # Flags and meta
-            data['is_negotiation_expired'] = refund.is_negotiation_expired
-            data['evidence_count'] = refund.evidence_count if hasattr(refund, 'evidence_count') else len(evidence)
-
-            # Approval and return timeline
-            data['approved_at'] = refund.approved_at.isoformat() if getattr(refund, 'approved_at', None) else None
-            data['return_deadline'] = refund.return_deadline.isoformat() if getattr(refund, 'return_deadline', None) else None
-
-            # Available actions for seller view
-            actions = []
-            st = refund.status
-            if st == 'pending':
-                actions = ['approve', 'reject', 'propose_negotiation']
-            elif st == 'negotiation':
-                actions = ['propose_negotiation', 'contact_customer']
-            elif st == 'approved':
-                actions = ['schedule_pickup']
-            elif st == 'waiting':
-                actions = ['mark_as_received']
-            elif st == 'to_verify':
-                actions = ['verify_item']
-            elif st == 'to_process':
-                actions = ['process_refund']
-            elif st == 'dispute':
-                actions = ['contact_customer', 'resolve_dispute']
-            else:
-                actions = []
-            data['available_actions'] = actions
-
-            # Payment method status
-            data['payment_method_set'] = (
-                hasattr(refund, 'wallet_details') or 
-                hasattr(refund, 'bank_details') or 
-                hasattr(refund, 'remittance_details')
-            )
-            data['preferred_refund_method'] = refund.preferred_refund_method
-
-            return Response(data)
-
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    @action(detail=True, methods=['post'])
-    def proceed_dispute_processing(self, request, pk=None):
-        """Seller marks the related dispute request as processing.
-
-        This is used by the seller UI "Proceed to process" button in the dispute view.
-        """
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-
-            dispute_request = DisputeRequest.objects.filter(refund=refund).order_by('-created_at').first()
-            if not dispute_request:
-                return Response({"error": "No dispute request found for this refund"}, status=status.HTTP_404_NOT_FOUND)
-
-            # Only allow moving to processing once the dispute was approved.
-            if dispute_request.status != 'processing' and dispute_request.status != 'approved':
-                return Response(
-                    {"error": f"Cannot proceed to processing from status '{dispute_request.status}'"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            if dispute_request.status != 'processing':
-                dispute_request.status = 'processing'
-                dispute_request.save()
-
-            # Move refund out of dispute and into processing stage for seller workflow
-            # (seller UI uses `to_process` as the processing tab)
-            if getattr(refund, 'status', None) == 'dispute':
-                refund.status = 'to_process'
-                refund.save(update_fields=['status'])
-
-            return Response({
-                'id': str(dispute_request.id),
-                'status': dispute_request.status,
-                'created_at': dispute_request.created_at,
-                'resolved_at': dispute_request.resolved_at,
-                'reason': dispute_request.reason,
-                'refund_status': refund.status,
-            })
-
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    @action(detail=True, methods=['post'])
-    def approve_refund(self, request, pk=None):
-        """Seller approves a refund request"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            if refund.status != 'pending':
-                return Response({"error": "Can only approve pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund.status = 'approved'
-            refund.processed_by = user
-            refund.seller_response = request.data.get('notes', 'Approved by seller')
-
-            # Set approval timestamps explicitly (deadline 7 days by default)
-            now = timezone.now()
-            refund.approved_at = now
-            refund.return_deadline = now + timedelta(days=7)
-
-            refund.save()
-            
-            return Response({
-                "message": "Refund approved successfully",
-                "refund_id": str(refund.refund),
-                "status": refund.status,
-                "approved_at": refund.approved_at.isoformat() if refund.approved_at else None,
-                "return_deadline": refund.return_deadline.isoformat() if refund.return_deadline else None,
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def notify_buyer(self, request, pk=None):
-        """Seller notifies buyer that refund is approved and ready for processing"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            if refund.status != 'approved':
-                return Response({"error": "Can only notify buyer for approved refunds"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            if refund.buyer_notified_at:
-                return Response({"error": "Buyer has already been notified"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Set notification timestamp
-            refund.buyer_notified_at = timezone.now()
-            refund.save()
-            
-            return Response({
-                "message": "Buyer notified successfully",
-                "refund_id": str(refund.refund),
-                "buyer_notified_at": refund.buyer_notified_at.isoformat(),
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def start_return_process(self, request, pk=None):
-        """Buyer starts the return process"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
-            
-            if refund.status != 'approved':
-                return Response({"error": "Can only start process for approved refunds"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            if not refund.buyer_notified_at:
-                return Response({"error": "Buyer must be notified first"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            if refund.refund_category == 'return_item':
-                refund.status = 'waiting'
-            elif refund.refund_category == 'keep_item':
-                refund.status = 'to_process'
-            else:
-                return Response({"error": "Invalid refund category"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund.save()
-            
-            return Response({
-                "message": "Return process started",
-                "refund_id": str(refund.refund),
-                "status": refund.status,
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def update_tracking(self, request, pk=None):
-        """Buyer updates tracking information for return shipment"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk, requested_by=user)
-            
-            if refund.status not in ['waiting', 'to_process']:
-                return Response({"error": "Can only update tracking for active return processes"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            logistic_service = request.data.get('logistic_service')
-            tracking_number = request.data.get('tracking_number')
-            
-            if not logistic_service or not tracking_number:
-                return Response({"error": "Logistic service and tracking number are required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund.logistic_service = logistic_service
-            refund.tracking_number = tracking_number
-            refund.save()
-            
-            return Response({
-                "message": "Tracking information updated successfully",
-                "refund_id": str(refund.refund),
-                "logistic_service": refund.logistic_service,
-                "tracking_number": refund.tracking_number,
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post', 'patch'])
-    def reject_refund(self, request, pk=None):
-        """Seller rejects a refund request with negotiation counter-offer"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            if refund.status != 'pending':
-                return Response({"error": "Can only reject pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get rejection details from request
-            seller_suggested_reason = request.data.get('seller_suggested_reason')
-            seller_suggested_method = request.data.get('seller_suggested_method')
-            status_override = request.data.get('status', 'negotiation')
-            
-            # Validate required fields
-            if not seller_suggested_reason:
-                return Response(
-                    {"error": "seller_suggested_reason is required"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            if not seller_suggested_method:
-                return Response(
-                    {"error": "seller_suggested_method is required"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Update refund with negotiation details
-            refund.status = status_override  # Usually 'negotiation'
-            refund.processed_by = user
-            refund.seller_suggested_reason = seller_suggested_reason
-            refund.seller_suggested_method = seller_suggested_method
-            refund.seller_response = f"Seller counter-offer: {seller_suggested_reason}"
-            refund.save()
-            
-            return Response({
-                "message": "Counter-offer sent to buyer",
-                "refund_id": str(refund.refund),
-                "status": refund.status,
-                "seller_suggested_reason": refund.seller_suggested_reason,
-                "seller_suggested_method": refund.seller_suggested_method,
-                "negotiation_deadline": refund.negotiation_deadline
-            }, status=status.HTTP_200_OK)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def propose_negotiation(self, request, pk=None):
-        """Seller proposes alternative refund method (negotiation)"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            if refund.status != 'pending':
-                return Response({"error": "Can only negotiate pending refunds"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            suggested_method = request.data.get('seller_suggested_method')
-            suggested_amount = request.data.get('seller_suggested_amount')
-            suggested_reason = request.data.get('seller_suggested_reason')
-            
-            if not suggested_method:
-                return Response({"error": "Suggested method required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund.status = 'negotiation'
-            refund.processed_by = user
-            refund.seller_suggested_method = suggested_method
-            refund.seller_suggested_amount = suggested_amount
-            refund.seller_suggested_reason = suggested_reason
-            refund.seller_response = f"Seller proposed alternative: {suggested_reason}"
-            refund.save()
-            
-            return Response({
-                "message": "Negotiation proposal sent to buyer",
-                "refund_id": str(refund.refund),
-                "status": refund.status,
-                "suggested_method": refund.seller_suggested_method,
-                "suggested_amount": refund.seller_suggested_amount,
-                "deadline": refund.negotiation_deadline
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def mark_as_received(self, request, pk=None):
-        """Seller marks returned item as received (to_verify)"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            if refund.status != 'waiting':
-                return Response({"error": "Can only mark received items that are waiting for return"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            tracking_number = request.data.get('tracking_number')
-            if tracking_number:
-                refund.tracking_number = tracking_number
-            
-            refund.status = 'to_verify'
-            refund.processed_by = user
-            refund.save()
-            
-            return Response({
-                "message": "Item marked as received",
-                "refund_id": str(refund.refund),
-                "status": refund.status
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def verify_item(self, request, pk=None):
-        """Seller verifies returned item condition"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            if refund.status != 'to_verify':
-                return Response({"error": "Can only verify items in 'to_verify' status"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            verification_result = request.data.get('verification_result')  # 'approved' or 'rejected'
-            verification_notes = request.data.get('verification_notes', '')
-            
-            if verification_result == 'approved':
-                refund.status = 'to_process'
-                refund.seller_response = f"Item verified and approved: {verification_notes}"
-            elif verification_result == 'rejected':
-                # Move to rejected tab; seller can file dispute later if needed
-                refund.status = 'rejected'
-                refund.seller_response = f"Item verification failed: {verification_notes}"
-            else:
-                return Response({"error": "Invalid verification result"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund.processed_by = user
-            refund.save()
-            
-            return Response({
-                "message": f"Item verification {verification_result}",
-                "refund_id": str(refund.refund),
-                "status": refund.status
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def process_refund(self, request, pk=None):
-        """Seller processes the refund payment"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            if refund.status != 'to_process':
-                return Response({"error": "Can only process refunds in 'to_process' status"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund.status = 'completed'
-            refund.processed_by = user
-            refund.final_refund_method = request.data.get('final_refund_method', refund.seller_suggested_method or refund.preferred_refund_method)
-            refund.save()
-            
-            return Response({
-                "message": "Refund processed successfully",
-                "refund_id": str(refund.refund),
-                "status": refund.status,
-                "final_method": refund.final_refund_method,
-                "amount": refund.total_refund_amount,
-                "processed_at": refund.processed_at
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    # ========== ADMIN ENDPOINTS ==========
-    
-    @action(detail=False, methods=['get'])
-    def get_all_disputes(self, request):
-        """Admin gets all disputes"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            
-            disputes = Refund.objects.filter(status='dispute').order_by('-dispute_filed_at')
-            serializer = RefundSerializer(disputes, many=True)
-            return Response(serializer.data)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def resolve_dispute(self, request, pk=None):
-        """Admin resolves a dispute"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            
-            refund = get_object_or_404(Refund, refund=pk, status='dispute')
-            
-            admin_decision = request.data.get('admin_decision')
-            admin_response = request.data.get('admin_response')
-            
-            if not admin_decision or not admin_response:
-                return Response({"error": "Admin decision and response required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund.admin_decision = admin_decision
-            refund.admin_response = admin_response
-            refund.processed_by = user
-            
-            # Determine final status based on decision
-            if admin_decision.lower() in ['approved', 'in_favor_buyer']:
-                refund.status = 'to_process'
-            elif admin_decision.lower() in ['rejected', 'in_favor_seller']:
-                refund.status = 'rejected'
-            else:
-                refund.status = 'completed'
-            
-            refund.save()
-            
-            return Response({
-                "message": "Dispute resolved successfully",
-                "refund_id": str(refund.refund),
-                "status": refund.status,
-                "admin_decision": refund.admin_decision
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    # ========== COMMON ENDPOINTS ==========
-    
-    @action(detail=False, methods=['get'])
-    def get_refund_stats(self, request):
-        """Get refund statistics for dashboard"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            
-            if hasattr(user, 'is_seller') and user.is_seller:
-                # Seller stats
-                shops = Shop.objects.filter(customer__customer=user)
-                if not shops.exists():
-                    refunds = Refund.objects.none()
-                else:
-                    refunds = (
-                        Refund.objects.filter(order__checkout__cart_item__product__shop__in=shops)
-                        .distinct()
-                    )
-            elif hasattr(user, 'is_customer') and user.is_customer:
-                # Buyer stats
-                refunds = Refund.objects.filter(requested_by=user)
-            else:
-                return Response({"error": "User role not recognized"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            stats = {
-                'total': refunds.count(),
-                'pending': refunds.filter(status='pending').count(),
-                'negotiation': refunds.filter(status='negotiation').count(),
-                'approved': refunds.filter(status='approved').count(),
-                'waiting': refunds.filter(status='waiting').count(),
-                'to_verify': refunds.filter(status='to_verify').count(),
-                'to_process': refunds.filter(status='to_process').count(),
-                'dispute': refunds.filter(status='dispute').count(),
-                'completed': refunds.filter(status='completed').count(),
-                'rejected': refunds.filter(status='rejected').count(),
-                'cancelled': refunds.filter(status='cancelled').count(),
-            }
-            
-            return Response(stats)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=False, methods=['get'])
-    def get_status_options(self, request):
-        """Get all available status options"""
-        return Response({
-            'status_options': [
-                {'value': 'pending', 'label': 'Pending Review'},
-                {'value': 'negotiation', 'label': 'Negotiation'},
-                {'value': 'approved', 'label': 'Approved'},
-                {'value': 'waiting', 'label': 'Waiting For Return'},
-                {'value': 'to_verify', 'label': 'To Verify'},
-                {'value': 'to_process', 'label': 'To Process'},
-                {'value': 'dispute', 'label': 'Dispute'},
-                {'value': 'completed', 'label': 'Completed'},
-                {'value': 'rejected', 'label': 'Rejected'},
-                {'value': 'cancelled', 'label': 'Cancelled'},
-            ]
-        })
-    
-    # ========== RETURN WAYBILL ENDPOINTS ==========
-    
-    @action(detail=True, methods=['post'])
-    def create_return_waybill(self, request, pk=None):
-        """Seller creates a return waybill for a refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            # Check if waybill already exists
-            if hasattr(refund, 'return_waybill') and refund.return_waybill:
-                return Response({"error": "Return waybill already exists for this refund"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create return waybill
-            waybill_data = {
-                'refund': refund,
-                'shop': shop,
-                'status': 'pending',
-            }
-            
-            waybill = ReturnWaybill.objects.create(**waybill_data)
-            
-            # Serialize and return
-            serializer = ReturnWaybillSerializer(waybill)
-            return Response({
-                "message": "Return waybill created successfully",
-                "waybill": serializer.data
-            }, status=status.HTTP_201_CREATED)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-    @action(detail=True, methods=['get'])
-    def get_return_waybill(self, request, pk=None):
-        """Get return waybill for a refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            # Check authorization: buyer who requested refund, or seller who owns the shop
-            authorized = False
-            if refund.requested_by and str(refund.requested_by.id) == str(user.id):
-                authorized = True
-            else:
-                # Check seller ownership
-                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-                if not err:
-                    authorized = True
-            
-            if not authorized:
-                return Response({"error": "Not authorized to view this waybill"}, status=status.HTTP_403_FORBIDDEN)
-            
-            # Get waybill
-            try:
-                waybill = refund.return_waybill
-            except ReturnWaybill.DoesNotExist:
-                return Response({"error": "Return waybill not found"}, status=status.HTTP_404_NOT_FOUND)
-            
-            serializer = ReturnWaybillSerializer(waybill)
-            return Response(serializer.data)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def update_waybill_status(self, request, pk=None):
-        """Seller updates return waybill status"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-            
-            # Get waybill
-            try:
-                waybill = refund.return_waybill
-            except ReturnWaybill.DoesNotExist:
-                return Response({"error": "Return waybill not found"}, status=status.HTTP_404_NOT_FOUND)
-            
-            new_status = request.data.get('status')
-            if not new_status:
-                return Response({"error": "Status required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Validate status transition
-            valid_statuses = ['pending', 'in_transit', 'delivered', 'cancelled']
-            if new_status not in valid_statuses:
-                return Response({"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            waybill.status = new_status
-            waybill.save()
-            
-            serializer = ReturnWaybillSerializer(waybill)
-            return Response({
-                "message": f"Waybill status updated to {new_status}",
-                "waybill": serializer.data
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['post'])
-    def print_waybill(self, request, pk=None):
-        """Generate printable return waybill"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            # Check authorization
-            authorized = False
-            if refund.requested_by and str(refund.requested_by.id) == str(user.id):
-                authorized = True
-            else:
-                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-                if not err:
-                    authorized = True
-            
-            if not authorized:
-                return Response({"error": "Not authorized to print this waybill"}, status=status.HTTP_403_FORBIDDEN)
-            
-            # Get waybill
-            try:
-                waybill = refund.return_waybill
-            except ReturnWaybill.DoesNotExist:
-                return Response({"error": "Return waybill not found"}, status=status.HTTP_404_NOT_FOUND)
-            
-            # Generate printable data
-            serializer = ReturnWaybillSerializer(waybill)
-            printable_data = serializer.data
-            
-            # Add print-specific fields
-            printable_data['print_date'] = timezone.now().isoformat()
-            printable_data['printed_by'] = f"{user.first_name} {user.last_name}".strip() or user.username
-            
-            return Response({
-                "message": "Waybill data ready for printing",
-                "printable_data": printable_data
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
 class OrderSuccessfull(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_order_successful(self, request, pk=None):
@@ -13286,260 +11582,6 @@ class OrderSuccessfull(viewsets.ViewSet):
 
 
 
-
-
-class RefundPaymentMethodViewSet(viewsets.ViewSet):
-    """Payment method management for refunds"""
-    
-    # ========== WALLET ENDPOINTS ==========
-    
-    @action(detail=False, methods=['post'])
-    def add_wallet(self, request):
-        """Add wallet details to a refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund_id = request.data.get('refund_id')
-            
-            if not refund_id:
-                return Response({"error": "Refund ID required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get refund
-            refund = get_object_or_404(Refund, refund=refund_id)
-            
-            # Check authorization
-            if refund.requested_by != user:
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
-            
-            # Check if wallet already exists
-            if hasattr(refund, 'wallet_details'):
-                return Response({"error": "Wallet details already exist for this refund"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create wallet
-            wallet_data = {
-                'provider': request.data.get('provider'),
-                'account_name': request.data.get('account_name'),
-                'account_number': request.data.get('account_number'),
-                'contact_number': request.data.get('contact_number'),
-            }
-            
-            serializer = RefundWalletSerializer(data=wallet_data)
-            if serializer.is_valid():
-                wallet = serializer.save(refund=refund)
-                
-                # Update refund's preferred method if needed
-                if not refund.preferred_refund_method or 'wallet' in refund.preferred_refund_method.lower():
-                    refund.preferred_refund_method = 'Return Item & Refund to Wallet'
-                    refund.save()
-                
-                return Response({
-                    "message": "Wallet details added successfully",
-                    "wallet_id": str(wallet.id),
-                    "refund_id": str(refund.refund)
-                }, status=status.HTTP_201_CREATED)
-            
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['get'])
-    def get_wallet(self, request, pk=None):
-        """Get wallet details for a refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            # Check authorization
-            if refund.requested_by != user:
-                # Also check if user is seller for this refund
-                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-                if err:
-                    return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
-            
-            if hasattr(refund, 'wallet_details'):
-                serializer = RefundWalletSerializer(refund.wallet_details)
-                return Response(serializer.data)
-            
-            return Response({"message": "No wallet details found for this refund"}, status=status.HTTP_404_NOT_FOUND)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    # ========== BANK ENDPOINTS ==========
-    
-    @action(detail=False, methods=['post'])
-    def add_bank(self, request):
-        """Add bank details to a refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund_id = request.data.get('refund_id')
-            
-            if not refund_id:
-                return Response({"error": "Refund ID required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund = get_object_or_404(Refund, refund=refund_id)
-            
-            # Check authorization
-            if refund.requested_by != user:
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
-            
-            # Check if bank already exists
-            if hasattr(refund, 'bank_details'):
-                return Response({"error": "Bank details already exist for this refund"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create bank
-            bank_data = {
-                'bank_name': request.data.get('bank_name'),
-                'account_name': request.data.get('account_name'),
-                'account_number': request.data.get('account_number'),
-                'account_type': request.data.get('account_type'),
-                'branch': request.data.get('branch', ''),
-            }
-            
-            serializer = RefundBankSerializer(data=bank_data)
-            if serializer.is_valid():
-                bank = serializer.save(refund=refund)
-                
-                # Update refund's preferred method if needed
-                if not refund.preferred_refund_method or 'bank' in refund.preferred_refund_method.lower():
-                    refund.preferred_refund_method = 'Return Item & Bank Transfer'
-                    refund.save()
-                
-                return Response({
-                    "message": "Bank details added successfully",
-                    "bank_id": str(bank.id),
-                    "refund_id": str(refund.refund)
-                }, status=status.HTTP_201_CREATED)
-            
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['get'])
-    def get_bank(self, request, pk=None):
-        """Get bank details for a refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            # Check authorization
-            if refund.requested_by != user:
-                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-                if err:
-                    return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
-            
-            if hasattr(refund, 'bank_details'):
-                serializer = RefundBankSerializer(refund.bank_details)
-                return Response(serializer.data)
-            
-            return Response({"message": "No bank details found for this refund"}, status=status.HTTP_404_NOT_FOUND)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    # ========== REMITTANCE ENDPOINTS ==========
-    
-    @action(detail=False, methods=['post'])
-    def add_remittance(self, request):
-        """Add remittance details to a refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund_id = request.data.get('refund_id')
-            
-            if not refund_id:
-                return Response({"error": "Refund ID required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            refund = get_object_or_404(Refund, refund=refund_id)
-            
-            # Check authorization
-            if not (refund.requested_by == user or user.is_staff):
-                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
-            
-            # Check if remittance already exists
-            if hasattr(refund, 'remittance_details'):
-                return Response({"error": "Remittance details already exist for this refund"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create remittance
-            remittance_data = {
-                'provider': request.data.get('provider'),
-                'first_name': request.data.get('first_name'),
-                'last_name': request.data.get('last_name'),
-                'contact_number': request.data.get('contact_number'),
-                'address': request.data.get('address'),
-                'city': request.data.get('city'),
-                'province': request.data.get('province'),
-                'zip_code': request.data.get('zip_code', ''),
-                'valid_id_type': request.data.get('valid_id_type'),
-                'valid_id_number': request.data.get('valid_id_number'),
-            }
-            
-            serializer = RefundRemittanceSerializer(data=remittance_data)
-            if serializer.is_valid():
-                remittance = serializer.save(refund=refund)
-                
-                # Update refund's preferred method if needed
-                if not refund.preferred_refund_method or 'money back' in refund.preferred_refund_method.lower():
-                    refund.preferred_refund_method = 'Return Item & Money Back'
-                    refund.save()
-                
-                return Response({
-                    "message": "Remittance details added successfully",
-                    "remittance_id": str(remittance.id),
-                    "refund_id": str(refund.refund)
-                }, status=status.HTTP_201_CREATED)
-            
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=True, methods=['get'])
-    def get_remittance(self, request, pk=None):
-        """Get remittance details for a refund"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            refund = get_object_or_404(Refund, refund=pk)
-            
-            # Check authorization
-            if not (refund.requested_by == user or user.is_staff):
-                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-                if err:
-                    return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
-            
-            if hasattr(refund, 'remittance_details'):
-                serializer = RefundRemittanceSerializer(refund.remittance_details)
-                return Response(serializer.data)
-            
-            return Response({"message": "No remittance details found for this refund"}, status=status.HTTP_404_NOT_FOUND)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
 class UserPaymentMethodViewSet(viewsets.ViewSet):
     """User's saved payment methods"""
     
@@ -13660,362 +11702,7 @@ class UserPaymentMethodViewSet(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
         
-
-
-class DisputeViewSet(viewsets.ViewSet):
-    """
-    ViewSet for managing dispute requests
-    """
     
-    # ========== USER ENDPOINTS ==========
-    
-    @action(detail=False, methods=['get'])
-    def my_disputes(self, request):
-        """Get disputes filed by current user"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=400)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            disputes = DisputeRequest.objects.filter(filed_by=user).order_by('-created_at')
-            serializer = DisputeRequestSerializer(disputes, many=True, context={'request': request})
-            return Response(serializer.data)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-    
-    @action(detail=False, methods=['post'])
-    def file_dispute(self, request):
-        """File a new dispute"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=400)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            
-            # Validate required fields
-            if not request.data.get('order'):
-                return Response({"error": "Order ID is required"}, status=400)
-            
-            # Check if order exists
-            try:
-                order = Order.objects.get(order=request.data.get('order'))
-            except Order.DoesNotExist:
-                return Response({"error": "Order not found"}, status=404)
-            
-            # Check if user owns the order or is a seller for items in the order
-            is_buyer = order.user == user
-            is_seller = False
-            try:
-                is_seller = Checkout.objects.filter(
-                    order=order,
-                    cart_item__product__shop__customer__customer=user,
-                ).exists()
-            except Exception:
-                pass
-            
-            if not (is_buyer or is_seller):
-                return Response({"error": "You can only file disputes for your own orders or orders containing your shop's products"}, status=403)
-            
-            # Check for existing dispute
-            if DisputeRequest.objects.filter(order=order).exists():
-                return Response({"error": "A dispute already exists for this order"}, status=400)
-            
-            # Create dispute
-            data = request.data.copy()
-            data['filed_by'] = str(user.id)
-            data['order'] = str(order.order)  # Use the order UUID
-            
-            # Check if refund is provided and valid
-            if data.get('refund'):
-                try:
-                    refund = Refund.objects.get(refund=data['refund'])
-                    # Check if user can access this refund (buyer who requested it or seller of the shop)
-                    can_access_refund = refund.requested_by == user
-                    if not can_access_refund:
-                        try:
-                            can_access_refund = Checkout.objects.filter(
-                                order=refund.order,
-                                cart_item__product__shop__customer__customer=user,
-                            ).exists()
-                        except Exception:
-                            pass
-                    
-                    if not can_access_refund:
-                        return Response({"error": "You can only file disputes for your own refunds or refunds for orders containing your shop's products"}, status=403)
-                    data['refund'] = str(refund.refund)  # Use the refund UUID
-                except Refund.DoesNotExist:
-                    return Response({"error": "Refund not found"}, status=404)
-            
-            serializer = DisputeRequestCreateSerializer(data=data, context={'request': request})
-            if serializer.is_valid():
-                dispute = serializer.save()
-                
-                # Update refund status if dispute is for a refund
-                if dispute.refund:
-                    dispute.refund.status = 'dispute'
-                    dispute.refund.dispute_filed_by = user
-                    dispute.refund.dispute_filed_at = timezone.now()
-                    dispute.refund.save()
-                
-                return Response({
-                    "message": "Dispute filed successfully",
-                    "dispute_id": str(dispute.id),
-                    "status": dispute.status
-                }, status=201)
-            
-            return Response(serializer.errors, status=400)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-    
-    @action(detail=True, methods=['get'])
-    def get_dispute(self, request, pk=None):
-        """Get dispute details"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=400)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            dispute = get_object_or_404(DisputeRequest, id=pk)
-            
-            # Check authorization - only filer or admin can view
-            if dispute.filed_by != user and not user.is_staff:
-                return Response({"error": "Not authorized to view this dispute"}, status=403)
-            
-            serializer = DisputeRequestSerializer(dispute, context={'request': request})
-            return Response(serializer.data)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-    
-    @action(detail=True, methods=['post'])
-    def upload_evidence(self, request, pk=None):
-        """Upload evidence for dispute"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=400)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            print(f"Upload evidence: user_id={user_id}, dispute_id={pk}")  # Debug logging
-            dispute = get_object_or_404(DisputeRequest, id=pk)
-            print(f"Found dispute: {dispute.id}, filed_by: {dispute.filed_by.id}")  # Debug logging
-            
-            # Check authorization - only filer can upload evidence
-            if dispute.filed_by != user:
-                print(f"Authorization failed: dispute.filed_by={dispute.filed_by.id}, user={user.id}")  # Debug logging
-                return Response({"error": "Not authorized to upload evidence for this dispute"}, status=403)
-            
-            # Check if dispute is still active
-            if dispute.status not in ['filed', 'under_review']:
-                return Response({"error": f"Cannot upload evidence for dispute in {dispute.status} status"}, status=400)
-            
-            # Check file in request
-            if 'file' not in request.FILES:
-                print(f"No file in request.FILES: {list(request.FILES.keys())}")  # Debug logging
-                return Response({"error": "No file uploaded"}, status=400)
-            
-            print(f"File found: {request.FILES['file'].name}")  # Debug logging
-            
-            # Create evidence
-            evidence_data = {
-                'dispute': dispute,
-                'uploaded_by': user,
-                'file': request.FILES['file']
-            }
-            
-            serializer = DisputeEvidenceSerializer(data=evidence_data, context={'request': request})
-            if serializer.is_valid():
-                print("Serializer is valid, saving evidence...")  # Debug logging
-                evidence = serializer.save()
-                print(f"Evidence saved: {evidence.id}")  # Debug logging
-                return Response({
-                    "message": "Evidence uploaded successfully",
-                    "evidence_id": str(evidence.id),
-                    "file_url": request.build_absolute_uri(evidence.file.url)
-                }, status=201)
-            else:
-                print(f"Serializer errors: {serializer.errors}")  # Debug logging
-                return Response({
-                    "error": "Invalid data",
-                    "details": serializer.errors
-                }, status=400)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-        except Exception as e:
-            print(f"Upload evidence error: {str(e)}")  # Debug logging
-            return Response({"error": str(e)}, status=500)
-    
-    @action(detail=True, methods=['post'])
-    def withdraw_dispute(self, request, pk=None):
-        """User withdraws their dispute"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=400)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            dispute = get_object_or_404(DisputeRequest, id=pk, filed_by=user)
-            
-            # Check if dispute can be withdrawn
-            if dispute.status not in ['filed', 'under_review']:
-                return Response({"error": f"Cannot withdraw dispute in {dispute.status} status"}, status=400)
-            
-            # Update dispute
-            dispute.status = 'cancelled'
-            dispute.outcome = 'withdrawn'
-            dispute.resolved_at = timezone.now()
-            dispute.save()
-            
-            # Update refund status if applicable
-            if dispute.refund:
-                dispute.refund.status = 'cancelled'  # or revert to previous status
-                dispute.refund.save()
-            
-            return Response({
-                "message": "Dispute withdrawn successfully",
-                "dispute_id": str(dispute.id),
-                "status": dispute.status
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-    
-    # ========== ADMIN ENDPOINTS ==========
-    
-    @action(detail=False, methods=['get'])
-    def all_disputes(self, request):
-        """Get all disputes (admin only)"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=400)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            if not user.is_staff:
-                return Response({"error": "Admin access required"}, status=403)
-            
-            status_filter = request.query_params.get('status')
-            disputes = DisputeRequest.objects.all().order_by('-created_at')
-            
-            if status_filter:
-                disputes = disputes.filter(status=status_filter)
-            
-            serializer = DisputeRequestSerializer(disputes, many=True, context={'request': request})
-            return Response(serializer.data)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-    
-    @action(detail=True, methods=['post'])
-    def update_status(self, request, pk=None):
-        """Admin updates dispute status"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=400)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            if not user.is_staff:
-                return Response({"error": "Admin access required"}, status=403)
-            
-            dispute = get_object_or_404(DisputeRequest, id=pk)
-            new_status = request.data.get('status')
-            admin_note = request.data.get('admin_note', '')
-            
-            if not new_status:
-                return Response({"error": "Status is required"}, status=400)
-            
-            # Validate status transition
-            valid_transitions = {
-                'filed': ['under_review', 'cancelled'],
-                'under_review': ['processing', 'rejected', 'cancelled'],
-                'processing': ['completed', 'rejected'],
-                'completed': [],  # terminal state
-                'rejected': [],   # terminal state
-                'cancelled': [],  # terminal state
-            }
-            
-            current_status = dispute.status
-            if new_status not in valid_transitions.get(current_status, []):
-                return Response({"error": f"Cannot change status from {current_status} to {new_status}"}, status=400)
-            
-            # Update dispute
-            dispute.status = new_status
-            if admin_note:
-                dispute.admin_note = admin_note
-            
-            # Set outcome based on status
-            if new_status == 'completed':
-                dispute.outcome = request.data.get('outcome', 'buyer_wins')
-                dispute.awarded_amount = request.data.get('awarded_amount')
-                dispute.resolved_at = timezone.now()
-                
-                # Update refund if applicable
-                if dispute.refund and dispute.outcome == 'buyer_wins':
-                    dispute.refund.status = 'to_process'
-                    dispute.refund.total_refund_amount = dispute.awarded_amount or dispute.refund.total_refund_amount
-                    dispute.refund.save()
-            
-            elif new_status == 'rejected':
-                dispute.outcome = 'seller_wins'
-                dispute.resolved_at = timezone.now()
-                
-                # Update refund if applicable
-                if dispute.refund:
-                    dispute.refund.status = 'rejected'
-                    dispute.refund.save()
-            
-            dispute.save()
-            
-            return Response({
-                "message": f"Dispute status updated to {new_status}",
-                "dispute_id": str(dispute.id),
-                "status": dispute.status,
-                "outcome": dispute.outcome
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-    
-    @action(detail=True, methods=['post'])
-    def add_admin_response(self, request, pk=None):
-        """Admin adds response/note to dispute"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=400)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            if not user.is_staff:
-                return Response({"error": "Admin access required"}, status=403)
-            
-            dispute = get_object_or_404(DisputeRequest, id=pk)
-            response = request.data.get('response')
-            
-            if not response:
-                return Response({"error": "Response text is required"}, status=400)
-            
-            # Update admin note (append or replace based on your preference)
-            if dispute.admin_note:
-                dispute.admin_note += f"\n\n[{timezone.now().strftime('%Y-%m-%d %H:%M')}] {response}"
-            else:
-                dispute.admin_note = f"[{timezone.now().strftime('%Y-%m-%d %H:%M')}] {response}"
-            
-            dispute.save()
-            
-            return Response({
-                "message": "Response added successfully",
-                "dispute_id": str(dispute.id)
-            })
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-        
 class ArrangeShipment(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_order_details(self, request, pk=None):
@@ -14798,170 +12485,6 @@ class RiderOrdersActive(viewsets.ViewSet):
             }
         })
 
-class CreateRefundView(APIView):
-    def post(self, request):
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        try:
-            with transaction.atomic():
-                # Get required fields
-                order_id = request.data.get('order')
-                reason = request.data.get('reason')
-                preferred_refund_method = request.data.get('preferred_refund_method')
-                refund_category = request.data.get('refund_category', 'return_item')
-                total_refund_amount = request.data.get('total_refund_amount')
-                
-                if not all([order_id, reason, preferred_refund_method, total_refund_amount]):
-                    return Response(
-                        {'error': 'Missing required fields'}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Validate order
-                try:
-                    order = Order.objects.get(order=order_id, user=user)
-                except Order.DoesNotExist:
-                    return Response(
-                        {'error': 'Order not found or does not belong to user'},
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-                
-                # Check if refund already exists for this order
-                existing_refund = Refund.objects.filter(
-                    order=order, 
-                    requested_by=user,
-                    status__in=['pending', 'approved', 'negotiation', 'under_review']
-                ).first()
-                
-                if existing_refund:
-                    return Response(
-                        {'error': 'A refund request for this order is already in progress'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Create refund
-                refund = Refund.objects.create(
-                    order=order,
-                    requested_by=user,
-                    reason=reason,
-                    preferred_refund_method=preferred_refund_method,
-                    refund_category=refund_category,
-                    total_refund_amount=Decimal(total_refund_amount),
-                    customer_note=request.data.get('customer_note', ''),
-                    status='pending'
-                )
-                
-                # Handle payment method details
-                refund_method_type = preferred_refund_method.lower()
-                
-                if 'wallet' in refund_method_type:
-                    # Create e-wallet details
-                    RefundWallet.objects.create(
-                        refund=refund,
-                        provider=request.data.get('wallet_provider', ''),
-                        account_name=request.data.get('wallet_account_name', ''),
-                        account_number=request.data.get('wallet_account_number', ''),
-                        contact_number=request.data.get('wallet_contact_number', '')
-                    )
-                elif 'bank' in refund_method_type:
-                    # Create bank details
-                    RefundBank.objects.create(
-                        refund=refund,
-                        bank_name=request.data.get('bank_name', ''),
-                        account_name=request.data.get('bank_account_name', ''),
-                        account_number=request.data.get('bank_account_number', ''),
-                        account_type=request.data.get('bank_account_type', ''),
-                        branch=request.data.get('bank_branch', '')
-                    )
-                elif 'moneyback' in refund_method_type or 'remittance' in refund_method_type:
-                    # Create remittance details
-                    RefundRemittance.objects.create(
-                        refund=refund,
-                        provider=request.data.get('remittance_provider', ''),
-                        first_name=request.data.get('remittance_first_name', ''),
-                        last_name=request.data.get('remittance_last_name', ''),
-                        contact_number=request.data.get('remittance_contact_number', ''),
-                        address=request.data.get('remittance_address', ''),
-                        city=request.data.get('remittance_city', ''),
-                        province=request.data.get('remittance_province', ''),
-                        zip_code=request.data.get('remittance_zip_code', ''),
-                        valid_id_type=request.data.get('remittance_valid_id_type', ''),
-                        valid_id_number=request.data.get('remittance_valid_id_number', '')
-                    )
-                
-                # Handle evidence files
-                for key in request.FILES:
-                    if key.startswith('evidence_'):
-                        file = request.FILES[key]
-                        file_type = file.content_type.split('/')[0]  # image or video
-                        
-                        RefundMedias.objects.create(
-                            refund=refund,
-                            file_data=file,
-                            file_type=file_type
-                        )
-                
-                # Add selected item IDs to notes
-                selected_items = []
-                for key in request.data:
-                    if key.startswith('selected_item_'):
-                        selected_items.append(request.data[key])
-                
-                if selected_items:
-                    refund.customer_note += f"\nSelected items: {', '.join(selected_items)}"
-                    refund.save()
-                
-                # Send notification to seller
-                self._notify_seller(refund)
-                
-                return Response({
-                    'message': 'Refund request created successfully',
-                    'refund_id': str(refund.refund),
-                    'request_number': refund.request_number
-                }, status=status.HTTP_201_CREATED)
-                
-        except Exception as e:
-            print(f"Error creating refund: {str(e)}")
-            return Response(
-                {'error': f'Failed to create refund request: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    # def _notify_seller(self, refund):
-    #     """Send notification to seller about refund request"""
-    #     try:
-    #         # Get seller from order items
-    #         from notifications.models import Notification
-    #         from .models import Checkout
-            
-    #         checkouts = Checkout.objects.filter(order=refund.order)
-    #         if not checkouts.exists():
-    #             return
-            
-    #         # Get shop from first checkout item
-    #         first_checkout = checkouts.first()
-    #         if first_checkout.cart_item and first_checkout.cart_item.product:
-    #             shop = first_checkout.cart_item.product.shop
-    #             if shop and shop.customer and shop.customer.customer:
-    #                 seller = shop.customer.customer
-                    
-    #                 # Create notification for seller
-    #                 Notification.objects.create(
-    #                     user=seller,
-    #                     title='New Refund Request',
-    #                     type='refund_request',
-    #                     message=f'Customer has requested a refund for order #{refund.order.order}',
-    #                     is_read=False
-    #                 )
-    #     except Exception as e:
-    #         print(f"Error notifying seller: {str(e)}")
 
 class SwapViewset(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
@@ -16276,610 +13799,4400 @@ class CustomerProductsList(viewsets.ViewSet):
 
 
 
+# Refund and Return Views
+# views.py
 
-class DisputeRequestViewSet(viewsets.ModelViewSet):
+# Refund and Return Views based on new model structure
+class RefundViewSet(viewsets.ViewSet):
     """
-    ViewSet for handling dispute requests with header-based authentication
+    Refund Management API for buyers, sellers, and admins based on new model structure
     """
-    queryset = DisputeRequest.objects.all()
-    
-    def get_serializer_class(self):
-        if self.action == 'update':
-            return DisputeUpdateSerializer
-        elif self.action == 'update_status':
-            return DisputeStatusUpdateSerializer
-        elif self.action == 'set_outcome':
-            return DisputeOutcomeSerializer
-        return DisputeRequestSerializer
-    
-    def _get_user_from_header(self, request):
-        """Extract user from X-User-Id header"""
+
+    def _resolve_seller_shop_for_refund(self, request, user, refund):
+        """Resolve and authorize the seller shop context for a refund.
+        
+        Returns: (shop, error_response)
+        """
+        # Get order from refund
+        order = getattr(refund, 'order_id', None)
+        if not order:
+            return None, Response({"error": "Refund has no related order"}, 
+                                  status=status.HTTP_400_BAD_REQUEST)
+
+        # Get shop ID from header/query/data
+        shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
+        if not shop_id and hasattr(request, 'data'):
+            shop_id = request.data.get('shop_id')
+        
+        shop = None
+        if shop_id:
+            try:
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return None, Response({"error": "Shop not found"}, 
+                                      status=status.HTTP_404_NOT_FOUND)
+        else:
+            # Try to infer shop from order items
+            shop_ids = list(
+                Checkout.objects.filter(
+                    order=order,
+                    cart_item__product__shop__isnull=False,
+                ).values_list('cart_item__product__shop_id', flat=True).distinct()
+            )
+            if len(shop_ids) != 1:
+                return None, Response({"error": "Shop ID required"}, 
+                                      status=status.HTTP_400_BAD_REQUEST)
+            try:
+                shop = Shop.objects.get(id=shop_ids[0])
+            except Shop.DoesNotExist:
+                return None, Response({"error": "Shop not found"}, 
+                                      status=status.HTTP_404_NOT_FOUND)
+
+        # Ownership check: User must own the shop
+        if not shop.customer or not getattr(shop.customer, 'customer', None) or str(shop.customer.customer.id) != str(user.id):
+            return None, Response({"error": "Not authorized for this shop"}, 
+                                  status=status.HTTP_403_FORBIDDEN)
+
+        # Ensure the order contains items from this shop
+        if not Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists():
+            return None, Response({"error": "This refund does not belong to the provided shop"}, 
+                                  status=status.HTTP_403_FORBIDDEN)
+
+        return shop, None
+
+    # ========== BUYER VIEWS ==========
+
+    @action(detail=False, methods=['get'])
+    def get_my_refunds(self, request):
+        """
+        BUYER VIEW: Get refunds for current user.
+        - Returns refunds requested by the user.
+        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return None
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            return User.objects.get(id=user_id)
+            user = User.objects.get(id=user_id)
+            # Get refunds requested by this user
+            refunds = Refund.objects.filter(requested_by=user).order_by('-requested_at')
+            
+            # Filter by status if provided
+            status_filter = request.query_params.get('status')
+            if status_filter:
+                refunds = refunds.filter(status=status_filter)
+            
+            # Filter by refund type if provided
+            refund_type = request.query_params.get('refund_type')
+            if refund_type:
+                refunds = refunds.filter(refund_type=refund_type)
+            
+            serializer = RefundSerializer(refunds, many=True, context={'request': request})
+            refund_data = serializer.data
+            
+            # Add order items and shop information for each refund
+            for i, refund in enumerate(refunds):
+                refund_data[i]['order_items'] = self._get_order_items_for_refund(refund, request)
+                
+                # Add shop information for each refund
+                # Get the shop from the order items
+                order_items = refund_data[i]['order_items']
+                if order_items and len(order_items) > 0:
+                    # All items in an order should be from the same shop, so take the first one
+                    shop_info = order_items[0].get('shop', {})
+                    refund_data[i]['shop'] = shop_info
+            
+            return Response(refund_data)
+            
         except User.DoesNotExist:
-            return None
-    
-    def _is_admin_user(self, user):
-        """Check if user is admin/staff (you can customize this)"""
-        # Adjust based on your user model
-        return user.is_staff or user.is_superuser if user else False
-    
-    def list(self, request, *args, **kwargs):
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=False, methods=['post'])
+    def create_refund_request(self, request):
         """
-        List disputes - users see their own, admins see all
+        BUYER VIEW: Create a new refund request
         """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Filter based on user role
-        if self._is_admin_user(user):
-            queryset = self.get_queryset()
-        else:
-            queryset = self.get_queryset().filter(filed_by=user)
-        
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-    
-    def retrieve(self, request, *args, **kwargs):
-        """
-        Retrieve a specific dispute
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        instance = self.get_object()
-        
-        # Check if user can view this dispute
-        if not self._is_admin_user(user) and instance.filed_by != user:
-            return Response(
-                {'error': 'You do not have permission to view this dispute'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
-    
-    def create(self, request, *args, **kwargs):
-        """
-        Create a new dispute request
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
         try:
-            # Check if order exists and belongs to user
-            order_id = request.data.get('order')
-            if not order_id:
-                return Response(
-                    {'error': 'Order ID is required'},
-                    status=status.HTTP_400_BAD_REQUEST
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return Response({"error": "User ID required"}, 
+                                status=status.HTTP_400_BAD_REQUEST)
+            
+            user = User.objects.get(id=user_id)
+            
+            # Validate required fields
+            required_fields = ['order_id', 'reason', 'refund_type', 'buyer_preferred_refund_method']
+            for field in required_fields:
+                if field not in request.data:
+                    return Response({"error": f"{field.replace('_', ' ').title()} is required"}, 
+                                    status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get order
+            try:
+                order = Order.objects.get(order=request.data['order_id'], user=user)
+            except Order.DoesNotExist:
+                return Response({"error": "Order not found or does not belong to user"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if refund already exists for this order
+            existing_refund = Refund.objects.filter(
+                order_id=order, 
+                requested_by=user,
+                status__in=['pending', 'approved', 'negotiation', 'dispute']
+            ).first()
+            
+            if existing_refund:
+                return Response({
+                    "error": "A refund request for this order is already in progress",
+                    "refund_id": str(existing_refund.refund_id),
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create refund
+            refund_data = {
+                'order_id': order,
+                'requested_by': user,
+                'reason': request.data['reason'],
+                'detailed_reason': request.data.get('detailed_reason', ''),
+                'refund_type': request.data['refund_type'],
+                'buyer_preferred_refund_method': request.data['buyer_preferred_refund_method'],
+                'customer_note': request.data.get('customer_note', ''),
+                'status': 'pending'
+            }
+
+            # Optional: accept total_refund_amount (from frontend) and convert to Decimal
+            try:
+                if request.data.get('total_refund_amount') is not None:
+                    refund_data['total_refund_amount'] = Decimal(str(request.data.get('total_refund_amount')))
+            except Exception:
+                # ignore parse errors here and leave field unset
+                pass
+            
+            refund = Refund.objects.create(**refund_data)
+            
+            # Handle payment method details based on buyer's preferred method
+            refund_method = request.data['buyer_preferred_refund_method']
+            
+            if refund_method == 'wallet':
+                wallet_data = request.data.get('wallet_details')
+                if wallet_data:
+                    RefundWallet.objects.create(
+                        refund_id=refund,
+                        provider=wallet_data.get('provider', ''),
+                        account_name=wallet_data.get('account_name', ''),
+                        account_number=wallet_data.get('account_number', ''),
+                        contact_number=wallet_data.get('contact_number', '')
+                    )
+            
+            elif refund_method == 'bank':
+                bank_data = request.data.get('bank_details')
+                if bank_data:
+                    RefundBank.objects.create(
+                        refund_id=refund,
+                        bank_name=bank_data.get('bank_name', ''),
+                        account_name=bank_data.get('account_name', ''),
+                        account_number=bank_data.get('account_number', ''),
+                        account_type=bank_data.get('account_type', ''),
+                        branch=bank_data.get('branch', '')
+                    )
+            
+            elif refund_method == 'remittance':
+                remittance_data = request.data.get('remittance_details')
+                if remittance_data:
+                    RefundRemittance.objects.create(
+                        refund_id=refund,
+                        provider=remittance_data.get('provider', ''),
+                        first_name=remittance_data.get('first_name', ''),
+                        middle_name=remittance_data.get('middle_name', ''),
+                        last_name=remittance_data.get('last_name', ''),
+                        contact_number=remittance_data.get('contact_number', ''),
+                        country=remittance_data.get('country', ''),
+                        city=remittance_data.get('city', ''),
+                        province=remittance_data.get('province', ''),
+                        zip_code=remittance_data.get('zip_code', ''),
+                        barangay=remittance_data.get('barangay', ''),
+                        street=remittance_data.get('street', ''),
+                        valid_id_type=remittance_data.get('valid_id_type', ''),
+                        valid_id_number=remittance_data.get('valid_id_number', '')
+                    )
+            
+            # Handle evidence files
+            files = request.FILES.getlist('evidence_files')
+            for file in files:
+                file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
+                RefundMedia.objects.create(
+                    refund_id=refund,
+                    file_data=file,
+                    file_type=file_type,
+                    uploaded_by=user
                 )
+            
+            # If refund_type is 'return', create a return request
+            if request.data['refund_type'] == 'return':
+                ReturnRequestItem.objects.create(
+                    refund_id=refund,
+                    return_method=request.data.get('return_method', 'courier'),
+                    logistic_service=request.data.get('logistic_service', ''),
+                    tracking_number=request.data.get('tracking_number', ''),
+                    return_deadline=timezone.now() + timedelta(days=7)  # 7 days return deadline
+                )
+            
+            serializer = RefundSerializer(refund, context={'request': request})
+            return Response({
+                "message": "Refund request created successfully",
+                "refund": serializer.data
+            }, status=status.HTTP_201_CREATED)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"Failed to create refund: {str(e)}"}, 
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def create_refund(self, request):
+        """
+        Simple view-based refund creation endpoint
+        """
+        try:
+            # Get user ID from headers
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return JsonResponse({
+                    'error': 'User ID required'
+                }, status=400)
             
             try:
-                order = Order.objects.get(id=order_id)
-                # Verify order belongs to user (add your logic here)
-                if order.user != user and not self._is_admin_user(user):
-                    return Response(
-                        {'error': 'Order does not belong to user'},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return JsonResponse({
+                    'error': 'User not found'
+                }, status=404)
+            
+            # Parse refund data from form data
+            # DRF's MultiPartParser exposes fields in request.data; Django exposes in request.POST
+            refund_data_str = request.data.get('refund_data') or request.POST.get('refund_data')
+            if not refund_data_str:
+                return JsonResponse({
+                    'error': 'Refund data required'
+                }, status=400)
+            
+            try:
+                refund_data = json.loads(refund_data_str)
+            except json.JSONDecodeError:
+                return JsonResponse({
+                    'error': 'Invalid refund data format'
+                }, status=400)
+            
+            # Validate required fields
+            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'total_refund_amount']
+            for field in required_fields:
+                if not refund_data.get(field):
+                    return JsonResponse({
+                        'error': f'{field.replace("_", " ").title()} is required'
+                    }, status=400)
+            
+            # Get order
+            try:
+                order = Order.objects.get(order=refund_data['order_id'], user=user)
             except Order.DoesNotExist:
-                return Response(
-                    {'error': 'Order not found'},
-                    status=status.HTTP_404_NOT_FOUND
+                return JsonResponse({
+                    'error': 'Order not found or does not belong to user'
+                }, status=404)
+            
+            # Check if refund already exists
+            existing_refund = Refund.objects.filter(
+                order_id=order,
+                requested_by=user,
+                status__in=['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
+            ).first()
+            
+            if existing_refund:
+                return JsonResponse({
+                    'error': 'A refund request for this order is already in progress',
+                    'refund_id': str(existing_refund.refund_id),
+                    'request_number': getattr(existing_refund, 'request_number', None)
+                }, status=400)
+            
+            # Start transaction
+            with transaction.atomic():
+                # Map legacy category to current refund_type, and create Refund with current field names
+                refund_type = 'return' if str(refund_data.get('refund_category', 'return_item')).lower().startswith('return') else 'keep'
+                refund = Refund.objects.create(
+                        order_id=order,
+                    requested_by=user,
+                    reason=refund_data['reason'],
+                    buyer_preferred_refund_method=refund_data.get('preferred_refund_method'),
+                    refund_type=refund_type,
+                    customer_note=refund_data.get('customer_note', ''),
+                    status='pending',
+                    total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None
                 )
-            
-            # Check if dispute already exists for this order
-            existing_dispute = DisputeRequest.objects.filter(
-                order=order,
-                status__in=['filed', 'under_review', 'processing']
-            ).exists()
-            
-            if existing_dispute:
-                return Response(
-                    {'error': 'An active dispute already exists for this order'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            
-            # Add filed_by to the data
-            data = serializer.validated_data
-            data['filed_by'] = user
-            data['order'] = order
-            
-            dispute = DisputeRequest.objects.create(**data)
-            
-            return Response(
-                DisputeRequestSerializer(dispute, context={'request': request}).data,
-                status=status.HTTP_201_CREATED
-            )
-            
+
+                # Save will auto-generate request_number
+                refund.save()
+
+                wallet_details = refund_data.get('wallet_details')
+                if wallet_details:
+                    RefundWallet.objects.create(
+                        refund_id=refund,
+                        provider=wallet_details.get('provider', ''),
+                        account_name=wallet_details.get('account_name', ''),
+                        account_number=wallet_details.get('account_number', ''),
+                        contact_number=wallet_details.get('contact_number', '')
+                    )
+                
+                bank_details = refund_data.get('bank_details')
+                if bank_details:
+                    RefundBank.objects.create(
+                        refund_id=refund,
+                        bank_name=bank_details.get('bank_name', ''),
+                        account_name=bank_details.get('account_name', ''),
+                        account_number=bank_details.get('account_number', ''),
+                        account_type=bank_details.get('account_type', ''),
+                        branch=bank_details.get('branch', '')
+                    )
+                
+                remittance_details = refund_data.get('remittance_details')
+                if remittance_details:
+                    RefundRemittance.objects.create(
+                        refund_id=refund,
+                        provider=remittance_details.get('provider', ''),
+                        first_name=remittance_details.get('first_name', ''),
+                        middle_name=remittance_details.get('middle_name', ''),
+                        last_name=remittance_details.get('last_name', ''),
+                        contact_number=remittance_details.get('contact_number', ''),
+                        country=remittance_details.get('country', ''),
+                        city=remittance_details.get('city', ''),
+                        province=remittance_details.get('province', ''),
+                        zip_code=remittance_details.get('zip_code', ''),
+                        barangay=remittance_details.get('barangay', ''),
+                        street=remittance_details.get('address', ''),
+                        valid_id_type=remittance_details.get('valid_id_type', ''),
+                        valid_id_number=remittance_details.get('valid_id_number', '')
+                    )
+                
+                # Handle uploaded files
+                for key, file in request.FILES.items():
+                    if key.startswith('evidence_'):
+                        file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
+                        RefundMedia.objects.create(
+                            refund_id=refund,
+                            file_data=file,
+                            file_type=file_type,
+                            uploaded_by=user
+                        )
+                
+                # Handle selected items (store in customer_note for reference)
+                selected_items = []
+                for key, value in request.POST.items():
+                    if key.startswith('selected_item_'):
+                        selected_items.append(value)
+                
+                if selected_items:
+                    refund.customer_note += f"\n\nSelected Checkout IDs: {', '.join(selected_items)}"
+                    refund.save()
+                
+                return JsonResponse({
+                    'message': 'Refund request created successfully',
+                    'refund_id': str(refund.refund_id),
+                    'request_number': getattr(refund, 'request_number', None)
+                }, status=201)
+                
         except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return JsonResponse({
+                'error': f'Failed to create refund: {str(e)}'
+            }, status=500)
     
-    def update(self, request, *args, **kwargs):
-        """
-        Update dispute (only allowed in 'filed' status)
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        instance = self.get_object()
-        
-        # Check if user owns the dispute
-        if instance.filed_by != user:
-            return Response(
-                {'error': 'You do not have permission to update this dispute'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Check if dispute can be updated
-        if instance.status != 'filed':
-            return Response(
-                {'error': 'Dispute can only be updated while in "Filed" status'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        
-        return Response(serializer.data)
-    
-    def destroy(self, request, *args, **kwargs):
-        """
-        Delete dispute (only allowed in 'filed' status for users)
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        instance = self.get_object()
-        
-        # Check if user owns the dispute or is admin
-        if not self._is_admin_user(user) and instance.filed_by != user:
-            return Response(
-                {'error': 'You do not have permission to delete this dispute'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Users can only delete if in 'filed' status
-        if not self._is_admin_user(user) and instance.status != 'filed':
-            return Response(
-                {'error': 'You can only delete disputes in "Filed" status'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        self.perform_destroy(instance)
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    
-    @action(detail=True, methods=['post'])
-    def add_evidence(self, request, pk=None):
-        """
-        Add evidence to a dispute
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        dispute = self.get_object()
-        
-        # Check if user owns the dispute
-        if dispute.filed_by != user:
-            return Response(
-                {'error': 'You do not have permission to add evidence to this dispute'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Check if evidence can be added (not in final states)
-        if dispute.status in ['completed', 'rejected', 'cancelled']:
-            return Response(
-                {'error': 'Cannot add evidence to a closed dispute'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        serializer = DisputeEvidenceSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        # Add dispute and user to the evidence
-        evidence = serializer.save(
-            dispute=dispute,
-            uploaded_by=user
-        )
-        
-        return Response(
-            DisputeEvidenceSerializer(evidence).data,
-            status=status.HTTP_201_CREATED
-        )
-    
-    @action(detail=True, methods=['post'])
-    def cancel(self, request, pk=None):
-        """
-        Cancel a dispute
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        dispute = self.get_object()
-        
-        # Check if user owns the dispute
-        if dispute.filed_by != user:
-            return Response(
-                {'error': 'You do not have permission to cancel this dispute'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Check if dispute can be cancelled
-        if dispute.status not in ['filed', 'under_review']:
-            return Response(
-                {'error': 'Dispute cannot be cancelled in its current status'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        dispute.status = 'cancelled'
-        dispute.resolved_at = timezone.now()
-        dispute.save()
-        
-        return Response(
-            DisputeRequestSerializer(dispute, context={'request': request}).data
-        )
-    
-    @action(detail=True, methods=['post'])
-    def update_status(self, request, pk=None):
-        """
-        Update dispute status (admin only)
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check if user is admin
-        if not self._is_admin_user(user):
-            return Response(
-                {'error': 'Only admin users can update dispute status'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        dispute = self.get_object()
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        data = serializer.validated_data
-        
-        # Update status and admin note
-        dispute.status = data['status']
-        if 'admin_note' in data:
-            dispute.admin_note = data.get('admin_note', '')
-        
-        # Set resolved_at if moving to a final state
-        if data['status'] in ['completed', 'rejected', 'cancelled']:
-            dispute.resolved_at = timezone.now()
-        
-        dispute.save()
-        
-        return Response(
-            DisputeRequestSerializer(dispute, context={'request': request}).data
-        )
-    
-    @action(detail=True, methods=['post'])
-    def set_outcome(self, request, pk=None):
-        """
-        Set dispute outcome (admin only)
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check if user is admin
-        if not self._is_admin_user(user):
-            return Response(
-                {'error': 'Only admin users can set dispute outcomes'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        dispute = self.get_object()
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        data = serializer.validated_data
-        
-        with transaction.atomic():
-            # Update dispute outcome
-            dispute.outcome = data['outcome']
-            dispute.awarded_amount = data.get('awarded_amount')
-            
-            if 'admin_note' in data:
-                if dispute.admin_note:
-                    dispute.admin_note += f"\n\n{data['admin_note']}"
-                else:
-                    dispute.admin_note = data['admin_note']
-            
-            # Auto-update status based on outcome
-            if data['outcome'] in ['buyer_wins', 'partial_refund', 'seller_wins']:
-                dispute.status = 'processing'
-            elif data['outcome'] in ['dismissed', 'withdrawn']:
-                dispute.status = 'completed'
-                dispute.resolved_at = timezone.now()
-            
-            dispute.save()
-            
-            # Create refund if needed
-            if data['outcome'] in ['buyer_wins', 'partial_refund'] and data.get('awarded_amount'):
-                refund = self._create_refund(dispute, data['awarded_amount'], user)
-                dispute.refund = refund
-                dispute.save()
-        
-        return Response(
-            DisputeRequestSerializer(dispute, context={'request': request}).data
-        )
-    
-    def _create_refund(self, dispute, amount, user):
-        """
-        Helper method to create refund for dispute outcome
-        """
-        # You'll need to implement your refund creation logic here
-        # This is a placeholder - adjust based on your Refund model
-        
-        refund_data = {
-            'order': dispute.order,
-            'amount': amount,
-            'status': 'pending',
-            'reason': f'Dispute resolution: {dispute.get_outcome_display()}',
-            'processed_by': user
-        }
-        
-        # Assuming you have a Refund model
-        try:
-            from .models import Refund  # Import your Refund model
-            refund = Refund.objects.create(**refund_data)
-            return refund
-        except ImportError:
-            # If Refund model doesn't exist, return None
-            return None
-    
-    @action(detail=False, methods=['get'])
-    def my_disputes(self, request):
-        """
-        Get disputes filed by the current user
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        disputes = self.get_queryset().filter(filed_by=user)
-        page = self.paginate_queryset(disputes)
-        
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        
-        serializer = self.get_serializer(disputes, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'])
-    def pending(self, request):
-        """
-        Get pending disputes (admin only)
-        """
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check if user is admin
-        if not self._is_admin_user(user):
-            return Response(
-                {'error': 'Only admin users can view pending disputes'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        pending_disputes = self.get_queryset().filter(
-            status__in=['filed', 'under_review', 'processing']
-        )
-        page = self.paginate_queryset(pending_disputes)
-        
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        
-        serializer = self.get_serializer(pending_disputes, many=True)
-        return Response(serializer.data)
 
-
-class DisputeEvidenceViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for managing dispute evidence with header-based authentication
-    """
-    queryset = DisputeEvidence.objects.all()
-    serializer_class = DisputeEvidenceSerializer
-    
-    def _get_user_from_header(self, request):
-        """Extract user from X-User-Id header"""
+    @action(detail=True, methods=['get'])
+    def get_my_refund(self, request, pk=None):
+        """
+        BUYER VIEW: Get detailed refund information for buyer
+        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return None
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            return User.objects.get(id=user_id)
+            user = User.objects.get(id=user_id)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+            
+            # Authorization check
+            if str(refund.requested_by.id) != str(user.id):
+                return Response({"error": "Not authorized to view this refund"}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Get refund data
+            data = self._get_refund_details_data(refund, request, user)
+            
+            return Response(data)
+            
         except User.DoesNotExist:
-            return None
-    
-    def _is_admin_user(self, user):
-        """Check if user is admin/staff"""
-        return user.is_staff or user.is_superuser if user else False
-    
-    def list(self, request, *args, **kwargs):
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Users can only see evidence for their own disputes
-        # Admins can see all evidence
-        if self._is_admin_user(user):
-            queryset = self.get_queryset()
-        else:
-            queryset = self.get_queryset().filter(
-                Q(uploaded_by=user) | Q(dispute__filed_by=user)
-            )
-        
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-    
-    def retrieve(self, request, *args, **kwargs):
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        instance = self.get_object()
-        
-        # Check if user can view this evidence
-        if not self._is_admin_user(user) and instance.uploaded_by != user and instance.dispute.filed_by != user:
-            return Response(
-                {'error': 'You do not have permission to view this evidence'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
-    
-    def create(self, request, *args, **kwargs):
-        user = self._get_user_from_header(request)
-        if not user:
-            return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get dispute_id from request data
-        dispute_id = request.data.get('dispute')
-        if not dispute_id:
-            return Response(
-                {'error': 'Dispute ID is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def cancel_refund(self, request, pk=None):
+        """
+        BUYER VIEW: Cancel a refund request
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            dispute = DisputeRequest.objects.get(id=dispute_id)
+            user = User.objects.get(id=user_id)
             
-            # Check if user owns the dispute
-            if dispute.filed_by != user:
-                return Response(
-                    {'error': 'You do not have permission to add evidence to this dispute'},
-                    status=status.HTTP_403_FORBIDDEN
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+            
+            # Authorization check
+            if str(refund.requested_by.id) != str(user.id):
+                return Response({"error": "Not authorized to cancel this refund"}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Check if refund can be cancelled (only pending refunds)
+            if refund.status != 'pending':
+                return Response({"error": "Only pending refunds can be cancelled"}, 
+                                status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update refund status
+            refund.status = 'cancelled'
+            refund.save()
+            
+            return Response({"message": "Refund cancelled successfully"})
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    # ========== SELLER VIEWS ==========
+
+    @action(detail=False, methods=['get'])
+    def get_shop_refunds(self, request):
+        """
+        SELLER VIEW: Get all refunds for seller's shops
+        """
+        # Debug: Print all headers
+        print("Headers received:", dict(request.headers))
+
+        user_id = request.headers.get('X-User-Id') or request.headers.get('x-user-id') or request.headers.get('HTTP_X_USER_ID')
+        print(f"User ID from header: {user_id}")
+
+        shop_id = request.headers.get('X-Shop-Id') or request.headers.get('x-shop-id') or request.headers.get('HTTP_X_SHOP_ID')
+        print(f"Shop ID from header: {shop_id}")
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Get shops owned by user
+            shops = Shop.objects.filter(customer__customer=user)
+            if not shops.exists():
+                return Response({"results": []})
+            
+            # Filter by specific shop if provided
+            if shop_id:
+                try:
+                    shop = shops.get(id=shop_id)
+                    shops = [shop]
+                except Shop.DoesNotExist:
+                    return Response({"error": "Shop not found"}, 
+                                    status=status.HTTP_404_NOT_FOUND)
+            
+            # Get refunds for items from these shops
+            refunds = Refund.objects.filter(
+                order_id__checkout__cart_item__product__shop__in=shops
+            ).distinct().order_by('-requested_at')
+            
+            # Apply filters
+            status_filter = request.query_params.get('status')
+            if status_filter:
+                refunds = refunds.filter(status=status_filter)
+            
+            refund_type_filter = request.query_params.get('refund_type')
+            if refund_type_filter:
+                refunds = refunds.filter(refund_type=refund_type_filter)
+            
+            serializer = RefundSerializer(refunds, many=True, context={'request': request})
+            refund_data = serializer.data
+            
+            # Add order items and shop information for each refund
+            for i, refund in enumerate(refunds):
+                refund_data[i]['order_items'] = self._get_order_items_for_refund(refund, request)
+                
+                # Add shop information for each refund
+                # Get the shop from the order items
+                order_items = refund_data[i]['order_items']
+                if order_items and len(order_items) > 0:
+                    # All items in an order should be from the same shop, so take the first one
+                    shop_info = order_items[0].get('shop', {})
+                    refund_data[i]['shop'] = shop_info
+            
+            response_data = {
+                "shops": [{"id": str(shop.id), "name": shop.name} for shop in shops],
+                "results": refund_data
+            }
+            
+            return Response(response_data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+
+
+    @action(detail=True, methods=['get'])
+    def get_seller_refund_details(self, request, pk=None):
+        """
+        SELLER VIEW: Get detailed refund information for seller
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+            
+            # Authorization check - seller must own the shop
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+            
+            # Get refund data with seller-specific details
+            data = self._get_refund_details_data(refund, request, user)
+            if not isinstance(data, dict) or data is None:
+                print(f"Warning: _get_refund_details_data returned non-dict for refund {pk}: {data}")
+                data = {}
+
+            # Add seller-specific information
+            data['shop'] = {
+                "id": str(shop.id),
+                "name": shop.name,
+                "is_suspended": shop.is_suspended
+            }
+            
+            # Add counter refund requests
+            counter_requests = CounterRefundRequest.objects.filter(
+                refund_id=refund,
+                shop_id=shop
+            ).order_by('-requested_at')
+            
+            data['counter_requests'] = [
+                {
+                    "counter_id": str(cr.counter_id),
+                    "requested_by": cr.requested_by,
+                    "counter_refund_method": cr.counter_refund_method,
+                    "notes": cr.notes,
+                    "status": cr.status,
+                    "requested_at": cr.requested_at.isoformat(),
+                    "updated_at": cr.updated_at.isoformat()
+                }
+                for cr in counter_requests
+            ]
+            
+            return Response(data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def seller_respond_to_refund(self, request, pk=None):
+        """
+        SELLER VIEW: Seller responds to refund request (approve/reject/negotiate)
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Validate refund id format early to avoid 500s when 'undefined' or invalid ids are used
+            # Defensive: explicitly reject common invalid token values sent by broken frontends
+            if not pk or str(pk).lower() in ['undefined', 'null', 'none', 'nan', '']:
+                return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                uuid.UUID(str(pk))
+            except (ValueError, TypeError, AttributeError):
+                return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Use a transaction and row-level lock so concurrent requests cannot append duplicate notes
+            try:
+                with transaction.atomic():
+                    refund = Refund.objects.select_for_update().get(refund_id=pk)
+
+                    # Authorization check
+                    shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+                    if err:
+                        return err
+
+                    if refund.status != 'pending':
+                        return Response({"error": "Can only respond to pending refunds"}, 
+                                        status=status.HTTP_400_BAD_REQUEST)
+
+                    # Action handling happens inside the transaction to prevent race conditions
+                    action = request.data.get('action')  # 'approve', 'reject', 'negotiate'
+                    notes = request.data.get('notes', '')
+
+                    if action == 'approve':
+                        refund.status = 'approved'
+                        refund.processed_by = user
+                        refund.processed_at = timezone.now()
+
+                        # If seller provided an approved refund amount, store it
+                        approved_amt = request.data.get('approved_refund_amount') or request.data.get('approved_amount')
+                        if approved_amt is not None:
+                            try:
+                                refund.approved_refund_amount = Decimal(str(approved_amt))
+                            except Exception:
+                                # ignore invalid amounts
+                                pass
+
+                        # Append approval note only if it hasn't already been recorded to avoid duplicate entries
+                        new_note = f"Seller approved: {notes}".strip()
+                        existing_text = (refund.customer_note or '').strip()
+                        # Use case-insensitive containment check to avoid duplicates even with spacing/newline differences
+                        if new_note and new_note.lower() not in existing_text.lower():
+                            refund.customer_note = f"{existing_text}\n{new_note}" if existing_text else new_note
+
+                        # If refund type is return, update return request
+                        if refund.refund_type == 'return':
+                            return_request = getattr(refund, 'return_request', None)
+                            if return_request:
+                                return_request.status = 'approved'
+                                return_request.updated_by = user
+                                return_request.updated_at = timezone.now()
+                                return_request.save()
+
+                        refund.save()
+                        # Return refreshed refund details for frontend to update state without a full reload
+                        data = self._get_refund_details_data(refund, request, user)
+                        return Response({
+                            "message": "Refund approved",
+                            "refund_id": str(refund.refund_id),
+                            "status": refund.status,
+                            "refund": data
+                        })
+
+                    elif action == 'reject':
+                        refund.status = 'rejected'
+                        refund.processed_by = user
+                        refund.processed_at = timezone.now()
+                        reject_note = f"Seller rejected: {notes}".strip()
+                        existing_text = (refund.customer_note or '').strip()
+                        if reject_note and reject_note.lower() not in existing_text.lower():
+                            refund.customer_note = f"{existing_text}\n{reject_note}" if existing_text else reject_note
+                        refund.save()
+
+                        return Response({
+                            "message": "Refund rejected",
+                            "refund_id": str(refund.refund_id),
+                            "status": refund.status
+                        })
+
+                    elif action == 'negotiate':
+                        # Create counter refund request
+                        raw_counter = request.data.get('counter_refund_method') or request.data.get('counter_method') or ''
+                        counter_notes = request.data.get('counter_notes', '')
+
+                        # Normalize and parse potential 'type:method' input (frontend may send 'keep:wallet')
+                        allowed_methods = [m[0] for m in Refund.REFUND_METHOD_CHOICES]
+                        allowed_types = ['return', 'keep']
+
+                        counter_method = ''
+                        counter_type = None
+                        raw_counter = str(raw_counter).strip() if raw_counter is not None else ''
+                        if raw_counter:
+                            if ':' in raw_counter:
+                                parts = raw_counter.split(':', 1)
+                                t = parts[0].strip().lower()
+                                m = parts[1].strip().lower()
+                                if t in allowed_types:
+                                    counter_type = t
+                                # method part validation
+                                if m in allowed_methods:
+                                    counter_method = m
+                                else:
+                                    return Response({"error": "Invalid counter refund method"}, status=status.HTTP_400_BAD_REQUEST)
+                            else:
+                                m = raw_counter.lower()
+                                if m in allowed_methods:
+                                    counter_method = m
+                                else:
+                                    return Response({"error": "Invalid counter refund method"}, status=status.HTTP_400_BAD_REQUEST)
+
+                        # Accept counter amount (required for keep/return offers)
+                        counter_amount_raw = request.data.get('counter_refund_amount') or request.data.get('counter_amount')
+                        counter_amount_decimal = None
+
+                        # If seller explicitly specified a counter type (return/keep) require an amount
+                        if counter_type in ['keep', 'return'] and (counter_amount_raw is None or str(counter_amount_raw).strip() == ''):
+                            return Response({"error": "Counter refund amount is required for keep/return offers"}, status=status.HTTP_400_BAD_REQUEST)
+
+                        if counter_amount_raw is not None and str(counter_amount_raw).strip() != '':
+                            try:
+                                counter_amount_decimal = Decimal(str(counter_amount_raw))
+                                if counter_amount_decimal <= 0:
+                                    return Response({"error": "Counter refund amount must be positive"}, status=status.HTTP_400_BAD_REQUEST)
+                                # Business rule: do not exceed order total when available
+                                try:
+                                    order_total = refund.order_id.total_amount
+                                    if order_total is not None and counter_amount_decimal > Decimal(str(order_total)):
+                                        return Response({"error": "Counter refund amount cannot exceed order total"}, status=status.HTTP_400_BAD_REQUEST)
+                                except Exception:
+                                    pass
+                            except Exception:
+                                return Response({"error": "Invalid counter refund amount"}, status=status.HTTP_400_BAD_REQUEST)
+
+                        # If counter type is 'return', ensure a return address already exists; require seller to call set_return_address first
+                        if counter_type == 'return':
+                            existing_ra = getattr(refund, 'return_address', None)
+                            if not existing_ra:
+                                return Response({"error": "Return address required for return-type counter offers. Use set_return_address endpoint."}, status=status.HTTP_400_BAD_REQUEST)
+
+                        # Create counter request (method may be empty, notes carry the seller message)
+                        CounterRefundRequest.objects.create(
+                            refund_id=refund,
+                            requested_by='seller',
+                            seller_id=user,
+                            shop_id=shop,
+                            counter_refund_method=counter_method,
+                            counter_refund_type=counter_type,
+                            counter_refund_amount=counter_amount_decimal,
+                            notes=counter_notes or '',
+                            status='pending'
+                        )
+
+                        refund.status = 'negotiation'
+                        refund.save()
+
+                        return Response({
+                            "message": "Counter offer sent to buyer",   
+                            "refund_id": str(refund.refund_id),
+                            "status": refund.status
+                        })
+                    else:
+                        return Response({"error": "Invalid action"}, 
+                                        status=status.HTTP_400_BAD_REQUEST)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+                
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def respond_to_negotiation(self, request, pk=None):
+        """
+        BUYER VIEW: Respond to a seller's counter offer. Payload: { action: 'accept'|'reject', reason?: string }
+        Accepting will apply the counter method & type to the refund and mark it approved.
+        Rejecting will mark the counter request rejected and keep the refund in negotiation state.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization: only the buyer who requested the refund can respond
+            if str(refund.requested_by.id) != str(user.id):
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+
+            if refund.status != 'negotiation':
+                return Response({"error": "No active negotiation to respond to"}, status=status.HTTP_400_BAD_REQUEST)
+
+            action = request.data.get('action')
+            reason = request.data.get('reason', '')
+
+            # Find latest pending counter request from seller
+            cr = CounterRefundRequest.objects.filter(refund_id=refund, requested_by='seller', status='pending').order_by('-requested_at').first()
+            if not cr:
+                # If there is no pending counter, check for latest seller counter and return informative message
+                latest = CounterRefundRequest.objects.filter(refund_id=refund, requested_by='seller').order_by('-requested_at').first()
+                if latest:
+                    return Response({"error": f"No pending counter request found (latest status: {latest.status})"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "No pending counter request found"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if action == 'accept':
+                # Apply counter offer
+                # If seller provided a method, set it as the final method
+                if getattr(cr, 'counter_refund_method', None):
+                    refund.final_refund_method = cr.counter_refund_method
+
+                # If seller provided a counter amount (partial offer), record it as the approved amount
+                if getattr(cr, 'counter_refund_amount', None) is not None:
+                    try:
+                        refund.approved_refund_amount = Decimal(str(cr.counter_refund_amount))
+                    except Exception:
+                        # ignore invalid amounts
+                        pass
+
+                # If seller provided a counter type (return|keep), apply it to the refund
+                if getattr(cr, 'counter_refund_type', None):
+                    ctype = str(cr.counter_refund_type).lower()
+                    if ctype in ('return', 'keep'):
+                        refund.refund_type = ctype
+
+                refund.status = 'approved'
+                refund.processed_by = user
+                refund.processed_at = timezone.now()
+                cr.status = 'accepted'
+                cr.save()
+                refund.save()
+
+                data = self._get_refund_details_data(refund, request, user)
+                return Response({"message": "Counter offer accepted", "refund": data})
+
+            elif action == 'reject':
+                cr.status = 'rejected'
+                cr.save()
+                # When buyer rejects the seller's counter, mark the entire refund as rejected
+                refund.status = 'rejected'
+                refund.processed_by = user
+                refund.processed_at = timezone.now()
+                refund.save()
+                return Response({"message": "Counter offer rejected and refund marked as rejected"})
+
+            else:
+                return Response({"error": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def process_refund(self, request, pk=None):
+        """
+        SELLER VIEW: Process a keep-item refund payment lifecycle.
+        - Applies only for refunds where refund.refund_type == 'keep'
+        - `final_refund_method` in payload will set the final method; otherwise use buyer's preferred method
+        - `set_status` in payload is one of ['processing','completed','failed'] and controls `refund.refund_payment_status`
+        - If `file_data` files are included (multipart), they will be saved as RefundProofs before processing so files and process happen in one request.
+        - Does NOT change `refund.status` (status remains 'approved' after approval)
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization check - seller must own the shop for this refund
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+
+            # Applicable for keep-item and return-type refunds
+            if refund.refund_type not in ['keep', 'return']:
+                return Response({"error": "process_refund only applicable for keep-item or return-item refunds"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # If files were included in the multipart request, save them as RefundProofs first
+            files = request.FILES.getlist('file_data') or []
+            if not files:
+                single = request.FILES.get('file')
+                if single:
+                    files = [single]
+
+            if files:
+                # Enforce server-side limit: max 4 proofs per refund
+                existing_count = RefundProof.objects.filter(refund=refund).count()
+                if existing_count + len(files) > 4:
+                    remaining = max(0, 4 - existing_count)
+                    return Response({"error": f"Cannot upload: only {remaining} proof(s) remaining"}, status=status.HTTP_400_BAD_REQUEST)
+
+                created = []
+                for f in files:
+                    file_type = request.data.get('file_type') or f.content_type or ''
+                    notes = request.data.get('notes', '')
+                    try:
+                        rp = RefundProof.objects.create(
+                            refund=refund,
+                            uploaded_by=user,
+                            file_type=file_type,
+                            file_data=f,
+                            notes=notes
+                        )
+                        created.append(str(rp.id))
+                    except Exception as e:
+                        print('Failed to save refund proof during process_refund', e)
+
+            final_method = request.data.get('final_refund_method')
+            set_status = request.data.get('set_status')  # processed, completed, failed
+
+            # Enforce proof requirements conditionally:
+            # - For set_status == 'completed' proofs are required for all refund types
+            # - For set_status == 'processing', proofs are required for return-type refunds but NOT for keep-type refunds (keep refunds auto-enter processing)
+            if set_status:
+                if set_status not in ['processing', 'completed', 'failed']:
+                    return Response({"error": "Invalid payment status"}, status=status.HTTP_400_BAD_REQUEST)
+
+                if set_status == 'completed':
+                    if not RefundProof.objects.filter(refund=refund).exists():
+                        return Response({"error": "Proof required before completing refund"}, status=status.HTTP_400_BAD_REQUEST)
+
+                if set_status == 'processing':
+                    # For processing: generally require proofs for return-type refunds, but allow keep-type to enter processing without proofs.
+                    # Additionally, if a DisputeRequest exists and has been approved by an admin, allow processing without proofs
+                    # and promote the refund status from 'dispute' to 'approved' so buyers see the processing UI.
+                    try:
+                        dispute = DisputeRequest.objects.get(refund_id=refund)
+                    except DisputeRequest.DoesNotExist:
+                        dispute = None
+
+                    if refund.refund_type == 'return' and not RefundProof.objects.filter(refund=refund).exists():
+                        # If there's no approved dispute, proofs are required
+                        if not dispute or str(dispute.status).lower() != 'approved':
+                            return Response({"error": "Proof required before processing refund"}, status=status.HTTP_400_BAD_REQUEST)
+
+                    # If a dispute was approved, promote refund.status if it's still 'dispute'
+                    if dispute and str(dispute.status).lower() == 'approved':
+                        if str(refund.status).lower() == 'dispute':
+                            refund.status = 'approved'
+
+            if final_method:
+                refund.final_refund_method = final_method
+            else:
+                # Default to buyer preferred method if final method isn't provided
+                refund.final_refund_method = refund.final_refund_method or getattr(refund, 'buyer_preferred_refund_method', None)
+
+            if set_status:
+                if set_status not in ['processing', 'completed', 'failed']:
+                    return Response({"error": "Invalid payment status"}, status=status.HTTP_400_BAD_REQUEST)
+                refund.refund_payment_status = set_status
+                # If final status is completed, record who and when processed; do NOT alter refund.status here
+                if set_status == 'completed':
+                    try:
+                        refund.processed_at = timezone.now()
+                        refund.processed_by = user
+                    except Exception:
+                        pass
+
+            refund.save()
+
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Refund payment updated", "refund": data})
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def notify_buyer(self, request, pk=None):
+        """
+        SELLER VIEW: Notify the buyer that their refund request (approved) has been notified by the seller.
+        Marks `buyer_notified_at` and sets refund to `waiting` for return refunds.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization check: seller must own the shop for this refund
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+
+            # Only notify for approved refunds
+            if refund.status != 'approved':
+                return Response({"error": "Can only notify buyer on approved refunds"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Mark buyer notified timestamp
+            refund.buyer_notified_at = timezone.now()
+            # Do NOT change the refund.status here — keep the status as 'approved' for return refunds
+            refund.save()
+
+            # TODO: integrate actual notification (email/push) if available
+
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Buyer notified", "refund": data})
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def set_return_address(self, request, pk=None):
+        """
+        SELLER VIEW: Set or update a return address for a refund (used for return-type refunds, or to provision an address before negotiating a return) and notify the buyer.
+        This will create or update the ReturnAddress object linked to the Refund and set buyer_notified_at.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization check: seller must own the shop for this refund
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+
+            # Allow setting return address when refund is still pending (approve after address provided)
+            if refund.status not in ['pending', 'approved']:
+                return Response({"error": "Can only set return address on pending or approved refunds"}, status=status.HTTP_400_BAD_REQUEST)
+
+            payload = request.data or {}
+            notify_buyer = payload.get('notify_buyer', True)
+            required = ['recipient_name', 'contact_number', 'country', 'province', 'city', 'barangay', 'street', 'zip_code']
+            missing = [f for f in required if not payload.get(f)]
+            if missing:
+                return Response({"error": f"Missing fields: {', '.join(missing)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create or update return address
+            try:
+                ra = refund.return_address
+                ra.recipient_name = payload.get('recipient_name')
+                ra.contact_number = payload.get('contact_number')
+                ra.country = payload.get('country')
+                ra.province = payload.get('province')
+                ra.city = payload.get('city')
+                ra.barangay = payload.get('barangay')
+                ra.street = payload.get('street')
+                ra.zip_code = payload.get('zip_code')
+                ra.notes = payload.get('notes', '')
+                ra.created_by = user
+                # Ensure shop and seller are set for the address (shop resolved earlier)
+                try:
+                    ra.shop = shop
+                except Exception:
+                    pass
+                ra.seller = user
+                ra.save()
+            except ReturnAddress.DoesNotExist:
+                ra = ReturnAddress.objects.create(
+                    refund=refund,
+                    shop=shop,
+                    seller=user,
+                    recipient_name=payload.get('recipient_name'),
+                    contact_number=payload.get('contact_number'),
+                    country=payload.get('country'),
+                    province=payload.get('province'),
+                    city=payload.get('city'),
+                    barangay=payload.get('barangay'),
+                    street=payload.get('street'),
+                    zip_code=payload.get('zip_code'),
+                    notes=payload.get('notes', ''),
+                    created_by=user
                 )
-            
-            # Check if evidence can be added
-            if dispute.status in ['completed', 'rejected', 'cancelled']:
-                return Response(
-                    {'error': 'Cannot add evidence to a closed dispute'},
-                    status=status.HTTP_400_BAD_REQUEST
+
+            # Only notify buyer and auto-approve if the request wants notification
+            if notify_buyer:
+                refund.buyer_notified_at = timezone.now()
+
+                # If refund was still pending, approve it now because seller confirmed return address
+                if refund.status == 'pending':
+                    refund.status = 'approved'
+                    refund.processed_by = user
+                    refund.processed_at = timezone.now()
+                    # If there's an existing return request, mark it approved as well
+                    try:
+                        rr = refund.return_request
+                        rr.status = 'approved'
+                        rr.updated_by = user
+                        rr.updated_at = timezone.now()
+                        rr.save()
+                    except ReturnRequestItem.DoesNotExist:
+                        pass
+
+            refund.save()
+
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Return address saved and buyer notified", "refund": data})
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def start_return_process(self, request, pk=None):
+        """
+        BUYER VIEW: Start the return process for approved return refunds. Creates a ReturnRequestItem (if missing).
+        Note: This does NOT change the `refund.status` (keeps as 'approved'); use `buyer_notified_at` / `return_request` to indicate waiting state.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization: only original requester (buyer) can start the return
+            if str(refund.requested_by.id) != str(user.id):
+                return Response({"error": "Not authorized to start return for this refund"}, status=status.HTTP_403_FORBIDDEN)
+
+            if refund.refund_type != 'return':
+                return Response({"error": "This refund is not a return item refund"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if refund.status not in ['approved', 'waiting']:
+                return Response({"error": "Return process can only be started after approval"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create return request if it doesn't exist
+            return_request = getattr(refund, 'return_request', None)
+            if not return_request:
+                return_request = ReturnRequestItem.objects.create(
+                    refund_id=refund,
+                    return_method=refund.buyer_preferred_refund_method or 'courier',
+                    return_deadline=timezone.now() + timedelta(days=7)
                 )
+
+            # Do not modify refund.status here; leave it 'approved' so DB remains consistent.
+            refund.save()
+
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Return process started", "refund": data})
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def update_tracking(self, request, pk=None):
+        """
+        BUYER VIEW: Update logistic service and tracking number for an ongoing return.
+        Creates a ReturnRequestItem if necessary and marks the return_request as 'shipped'.
+        Note: This does NOT change `refund.status`; keep refund.status as 'approved'.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization: only buyer can update tracking
+            if str(refund.requested_by.id) != str(user.id):
+                return Response({"error": "Not authorized to update tracking for this refund"}, status=status.HTTP_403_FORBIDDEN)
+
+            if refund.refund_type != 'return':
+                return Response({"error": "This refund is not a return item refund"}, status=status.HTTP_400_BAD_REQUEST)
+
+            logistic_service = request.data.get('logistic_service')
+            tracking_number = request.data.get('tracking_number')
+
+            if not logistic_service or not tracking_number:
+                return Response({"error": "Both logistic_service and tracking_number are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            return_request = getattr(refund, 'return_request', None)
+            if not return_request:
+                return_request = ReturnRequestItem.objects.create(
+                    refund_id=refund,
+                    return_method=refund.buyer_preferred_refund_method or 'courier',
+                    return_deadline=timezone.now() + timedelta(days=7)
+                )
+
+            return_request.logistic_service = logistic_service
+            return_request.tracking_number = tracking_number
+            return_request.status = 'shipped'
+
+            # Use provided shipped_at if present (ISO format expected), else now
+            shipped_at = request.data.get('shipped_at')
+            if shipped_at:
+                try:
+                    # Expect ISO format date
+                    return_request.shipped_at = timezone.datetime.fromisoformat(shipped_at)
+                except Exception:
+                    # fallback to now if parsing fails
+                    return_request.shipped_at = timezone.now()
+            else:
+                return_request.shipped_at = timezone.now()
+
+            # Save shipped_by if uploader is a buyer
+            return_request.shipped_by = user
+
+            # Save any notes
+            notes = request.data.get('notes')
+            if notes:
+                return_request.notes = notes
+
+            return_request.save()
+
+            # Handle uploaded media files (media_files[])
+            files = request.FILES.getlist('media_files') if hasattr(request, 'FILES') else []
+
+            # Enforce server-side limit: max 9 media files per return request
+            existing_media_count = ReturnRequestMedia.objects.filter(return_id=return_request).count()
+            if existing_media_count + len(files) > 9:
+                remaining = max(0, 9 - existing_media_count)
+                return Response({"error": f"Cannot upload: only {remaining} image(s) remaining"}, status=status.HTTP_400_BAD_REQUEST)
+
+            created_media = []
+            for f in files:
+                try:
+                    rm = ReturnRequestMedia.objects.create(
+                        return_id=return_request,
+                        file_type=(f.content_type or '')[:255],
+                        file_data=f,
+                        uploaded_by=user,
+                        notes=notes or ''
+                    )
+                    created_media.append(rm)
+                except Exception as e:
+                    # Log and continue; do not fail the entire request for a single file
+                    print('Failed to save return media', e)
+
+            # Do not change refund.status here; we keep refund.status as 'approved' and use buyer_notified_at / return_request to indicate waiting state
+            refund.save()
+
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Tracking updated", "refund": data, "created_media_count": len(created_media)})
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def add_proof(self, request, pk=None):
+        """
+        SELLER VIEW: Upload one or more proof files (images/pdf) for a refund. Only seller owning the shop can upload.
+        Accepts multipart/form-data fields:
+          - file_data (file) (can be multiple)
+          - file_type (optional)
+          - notes (optional)
+        Returns the updated refund payload.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+
+            try:
+                try:
+                    refund = Refund.objects.get(refund_id=pk)
+                except (ValueError, TypeError):
+                    return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization check: seller must own the shop for this refund
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+
+            files = request.FILES.getlist('file_data') or []
+            if not files:
+                # Also accept single file under 'file'
+                single = request.FILES.get('file')
+                if single:
+                    files = [single]
+
+            if not files:
+                return Response({"error": "No files uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Enforce server-side limit: max 4 proofs per refund
+            existing_count = RefundProof.objects.filter(refund=refund).count()
+            if existing_count + len(files) > 4:
+                remaining = max(0, 4 - existing_count)
+                return Response({"error": f"Cannot upload: only {remaining} proof(s) remaining"}, status=status.HTTP_400_BAD_REQUEST)
+
+            created = []
+            for f in files:
+                file_type = request.data.get('file_type') or f.content_type or ''
+                notes = request.data.get('notes', '')
+                try:
+                    rp = RefundProof.objects.create(
+                        refund=refund,
+                        uploaded_by=user,
+                        file_type=file_type,
+                        file_data=f,
+                        notes=notes
+                    )
+                    created.append(str(rp.id))
+                except Exception as e:
+                    # Log and continue saving the rest
+                    print('Failed to save refund proof', e)
+
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Proof(s) uploaded", "created": created, "refund": data}, status=status.HTTP_201_CREATED)
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def update_return_status(self, request, pk=None):
+        """
+        SELLER VIEW: Update return item status
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
             
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except (ValueError, TypeError):
+                # Invalid pk (e.g. 'undefined') - return 400 instead of allowing an unhandled exception
+                return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
             
-            # Add user to the evidence
-            evidence = serializer.save(
-                dispute=dispute,
-                uploaded_by=user
-            )
+            # Authorization check
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
             
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
+            # Check if this is a return refund
+            if refund.refund_type != 'return':
+                return Response({"error": "This refund is not a return item refund"}, 
+                                status=status.HTTP_400_BAD_REQUEST)
             
+            # Get return request
+            try:
+                return_request = refund.return_request
+            except ReturnRequestItem.DoesNotExist:
+                return Response({"error": "No return request found for this refund"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+            
+            action = request.data.get('action')  # 'mark_shipped', 'mark_received', 'mark_inspected', 'mark_completed'
+            notes = request.data.get('notes', '')
+            
+            if action == 'mark_shipped':
+                return_request.status = 'shipped'
+                return_request.shipped_by = user
+                return_request.shipped_at = timezone.now()
+                
+            elif action == 'mark_received':
+                return_request.status = 'received'
+                return_request.received_at = timezone.now()
+                
+            elif action == 'mark_inspected':
+                return_request.status = 'inspected'
+                # Keep `refund.status` unchanged here - we derive the UI verification state from the return_request status
+                # The seller's subsequent Accept/Reject action will update refund.refund_payment_status (processing) or refund.status (rejected/approved)
+                # Do NOT write a non-enum value into refund.status (e.g. 'to_verify')
+                # (No refund.save() here)
+                
+            elif action == 'mark_completed':
+                return_request.status = 'completed'
+                # Complete the refund process
+                refund.status = 'completed'
+                refund.refund_payment_status = 'completed'
+                refund.save()
+                
+            else:
+                return Response({"error": "Invalid action"}, 
+                                status=status.HTTP_400_BAD_REQUEST)
+            
+            return_request.updated_by = user
+            return_request.notes = f"{return_request.notes or ''}\n{notes}"
+            return_request.save()
+            
+            # Return full refund details so frontend can immediately update UI without extra fetch
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({
+                "message": f"Return status updated to {return_request.status}",
+                "refund": data,
+                "refund_id": str(refund.refund_id),
+                "return_status": return_request.status,
+                "refund_status": refund.status
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def verify_item(self, request, pk=None):
+        """
+        SELLER VIEW: Verify inspected return item and accept/reject the return.
+        Payload: { verification_result: 'approved'|'rejected', verification_notes?: string }
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+
+            # Validate refund id
+            try:
+                uuid.UUID(str(pk))
+            except (ValueError, TypeError, AttributeError):
+                return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization check
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+
+            if refund.refund_type != 'return':
+                return Response({"error": "This refund is not a return item refund"}, status=status.HTTP_400_BAD_REQUEST)
+
+            return_request = getattr(refund, 'return_request', None)
+            if not return_request:
+                return Response({"error": "No return request found"}, status=status.HTTP_404_NOT_FOUND)
+
+            action = request.data.get('verification_result')
+            notes = request.data.get('verification_notes', '')
+
+            if action == 'approved':
+                # Seller accepts the return; keep refund.status = 'approved' but mark payment as processing
+                return_request.status = 'approved'
+                refund.refund_payment_status = 'processing'
+                # ensure refund.status remains 'approved' for DB constraints
+                refund.processed_by = user
+                refund.processed_at = timezone.now()
+                return_request.notes = f"{return_request.notes or ''}\nSeller accepted: {notes}"
+                return_request.updated_by = user
+                return_request.updated_at = timezone.now()
+                return_request.save()
+                refund.save()
+
+            elif action == 'rejected':
+                # Seller rejects the return
+                return_request.status = 'rejected'
+                refund.status = 'rejected'
+                refund.processed_by = user
+                refund.processed_at = timezone.now()
+                return_request.notes = f"{return_request.notes or ''}\nSeller rejected: {notes}"
+                return_request.updated_by = user
+                return_request.updated_at = timezone.now()
+                return_request.save()
+                refund.save()
+
+            else:
+                return Response({"error": "Invalid verification_result"}, status=status.HTTP_400_BAD_REQUEST)
+
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Verification updated", "refund": data, "return_status": return_request.status, "refund_status": refund.status})
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # ========== ADMIN VIEWS ==========
+
+    @action(detail=False, methods=['get'])
+    def get_all_refunds(self, request):
+        """
+        ADMIN VIEW: Get all refunds (admin only)
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Check if user is admin
+            if not user.is_admin:
+                return Response({"error": "Admin access required"}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            refunds = Refund.objects.all().order_by('-requested_at')
+            
+            # Apply filters
+            status_filter = request.query_params.get('status')
+            if status_filter:
+                refunds = refunds.filter(status=status_filter)
+            
+            refund_type_filter = request.query_params.get('refund_type')
+            if refund_type_filter:
+                refunds = refunds.filter(refund_type=refund_type_filter)
+            
+            user_filter = request.query_params.get('user_id')
+            if user_filter:
+                refunds = refunds.filter(requested_by_id=user_filter)
+            
+            shop_filter = request.query_params.get('shop_id')
+            if shop_filter:
+                refunds = refunds.filter(
+                    order_id__checkout__cart_item__product__shop_id=shop_filter
+                ).distinct()
+            
+            serializer = RefundSerializer(refunds, many=True, context={'request': request})
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['get'])
+    def get_admin_refund_details(self, request, pk=None):
+        """
+        ADMIN VIEW: Get detailed refund information for admin
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Check if user is admin
+            if not user.is_admin:
+                return Response({"error": "Admin access required"}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+            
+            # Get comprehensive refund data
+            data = self._get_refund_details_data(refund, request, user)
+            
+            # Add admin-specific information
+            data['admin_notes'] = refund.customer_note
+            data['processed_by'] = {
+                "id": str(refund.processed_by.id) if refund.processed_by else None,
+                "username": refund.processed_by.username if refund.processed_by else None,
+                "email": refund.processed_by.email if refund.processed_by else None
+            } if refund.processed_by else None
+            
+            # Add all related disputes
+            disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
+            data['disputes'] = [
+                {
+                    "id": str(d.id),
+                    "requested_by": {
+                        "id": str(d.requested_by.id),
+                        "username": d.requested_by.username,
+                        "email": d.requested_by.email
+                    },
+                    "reason": d.reason,
+                    "status": d.status,
+                    "admin_notes": d.admin_notes,
+                    "created_at": d.created_at.isoformat(),
+                    "resolved_at": d.resolved_at.isoformat() if d.resolved_at else None
+                }
+                for d in disputes
+            ]
+            
+            # Add all counter requests
+            counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
+            data['counter_requests'] = [
+                {
+                    "counter_id": str(cr.counter_id),
+                    "requested_by": cr.requested_by,
+                    "seller": {
+                        "id": str(cr.seller_id.id),
+                        "username": cr.seller_id.username
+                    },
+                    "shop": {
+                        "id": str(cr.shop_id.id),
+                        "name": cr.shop_id.name
+                    },
+                    "counter_refund_method": cr.counter_refund_method,
+                    "counter_refund_type": cr.counter_refund_type,
+                    "counter_refund_amount": float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
+                    "notes": cr.notes,
+                    "status": cr.status,
+                    "requested_at": cr.requested_at.isoformat()
+                }
+                for cr in counter_requests
+            ]
+            
+            return Response(data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'])
+    def admin_update_refund(self, request, pk=None):
+        """
+        ADMIN VIEW: Admin updates refund status or information
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Check if user is admin
+            if not user.is_admin:
+                return Response({"error": "Admin access required"}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+            
+            # Update fields
+            update_fields = {}
+            
+            if 'status' in request.data:
+                update_fields['status'] = request.data['status']
+            
+            if 'refund_payment_status' in request.data:
+                update_fields['refund_payment_status'] = request.data['refund_payment_status']
+            
+            if 'final_refund_method' in request.data:
+                update_fields['final_refund_method'] = request.data['final_refund_method']
+            
+            if 'customer_note' in request.data:
+                update_fields['customer_note'] = f"{refund.customer_note or ''}\n[Admin]: {request.data['customer_note']}"
+
+            # Allow admin to set an approved refund amount
+            if 'approved_refund_amount' in request.data:
+                try:
+                    update_fields['approved_refund_amount'] = Decimal(str(request.data.get('approved_refund_amount')))
+                except Exception:
+                    pass
+            
+            if update_fields:
+                # If payment status is set to completed and refund is currently approved,
+                # promote refund.status to 'completed' unless admin explicitly provided a different status.
+                # Previously we promoted refund.status to 'completed' when refund_payment_status was set to 'completed'.
+                # Keep refund.status unchanged (remain 'approved') and use refund.refund_payment_status to indicate completion.
+                # Do not auto-promote refund.status here to avoid conflating approval state with payment completion.
+
+                update_fields['processed_by'] = user
+                update_fields['processed_at'] = timezone.now()
+
+                for field, value in update_fields.items():
+                    setattr(refund, field, value)
+
+                refund.save()
+            
+            # Handle dispute resolution
+            if 'resolve_dispute' in request.data:
+                dispute_id = request.data.get('dispute_id')
+                dispute_action = request.data.get('dispute_action')  # 'approve', 'reject', 'resolve'
+                dispute_notes = request.data.get('dispute_notes', '')
+                
+                if dispute_id:
+                    try:
+                        dispute = DisputeRequest.objects.get(id=dispute_id, refund_id=refund)
+                        
+                        if dispute_action == 'approve':
+                            dispute.status = 'approved'
+                            refund.refund_payment_status = 'processing'
+                            # record which admin processed the dispute
+                            refund.processed_by = user
+                            refund.processed_at = timezone.now()
+                            refund.save()
+                        elif dispute_action == 'reject':
+                            dispute.status = 'rejected'
+                            refund.status = 'rejected'
+                            refund.processed_by = user
+                            refund.processed_at = timezone.now()
+                            refund.save()
+                        elif dispute_action == 'resolve':
+                            dispute.status = 'resolved'
+                            # For resolve, also record admin as the processor of the refund if not already set
+                            refund.processed_by = user
+                            refund.processed_at = timezone.now()
+                            refund.save()
+                        
+                        dispute.admin_notes = dispute_notes
+                        dispute.processed_by = user
+                        dispute.resolved_at = timezone.now()
+                        dispute.save()
+                        
+                    except DisputeRequest.DoesNotExist:
+                        return Response({"error": "Dispute not found"}, 
+                                        status=status.HTTP_404_NOT_FOUND)
+            
+            serializer = RefundSerializer(refund, context={'request': request})
+            return Response({
+                "message": "Refund updated successfully",
+                "refund": serializer.data
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    # ========== COMMON/UTILITY METHODS ==========
+
+    def _get_refund_details_data(self, refund, request, user):
+        """Get detailed refund data (common for buyer, seller, and admin views)"""
+        data = RefundSerializer(refund, context={'request': request}).data
+
+
+        # Expose requester info for easier frontend display
+        data['requested_by_username'] = refund.requested_by.username if refund.requested_by else None
+        data['requested_by_email'] = refund.requested_by.email if refund.requested_by else None
+        
+        # Add order information
+        if refund.order_id:
+            order = refund.order_id
+            data['order'] = {
+                "order_id": str(order.order),
+                "total_amount": float(order.total_amount) if order.total_amount else None,
+                "status": order.status,
+                "created_at": order.created_at.isoformat() if order.created_at else None,
+                "payment_method": order.payment_method if hasattr(order, 'payment_method') else None,
+                "delivery_method": order.delivery_method if hasattr(order, 'delivery_method') else None,
+                "customer_username": order.user.username if order.user else None,
+                "customer_email": order.user.email if order.user else None,
+                "delivery_address_text": order.delivery_address_text or (order.shipping_address.get_full_address() if order.shipping_address else None),
+                "shipping_address": {
+                    "recipient_name": order.shipping_address.recipient_name if order.shipping_address else None,
+                    "recipient_phone": order.shipping_address.recipient_phone if order.shipping_address else None,
+                    "full_address": order.shipping_address.get_full_address() if order.shipping_address else (order.delivery_address_text or None)
+                } if order.shipping_address or order.delivery_address_text else None,
+            }
+            
+            # Get order items from this shop (for seller) or all items (for buyer/admin)
+            data['order_items'] = self._get_order_items_for_refund(refund, request)
+            # Prefer stored total_refund_amount; otherwise compute total from order items as a fallback
+            try:
+                if getattr(refund, 'total_refund_amount', None) is not None:
+                    data['total_refund_amount'] = float(refund.total_refund_amount)
+                else:
+                    total_refund_amount = 0.0
+                    for it in data.get('order_items', []):
+                        itm_total = it.get('total')
+                        if itm_total is None:
+                            price = it.get('price') or 0
+                            qty = it.get('quantity') or 0
+                            itm_total = float(price) * int(qty)
+                        total_refund_amount += float(itm_total)
+                    data['total_refund_amount'] = round(float(total_refund_amount), 2) if total_refund_amount > 0 else None
+            except Exception:
+                data['total_refund_amount'] = None
+        
+        # Add payment method details
+        payment_details = {}
+        
+        try:
+            wallet = refund.wallet
+            payment_details['wallet'] = {
+                "provider": wallet.provider,
+                "account_name": wallet.account_name,
+                "account_number": wallet.account_number,
+                "contact_number": wallet.contact_number
+            }
+        except RefundWallet.DoesNotExist:
+            pass
+        
+        try:
+            bank = refund.bank
+            payment_details['bank'] = {
+                "bank_name": bank.bank_name,
+                "account_name": bank.account_name,
+                "account_number": bank.account_number,
+                "account_type": bank.account_type,
+                "branch": bank.branch
+            }
+        except RefundBank.DoesNotExist:
+            pass
+        
+        try:
+            remittance = refund.remittance
+            payment_details['remittance'] = {
+                "provider": remittance.provider,
+                "first_name": remittance.first_name,
+                "middle_name": remittance.middle_name,
+                "last_name": remittance.last_name,
+                "contact_number": remittance.contact_number,
+                "address": {
+                    "street": remittance.street,
+                    "barangay": remittance.barangay,
+                    "city": remittance.city,
+                    "province": remittance.province,
+                    "zip_code": remittance.zip_code,
+                    "country": remittance.country
+                },
+                "valid_id_type": remittance.valid_id_type,
+                "valid_id_number": remittance.valid_id_number
+            }
+        except RefundRemittance.DoesNotExist:
+            pass
+        
+        data['payment_details'] = payment_details
+        
+        # Add evidence/media files
+        media_files = RefundMedia.objects.filter(refund_id=refund)
+        data['evidence'] = [
+            {
+                "id": str(media.refundmedia),
+                "file_url": request.build_absolute_uri(media.file_data.url) if media.file_data else None,
+                "file_type": media.file_type,
+                "uploaded_by": str(media.uploaded_by.id),
+                "uploaded_by_username": media.uploaded_by.username if media.uploaded_by else None,
+                "uploaded_by_email": media.uploaded_by.email if media.uploaded_by else None,
+                "uploaded_at": media.uploaded_at.isoformat()
+            }
+            for media in media_files
+        ]
+
+        # Add seller-uploaded proofs (files uploaded as proof of refund)
+        proofs_qs = RefundProof.objects.filter(refund=refund)
+        data['proofs'] = [
+            {
+                "id": str(p.id),
+                "file_url": request.build_absolute_uri(p.file_data.url) if p.file_data else None,
+                "file_type": p.file_type,
+                "uploaded_by": str(p.uploaded_by.id) if p.uploaded_by else None,
+                "uploaded_by_username": p.uploaded_by.username if p.uploaded_by else None,
+                "notes": p.notes,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in proofs_qs
+        ]
+        
+        # Add return request information (if applicable)
+        if refund.refund_type == 'return':
+            try:
+                return_request = refund.return_request
+                data['return_request'] = {
+                    "return_id": str(return_request.return_id),
+                    "return_method": return_request.return_method,
+                    "logistic_service": return_request.logistic_service,
+                    "tracking_number": return_request.tracking_number,
+                    "status": return_request.status,
+                    "shipped_at": return_request.shipped_at.isoformat() if return_request.shipped_at else None,
+                    "received_at": return_request.received_at.isoformat() if return_request.received_at else None,
+                    "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
+                    "notes": return_request.notes
+                }
+                
+                # Add return media
+                return_media = ReturnRequestMedia.objects.filter(return_id=return_request)
+                data['return_request']['media'] = [
+                    {
+                        "id": str(rm.id),
+                        "file_url": request.build_absolute_uri(rm.file_data.url) if rm.file_data else None,
+                        "file_type": rm.file_type,
+                        "notes": rm.notes,
+                        "uploaded_at": rm.uploaded_at.isoformat()
+                    }
+                    for rm in return_media
+                ]
+                
+            except ReturnRequestItem.DoesNotExist:
+                data['return_request'] = None
+
+        # Add return address information (if any)
+        try:
+            ra = refund.return_address
+            data['return_address'] = {
+                'id': str(ra.id),
+                'recipient_name': ra.recipient_name,
+                'contact_number': ra.contact_number,
+                'country': ra.country,
+                'province': ra.province,
+                'city': ra.city,
+                'barangay': ra.barangay,
+                'street': ra.street,
+                'zip_code': ra.zip_code,
+                'notes': ra.notes,
+                'created_by': str(ra.created_by.id) if ra.created_by else None,
+                'created_at': ra.created_at.isoformat() if ra.created_at else None,
+                'shop': {
+                    'id': str(ra.shop.id) if ra.shop else None,
+                    'name': ra.shop.name if ra.shop else None
+                } if ra.shop else None,
+                'seller': {
+                    'id': str(ra.seller.id) if ra.seller else None,
+                    'username': ra.seller.username if ra.seller else None
+                } if ra.seller else None
+            }
+            
+        except ReturnAddress.DoesNotExist:
+            data['return_address'] = None
+        
+        # Add timeline/activity log
+        timeline = []
+        
+        # Refund requested
+        timeline.append({
+            "event": "refund_requested",
+            "timestamp": refund.requested_at.isoformat(),
+            "user": str(refund.requested_by.id),
+            "details": f"Refund requested: {refund.reason}"
+        })
+        
+        # Status changes
+        if refund.processed_at:
+            timeline.append({
+                "event": "status_changed",
+                "timestamp": refund.processed_at.isoformat(),
+                "user": str(refund.processed_by.id) if refund.processed_by else None,
+                "details": f"Status changed to {refund.status}"
+            })
+        
+        # Buyer notified
+        if refund.buyer_notified_at:
+            timeline.append({
+                "event": "buyer_notified",
+                "timestamp": refund.buyer_notified_at.isoformat(),
+                "details": "Buyer notified about refund approval"
+            })
+        
+        # Counter requests
+        counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
+        for cr in counter_requests:
+            timeline.append({
+                "event": "counter_request",
+                "timestamp": cr.requested_at.isoformat(),
+                "user": str(cr.seller_id.id),
+                "details": f"Counter offer: {cr.counter_refund_method} - Status: {cr.status}"
+            })
+
+        # Expose structured counter request list and latest suggestion for frontend
+        try:
+            data['counter_requests'] = [
+                {
+                    'id': str(cr.counter_id),
+                    'requested_by': cr.requested_by,
+                    'seller_id': str(cr.seller_id.id) if cr.seller_id else None,
+                    'seller_username': cr.seller_id.username if cr.seller_id else None,
+                    'counter_refund_method': cr.counter_refund_method,
+                    'counter_refund_type': cr.counter_refund_type,
+                    'counter_refund_amount': float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
+                    'notes': cr.notes,
+                    'status': cr.status,
+                    'requested_at': cr.requested_at.isoformat(),
+                    'updated_at': cr.updated_at.isoformat()
+                }
+                for cr in counter_requests
+            ]
+            latest_cr = counter_requests.first()
+            if latest_cr:
+                data['seller_suggested_method'] = latest_cr.counter_refund_method
+                data['seller_suggested_type'] = latest_cr.counter_refund_type
+                data['seller_suggested_amount'] = float(latest_cr.counter_refund_amount) if latest_cr.counter_refund_amount is not None else None
+            else:
+                data['seller_suggested_method'] = None
+                data['seller_suggested_type'] = None
+                data['seller_suggested_amount'] = None
+        except Exception:
+            data['counter_requests'] = []
+            data['seller_suggested_method'] = None
+            data['seller_suggested_type'] = None
+        
+        # Return request activities
+        if refund.refund_type == 'return':
+            try:
+                return_request = refund.return_request
+                if return_request.shipped_at:
+                    timeline.append({
+                        "event": "item_shipped",
+                        "timestamp": return_request.shipped_at.isoformat(),
+                        "user": str(return_request.shipped_by.id) if return_request.shipped_by else None,
+                        "details": f"Item shipped via {return_request.logistic_service}"
+                    })
+                
+                if return_request.received_at:
+                    timeline.append({
+                        "event": "item_received",
+                        "timestamp": return_request.received_at.isoformat(),
+                        "details": "Item received by seller"
+                    })
+                
+                if return_request.updated_at and return_request.updated_by:
+                    timeline.append({
+                        "event": "return_updated",
+                        "timestamp": return_request.updated_at.isoformat(),
+                        "user": str(return_request.updated_by.id),
+                        "details": f"Return status updated to {return_request.status}"
+                    })
+                    
+            except ReturnRequestItem.DoesNotExist:
+                pass
+        
+        # Dispute activities
+        try:
+            dispute = refund.dispute
+            if dispute.resolved_at:
+                timeline.append({
+                    "event": "dispute_resolved",
+                    "timestamp": dispute.resolved_at.isoformat(),
+                    "user": str(dispute.processed_by.id) if dispute.processed_by else None,
+                    "details": f"Dispute resolved: {dispute.status}"
+                })
         except DisputeRequest.DoesNotExist:
-            return Response(
-                {'error': 'Dispute not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            pass
+        
+        # Sort timeline by timestamp
+        timeline.sort(key=lambda x: x['timestamp'], reverse=True)
+        data['timeline'] = timeline
+        
+        # Add available actions based on status and user role
+        data['available_actions'] = self._get_available_actions(refund, user)
+        # Normalize status to lowercase for consistent frontend handling
+        try:
+            data['status'] = str(refund.status).lower()
+        except Exception:
+            pass
+        
+        return data
+
+    @action(detail=True, methods=['post'])
+    def add_refund_payment_detail(self, request, pk=None):
+        """Allow buyer to provide refund-specific account details for this refund (wallet/bank/remittance).
+        The saved details are attached to the refund via RefundWallet/RefundBank/RefundRemittance models and
+        included in subsequent refund detail responses.
+        """
+        user_id = request.headers.get('X-User-Id')
+        user = None
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                user = None
+
+        try:
+            refund = Refund.objects.get(refund_id=pk)
+        except Refund.DoesNotExist:
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Authorization: only refund requester (buyer) or admin/moderator may set refund payment detail
+        if user and refund.requested_by and str(refund.requested_by.id) != str(user.id):
+            if not (getattr(user, 'is_admin', False) or getattr(user, 'is_moderator', False)):
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+
+        method = (request.data.get('method') or request.data.get('method_type') or '').strip().lower()
+        if not method:
+            return Response({"error": "Method is required (wallet|bank|remittance)"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            if method == 'wallet':
+                provider = request.data.get('provider', '')
+                account_name = request.data.get('account_name', '')
+                account_number = request.data.get('account_number', '')
+                contact_number = request.data.get('contact_number', '')
+                RefundWallet.objects.update_or_create(
+                    refund_id=refund,
+                    defaults={
+                        'provider': provider,
+                        'account_name': account_name,
+                        'account_number': account_number,
+                        'contact_number': contact_number,
+                    }
+                )
+
+            elif method == 'bank':
+                bank_name = request.data.get('bank_name', '')
+                account_name = request.data.get('account_name', '')
+                account_number = request.data.get('account_number', '')
+                account_type = request.data.get('account_type', '')
+                branch = request.data.get('branch', '')
+                RefundBank.objects.update_or_create(
+                    refund_id=refund,
+                    defaults={
+                        'bank_name': bank_name,
+                        'account_name': account_name,
+                        'account_number': account_number,
+                        'account_type': account_type,
+                        'branch': branch,
+                    }
+                )
+
+            elif method == 'remittance':
+                provider = request.data.get('provider', '')
+                first_name = request.data.get('first_name', '')
+                last_name = request.data.get('last_name', '')
+                contact_number = request.data.get('contact_number', '')
+                country = request.data.get('country', '')
+                city = request.data.get('city', '')
+                province = request.data.get('province', '')
+                zip_code = request.data.get('zip_code', '')
+                barangay = request.data.get('barangay', '')
+                street = request.data.get('street', '')
+                valid_id_type = request.data.get('valid_id_type', '')
+                valid_id_number = request.data.get('valid_id_number', '')
+                RefundRemittance.objects.update_or_create(
+                    refund_id=refund,
+                    defaults={
+                        'provider': provider,
+                        'first_name': first_name,
+                        'last_name': last_name,
+                        'contact_number': contact_number,
+                        'country': country,
+                        'city': city,
+                        'province': province,
+                        'zip_code': zip_code,
+                        'barangay': barangay,
+                        'street': street,
+                        'valid_id_type': valid_id_type,
+                        'valid_id_number': valid_id_number,
+                    }
+                )
+            else:
+                return Response({"error": "Unsupported method"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Return fresh refund details
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Saved", "refund": data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": "Failed to save payment detail", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _get_order_items_for_refund(self, refund, request):
+        """Get order items for a refund (used in list views)"""
+        if not refund.order_id:
+            return []
+        
+        order = refund.order_id
+        checkouts = Checkout.objects.filter(order=order)
+        
+        order_items = []
+        for checkout in checkouts:
+            cart_item = checkout.cart_item
+            if cart_item and cart_item.product:
+                product = cart_item.product
+                # Get product image if available
+                product_image = None
+                if hasattr(product, 'productimage_set') and product.productimage_set.exists():
+                    first_image = product.productimage_set.first()
+                    if first_image and first_image.image:
+                        product_image = request.build_absolute_uri(first_image.image.url)
+                
+                # Build a robust skus list with absolute image URLs
+                skus_qs = product.skus.all()
+                skus = []
+                for s in skus_qs:
+                    skus.append({
+                        'id': str(s.id),
+                        'sku_code': s.sku_code,
+                        'price': float(s.price) if s.price is not None else None,
+                        'image': request.build_absolute_uri(s.image.url) if getattr(s, 'image', None) else None,
+                        'option_ids': s.option_ids or None,
+                    })
+
+                # Heuristic: pick selected sku by matching unit price when possible, otherwise fallback to first SKU
+                selected_sku = None
+                try:
+                    unit_price = (float(checkout.total_amount) / float(checkout.quantity)) if checkout.quantity else None
+                except Exception:
+                    unit_price = None
+
+                if unit_price is not None:
+                    for s in skus:
+                        if s.get('price') is not None and abs(float(s['price']) - float(unit_price)) < 0.01:
+                            selected_sku = s
+                            break
+
+                if not selected_sku and skus:
+                    selected_sku = skus[0]
+
+                # Build variants payload (include option titles) for frontend label resolution
+                variants = []
+                try:
+                    variant_qs = Variants.objects.filter(product=product)
+                    for v in variant_qs:
+                        options_qs = VariantOptions.objects.filter(variant=v)
+                        opts = [{
+                            'id': str(o.id),
+                            'title': o.title
+                        } for o in options_qs]
+                        variants.append({
+                            'id': str(v.id),
+                            'title': v.title,
+                            'options': opts
+                        })
+                except Exception:
+                    variants = []
+
+                # Provide a nested product object that includes a cover image (product_image) for frontend convenience
+                # Build media files list for product
+                media_files = []
+                if hasattr(product, 'productimage_set') and product.productimage_set.exists():
+                    media_files = [
+                        { 'file_url': request.build_absolute_uri(img.image.url) }
+                        for img in product.productimage_set.all()
+                    ]
+
+                product_obj = {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description if hasattr(product, 'description') else None,
+                    'image': product_image,
+                    'price': float(product.price) if product.price else None,
+                    'condition': getattr(product, 'condition', None),
+                    'category_name': product.category.name if getattr(product, 'category', None) else None,
+                    'shop_name': product.shop.name if getattr(product, 'shop', None) else None,
+                    'skus': skus,
+                    'variants': variants,
+                    'media_files': media_files,
+                }
+
+                order_items.append({
+                    "product_id": str(product.id),
+                    "product_name": product.name,
+                    "quantity": checkout.quantity,
+                    "price": float(product.price) if product.price else None,
+                    "total": float(checkout.total_amount) if checkout.total_amount else None,
+                    "product_image": product_image,
+                    # selected sku exposed explicitly for frontend (may be heuristic)
+                    "sku": {
+                        'sku_id': selected_sku['id'] if selected_sku else None,
+                        'sku_code': selected_sku['sku_code'] if selected_sku else None,
+                        'sku_image': selected_sku['image'] if selected_sku else None,
+                        'price': selected_sku['price'] if selected_sku else None,
+                        'option_ids': selected_sku['option_ids'] if selected_sku else None,
+                    } if selected_sku else None,
+                    "skus": skus,
+                    # Provide nested product object (image present) for easier frontend fallbacks
+                    "product": product_obj,
+                    "shop": {
+                        "id": str(product.shop.id) if product.shop else None,
+                        "name": product.shop.name if product.shop else None
+                    } if product.shop else None
+                })
+        
+        return order_items
     
-    def destroy(self, request, *args, **kwargs):
-        user = self._get_user_from_header(request)
-        if not user:
+    def _get_available_actions(self, refund, user):
+        """Get available actions based on refund status and user role"""
+        actions = []
+        
+        # Check if user is the buyer
+        is_buyer = str(refund.requested_by.id) == str(user.id)
+        
+        # Check if user is seller (owns shop with items in the order)
+        is_seller = False
+        try:
+            shop_ids = list(Checkout.objects.filter(
+                order=refund.order_id,
+                cart_item__product__shop__customer__customer=user,
+            ).values_list('cart_item__product__shop_id', flat=True).distinct())
+            is_seller = len(shop_ids) > 0
+        except:
+            pass
+        
+        # Check if user is admin
+        is_admin = user.is_admin
+        
+        # Actions based on refund status
+        if refund.status == 'pending':
+            if is_buyer:
+                actions.append('cancel')
+                actions.append('upload_evidence')
+            if is_seller:
+                actions.append('approve')
+                actions.append('reject')
+                actions.append('negotiate')
+        
+        elif refund.status == 'negotiation':
+            if is_buyer:
+                actions.append('accept_counter_offer')
+                actions.append('reject_counter_offer')
+                actions.append('file_dispute')
+            if is_seller:
+                actions.append('update_counter_offer')
+                actions.append('withdraw_counter_offer')
+        
+        elif refund.status == 'approved':
+            if is_buyer and refund.refund_type == 'return':
+                actions.append('start_return')
+                actions.append('upload_shipping_info')
+            if is_seller:
+                actions.append('notify_buyer')
+                actions.append('process_payment')
+        
+        elif refund.status == 'to_process':
+            if is_seller:
+                actions.append('process_payment')
+                actions.append('mark_as_completed')
+        
+        elif refund.status == 'dispute':
+            if is_admin:
+                actions.append('resolve_dispute')
+                actions.append('request_additional_info')
+            if is_buyer or is_seller:
+                actions.append('upload_dispute_evidence')
+        
+        # Common actions
+        if is_buyer:
+            actions.append('contact_support')
+        
+        if is_seller:
+            actions.append('contact_buyer')
+        
+        if is_admin:
+            actions.append('update_status')
+            actions.append('add_admin_note')
+            actions.append('escalate')
+        
+        return list(set(actions))  # Remove duplicates
+
+    # ========== COMMON ENDPOINTS ==========
+
+    @action(detail=False, methods=['get'])
+    def get_refund_stats(self, request):
+        """
+        COMMON VIEW: Get refund statistics for dashboard
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Check user role and get appropriate stats
+            if user.is_admin:
+                # Admin stats - all refunds
+                refunds = Refund.objects.all()
+                stats = self._calculate_stats(refunds)
+                stats['role'] = 'admin'
+                
+            else:
+                # Check if user is a seller
+                shops = Shop.objects.filter(customer__customer=user)
+                if shops.exists():
+                    # Seller stats
+                    refunds = Refund.objects.filter(
+                        order_id__checkout__cart_item__product__shop__in=shops
+                    ).distinct()
+                    stats = self._calculate_stats(refunds)
+                    stats['role'] = 'seller'
+                    stats['shops_count'] = shops.count()
+                    
+                else:
+                    # Buyer stats
+                    refunds = Refund.objects.filter(requested_by=user)
+                    stats = self._calculate_stats(refunds)
+                    stats['role'] = 'buyer'
+            
+            return Response(stats)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+    
+    def _calculate_stats(self, refunds):
+        """Calculate statistics for refunds queryset"""
+        total = refunds.count()
+        
+        return {
+            'total': total,
+            'pending': refunds.filter(status='pending').count(),
+            'approved': refunds.filter(status='approved').count(),
+            'negotiation': refunds.filter(status='negotiation').count(),
+            'rejected': refunds.filter(status='rejected').count(),
+            'dispute': refunds.filter(status='dispute').count(),
+            'cancelled': refunds.filter(status='cancelled').count(),
+            'completed': refunds.filter(refund_payment_status='completed').count(),
+            'return_refunds': refunds.filter(refund_type='return').count(),
+            'keep_refunds': refunds.filter(refund_type='keep').count(),
+            'average_processing_time': None,  # Can be calculated if needed
+        }
+
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser, JSONParser])
+    def file_dispute(self, request, pk=None):
+        """
+        BUYER/SELLER VIEW: File a dispute for this refund. Accepts optional files.
+        Payload: { dispute_reason?: string, description?: string }
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            refund = Refund.objects.get(refund_id=pk)
+        except Refund.DoesNotExist:
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Authorization: buyer or seller associated with this refund can file a dispute
+        is_buyer = str(refund.requested_by.id) == str(user.id)
+        is_seller = False
+        try:
+            shop_ids = list(Checkout.objects.filter(
+                order=refund.order_id,
+                cart_item__product__shop__customer__customer=user,
+            ).values_list('cart_item__product__shop_id', flat=True).distinct())
+            is_seller = len(shop_ids) > 0
+        except Exception:
+            pass
+
+        if not (is_buyer or is_seller or user.is_admin):
+            return Response({"error": "Not authorized to file dispute"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Prevent duplicate disputes for the same refund (use model's FK name 'refund_id')
+        existing = DisputeRequest.objects.filter(refund_id=refund).first()
+        if existing:
+            return Response({"error": "A dispute has already been filed for this refund", "dispute_id": str(existing.id)}, status=status.HTTP_400_BAD_REQUEST)
+
+        reason = request.data.get('dispute_reason') or request.data.get('reason') or ''
+        description = request.data.get('description') or ''
+
+        # Use create serializer to validate (pass only reason/description; attach refund object on save)
+        serializer = DisputeRequestCreateSerializer(data={'reason': reason, 'description': description}, context={'filed_by': user})
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            with transaction.atomic():
+                dispute = serializer.save(refund=refund)
+
+                # Attach any uploaded files as evidence
+                files = request.FILES.getlist('file') or request.FILES.getlist('files') or []
+                for f in files:
+                    ev = DisputeEvidence()
+                    # Link FK - model uses 'dispute_id' as the ForeignKey field name
+                    try:
+                        setattr(ev, 'dispute_id', dispute)
+                    except Exception:
+                        try:
+                            setattr(ev, 'dispute', dispute)
+                        except Exception:
+                            pass
+                    ev.uploaded_by = user
+                    # Support both 'file' and 'file_data' field names in different schemas
+                    if hasattr(ev, 'file'):
+                        setattr(ev, 'file', f)
+                    elif hasattr(ev, 'file_data'):
+                        setattr(ev, 'file_data', f)
+                    else:
+                        # fallback: try to set 'file' attribute
+                        setattr(ev, 'file', f)
+                    ev.save()
+
+                # Move refund into dispute status
+                refund.status = 'dispute'
+                # Only set optional dispute metadata if those fields exist on the model
+                update_fields = ['status']
+                if hasattr(refund, 'dispute_filed_by'):
+                    refund.dispute_filed_by = user
+                    update_fields.append('dispute_filed_by')
+                if hasattr(refund, 'dispute_reason'):
+                    refund.dispute_reason = description or reason
+                    update_fields.append('dispute_reason')
+                if hasattr(refund, 'dispute_filed_at'):
+                    if not getattr(refund, 'dispute_filed_at', None):
+                        refund.dispute_filed_at = timezone.now()
+                    update_fields.append('dispute_filed_at')
+                # Save only the fields we actually set
+                refund.save(update_fields=update_fields)
+
+            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'])
+    def get_status_options(self, request):
+        """
+        COMMON VIEW: Get all available status options
+        """
+        return Response({
+            'refund_status_options': [
+                {'value': 'pending', 'label': 'Pending Review'},
+                {'value': 'approved', 'label': 'Approved'},
+                {'value': 'negotiation', 'label': 'Negotiation'},
+                {'value': 'rejected', 'label': 'Rejected'},
+                {'value': 'dispute', 'label': 'Dispute'},
+                {'value': 'cancelled', 'label': 'Cancelled'},
+            ],
+            'payment_status_options': [
+                {'value': 'pending', 'label': 'Pending'},
+                {'value': 'processing', 'label': 'Processing'},
+                {'value': 'failed', 'label': 'Failed'},
+                {'value': 'completed', 'label': 'Completed'},
+            ],
+            'refund_type_options': [
+                {'value': 'return', 'label': 'Return Item'},
+                {'value': 'keep', 'label': 'Keep Item'},
+            ],
+            'refund_method_options': [
+                {'value': 'wallet', 'label': 'E-wallet'},
+                {'value': 'bank', 'label': 'Bank Transfer'},
+                {'value': 'remittance', 'label': 'Remittance'},
+                {'value': 'voucher', 'label': 'Store Voucher'},
+            ]
+        })
+    
+
+class ReturnAddressViewSet(viewsets.ViewSet):
+    """
+    SELLER VIEW: Manage return addresses for refunds (CRUD).
+    """
+    def list(self, request):
+        """List return addresses for a shop. Requires X-User-Id and optional X-Shop-Id or shop_id query."""
+        user_id = request.headers.get('X-User-Id')
+        shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+            shops = Shop.objects.filter(customer__customer=user)
+            if not shops.exists():
+                return Response({"results": []})
+            if shop_id:
+                try:
+                    shop = shops.get(id=shop_id)
+                except Shop.DoesNotExist:
+                    return Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+                addresses = ReturnAddress.objects.filter(shop=shop).order_by('-created_at')
+            else:
+                addresses = ReturnAddress.objects.filter(shop__in=shops).order_by('-created_at')
+
+            serializer = ReturnAddressSerializer(addresses, many=True, context={'request': request})
+            return Response(serializer.data)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def retrieve(self, request, pk=None):
+        try:
+            ra = ReturnAddress.objects.get(id=pk)
+            serializer = ReturnAddressSerializer(ra, context={'request': request})
+            return Response(serializer.data)
+        except ReturnAddress.DoesNotExist:
+            return Response({"error": "Return address not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def create(self, request):
+        """Create a return address. Requires X-User-Id and X-Shop-Id (or refund_id to infer shop)."""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+
+            # Resolve shop: prefer header/query, else try refund
+            shop_id = request.headers.get('X-Shop-Id') or request.data.get('shop_id') or request.query_params.get('shop_id')
+            shop = None
+            if not shop_id and request.data.get('refund_id'):
+                try:
+                    refund = Refund.objects.get(refund_id=request.data.get('refund_id'))
+                    shop_ids = list(
+                        Checkout.objects.filter(
+                            order=refund.order_id,
+                            cart_item__product__shop__isnull=False,
+                        ).values_list('cart_item__product__shop_id', flat=True).distinct()
+                    )
+                    if len(shop_ids) == 1:
+                        shop = Shop.objects.get(id=shop_ids[0])
+                except Exception:
+                    pass
+
+            if shop_id and not shop:
+                try:
+                    shop = Shop.objects.get(id=shop_id)
+                except Shop.DoesNotExist:
+                    return Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            if not shop:
+                return Response({"error": "Shop required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Authorization check: user must be shop owner
+            if not shop.customer or str(shop.customer.customer.id) != str(user.id):
+                return Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
+
+            required = ['recipient_name', 'contact_number', 'country', 'province', 'city', 'barangay', 'street', 'zip_code']
+            missing = [f for f in required if not request.data.get(f)]
+            if missing:
+                return Response({"error": f"Missing fields: {', '.join(missing)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+            ra = ReturnAddress.objects.create(
+                refund=Refund.objects.get(refund_id=request.data.get('refund_id')) if request.data.get('refund_id') else None,
+                shop=shop,
+                seller=user,
+                recipient_name=request.data.get('recipient_name'),
+                contact_number=request.data.get('contact_number'),
+                country=request.data.get('country'),
+                province=request.data.get('province'),
+                city=request.data.get('city'),
+                barangay=request.data.get('barangay'),
+                street=request.data.get('street'),
+                zip_code=request.data.get('zip_code'),
+                notes=request.data.get('notes', ''),
+                created_by=user
+            )
+
+            serializer = ReturnAddressSerializer(ra, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def partial_update(self, request, pk=None):
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+            ra = ReturnAddress.objects.get(id=pk)
+            # Authorization: ensure seller owns the shop
+            if not ra.shop or not ra.shop.customer or str(ra.shop.customer.customer.id) != str(user.id):
+                return Response({"error": "Not authorized to update this address"}, status=status.HTTP_403_FORBIDDEN)
+
+            for field in ['recipient_name','contact_number','country','province','city','barangay','street','zip_code','notes']:
+                if field in request.data:
+                    setattr(ra, field, request.data.get(field))
+            ra.save()
+            serializer = ReturnAddressSerializer(ra, context={'request': request})
+            return Response(serializer.data)
+        except (User.DoesNotExist, ReturnAddress.DoesNotExist):
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def destroy(self, request, pk=None):
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+            ra = ReturnAddress.objects.get(id=pk)
+            if not ra.shop or not ra.shop.customer or str(ra.shop.customer.customer.id) != str(user.id):
+                return Response({"error": "Not authorized to delete this address"}, status=status.HTTP_403_FORBIDDEN)
+            ra.delete()
+            return Response({"message": "Return address deleted"})
+        except (User.DoesNotExist, ReturnAddress.DoesNotExist):
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+# Dispute views (placed at end for easy removal)
+class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
+    """Admin-facing read-only disputes endpoint. Placed at file end for easy removal if needed."""
+    queryset = DisputeRequest.objects.all().order_by('-created_at')
+    serializer_class = DisputeRequestSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status = self.request.query_params.get('status')
+        refund_id = self.request.query_params.get('refund_id')
+        requested_by = self.request.query_params.get('requested_by')
+        if status:
+            qs = qs.filter(status=status)
+        if refund_id:
+            # accept either refund_id string or full refund uuid
+            qs = qs.filter(refund_id__refund_id=refund_id)
+        if requested_by:
+            qs = qs.filter(requested_by__id=requested_by)
+        return qs
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        total = DisputeRequest.objects.count()
+        filed = DisputeRequest.objects.filter(status='filed').count()
+        under_review = DisputeRequest.objects.filter(status='under_review').count()
+        approved = DisputeRequest.objects.filter(status='approved').count()
+        rejected = DisputeRequest.objects.filter(status='rejected').count()
+        resolved = DisputeRequest.objects.filter(status='resolved').count()
+        return Response({
+            'total': total,
+            'filed': filed,
+            'under_review': under_review,
+            'approved': approved,
+            'rejected': rejected,
+            'resolved': resolved,
+        })
+
+    @action(detail=True, methods=['post'])
+    def start_review(self, request, pk=None):
+        try:
+            dispute = self.get_object()
+            dispute.status = 'under_review'
+            user_id = request.headers.get('X-User-Id')
+            resolved_user = None
+            if user_id:
+                # sanitize header: trim whitespace and surrounding quotes (including smart quotes)
+                import re
+                user_id = user_id.strip()
+                # remove leading/trailing quotes (', ", and unicode smart quotes)
+                user_id = re.sub(r'^[\'"\u201c\u201d\u2018\u2019]+|[\'"\u201c\u201d\u2018\u2019]+$', '', user_id)
+                # Accept UUID, username, or email; handle non-UUID values gracefully
+                try:
+                    resolved_user = User.objects.get(id=user_id)
+                except (User.DoesNotExist, ValueError):
+                    try:
+                        resolved_user = User.objects.get(username=user_id)
+                    except User.DoesNotExist:
+                        try:
+                            resolved_user = User.objects.get(email=user_id)
+                        except User.DoesNotExist:
+                            # fallback: if numeric (after stripping quotes), map to first admin user (dev-friendly)
+                            if str(user_id).isdigit():
+                                resolved_user = User.objects.filter(is_admin=True).first()
+                            else:
+                                resolved_user = None
+                if resolved_user:
+                    dispute.processed_by = resolved_user
+
+            dispute.save(update_fields=['status', 'processed_by'])
+            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        """Admin accepts dispute: set status to 'approved' and mark resolved_by/at"""
+        try:
+            dispute = self.get_object()
+            dispute.status = 'approved'
+            dispute.resolved_at = timezone.now()
+            user_id = request.headers.get('X-User-Id')
+            resolved_user = None
+            if user_id:
+                import re
+                user_id = user_id.strip()
+                user_id = re.sub(r'^[\'"\u201c\u201d\u2018\u2019]+|[\'"\u201c\u201d\u2018\u2019]+$', '', user_id)
+                try:
+                    resolved_user = User.objects.get(id=user_id)
+                except (User.DoesNotExist, ValueError):
+                    try:
+                        resolved_user = User.objects.get(username=user_id)
+                    except User.DoesNotExist:
+                        try:
+                            resolved_user = User.objects.get(email=user_id)
+                        except User.DoesNotExist:
+                            if str(user_id).isdigit():
+                                resolved_user = User.objects.filter(is_admin=True).first()
+                            else:
+                                resolved_user = None
+            if resolved_user:
+                dispute.processed_by = resolved_user
+            dispute.save(update_fields=['status', 'processed_by', 'resolved_at'])
+            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Admin rejects dispute: set status to 'rejected' and store admin notes"""
+        try:
+            dispute = self.get_object()
+            dispute.status = 'rejected'
+            dispute.resolved_at = timezone.now()
+            admin_notes = request.data.get('admin_notes')
+            if admin_notes:
+                dispute.admin_notes = admin_notes
+            user_id = request.headers.get('X-User-Id')
+            resolved_user = None
+            if user_id:
+                import re
+                user_id = user_id.strip()
+                user_id = re.sub(r'^[\'"\u201c\u201d\u2018\u2019]+|[\'"\u201c\u201d\u2018\u2019]+$', '', user_id)
+                try:
+                    resolved_user = User.objects.get(id=user_id)
+                except (User.DoesNotExist, ValueError):
+                    try:
+                        resolved_user = User.objects.get(username=user_id)
+                    except User.DoesNotExist:
+                        try:
+                            resolved_user = User.objects.get(email=user_id)
+                        except User.DoesNotExist:
+                            if str(user_id).isdigit():
+                                resolved_user = User.objects.filter(is_admin=True).first()
+                            else:
+                                resolved_user = None
+            if resolved_user:
+                dispute.processed_by = resolved_user
+            dispute.save(update_fields=['status', 'processed_by', 'resolved_at', 'admin_notes'])
+            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def acknowledge(self, request, pk=None):
+        """Buyer acknowledgement endpoint: mark dispute resolved and set refund.status to 'completed'"""
+        try:
+            dispute = self.get_object()
+            refund = getattr(dispute, 'refund_id', None)
+
+            # Update refund to completed when buyer acknowledges a rejected dispute
+            if refund:
+                # Only move forward if refund is currently 'dispute' or not already completed
+                if str(refund.status).lower() == 'dispute':
+                    refund.status = 'completed'
+                    refund.processed_at = timezone.now()
+                    # Buyer acknowledgement should mark payment as completed
+                    refund.refund_payment_status = 'completed'
+                    refund.save(update_fields=['status', 'processed_at', 'refund_payment_status'])
+
+            # Mark dispute as resolved and set resolved_at
+            dispute.status = 'resolved'
+            dispute.resolved_at = timezone.now()
+            dispute.save(update_fields=['status', 'resolved_at'])
+
+            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+class SellerGifts(viewsets.ModelViewSet):
+    serializer_class = ProductSerializer
+    
+    @action(detail=False, methods=['get'], url_path='global-categories')    
+    def get_global_categories(self, request):
+        """
+        Fetch global categories (where shop_id is null/empty)
+        """
+        try:
+            # Fetch categories where shop is null (global categories)
+            global_categories = Category.objects.filter(shop__isnull=True).order_by('name')
+            
+            # Serialize the data
+            categories_data = []
+            for category in global_categories:
+                category_data = {
+                    "id": str(category.id),
+                    "name": category.name,
+                    "shop": None,  # Explicitly set to null since we're filtering for null shop
+                    "user": {
+                        "id": str(category.user.id),
+                        "username": category.user.username
+                    } if category.user else None,
+                }
+                categories_data.append(category_data)
+            
+            return Response({
+                "success": True,
+                "categories": categories_data,
+                "message": "Global categories retrieved successfully",
+                "total_count": len(categories_data),
+                "is_global": True
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch global categories",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+    @action(detail=False, methods=['post'], url_path='global-categories/predict')    
+    def predict_category(self, request):
+        """
+        Predict category for a product - FIXED VERSION with UUIDs
+        """
+        try:
+            import pandas as pd
+            import numpy as np
+            import tensorflow as tf
+            import joblib
+            import os
+            
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+            MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+            
+            print(f"Looking for models in: {MODEL_DIR}")
+
+            # Load the trained models
+            try:
+                category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+                scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+                model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
+                
+                # Load the EXACT feature columns used during training
+                feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
+                
+                print(f"✅ Models loaded successfully!")
+                print(f"Model expects {len(feature_columns)} features: {feature_columns}")
+
+                print(f"Model input shape: {model.input_shape}")
+                print(f"Model expects {model.input_shape[1]} features")
+                print(f"Loaded {len(feature_columns)} features from file")
+                
+            except FileNotFoundError as e:
+                print(f"❌ Model file not found: {str(e)}")
+                return Response(
+                    {'success': False, 'error': f'Model files not found. Please train the model first.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Extract data from request
+            data = request.data
+            
+            # Required fields from UI - price still required but will be set to 0
+            required_fields = ['name', 'description', 'quantity', 'price', 'condition']
+            
+            # Validate required fields
+            for field in required_fields:
+                if field not in data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Prepare item data - set price to 0
+            item_data = {
+                'name': str(data['name']),
+                'description': str(data['description']),
+                'quantity': int(data['quantity']),
+                'price': 0.0,  # SET PRICE TO 0
+                'condition': str(data['condition'])
+            }
+            
+            print(f"\n=== PREDICTION STARTED ===")
+            print(f"Product: {item_data['name']}")
+            print(f"Price: ${item_data['price']}, Quantity: {item_data['quantity']}")
+            
+            # ================================================
+            # CREATE FEATURES - EXACTLY AS DURING TRAINING
+            # ================================================
+            
+            # Initialize all features to 0
+            features = {col: 0 for col in feature_columns}
+            
+            # Basic numeric features - only if they're in feature_columns
+            price = item_data['price']  # This will be 0
+            quantity = item_data['quantity']
+            
+            # Set only the features that exist in feature_columns
+            if 'price' in feature_columns:
+                features['price'] = price
+            if 'quantity' in feature_columns:
+                features['quantity'] = quantity
+            if 'price_quantity_interaction' in feature_columns:
+                features['price_quantity_interaction'] = price * np.log1p(quantity + 1)
+            if 'log_price' in feature_columns:
+                features['log_price'] = np.log1p(price)
+            if 'price_per_unit' in feature_columns:
+                features['price_per_unit'] = price / (quantity + 1)
+            if 'price_to_quantity_ratio' in feature_columns:
+                features['price_to_quantity_ratio'] = price / (quantity + 1e-5)
+            if 'price_scaled' in feature_columns:
+                features['price_scaled'] = price / 10000  # Use same scaling as training
+            if 'quantity_scaled' in feature_columns:
+                features['quantity_scaled'] = quantity / 100  # Use same scaling as training
+            
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            
+            if 'condition_score' in feature_columns:
+                if 'new' in condition_lower:
+                    features['condition_score'] = 3
+                elif 'like new' in condition_lower:
+                    features['condition_score'] = 2
+                elif 'refurbished' in condition_lower:
+                    features['condition_score'] = 1
+                elif 'excellent' in condition_lower:
+                    features['condition_score'] = 0
+                elif 'good' in condition_lower:
+                    features['condition_score'] = -1
+                elif 'fair' in condition_lower:
+                    features['condition_score'] = -2
+                else:
+                    features['condition_score'] = 0
+            
+            # is_refurbished feature (if present)
+            if 'is_refurbished' in feature_columns:
+                features['is_refurbished'] = 1 if 'refurbished' in condition_lower else 0
+            
+            # Text features
+            name_lower = item_data['name'].lower()
+            desc_lower = item_data['description'].lower()
+            all_text = name_lower + ' ' + desc_lower
+            
+            if 'name_length' in feature_columns:
+                features['name_length'] = len(item_data['name'])
+            if 'desc_length' in feature_columns:
+                features['desc_length'] = len(item_data['description'])
+            if 'name_desc_ratio' in feature_columns:
+                desc_len = len(item_data['description'])
+                if desc_len > 0:
+                    features['name_desc_ratio'] = len(item_data['name']) / desc_len
+                else:
+                    features['name_desc_ratio'] = len(item_data['name'])
+            
+            # Keyword features - only for features that start with 'has_' AND are in feature_columns
+            for feature in feature_columns:
+                if feature.startswith('has_'):
+                    keyword = feature[4:]  # Remove 'has_' prefix
+                    features[feature] = 1 if keyword in all_text else 0
+            
+            # Price bins - only if they're in feature_columns (all will be 0 since price is 0)
+            if 'price_bin_0' in feature_columns:
+                features['price_bin_0'] = 1 if price < 100 else 0  # This will be 1
+            if 'price_bin_1' in feature_columns:
+                features['price_bin_1'] = 1 if 100 <= price < 500 else 0
+            if 'price_bin_2' in feature_columns:
+                features['price_bin_2'] = 1 if 500 <= price < 1000 else 0
+            if 'price_bin_3' in feature_columns:
+                features['price_bin_3'] = 1 if 1000 <= price < 2000 else 0
+            if 'price_bin_4' in feature_columns:
+                features['price_bin_4'] = 1 if price >= 2000 else 0
+            
+            # Category-specific features (these use category stats, so set to 0 for prediction)
+            if 'price_category_zscore' in feature_columns:
+                features['price_category_zscore'] = 0  # Can't compute without category
+            if 'quantity_category_zscore' in feature_columns:
+                features['quantity_category_zscore'] = 0  # Can't compute without category
+            if 'price_category_quartile' in feature_columns:
+                features['price_category_quartile'] = 2  # Default middle quartile
+            
+            # Additional simple text features
+            if 'name_word_count' in feature_columns:
+                features['name_word_count'] = len(item_data['name'].split())
+            if 'desc_word_count' in feature_columns:
+                features['desc_word_count'] = len(item_data['description'].split())
+            if 'keyword_count' in feature_columns:
+                # Count keyword features that are set to 1
+                keyword_features = [f for f in feature_columns if f.startswith('has_')]
+                features['keyword_count'] = sum(1 for f in keyword_features if features.get(f, 0) == 1)
+            if 'unique_keywords' in feature_columns:
+                # Same as keyword_count for prediction
+                keyword_features = [f for f in feature_columns if f.startswith('has_')]
+                features['unique_keywords'] = sum(1 for f in keyword_features if features.get(f, 0) == 1)
+            
+            # Brand mentions
+            for brand_feature in ['has_iphone', 'has_samsung', 'has_apple', 'has_sony']:
+                if brand_feature in feature_columns:
+                    brand_name = brand_feature[4:]  # Remove 'has_' prefix
+                    features[brand_feature] = 1 if brand_name in all_text else 0
+            
+            # New/Used flags
+            if 'is_new' in feature_columns:
+                features['is_new'] = 1 if 'new' in condition_lower else 0
+            if 'is_used' in feature_columns:
+                features['is_used'] = 1 if 'used' in condition_lower else 0
+            
+            print(f"\n=== FEATURE SUMMARY ===")
+            print(f"Total features created: {len(features)}")
+            print(f"Features expected: {len(feature_columns)}")
+            
+            # Create DataFrame with EXACTLY the expected features
+            X_item = pd.DataFrame([features])
+            
+            # Ensure we only have the expected features (remove extras, add missing)
+            for col in feature_columns:
+                if col not in X_item.columns:
+                    X_item[col] = 0
+            
+            # Remove any columns not in feature_columns
+            extra_cols = [col for col in X_item.columns if col not in feature_columns]
+            if extra_cols:
+                print(f"Removing extra columns: {extra_cols}")
+                X_item = X_item.drop(columns=extra_cols)
+            
+            # Reorder columns to match training order
+            X_item = X_item[feature_columns]
+            
+            print(f"DataFrame shape: {X_item.shape}")
+            print(f"Columns: {list(X_item.columns)}")
+            
+            # Show top non-zero features
+            non_zero = X_item.loc[:, (X_item != 0).any()].columns.tolist()
+            print(f"Non-zero features ({len(non_zero)}): {non_zero}")
+            
+            # ================================================
+            # SCALE AND PREDICT
+            # ================================================
+            
+            try:
+                X_scaled = scaler.transform(X_item)
+                print(f"Scaled successfully to shape: {X_scaled.shape}")
+            except Exception as e:
+                print(f"Scaling error: {e}, using raw features")
+                X_scaled = X_item.values.astype(np.float32)
+            
+            # Make prediction
+            prediction_probs = model.predict(X_scaled, verbose=0)
+            predicted_class = np.argmax(prediction_probs, axis=1)[0]
+            confidence = np.max(prediction_probs, axis=1)[0]
+            
+            # Convert predicted class to actual category label
+            predicted_label = category_le.inverse_transform([predicted_class])[0]
+            
+            print(f"\n✅ PREDICTION SUCCESSFUL!")
+            print(f"Predicted: {predicted_label}")
+            print(f"Confidence: {confidence:.2%}")
+            
+            # ================================================
+            # GET UUID FROM DATABASE (NEW CODE)
+            # ================================================
+            
+            # Try to find the category in the database
+            try:
+                # First, try to find the category by name (case-insensitive)
+                category_obj = Category.objects.filter(
+                    name__iexact=predicted_label,
+                    shop__isnull=True  # Only global categories
+                ).first()
+                
+                if category_obj:
+                    category_uuid = str(category_obj.id)
+                    category_name = category_obj.name
+                    print(f"✅ Found category in DB: {category_name} (UUID: {category_uuid})")
+                else:
+                    # If not found by exact name, try to find similar
+                    # You might need to adjust this based on your category naming
+                    similar_categories = Category.objects.filter(
+                        name__icontains=predicted_label,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if similar_categories:
+                        category_uuid = str(similar_categories.id)
+                        category_name = similar_categories.name
+                        print(f"✅ Found similar category in DB: {category_name} (UUID: {category_uuid})")
+                    else:
+                        # Fallback: get the first available global category
+                        first_category = Category.objects.filter(shop__isnull=True).first()
+                        if first_category:
+                            category_uuid = str(first_category.id)
+                            category_name = first_category.name
+                            print(f"⚠️  Category not found, using first available: {category_name}")
+                        else:
+                            # No categories in database
+                            category_uuid = None
+                            category_name = predicted_label
+                            print(f"❌ No categories found in database")
+                            
+            except Exception as db_error:
+                print(f"Database lookup error: {db_error}")
+                category_uuid = None
+                category_name = predicted_label
+            
+            # ================================================
+            # PREPARE RESPONSE WITH UUIDs
+            # ================================================
+            
+            # Get all category names from database (not just from model)
+            try:
+                all_categories_objs = Category.objects.filter(shop__isnull=True)
+                all_categories_list = []
+                
+                for cat in all_categories_objs:
+                    all_categories_list.append({
+                        'uuid': str(cat.id),
+                        'name': cat.name,
+                        'id': str(cat.id)  # Include both uuid and id for compatibility
+                    })
+            except Exception as e:
+                print(f"Error fetching categories from DB: {e}")
+                all_categories_list = list(category_le.classes_)
+            
+            # Prepare top 3 categories
+            top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
+            top_categories = []
+            
+            for idx in top_3_indices:
+                category_label = category_le.inverse_transform([idx])[0]
+                
+                # Try to find this category in DB for UUID
+                try:
+                    cat_obj = Category.objects.filter(
+                        name__iexact=category_label,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if cat_obj:
+                        category_uuid_for_alt = str(cat_obj.id)
+                        category_name_for_alt = cat_obj.name
+                    else:
+                        category_uuid_for_alt = None
+                        category_name_for_alt = category_label
+                        
+                except Exception:
+                    category_uuid_for_alt = None
+                    category_name_for_alt = category_label
+                
+                top_categories.append({
+                    'category_id': int(idx),  # Keep numeric ID for model reference
+                    'category_uuid': category_uuid_for_alt,  # Add UUID for database
+                    'category_name': category_name_for_alt,
+                    'confidence': float(prediction_probs[0][idx])
+                })
+            
+            # Get keywords found
+            keyword_cols = [col for col in feature_columns if col.startswith('has_')]
+            keywords_found = [col.replace('has_', '') for col in keyword_cols if features.get(col, 0) == 1]
+            
+            # Determine price range (will always be Ultra Budget since price is 0)
+            price_range = 'Ultra Budget'  # Since price is 0
+            
+            # Build the response
+            result = {
+                'success': True,
+                'predicted_category': {
+                    'category_id': int(predicted_class),  # Numeric ID from model
+                    'category_uuid': category_uuid,  # UUID from database
+                    'category_name': predicted_label,
+                    'confidence': float(confidence)
+                },
+                'alternative_categories': top_categories[1:] if len(top_categories) > 1 else [],
+                'all_categories': all_categories_list,
+                'feature_insights': {
+                    'keywords_found': keywords_found,
+                    'price_range': price_range,
+                    'price': float(price),
+                    'quantity': int(quantity),
+                    'condition': item_data['condition']
+                }
+            }
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"\n❌ PREDICTION ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
             return Response(
-                {'error': 'User ID required in X-User-Id header'},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    'success': False, 
+                    'error': f'Prediction failed: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-        instance = self.get_object()
+    def get_queryset(self):
+        # Get user_id from request data instead of authenticated user
+        user_id = self.request.data.get('customer_id')
+        if user_id:
+            try:
+                seller = Customer.objects.get(customer_id=user_id)
+                return Product.objects.filter(customer=seller).order_by('-created_at')
+            except Customer.DoesNotExist:
+                return Product.objects.none()
+        return Product.objects.none()
+
+    def create(self, request):
+        # Validate required fields for seller product creation
+        required_fields = ["name", "description", "quantity", "price", "condition", "shop", "customer_id"]
+        missing_fields = [f for f in required_fields if f not in request.data]
+
+        if missing_fields:
+            return Response({
+                "error": "Missing required fields",
+                "missing_fields": missing_fields
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the user ID from session (sent from frontend)
+        user_id = request.data.get("customer_id")
+        if not user_id:
+            return Response({"error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get seller using the user_id from session
+        try:
+            seller = Customer.objects.get(customer_id=user_id)
+        except Customer.DoesNotExist:
+            return Response({"error": "Seller not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        shop_id = request.data.get("shop")
         
-        # Check if user can delete the evidence
-        if not self._is_admin_user(user) and instance.uploaded_by != user:
-            return Response(
-                {'error': 'You do not have permission to delete this evidence'},
-                status=status.HTTP_403_FORBIDDEN
+        # Verify the shop belongs to the seller
+        try:
+            shop = Shop.objects.get(id=shop_id, customer=seller)
+        except Shop.DoesNotExist:
+            return Response({
+                "error": "Shop not found or does not belong to you"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if seller can add more products
+        if not seller.can_add_product():
+            return Response({
+                "error": f"Cannot add more than {seller.product_limit} products. Current count: {seller.current_product_count}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Prepare data with the seller from session user_id
+        # Create a shallow copy excluding file fields
+        product_data = {}
+        for key, value in request.data.items():
+            if not hasattr(value, 'file'):  # Skip file objects
+                product_data[key] = value
+        product_data['customer'] = seller.customer_id
+        
+        # Set price to 0 for gifts
+        product_data['price'] = 0.0
+        
+        # Handle category_admin_id for global categories
+        category_admin_id = request.data.get('category_admin_id')
+        if category_admin_id and category_admin_id != "none":
+            try:
+                category_admin = Category.objects.get(id=category_admin_id, shop__isnull=True)
+                product_data['category_admin'] = category_admin_id
+            except Category.DoesNotExist:
+                return Response({
+                    "error": "Invalid global category selected"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # If accepted_categories was sent as a JSON string, parse it into a list for the serializer
+        try:
+            import json
+            accepted_raw = product_data.get('accepted_categories')
+            if accepted_raw and isinstance(accepted_raw, str):
+                accepted_list = json.loads(accepted_raw)
+                try:
+                    product_data.setlist('accepted_categories', accepted_list)
+                except Exception:
+                    product_data['accepted_categories'] = accepted_list
+        except Exception as e:
+            print('Failed to parse accepted_categories:', e)
+
+        serializer = ProductCreateSerializer(data=product_data, context={'request': request})
+        if serializer.is_valid():
+            with transaction.atomic():
+                # Save product and catch validation errors cleanly
+                try:
+                    product = serializer.save()
+                except ValidationError as e:
+                    return Response({
+                        "error": "Validation failed",
+                        "details": str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Handle media files if any
+                media_files = request.FILES.getlist('media_files')
+                print(f"Number of media files received: {len(media_files)}")  # Debug
+                for i, media_file in enumerate(media_files):
+                    print(f"Media file {i}: name={media_file.name}, size={media_file.size}, type={media_file.content_type}")  # Debug
+                    try:
+                        product_media = ProductMedia.objects.create(
+                            product=product,
+                            file_data=media_file,
+                            file_type=media_file.content_type
+                        )
+                        print(f"Created ProductMedia: {product_media.id}, file saved to: {product_media.file_data}")  # Debug
+                    except Exception as e:
+                        print(f"Error creating ProductMedia: {e}")  # Debug
+
+                # Process variants JSON (if provided) to create Variants and VariantOptions
+                variants_raw = request.data.get('variants')
+                if variants_raw:
+                    try:
+                        import json
+                        variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+                        # Collect uploaded files per option_id to later apply to matching SKUs
+                        option_image_files = {}
+                        # Map payload option ids -> created VariantOptions DB id
+                        option_id_map = {}
+                        for g in variants_list:
+                            group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
+                            variant = Variants.objects.create(
+                                product=product,
+                                shop=shop,
+                                title=g.get('title') or ''
+                            )
+                            for opt in g.get('options', []):
+                                provided_option_id = opt.get('id') or str(uuid.uuid4())
+                                vopt = VariantOptions.objects.create(
+                                    variant=variant,
+                                    title=opt.get('title') or ''
+                                )
+                                # Record mapping from provided option id to the actual DB id (string)
+                                option_id_map[str(provided_option_id)] = str(vopt.id)
+
+                                file_key = f"variant_image_{group_id}_{provided_option_id}"
+                                # Debug: log presence of file key and available FILES keys
+                                try:
+                                    files_keys = list(request.FILES.keys())
+                                except Exception:
+                                    files_keys = []
+                                print(f"Looking for variant file key '{file_key}' in request.FILES. Available keys: {files_keys}")
+
+                                target_key = None
+                                if file_key in request.FILES:
+                                    target_key = file_key
+                                else:
+                                    # Fallback: try match by option_id suffix if group_id mismatch occurred
+                                    for k in files_keys:
+                                        if k.endswith(f"_{provided_option_id}") and k.startswith("variant_image_"):
+                                            target_key = k
+                                            print(f"Fallback matched variant image key '{k}' for option {provided_option_id}")
+                                            break
+
+                                if target_key:
+                                    try:
+                                        file_obj = request.FILES[target_key]
+                                        print(f"Queued variant image for option {provided_option_id} (db id {vopt.id}): name={getattr(file_obj, 'name', None)}, size={getattr(file_obj, 'size', None)}, content_type={getattr(file_obj, 'content_type', None)}")
+                                        # Store to map for assignment to SKUs later
+                                        # Keep both keys: the provided id and the actual DB id, so lookups using either work
+                                        option_image_files[str(provided_option_id)] = file_obj
+                                        option_image_files[str(vopt.id)] = file_obj
+                                    except Exception as e:
+                                        print('Failed to read variant image file', e)
+
+                        # Handle SKUs payload (per-variant combination config including swap)
+                        skus_raw = request.data.get('skus')
+                        if skus_raw:
+                            try:
+                                import json
+                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+                                from decimal import Decimal
+                                # Debug: list incoming file keys and prepare available explicit sku image keys (preserve order)
+                                try:
+                                    files_keys = list(request.FILES.keys())
+                                except Exception:
+                                    files_keys = []
+                                print(f"Incoming FILES keys: {files_keys}")
+                                sku_file_keys = [k for k in files_keys if k.startswith('sku_image_')]
+                                print(f"Detected sku_image keys (ordered): {sku_file_keys}")
+                                print(f"SKUs payload: {skus_list}")
+                                for s in skus_list:
+                                    # Map provided option ids to DB VariantOptions ids when possible
+                                    provided_oids = s.get('option_ids') or []
+                                    mapped_oids = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oids ]
+
+                                    sku = ProductSKU.objects.create(
+                                        product=product,
+                                        option_ids=mapped_oids,
+                                        option_map=s.get('option_map'),
+                                        price=Decimal('0.00'),  # SET SKU PRICE TO 0
+                                        compare_price=(Decimal(str(s.get('compare_price'))) if s.get('compare_price') not in (None, '') else None),
+                                        quantity=int(s.get('quantity') or 0),
+                                        length=(Decimal(str(s.get('length'))) if s.get('length') not in (None, '') else None),
+                                        width=(Decimal(str(s.get('width'))) if s.get('width') not in (None, '') else None),
+                                        height=(Decimal(str(s.get('height'))) if s.get('height') not in (None, '') else None),
+                                        weight=(Decimal(str(s.get('weight'))) if s.get('weight') not in (None, '') else None),
+                                        weight_unit=s.get('weight_unit') or 'g',
+                                        sku_code=s.get('sku_code') or '',
+                                        critical_trigger=s.get('critical_trigger') if s.get('critical_trigger') not in (None, '') else None,
+                                        allow_swap=bool(s.get('allow_swap', False)),
+                                        swap_type=s.get('swap_type') or 'direct_swap',
+                                        minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                        maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
+                                        swap_description=s.get('swap_description') or '',
+                                    )
+
+                                    # Attach accepted categories if provided
+                                    accepted = s.get('accepted_categories') or []
+                                    if isinstance(accepted, str):
+                                        try:
+                                            import json
+                                            accepted = json.loads(accepted)
+                                        except Exception:
+                                            accepted = []
+                                    for cat_id in accepted:
+                                        try:
+                                            cat = Category.objects.get(id=cat_id)
+                                            sku.accepted_categories.add(cat)
+                                        except Exception:
+                                            pass
+
+                                    # Save SKU image if present in FILES keyed by provided sku id OR fallback to next available sku_image_* file key
+                                    provided_id = s.get('id')
+                                    print(f"Processing SKU: provided_id={provided_id}, option_ids={s.get('option_ids')}")
+                                    file_key = f"sku_image_{provided_id}" if provided_id else None
+                                    assigned = False
+                                    if file_key and file_key in request.FILES:
+                                        try:
+                                            sku.image = request.FILES[file_key]
+                                            sku.save()
+                                            assigned = True
+                                            print(f"SKU {sku.id} saved image from explicit key {file_key}: {sku.image.name}")
+                                        except Exception as e:
+                                            print('Failed to save sku image', e)
+                                    # Fallback: if explicit key not found, consume next sku_image_* from the FormData (preserve order)
+                                    if not assigned and sku_file_keys:
+                                        next_key = sku_file_keys.pop(0)
+                                        print(f"No explicit sku key for SKU {sku.id}; using next sku_image key {next_key}")
+                                        try:
+                                            sku.image = request.FILES[next_key]
+                                            sku.save()
+                                            assigned = True
+                                            print(f"SKU {sku.id} saved image from fallback key {next_key}: {sku.image.name}")
+                                        except Exception as e:
+                                            print('Failed to save sku image from fallback', e)
+                                    # Final fallback: map from option images by option_ids
+                                    if not assigned:
+                                        try:
+                                            provided_oid_list = s.get('option_ids') or []
+                                            # Prefer mapped DB option ids first, then the provided ids
+                                            mapped_oid_list = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oid_list ]
+                                            search_list = mapped_oid_list + [str(x) for x in provided_oid_list]
+                                            print(f"Attempting option->sku mapping using option_image_files keys: {list(option_image_files.keys())}; searching: {search_list}")
+                                            for oid in search_list:
+                                                f = option_image_files.get(str(oid))
+                                                if f:
+                                                    sku.image = f
+                                                    sku.save()
+                                                    print(f"SKU {sku.id} saved image from option {oid}: {sku.image.name}")
+                                                    break
+                                        except Exception as e:
+                                            print('Failed to map option image to sku', e)
+                            except Exception as e:
+                                print('Failed to parse skus payload:', e)
+                            else:
+                                # No SKUs provided - create simple SKU per option so images/quantities are stored
+                                try:
+                                    from decimal import Decimal
+                                    for g in variants_list:
+                                        for opt in g.get('options', []):
+                                            option_id = opt.get('id') or str(uuid.uuid4())
+                                            sku = ProductSKU.objects.create(
+                                                product=product,
+                                                option_ids=[option_id],
+                                                option_map={g.get('title') or 'Option': opt.get('title')},
+                                                price=Decimal('0.00'),  # SET SKU PRICE TO 0
+                                                quantity=int(opt.get('quantity') or 0),
+                                            )
+                                            f = option_image_files.get(str(option_id))
+                                            if f:
+                                                sku.image = f
+                                                sku.save()
+                                                print(f"Auto-created SKU {sku.id} for option {option_id} and saved image {sku.image.name}")
+                                except Exception as e:
+                                    print('Failed to auto-create SKUs from variants:', e)
+                        else:
+                            # No SKUs provided - create simple SKU per option so images/quantities are stored
+                            try:
+                                from decimal import Decimal
+                                for g in variants_list:
+                                    for opt in g.get('options', []):
+                                        option_id = opt.get('id') or str(uuid.uuid4())
+                                        # Use DB id mapping when available
+                                        mapped_option_id = option_id_map.get(str(option_id), str(option_id))
+                                        sku = ProductSKU.objects.create(
+                                            product=product,
+                                            option_ids=[mapped_option_id],
+                                            option_map={g.get('title') or 'Option': opt.get('title')},
+                                            price=Decimal('0.00'),  # SET SKU PRICE TO 0
+                                            quantity=int(opt.get('quantity') or 0),
+                                        )
+                                        # Try to get image by mapped id first, then provided id
+                                        f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(option_id))
+                                        if f:
+                                            sku.image = f
+                                            sku.save()
+                                            print(f"Auto-created SKU {sku.id} for option {option_id} (mapped {mapped_option_id}) and saved image {sku.image.name}")
+                            except Exception as e:
+                                print('Failed to auto-create SKUs from variants:', e)
+                    except Exception as e:
+                        print('Failed to parse variants payload:', e)
+
+                # Return same format as get_product_list
+                # Debug: list SKUs and their images
+                try:
+                    sku_debug = [{
+                        'id': str(s.id),
+                        'image': (s.image.name if s.image else None)
+                    } for s in product.skus.all()]
+                    print(f"Product {product.id} SKUs after creation: {sku_debug}")
+                except Exception as e:
+                    print('Failed to list skus after creation', e)
+
+                return Response({
+                    "success": True,
+                    "products": [
+                        {
+                            "id": str(product.id),
+                            "name": product.name,
+                            "description": product.description,
+                            "quantity": product.quantity,
+                            "price": str(product.price),  # This will be "0.00"
+                            "status": product.status,
+                            "upload_status": product.upload_status,
+                            "condition": product.condition,
+                            "shop": {
+                                "id": str(product.shop.id),
+                                "name": product.shop.name
+                            } if product.shop else None,
+                            "category_admin": {
+                                "id": str(product.category_admin.id),
+                                "name": product.category_admin.name
+                            } if product.category_admin else None,
+                            "category": {
+                                "id": str(product.category.id),
+                                "name": product.category.name
+                            } if product.category else None,
+                            "created_at": product.created_at.isoformat() if product.created_at else None,
+                            "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                        }
+                    ],
+                    "message": "Product created successfully",
+                    "data_source": "database",
+                    "product_limit_info": {
+                        "current_count": seller.current_product_count,
+                        "limit": seller.product_limit,
+                        "remaining": seller.product_limit - seller.current_product_count
+                    }
+                }, status=status.HTTP_201_CREATED)
+        else:
+            return Response({
+                "error": "Validation failed",
+                "details": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def list(self, request):
+        # For listing, we need to get user_id from request data or query params
+        user_id = request.data.get('customer_id') or request.query_params.get('customer_id')
+        
+        if not user_id:
+            return Response({
+                "error": "User ID is required"
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            seller = Customer.objects.get(customer_id=user_id)
+            # Prefetch variants and variant options to avoid N+1 queries
+            queryset = Product.objects.filter(customer=seller)\
+                .prefetch_related('variants_set__variantoptions_set')\
+                .order_by('-created_at')
+            
+            # Build response manually like in create method
+            products_data = []
+            for product in queryset:
+                # Build variants data
+                variants_data = []
+                # Get all variants for this product
+                for variant in product.variants_set.all():
+                    variant_data = {
+                        "id": str(variant.id),
+                        "title": variant.title,
+                        "options": []
+                    }
+                    # Get all options for this variant
+                    for option in variant.variantoptions_set.all():
+                        variant_data["options"].append({
+                            "id": str(option.id),
+                            "title": option.title,
+                            "quantity": option.quantity,
+                            "price": str(option.price)
+                        })
+                    variants_data.append(variant_data)
+                
+                product_data = {
+                    "id": str(product.id),
+                    "name": product.name,
+                    "description": product.description,
+                    "quantity": product.quantity,
+                    "price": str(product.price),  # This will show "0.00" for gifts
+                    "status": product.status,
+                    "upload_status": product.upload_status,
+                    "condition": product.condition,
+                    "shop": {
+                        "id": str(product.shop.id),
+                        "name": product.shop.name
+                    } if product.shop else None,
+                    "category_admin": {
+                        "id": str(product.category_admin.id),
+                        "name": product.category_admin.name
+                    } if product.category_admin else None,
+                    "category": {
+                        "id": str(product.category.id),
+                        "name": product.category.name
+                    } if product.category else None,
+                    "variants": variants_data,  # ADD VARIANTS HERE
+                    "created_at": product.created_at.isoformat() if product.created_at else None,
+                    "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                }
+                products_data.append(product_data)
+            
+            return Response({
+                "success": True,
+                "products": products_data,
+                "message": "Products retrieved successfully",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)
+        except Customer.DoesNotExist:
+            return Response({
+                "success": True,
+                "products": [],
+                "message": "No seller found for this user",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)
+
+
+class CustomerGiftViewSet(viewsets.ViewSet):
+    """
+    Comprehensive ViewSet for customer gift management 
+    (No shop required - for personal listings)
+    """
+    
+    @action(detail=False, methods=['get'])
+    def global_categories(self, request):
+        """Get all global categories (no shop) for customer gifts"""
+        try:
+            categories = Category.objects.filter(shop__isnull=True).order_by('name')
+            categories_data = []
+            
+            for category in categories:
+                categories_data.append({
+                    "id": str(category.id),
+                    "name": category.name,
+                    "shop": None,
+                    "user": {
+                        "id": str(category.user.id),
+                        "username": category.user.username
+                    } if category.user else None,
+                })
+            
+            return Response({
+                "success": True,
+                "categories": categories_data,
+                "message": "Global categories retrieved successfully",
+                "total_count": len(categories_data)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": "Failed to fetch global categories",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def create_gift(self, request):
+        """
+        Comprehensive gift creation for customers - handles everything:
+        - Basic gift info
+        - Categories (global only)
+        - Media files
+        - Variants & SKUs
+        - No price (always 0) and no swap features
+        - No shop required
+        """
+        try:
+            # Get user_id from headers or data
+            user_id = request.data.get('customer_id') or request.headers.get('X-User-Id')
+            
+            if not user_id:
+                return Response({
+                    "error": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get customer profile
+            try:
+                customer = Customer.objects.get(customer_id=user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "error": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check product limit (gifts count towards product limit)
+            if not customer.can_add_product():
+                return Response({
+                    "error": f"Cannot add more than {customer.product_limit} products. Current count: {customer.current_product_count}"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Prepare base gift data
+            gift_data = {}
+            
+            # Handle single values (fix duplicates from FormData)
+            single_value_fields = [
+                'name', 'description', 'condition', 'category_admin_id', 
+                'weight_unit', 'upload_status', 'status'
+            ]
+            
+            for field in single_value_fields:
+                value = request.data.get(field)
+                if isinstance(value, list) and len(value) > 0:
+                    gift_data[field] = value[0]  # Take first if list
+                elif value is not None:
+                    gift_data[field] = value
+            
+            # Handle numeric fields with validation
+            numeric_fields = ['quantity', 'length', 'width', 'height', 'weight', 'critical_stock']
+            for field in numeric_fields:
+                value = request.data.get(field)
+                if value:
+                    try:
+                        if isinstance(value, list) and len(value) > 0:
+                            gift_data[field] = float(value[0])
+                        else:
+                            gift_data[field] = float(value)
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Set customer and defaults
+            gift_data['customer'] = customer.customer_id
+            gift_data['upload_status'] = gift_data.get('upload_status', 'draft')
+            gift_data['status'] = gift_data.get('status', 'active')
+            
+            # Set price to 0 for gifts
+            gift_data['price'] = 0.0
+            
+            # Validate global category if provided
+            category_admin_id = gift_data.get('category_admin_id')
+            if category_admin_id and category_admin_id != "none":
+                try:
+                    Category.objects.get(id=category_admin_id, shop__isnull=True)
+                except Category.DoesNotExist:
+                    return Response({
+                        "error": "Invalid global category selected"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle shipping zones (for customer gifts if needed)
+            shipping_zones_raw = request.data.get('shipping_zones')
+            if shipping_zones_raw:
+                try:
+                    if isinstance(shipping_zones_raw, str):
+                        shipping_zones = json.loads(shipping_zones_raw)
+                    else:
+                        shipping_zones = shipping_zones_raw
+                    
+                    # Validate shipping zones
+                    valid_zones = []
+                    for zone in shipping_zones:
+                        if isinstance(zone, dict) and 'name' in zone:
+                            valid_zones.append({
+                                'name': zone.get('name'),
+                                'fee': float(zone.get('fee', 0)),
+                                'free_shipping': bool(zone.get('free_shipping', False))
+                            })
+                    
+                    if valid_zones:
+                        gift_data['shipping_zones'] = valid_zones
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
+            
+            # Create gift with transaction
+            with transaction.atomic():
+                serializer = ProductCreateSerializer(
+                    data=gift_data, 
+                    context={'request': request}
+                )
+                
+                if serializer.is_valid():
+                    # Create the gift (shop will be null for customer gifts)
+                    gift = serializer.save()
+                    
+                    # Handle media files
+                    media_files = request.FILES.getlist('media_files', [])
+                    for media_file in media_files:
+                        ProductMedia.objects.create(
+                            product=gift,
+                            file_data=media_file,
+                            file_type=media_file.content_type
+                        )
+                    
+                    # Handle variants and SKUs if provided
+                    variants_raw = request.data.get('variants')
+                    skus_raw = request.data.get('skus')
+                    
+                    if variants_raw:
+                        # Parse variants data
+                        try:
+                            variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+                            
+                            # Parse SKUs data
+                            skus_list = []
+                            if skus_raw:
+                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+                            
+                            # Process variants and SKUs (without swap features)
+                            self._create_variants_with_skus(
+                                product=gift,
+                                variants_data=variants_list,
+                                skus_data=skus_list,
+                                files=request.FILES
+                            )
+                        except Exception as e:
+                            print(f"Error processing variants/SKUs: {type(e)} - {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                            # Rollback transaction if variant creation fails
+                            raise ValidationError(f"Failed to create variants: {str(e)}")
+                    
+                    # Increment customer's product count
+                    customer.increment_product_count()
+                    
+                    # Return comprehensive success response
+                    return Response({
+                        "success": True,
+                        "gift": self._get_gift_detail_data(gift),
+                        "message": "Customer gift created successfully",
+                        "product_limit": {
+                            "current_count": customer.current_product_count,
+                            "limit": customer.product_limit,
+                            "remaining": customer.product_limit - customer.current_product_count
+                        }
+                    }, status=status.HTTP_201_CREATED)
+                else:
+                    return Response({
+                        "error": "Validation failed",
+                        "details": serializer.errors
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+        except ValidationError as e:
+            return Response({
+                "error": "Validation failed",
+                "details": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({
+                "error": "Gift creation failed",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _create_variants_with_skus(self, product, variants_data, skus_data, files):
+        from decimal import Decimal, InvalidOperation
+
+        """Helper method to create variants and SKUs for customer gifts (no swap features)"""
+        option_image_files = {}
+        option_id_map = {}
+        
+        print(f"Creating variants for gift {product.id}")
+        print(f"Variants data: {variants_data}")
+        print(f"SKUs data: {skus_data}")
+        print(f"Files keys: {list(files.keys())}")
+        
+        # Create variant groups and options
+        for variant_group in variants_data:
+            variant = Variants.objects.create(
+                product=product,
+                shop=None,  # Customer gifts have no shop
+                title=variant_group.get('title', '')
             )
+            print(f"Created variant: {variant.id} - {variant.title}")
+            
+            for option in variant_group.get('options', []):
+                provided_option_id = option.get('id', str(uuid.uuid4()))
+                voption = VariantOptions.objects.create(
+                    variant=variant,
+                    title=option.get('title', '')
+                )
+                print(f"Created variant option: {voption.id} - {voption.title}")
+                
+                # Map provided ID to actual DB ID
+                option_id_map[str(provided_option_id)] = str(voption.id)
+                
+                # Store variant images if any
+                file_key = f"variant_image_{variant_group.get('id', '')}_{provided_option_id}"
+                if file_key in files:
+                    option_image_files[str(provided_option_id)] = files[file_key]
+                    option_image_files[str(voption.id)] = files[file_key]
+                    print(f"Stored variant image for option {provided_option_id}")
         
-        # Check if dispute is in a state that allows evidence deletion
-        if instance.dispute.status in ['completed', 'rejected', 'cancelled']:
+        # Create SKUs if provided
+        if skus_data:
+            print(f"Creating {len(skus_data)} SKUs")
+            for sku_data in skus_data:
+                provided_option_ids = sku_data.get('option_ids', [])
+                mapped_option_ids = [
+                    option_id_map.get(str(oid), str(oid)) 
+                    for oid in provided_option_ids
+                ]
+                
+                # Safe Decimal conversion helper function
+                def safe_decimal(value, default=None):
+                    if value is None or value == '':
+                        return default
+                    try:
+                        # Handle string or numeric values
+                        if isinstance(value, str):
+                            # Remove any whitespace and check if empty
+                            value = value.strip()
+                            if value == '':
+                                return default
+                            # Replace comma with dot for decimal separator
+                            value = value.replace(',', '.')
+                        return Decimal(str(value))
+                    except (ValueError, TypeError, InvalidOperation):
+                        print(f"Warning: Could not convert '{value}' to Decimal, using default: {default}")
+                        return default
+                
+                # Create SKU with safe conversions - price always 0 for gifts
+                sku = ProductSKU.objects.create(
+                    product=product,
+                    option_ids=mapped_option_ids,
+                    option_map=sku_data.get('option_map', {}),
+                    price=Decimal('0.00'),  # Gifts always have price 0
+                    compare_price=safe_decimal(sku_data.get('compare_price'), None),
+                    quantity=int(sku_data.get('quantity', 0)),
+                    length=safe_decimal(sku_data.get('length'), None),
+                    width=safe_decimal(sku_data.get('width'), None),
+                    height=safe_decimal(sku_data.get('height'), None),
+                    weight=safe_decimal(sku_data.get('weight'), None),
+                    weight_unit=sku_data.get('weight_unit', 'g'),
+                    sku_code=sku_data.get('sku_code', ''),
+                    critical_trigger=int(sku_data.get('critical_trigger')) if sku_data.get('critical_trigger') not in (None, '') else None,
+                    allow_swap=False,  # No swap for gifts
+                    swap_type='direct_swap',  # Default, not used
+                    minimum_additional_payment=Decimal('0.00'),  # No swap
+                    maximum_additional_payment=Decimal('0.00'),  # No swap
+                    swap_description='',  # No swap
+                )
+                print(f"Created SKU: {sku.id}")
+                
+                # Handle SKU images
+                sku_id = sku_data.get('id')
+                file_key = f"sku_image_{sku_id}" if sku_id else None
+                
+                if file_key and file_key in files:
+                    sku.image = files[file_key]
+                    sku.save()
+                    print(f"Added explicit image to SKU {sku.id}")
+                else:
+                    # Try to get image from option images
+                    for oid in provided_option_ids:
+                        if str(oid) in option_image_files:
+                            sku.image = option_image_files[str(oid)]
+                            sku.save()
+                            print(f"Added option image to SKU {sku.id}")
+                            break
+        else:
+            # Auto-create SKUs from variants if no SKUs provided
+            print("Auto-creating SKUs from variants")
+            for variant_group in variants_data:
+                for option in variant_group.get('options', []):
+                    provided_option_id = option.get('id', str(uuid.uuid4()))
+                    mapped_option_id = option_id_map.get(str(provided_option_id), str(provided_option_id))
+                    
+                    sku = ProductSKU.objects.create(
+                        product=product,
+                        option_ids=[mapped_option_id],
+                        option_map={variant_group.get('title', 'Option'): option.get('title', '')},
+                        price=Decimal('0.00'),  # Gifts always have price 0
+                        quantity=int(option.get('quantity', 0)),
+                        allow_swap=False,  # No swap for gifts
+                    )
+                    
+                    # Add image if available
+                    f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(provided_option_id))
+                    if f:
+                        sku.image = f
+                        sku.save()
+
+    def _get_gift_detail_data(self, gift):
+        """Get detailed gift data for response"""
+        # Get media files
+        media_files = []
+        for media in gift.productmedia_set.all():
+            media_files.append({
+                "id": str(media.id),
+                "file_data": media.file_data.url if media.file_data else None,
+                "file_type": media.file_type
+            })
+        
+        # Get SKUs
+        skus = []
+        for sku in gift.skus.all():
+            sku_data = {
+                "id": str(sku.id),
+                "option_ids": sku.option_ids,
+                "option_map": sku.option_map,
+                "sku_code": sku.sku_code,
+                "price": str(sku.price) if sku.price else None,  # Will be "0.00"
+                "compare_price": str(sku.compare_price) if sku.compare_price else None,
+                "quantity": sku.quantity,
+                "allow_swap": sku.allow_swap,  # Will always be False
+                "swap_type": sku.swap_type,
+                "minimum_additional_payment": str(sku.minimum_additional_payment) if sku.minimum_additional_payment else "0.00",
+                "maximum_additional_payment": str(sku.maximum_additional_payment) if sku.maximum_additional_payment else "0.00",
+                "swap_description": sku.swap_description,
+                "image": sku.image.url if sku.image else None,
+            }
+            skus.append(sku_data)
+        
+        # Get variants
+        variants = []
+        for variant in gift.variants_set.all():
+            variant_data = {
+                "id": str(variant.id),
+                "title": variant.title,
+                "options": []
+            }
+            
+            for option in variant.variantoptions_set.all():
+                option_data = {
+                    "id": str(option.id),
+                    "title": option.title,
+                }
+                variant_data["options"].append(option_data)
+            
+            variants.append(variant_data)
+        
+        return {
+            "id": str(gift.id),
+            "name": gift.name,
+            "description": gift.description,
+            "quantity": gift.quantity,
+            "price": str(gift.price),  # Will be "0.00"
+            "compare_price": str(gift.compare_price) if gift.compare_price else None,
+            "upload_status": gift.upload_status,
+            "status": gift.status,
+            "condition": gift.condition,
+            "category_admin": {
+                "id": str(gift.category_admin.id),
+                "name": gift.category_admin.name
+            } if gift.category_admin else None,
+            "media_files": media_files,
+            "skus": skus,
+            "variants": variants,
+            "dimensions": {
+                "length": str(gift.length) if gift.length else None,
+                "width": str(gift.width) if gift.width else None,
+                "height": str(gift.height) if gift.height else None,
+                "weight": str(gift.weight) if gift.weight else None,
+                "weight_unit": gift.weight_unit,
+            } if any([gift.length, gift.width, gift.height, gift.weight]) else None,
+            "created_at": gift.created_at.isoformat(),
+            "updated_at": gift.updated_at.isoformat(),
+        }
+    
+    @action(detail=False, methods=['post'])
+    def predict_category(self, request):
+        """
+        Predict category for a gift - Similar to product prediction but with price=0
+        """
+        try:
+            import pandas as pd
+            import numpy as np
+            import tensorflow as tf
+            import joblib
+            import os
+            
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+            MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+            
+            # Load models
+            try:
+                category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+                scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+                model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
+                feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
+                
+            except FileNotFoundError as e:
+                return Response(
+                    {'success': False, 'error': f'Model files not found. Please train the model first.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Extract data from request
+            data = request.data
+            
+            # Required fields - price not required since it's always 0 for gifts
+            required_fields = ['name', 'description', 'quantity', 'condition']
+            for field in required_fields:
+                if field not in data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Prepare item data - price always 0 for gifts
+            item_data = {
+                'name': str(data['name']),
+                'description': str(data['description']),
+                'quantity': int(data['quantity']),
+                'price': 0.0,  # Gifts always have price 0
+                'condition': str(data['condition'])
+            }
+            
+            # Initialize all features to 0
+            features = {col: 0 for col in feature_columns}
+            
+            # Basic numeric features
+            price = item_data['price']  # This will be 0
+            quantity = item_data['quantity']
+            
+            # Set only the features that exist in feature_columns
+            if 'price' in feature_columns:
+                features['price'] = price
+            if 'quantity' in feature_columns:
+                features['quantity'] = quantity
+            if 'price_quantity_interaction' in feature_columns:
+                features['price_quantity_interaction'] = price * np.log1p(quantity + 1)
+            if 'log_price' in feature_columns:
+                features['log_price'] = np.log1p(price)
+            if 'price_per_unit' in feature_columns:
+                features['price_per_unit'] = price / (quantity + 1)
+            if 'price_to_quantity_ratio' in feature_columns:
+                features['price_to_quantity_ratio'] = price / (quantity + 1e-5)
+            if 'price_scaled' in feature_columns:
+                features['price_scaled'] = price / 10000
+            if 'quantity_scaled' in feature_columns:
+                features['quantity_scaled'] = quantity / 100
+            
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            
+            if 'condition_score' in feature_columns:
+                if 'new' in condition_lower:
+                    features['condition_score'] = 3
+                elif 'like new' in condition_lower:
+                    features['condition_score'] = 2
+                elif 'refurbished' in condition_lower:
+                    features['condition_score'] = 1
+                elif 'excellent' in condition_lower:
+                    features['condition_score'] = 0
+                elif 'good' in condition_lower:
+                    features['condition_score'] = -1
+                elif 'fair' in condition_lower:
+                    features['condition_score'] = -2
+                else:
+                    features['condition_score'] = 0
+            
+            # is_refurbished feature (if present)
+            if 'is_refurbished' in feature_columns:
+                features['is_refurbished'] = 1 if 'refurbished' in condition_lower else 0
+            
+            # Text features
+            name_lower = item_data['name'].lower()
+            desc_lower = item_data['description'].lower()
+            all_text = name_lower + ' ' + desc_lower
+            
+            if 'name_length' in feature_columns:
+                features['name_length'] = len(item_data['name'])
+            if 'desc_length' in feature_columns:
+                features['desc_length'] = len(item_data['description'])
+            
+            # Keyword features
+            for feature in feature_columns:
+                if feature.startswith('has_'):
+                    keyword = feature[4:]  # Remove 'has_' prefix
+                    features[feature] = 1 if keyword in all_text else 0
+            
+            # Price bins (all will be 0 since price is 0)
+            if 'price_bin_0' in feature_columns:
+                features['price_bin_0'] = 1 if price < 100 else 0  # This will be 1
+            if 'price_bin_1' in feature_columns:
+                features['price_bin_1'] = 1 if 100 <= price < 500 else 0
+            if 'price_bin_2' in feature_columns:
+                features['price_bin_2'] = 1 if 500 <= price < 1000 else 0
+            if 'price_bin_3' in feature_columns:
+                features['price_bin_3'] = 1 if 1000 <= price < 2000 else 0
+            if 'price_bin_4' in feature_columns:
+                features['price_bin_4'] = 1 if price >= 2000 else 0
+            
+            # Additional features
+            if 'name_word_count' in feature_columns:
+                features['name_word_count'] = len(item_data['name'].split())
+            if 'desc_word_count' in feature_columns:
+                features['desc_word_count'] = len(item_data['description'].split())
+            
+            # Create DataFrame
+            X_item = pd.DataFrame([features])
+            
+            # Ensure we only have the expected features
+            for col in feature_columns:
+                if col not in X_item.columns:
+                    X_item[col] = 0
+            
+            # Remove any columns not in feature_columns
+            extra_cols = [col for col in X_item.columns if col not in feature_columns]
+            if extra_cols:
+                X_item = X_item.drop(columns=extra_cols)
+            
+            X_item = X_item[feature_columns]
+            
+            # Scale and predict
+            try:
+                X_scaled = scaler.transform(X_item)
+            except Exception as e:
+                X_scaled = X_item.values.astype(np.float32)
+            
+            # Make prediction
+            prediction_probs = model.predict(X_scaled, verbose=0)
+            predicted_class = np.argmax(prediction_probs, axis=1)[0]
+            confidence = np.max(prediction_probs, axis=1)[0]
+            
+            # Convert predicted class to actual category label
+            predicted_label = category_le.inverse_transform([predicted_class])[0]
+            
+            # Try to find the category in the database
+            try:
+                category_obj = Category.objects.filter(
+                    name__iexact=predicted_label,
+                    shop__isnull=True
+                ).first()
+                
+                if category_obj:
+                    category_uuid = str(category_obj.id)
+                    category_name = category_obj.name
+                else:
+                    # Fallback
+                    first_category = Category.objects.filter(shop__isnull=True).first()
+                    if first_category:
+                        category_uuid = str(first_category.id)
+                        category_name = first_category.name
+                    else:
+                        category_uuid = None
+                        category_name = predicted_label
+                        
+            except Exception as db_error:
+                category_uuid = None
+                category_name = predicted_label
+            
+            # Prepare response
+            result = {
+                'success': True,
+                'predicted_category': {
+                    'category_id': int(predicted_class),
+                    'category_uuid': category_uuid,
+                    'category_name': predicted_label,
+                    'confidence': float(confidence)
+                },
+                'feature_insights': {
+                    'condition': item_data['condition'],
+                    'price': 0,  # Gifts have price 0
+                    'quantity': int(quantity)
+                }
+            }
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"\n❌ PREDICTION ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
             return Response(
-                {'error': 'Cannot delete evidence from a closed dispute'},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    'success': False, 
+                    'error': f'Prediction failed: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        self.perform_destroy(instance)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+

@@ -128,7 +128,7 @@ class OTP(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     otp = models.CharField(max_length=10)
     sent_at = models.DateTimeField(auto_now_add=True)
-    expired_at = models.DateTimeField()
+    expired_at = models.DateTimeField(default=timezone.now)
 
     def save(self, *args, **kwargs):
         if not self.expired_at:
@@ -798,190 +798,6 @@ class Payment(models.Model):
     def __str__(self):
         return f"Payment {self.id} for Order {self.order.order}"
 
-
-class Refund(models.Model):
-    STATUS_CHOICES = [
-        ('pending', 'Pending Review'),
-        ('negotiation', 'Negotiation'),
-        ('approved', 'Approved'),
-        ('waiting', 'Waiting For Return'),
-        ('to_verify', 'To Verify'),
-        ('to_process', 'To Process'),
-        ('dispute', 'Dispute'),
-        ('completed', 'Completed'),
-        ('rejected', 'Rejected'),
-        ('cancelled', 'Cancelled'),
-    ]
-    
-    PAYMENT_STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('processing', 'Processing'),
-        ('completed', 'Completed'),
-        ('failed', 'Failed'),
-        ('not_applicable', 'Not Applicable'),
-    ]
-    
-    # === ADD THIS SECTION ===
-    REFUND_CATEGORY_CHOICES = [
-        ('return_item', 'Return Item'),      # Customer returns item
-        ('keep_item', 'Keep Item'),          # Customer keeps item, partial refund
-        ('replacement', 'Replacement'),      # Return + replacement
-    ]
-    # ========================
-    
-    refund = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True)
-    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='refunds_requested')
-    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='refunds_processed')
-    reason = models.CharField(max_length=500)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
-    
-    # === ADD THIS FIELD ===
-    refund_category = models.CharField(
-        max_length=20, 
-        choices=REFUND_CATEGORY_CHOICES, 
-        default='return_item'
-    )
-    # ======================
-    
-    requested_at = models.DateTimeField(auto_now_add=True)
-    logistic_service = models.CharField(max_length=100, null=True, blank=True)
-    tracking_number = models.CharField(max_length=100, null=True, blank=True)
-    preferred_refund_method = models.CharField(max_length=100, null=True, blank=True)
-    final_refund_method = models.CharField(max_length=100, null=True, blank=True)
-    total_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    processed_at = models.DateTimeField(null=True, blank=True)
-    # Date when seller approved the refund request
-    approved_at = models.DateTimeField(null=True, blank=True)
-    # Deadline by which the buyer must return the item after approval
-    return_deadline = models.DateTimeField(null=True, blank=True)
-    # Track if seller has notified buyer to process return
-    buyer_notified_at = models.DateTimeField(null=True, blank=True)
-
-    request_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
-    customer_note = models.TextField(blank=True, null=True)
-    seller_response = models.TextField(blank=True, null=True)
-    
-    # negotition
-    seller_suggested_method = models.CharField(max_length=100, null=True, blank=True)
-    seller_suggested_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    seller_suggested_reason = models.TextField(blank=True, null=True)
-    negotiation_deadline = models.DateTimeField(null=True, blank=True)  # e.g., 3 days to respond
-    
-    # dispute
-    dispute_filed_by = models.ForeignKey(
-        User, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True
-    )
-    dispute_filed_at = models.DateTimeField(null=True, blank=True)
-    dispute_reason = models.TextField(blank=True, null=True)
-    
-    # admin response
-    admin_decision = models.CharField(max_length=100, null=True, blank=True)  # e.g., "Full refund to buyer"
-    admin_response = models.TextField(blank=True, null=True)
-    resolved_at = models.DateTimeField(null=True, blank=True)
-    
-    def save(self, *args, **kwargs):
-        # Auto-generate request number
-        if not self.request_number:
-            date_str = timezone.now().strftime('%Y%m%d')
-            last_request = Refund.objects.filter(
-                requested_at__date=timezone.now().date()
-            ).count()
-            self.request_number = f"RR-{date_str}-{last_request + 1:05d}"
-        
-        # === ADD THIS LOGIC ===
-        # Auto-determine refund category based on preferred_refund_method
-        if self.preferred_refund_method:
-            method_lower = self.preferred_refund_method.lower()
-            if any(word in method_lower for word in ['return', 'replace']):
-                self.refund_category = 'return_item'
-            elif 'keep' in method_lower:
-                self.refund_category = 'keep_item'
-            elif 'replacement' in method_lower:
-                self.refund_category = 'replacement'
-        # ======================
-        
-        # Auto-update payment_status based on main status
-        if self.status in ['pending', 'negotiation', 'approved', 'waiting', 'to_verify', 'dispute']:
-            self.payment_status = 'pending'
-        elif self.status == 'to_process':
-            self.payment_status = 'processing'
-        elif self.status == 'completed':
-            self.payment_status = 'completed'
-        elif self.status in ['rejected', 'cancelled']:
-            self.payment_status = 'not_applicable'
-            
-        # Set negotiation deadline when seller suggests alternative
-        if self.status == 'negotiation' and self.seller_suggested_method and not self.negotiation_deadline:
-            self.negotiation_deadline = timezone.now() + timezone.timedelta(days=3)
-        
-        # When status changes to 'approved', record approval time and compute return deadline
-        if self.status == 'approved' and not self.approved_at:
-            self.approved_at = timezone.now()
-            # Default return window is 7 days after approval
-            # Only set return deadline if it's a "return_item" category
-            if self.refund_category in ['return_item', 'replacement'] and not self.return_deadline:
-                self.return_deadline = self.approved_at + timezone.timedelta(days=7)
-            # For "keep_item" category, no return deadline needed
-
-        # Set dispute filed date when status changes to dispute
-        if self.status == 'dispute' and not self.dispute_filed_at:
-            self.dispute_filed_at = timezone.now()
-        
-        # Set resolved_at when admin makes decision
-        if self.status == 'dispute' and self.admin_decision and not self.resolved_at:
-            self.resolved_at = timezone.now()
-            
-        super().save(*args, **kwargs)
-    
-    def __str__(self):
-        return f"Refund {self.request_number or self.refund}"
-    
-    # Property to check if negotiation expired
-    @property
-    def is_negotiation_expired(self):
-        if self.negotiation_deadline:
-            return timezone.now() > self.negotiation_deadline
-        return False
-    
-    @property
-    def get_refund_category_display(self):
-        """Get human-readable category name"""
-        for choice in self.REFUND_CATEGORY_CHOICES:
-            if choice[0] == self.refund_category:
-                return choice[1]
-        return self.refund_category
-    
-    # === ADD THIS PROPERTY ===
-    @property
-    def requires_return(self):
-        """Check if this refund requires the customer to return the item"""
-        return self.refund_category in ['return_item', 'replacement']
-    
-    @property
-    def is_partial_refund(self):
-        """Check if this is a partial refund (keep item)"""
-        return self.refund_category == 'keep_item'
-    # =========================
-    
-    # Property to get evidence count (if you have RefundMedias model)
-    @property
-    def evidence_count(self):
-        try:
-            return self.refundmedias_set.count()
-        except:
-            return 0
-
-class RefundMedias(models.Model):
-    refund_media = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    refund = models.ForeignKey(Refund, on_delete=models.CASCADE)
-    file_data = models.FileField(upload_to="refunds/")
-    file_type = models.TextField()
-
 class Report(models.Model):
     REPORT_TYPES = [
         ('account', 'Account'),
@@ -1219,53 +1035,6 @@ class ProductSKU(models.Model):
 
 
 
-
-
-# Add these models after RefundMedias
-
-class RefundWallet(models.Model):
-    """E-wallet details for refund"""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    refund = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='wallet_details')
-    provider = models.CharField(max_length=100, blank=True, null=True)
-    account_name = models.CharField(max_length=200, blank=True, null=True)
-    account_number = models.CharField(max_length=50, blank=True, null=True)
-    contact_number = models.CharField(max_length=20, blank=True, null=True)
-    
-    def __str__(self):
-        return f"Wallet for {self.refund.request_number}"
-
-class RefundBank(models.Model):
-    """Bank details for refund"""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    refund = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='bank_details')
-    bank_name = models.CharField(max_length=100, blank=True, null=True)
-    account_name = models.CharField(max_length=200, blank=True, null=True)
-    account_number = models.CharField(max_length=50, blank=True, null=True)
-    account_type = models.CharField(max_length=50, blank=True, null=True)
-    branch = models.CharField(max_length=200, blank=True, null=True)
-    
-    def __str__(self):
-        return f"Bank for {self.refund.request_number}"
-
-class RefundRemittance(models.Model):
-    """Remittance details for refund"""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    refund = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='remittance_details')
-    provider = models.CharField(max_length=100, blank=True, null=True)
-    first_name = models.CharField(max_length=100, blank=True, null=True)
-    last_name = models.CharField(max_length=100, blank=True, null=True)
-    contact_number = models.CharField(max_length=20, blank=True, null=True)
-    address = models.TextField(blank=True, null=True)
-    city = models.CharField(max_length=100, blank=True, null=True)
-    province = models.CharField(max_length=100, blank=True, null=True)
-    zip_code = models.CharField(max_length=10, blank=True, null=True)
-    valid_id_type = models.CharField(max_length=100, blank=True, null=True)
-    valid_id_number = models.CharField(max_length=50, blank=True, null=True)
-    
-    def __str__(self):
-        return f"Remittance for {self.refund.request_number}"
-
 # Add this table to track user's saved payment methods
 class UserPaymentMethod(models.Model):
     """User's saved payment methods for future use"""
@@ -1311,233 +1080,322 @@ class UserPaymentMethod(models.Model):
         return f"{self.get_method_type_display()} - {self.account_number}"
     
 
-class ReturnWaybill(models.Model):
-    """Waybill for return shipments containing shop and product information"""
+
+
+class Refund(models.Model):
+    REFUND_METHOD_CHOICES = [
+        ('wallet', 'E-wallet'),
+        ('bank', 'Bank Transfer'),
+        ('remittance', 'Remittance'),
+        ('voucher', 'Store Voucher'),
+    ]
+
+    REFUND_TYPE_CHOICES = [
+        ('return', 'Return Item'),
+        ('keep', 'Keep Item'),
+    ]
+
     STATUS_CHOICES = [
         ('pending', 'Pending'),
-        ('printed', 'Printed'),
-        ('shipped', 'Shipped'),
-        ('received', 'Received'),
+        ('approved', 'Approved'),
+        ('negotiation', 'Negotiation'),
+        ('rejected', 'Rejected'),
+        ('dispute', 'Dispute'),
         ('cancelled', 'Cancelled'),
+        ('failed', 'Failed'),
     ]
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
-    refund = models.OneToOneField(
-        Refund, 
-        on_delete=models.CASCADE, 
-        related_name='waybill'
-    )
-    
-    # Shop information (duplicated for waybill purposes)
-    shop = models.ForeignKey(
-        Shop,
-        on_delete=models.CASCADE,
-        related_name='return_waybills'
-    )
-    shop_name = models.CharField(max_length=50)
-    shop_contact_number = models.CharField(max_length=20, blank=True, default='')
-    shop_address = models.TextField()  # Full shop address
-    
-    # Return details
-    waybill_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
-    logistic_service = models.CharField(max_length=100, null=True, blank=True)
-    tracking_number = models.CharField(max_length=100, null=True, blank=True)
+
+    PAYMENT_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('failed', 'Failed'),
+        ('completed', 'Completed'),
+    ]
+
+    refund_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    reason = models.CharField(max_length=500)
+    detailed_reason = models.TextField(blank=True, null=True)
+    buyer_preferred_refund_method = models.CharField(max_length=50, choices=REFUND_METHOD_CHOICES)
+    refund_type = models.CharField(max_length=10, choices=REFUND_TYPE_CHOICES)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    
-    # Return instructions
-    return_instructions = models.TextField(blank=True, null=True)
-    
-    # Timestamps
+    customer_note = models.TextField(blank=True, null=True)
+    # Requested refund amounts
+    total_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    approved_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    final_refund_method = models.CharField(max_length=50, blank=True, null=True)
+    refund_payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    order_id = models.ForeignKey(Order, on_delete=models.CASCADE)
+    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_refunds')
+    requested_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='requested_refunds')
+    buyer_notified_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Refund {self.refund_id}"
+
+
+class RefundMedia(models.Model):
+    refundmedia = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    file_data = models.FileField(upload_to='refunds/media/')
+    file_type = models.CharField(max_length=50)
+    refund_id = models.ForeignKey(Refund, on_delete=models.CASCADE, related_name='medias')
+    uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Media for Refund {self.refund_id.refund_id}"
+
+
+class RefundWallet(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    provider = models.CharField(max_length=100)
+    account_name = models.CharField(max_length=100)
+    account_number = models.CharField(max_length=100)
+    contact_number = models.CharField(max_length=20)
+    refund_id = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='wallet')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    printed_at = models.DateTimeField(null=True, blank=True)
-    shipped_at = models.DateTimeField(null=True, blank=True)
-    received_at = models.DateTimeField(null=True, blank=True)
-    
-    class Meta:
-        ordering = ['-created_at']
-        verbose_name = "Return Waybill"
-        verbose_name_plural = "Return Waybills"
-    
-    def save(self, *args, **kwargs):
-        # Auto-generate waybill number
-        if not self.waybill_number:
-            date_str = timezone.now().strftime('%Y%m%d')
-            last_waybill = ReturnWaybill.objects.filter(
-                created_at__date=timezone.now().date()
-            ).count()
-            self.waybill_number = f"RWB-{date_str}-{last_waybill + 1:05d}"
-        
-        # Populate shop information from the related shop
-        if self.shop and not self.shop_address:
-            address_parts = [
-                self.shop.street,
-                self.shop.barangay,
-                self.shop.city,
-                self.shop.province,
-                "Philippines"
-            ]
-            self.shop_address = ", ".join(filter(None, address_parts))
-            self.shop_name = self.shop.name
-            self.shop_contact_number = self.shop.contact_number
-        
-        # Update timestamps based on status
-        if self.status == 'printed' and not self.printed_at:
-            self.printed_at = timezone.now()
-        elif self.status == 'shipped' and not self.shipped_at:
-            self.shipped_at = timezone.now()
-        elif self.status == 'received' and not self.received_at:
-            self.received_at = timezone.now()
-        
-        super().save(*args, **kwargs)
-    
+
     def __str__(self):
-        return f"Return Waybill {self.waybill_number or self.id} for {self.refund.request_number}"
-    
-    @property
-    def return_items(self):
-        """Get the items being returned"""
-        if not self.refund.order:
-            return []
-        
-        # Get checkout items for this order
-        checkouts = Checkout.objects.filter(order=self.refund.order).select_related('cart_item__product')
-        return [
-            {
-                'product_name': co.cart_item.product.name if co.cart_item and co.cart_item.product else 'Unknown Product',
-                'product_description': co.cart_item.product.description[:100] + '...' if co.cart_item and co.cart_item.product and len(co.cart_item.product.description) > 100 else (co.cart_item.product.description if co.cart_item and co.cart_item.product else ''),
-                'quantity': co.quantity,
-                'total_amount': co.total_amount,
-            }
-            for co in checkouts
-        ]
-    
-    @property
-    def customer_info(self):
-        """Get customer information for the return"""
-        if not self.refund.requested_by:
-            return {}
-        
-        user = self.refund.requested_by
-        return {
-            'name': f"{user.first_name} {user.last_name}".strip() or user.username,
-            'contact_number': user.contact_number,
-            'address': f"{user.street}, {user.barangay}, {user.city}, {user.province}".strip(', ')
-        }
+        return f"Wallet for Refund {self.refund_id.refund_id}"
 
 
+class RefundBank(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bank_name = models.CharField(max_length=100)
+    account_name = models.CharField(max_length=100)
+    account_number = models.CharField(max_length=100)
+    account_type = models.CharField(max_length=50)
+    branch = models.CharField(max_length=100)
+    refund_id = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='bank')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Bank for Refund {self.refund_id.refund_id}"
+
+
+class RefundRemittance(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    provider = models.CharField(max_length=100)
+    first_name = models.CharField(max_length=100)
+    middle_name = models.CharField(max_length=100, blank=True, null=True)
+    last_name = models.CharField(max_length=100)
+    contact_number = models.CharField(max_length=20)
+    country = models.CharField(max_length=100)
+    city = models.CharField(max_length=100)
+    province = models.CharField(max_length=100)
+    zip_code = models.CharField(max_length=20)
+    barangay = models.CharField(max_length=100)
+    street = models.CharField(max_length=200)
+    valid_id_type = models.CharField(max_length=50)
+    valid_id_number = models.CharField(max_length=50)
+    refund_id = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='remittance')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Remittance for Refund {self.refund_id.refund_id}"
+
+
+class CounterRefundRequest(models.Model):
+    REQUESTED_BY_CHOICES = [
+        ('buyer', 'Buyer'),
+        ('seller', 'Seller'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('accepted', 'Accepted'),
+        ('rejected', 'Rejected'),
+        ('dispute', 'Dispute'),
+    ]
+
+    counter_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    refund_id = models.ForeignKey(Refund, on_delete=models.CASCADE, related_name='counter_requests')
+    requested_by = models.CharField(max_length=10, choices=REQUESTED_BY_CHOICES)
+    seller_id = models.ForeignKey(User, on_delete=models.CASCADE, related_name='counter_requests_made')
+    shop_id = models.ForeignKey(Shop, on_delete=models.CASCADE)
+    counter_refund_method = models.CharField(max_length=50)
+    counter_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    COUNTER_TYPE_CHOICES = [
+        ('return', 'Return'),
+        ('keep', 'Keep'),
+    ]
+    counter_refund_type = models.CharField(max_length=10, choices=COUNTER_TYPE_CHOICES, null=True, blank=True)
+
+    notes = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Counter Request for Refund {self.refund_id.refund_id}"
 
 
 class DisputeRequest(models.Model):
-    """
-    Minimal dispute request model (Shopee-style)
-    """
 
-    DISPUTE_STATUS_CHOICES = [
+    REQUESTED_BY_CHOICES = [
+        ('buyer', 'Buyer'),
+        ('seller', 'Seller'),
+    ]
+
+    STATUS_CHOICES = [
         ('filed', 'Filed'),
         ('under_review', 'Under Review'),
         ('approved', 'Approved'),
-        ('processing', 'Processing'),
-        ('completed', 'Completed'),
         ('rejected', 'Rejected'),
-        ('cancelled', 'Cancelled'),
-    ]
-
-    DISPUTE_REASON_CHOICES = [
-        ('item_not_received', 'Item Not Received'),
-        ('item_damaged', 'Item Damaged'),
-        ('wrong_item', 'Wrong Item Received'),
-        ('not_as_described', 'Not As Described'),
-        ('seller_unresponsive', 'Seller Unresponsive'),
-        ('other', 'Other'),
-    ]
-
-    DISPUTE_OUTCOME_CHOICES = [
-        ('buyer_wins', 'Buyer Wins'),
-        ('seller_wins', 'Seller Wins'),
-        ('partial_refund', 'Partial Refund'),
-        ('dismissed', 'Dismissed'),
-        ('withdrawn', 'Withdrawn'),
+        ('resolved', 'Resolved'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    # Relations
-    order = models.ForeignKey('Order', on_delete=models.CASCADE)
-    refund = models.OneToOneField(
-        'Refund',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
-    )
-
-    filed_by = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='disputes'
-    )
-
-    # Core info
-    reason = models.CharField(max_length=50, choices=DISPUTE_REASON_CHOICES)
-    description = models.TextField()
-
-    # Workflow
-    status = models.CharField(
-        max_length=20,
-        choices=DISPUTE_STATUS_CHOICES,
-        default='filed'
-    )
-
-    outcome = models.CharField(
-        max_length=30,
-        choices=DISPUTE_OUTCOME_CHOICES,
-        null=True,
-        blank=True
-    )
-
-    awarded_amount = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        null=True,
-        blank=True
-    )
-
-    admin_note = models.TextField(blank=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
+    refund_id = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='dispute', null=True, blank=True)
+    requested_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    reason = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='filed')
+    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_disputes')
     resolved_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ['-created_at']
+    admin_notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Dispute {self.id}"
-
-
+        return f"Dispute for Refund {self.refund_id.refund_id}"
 
 
 class DisputeEvidence(models.Model):
-    """
-    Evidence attached to a dispute
-    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    file_type = models.CharField(max_length=50, null=True, blank=True)
+    dispute_id = models.ForeignKey(DisputeRequest, on_delete=models.CASCADE, related_name='evidences', null=True, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
 
+    # Note: file_data is not specified in the table, but assuming it's needed
+    file_data = models.FileField(upload_to='disputes/evidence/', null=True, blank=True)
+
+    def __str__(self):
+        return f"Evidence for Dispute {self.dispute_id.dispute_id}"
+
+
+class ReturnRequestItem(models.Model):
+    STATUS_CHOICES = [
+        ('shipped', 'Shipped'),
+        ('received', 'Received'),
+        ('inspected', 'Inspected'),
+        # decision results
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('completed', 'Completed'),
+        ('problem', 'Problem'),
+    ]
+
+    return_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    refund_id = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='return_request')
+    return_method = models.CharField(max_length=100)
+    logistic_service = models.CharField(max_length=100, blank=True, null=True) 
+    tracking_number = models.CharField(max_length=100, blank=True, null=True)
+    shipped_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='shipped_returns')
+    shipped_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    notes = models.TextField(blank=True, null=True)
+    return_deadline = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_returns')
+
+    def __str__(self):
+        return f"Return for Refund {self.refund_id.refund_id}"
+
+
+class ReturnRequestMedia(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    return_id = models.ForeignKey(ReturnRequestItem, on_delete=models.CASCADE, related_name='medias')
+    file_type = models.CharField(max_length=50)
+    file_data = models.FileField(upload_to='returns/media/')
+    uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"Media for Return {self.return_id.return_id}"
+    
+
+class ReturnAddress(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    dispute = models.ForeignKey(
-        DisputeRequest,
+    # Change the OneToOneField to allow NULL
+    refund = models.OneToOneField(
+        Refund,
         on_delete=models.CASCADE,
-        related_name='evidence'
+        related_name='return_address',
+        null=True,
+        blank=True,
     )
 
-    uploaded_by = models.ForeignKey(
+    # Link directly to shop and seller for easier querying and ownership
+    shop = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='return_addresses'
+    )
+
+    seller = models.ForeignKey(
         User,
-        on_delete=models.CASCADE
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='seller_return_addresses'
     )
 
-    file = models.FileField(upload_to='disputes/')
+    recipient_name = models.CharField(max_length=100)
+    contact_number = models.CharField(max_length=20)
+
+    country = models.CharField(max_length=100)
+    province = models.CharField(max_length=100)
+    city = models.CharField(max_length=100)
+    barangay = models.CharField(max_length=100)
+    street = models.CharField(max_length=255)
+    zip_code = models.CharField(max_length=20)
+
+    notes = models.TextField(blank=True, null=True)
+
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_return_addresses'
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Evidence {self.id}"
+        shop_part = f" for Shop {self.shop.name}" if self.shop else ''
+        return f"Return Address for Refund {self.refund.refund_id}{shop_part}"
 
+
+class RefundProof(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    refund = models.ForeignKey(
+        Refund,
+        on_delete=models.CASCADE,
+        related_name='proofs'
+    )
+    uploaded_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='uploaded_refund_proofs'
+    )
+    file_type = models.CharField(max_length=50)  # e.g., 'image', 'pdf'
+    file_data = models.FileField(upload_to='refunds/proof/')
+    notes = models.TextField(blank=True, null=True)  # optional description
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Proof for Refund {self.refund.refund_id}"

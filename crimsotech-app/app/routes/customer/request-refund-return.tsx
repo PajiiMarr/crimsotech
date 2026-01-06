@@ -829,6 +829,17 @@ export default function RequestReturnRefund({ loaderData }: any) {
       ? parseFloat(partialAmount)
       : selectedItemsDetails.reduce((sum: number, item: OrderItem) => sum + parseFloat(item.subtotal), 0);
 
+    // Map subType to backend expected value
+    const mapSubTypeToRefundMethod = (subType: string) => {
+      switch (subType) {
+        case 'wallet': return 'wallet';
+        case 'bank': return 'bank';
+        case 'voucher': return 'voucher';
+        case 'moneyback': return 'remittance';
+        default: return subType;
+      }
+    };
+
     // Create FormData for file uploads
     const formData = new FormData();
     
@@ -836,7 +847,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
     const refundData = {
       order_id: order.order_id,
       reason: returnReason,
-      preferred_refund_method: selectedRefundMethod!.label,
+      preferred_refund_method: mapSubTypeToRefundMethod(selectedRefundMethod!.subType),
       total_refund_amount: totalRefundAmount,
       customer_note: additionalDetails || '',
       refund_category: selectedRefundMethod!.type,
@@ -905,17 +916,18 @@ export default function RequestReturnRefund({ loaderData }: any) {
       // Show success message
       alert('Return request submitted successfully!');
       
-      // Navigate to view refund request page
-      navigate(`/view-customer-return-cancel/${refundRequestId}`, {
+      // Navigate to refund requests page with refund-requests tab active
+      navigate('/return-refund?tab=refund-requests', {
         state: {
           success: true,
-          message: 'Return request submitted successfully! The seller will review your request within 48 hours.'
+          message: 'Return request submitted successfully! The seller will review your request within 48 hours.',
+          refundId: refundRequestId
         }
       });
     } else if (response.data.message) {
       // Fallback for older API responses
       alert('Return request submitted successfully!');
-      navigate('/purchases', {
+      navigate('/return-refund?tab=refund-requests', {
         state: {
           success: true,
           message: 'Return request submitted! Check your notifications for updates.'
