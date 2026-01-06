@@ -4,7 +4,8 @@ import {
   Home, ShoppingCart, TicketCheck, Star, Gift, Handshake, Package,
   Store, CreditCard, List, MessageSquare, Users, 
   Shield, AlertCircle, FileText, Settings, Bell,
-  BarChart, Bike, MapPin, Calendar, DollarSign, ClipboardList
+  BarChart, Bike, MapPin, Calendar, DollarSign, ClipboardList,
+  PhilippinePeso
 } from "lucide-react"
 import { Link, useLocation } from 'react-router'
 import { useUser } from '~/components/providers/user-role-provider';
@@ -104,7 +105,7 @@ const menuItems = [
       { title: "My products", url: "/personal-listing", icon: Package  , roles: ["customer"] },
       { title: "Order Lists", url: "/order-list", icon: ClipboardList, roles: ["customer"] },
       { title: "Return/Refund/Cancel", url: "/return-refund-cancel", icon: ClipboardList, roles: ["customer"] },
-      { title: "Subscription Plans", url: "/subscription-plan", icon: DollarSign, roles: ["customer"] },
+      { title: "Subscription Plans", url: "/subscription-plan", icon: PhilippinePeso, roles: ["customer"] },
     ]
   },
 

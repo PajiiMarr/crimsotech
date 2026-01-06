@@ -1,6 +1,6 @@
 // app/routes/process-return.tsx
 import type { Route } from './+types/process-return'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { useState } from 'react'
 import { Calendar, Package, Truck, AlertCircle, CheckCircle, ArrowLeft } from 'lucide-react'
 import AxiosInstance from '~/components/axios/Axios'
