@@ -89,7 +89,7 @@ interface PurchaseItem {
   product_name: string;
   shop_name: string;
   quantity: number;
-  status: 'pending' | 'in_progress' | 'to_ship' | 'to_receive' | 'completed' | 'cancelled' | 'return_refund';
+  status: 'pending' | 'in_progress' | 'to_ship' | 'to_receive' | 'completed' | 'cancelled' | 'return_refund' | 'ready_for_pickup';
   purchased_at: string;
   total_amount: number;
   image: string;
@@ -113,6 +113,7 @@ const STATUS_TABS = [
   { id: 'pending', label: 'Pending', icon: Clock },
   { id: 'in_progress', label: 'In Progress', icon: Clock },
   { id: 'to_ship', label: 'To Ship', icon: Package },
+  { id: 'ready_for_pickup', label: 'To Pickup', icon: Package },
   { id: 'to_receive', label: 'To Receive', icon: Truck },
   { id: 'completed', label: 'Completed', icon: CheckCircle },
   { id: 'return_refund', label: 'Return & Refund', icon: RefreshCcw },
@@ -138,6 +139,11 @@ const STATUS_CONFIG = {
   },
   to_receive: { 
     label: 'To Receive', 
+    color: 'bg-blue-100 text-blue-800',
+    icon: Truck
+  },
+  ready_for_pickup: { 
+    label: 'To Pickup', 
     color: 'bg-blue-100 text-blue-800',
     icon: Truck
   },
@@ -167,8 +173,12 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
       return 'in_progress';
     case 'shipped':
       return 'to_ship';
+    case 'ready_for_pickup':
+      return 'ready_for_pickup';
+    case 'shipped':
+      return 'to_ship';
     case 'delivered':
-      return 'to_receive';
+      return 'completed';
     case 'completed':
       return 'completed';
     case 'cancelled':
@@ -504,6 +514,7 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
                    activeTab === 'pending' ? 'No pending purchases' :
                    activeTab === 'in_progress' ? 'No in progress purchases' :
                    activeTab === 'to_ship' ? 'No items to ship' :
+                   activeTab === 'ready_for_pickup' ? 'No items to pickup' :
                    activeTab === 'to_receive' ? 'No items to receive' :
                    activeTab === 'completed' ? 'No completed purchases' :
                    activeTab === 'return_refund' ? 'No return & refund requests' :

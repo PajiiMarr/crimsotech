@@ -74,7 +74,8 @@ type OrderStatus =
   | "to_receive"
   | "completed"
   | "cancelled"
-  | "return_refund";
+  | "return_refund"
+  | "delivered";
 
 const mapStatus = (backendStatus: string): OrderStatus => {
   switch (backendStatus) {
@@ -85,7 +86,7 @@ const mapStatus = (backendStatus: string): OrderStatus => {
     case "shipped":
       return "to_ship";
     case "delivered":
-      return "to_receive";
+      return "completed";
     case "completed":
       return "completed";
     case "cancelled":
@@ -198,6 +199,16 @@ const STATUS_CONFIG: Record<
   },
   to_ship: {
     label: "To Ship",
+    color: "bg-indigo-100 text-indigo-800 hover:bg-indigo-100",
+    icon: Package,
+    alertTitle: "Order Packed and Ready",
+    alertDescription:
+      "Your order has been packed and is waiting to be handed over to the delivery service.",
+    alertClassName: "bg-indigo-50 border-indigo-200",
+    alertIcon: Package,
+  },
+  delivered: {
+    label: "Completed",
     color: "bg-indigo-100 text-indigo-800 hover:bg-indigo-100",
     icon: Package,
     alertTitle: "Order Packed and Ready",

@@ -4,7 +4,8 @@ import {
   Home, ShoppingCart, TicketCheck, Star, Gift, Handshake, Package,
   Store, CreditCard, List, MessageSquare, Users, 
   Shield, AlertCircle, FileText, Settings, Bell,
-  BarChart, Bike, MapPin, Calendar, DollarSign, ClipboardList
+  BarChart, Bike, MapPin, Calendar, DollarSign, ClipboardList,
+  PhilippinePeso
 } from "lucide-react"
 import { Link, useLocation } from 'react-router'
 import { useUser } from '~/components/providers/user-role-provider';

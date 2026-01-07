@@ -410,7 +410,6 @@ const SimpleOrderSummary = ({
   subtotal,
   discount,
   delivery,
-  tax,
   onProceedToCheckout,
   itemCount,
   shopCount
@@ -418,12 +417,11 @@ const SimpleOrderSummary = ({
   subtotal: number;
   discount: number;
   delivery: number;
-  tax: number;
   onProceedToCheckout: () => void;
   itemCount: number;
   shopCount: number;
 }) => {
-  const total = subtotal - discount + delivery + tax;
+  const total = subtotal - discount + delivery;
 
   return (
     <div className="border rounded-lg p-4 bg-white">
@@ -454,10 +452,6 @@ const SimpleOrderSummary = ({
           <span>₱{delivery.toFixed(2)}</span>
         </div>
         
-        <div className="flex justify-between">
-          <span className="text-gray-600">Tax</span>
-          <span>₱{tax.toFixed(2)}</span>
-        </div>
       </div>
       
       <div className="border-t pt-4 mb-4">
@@ -653,7 +647,6 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   const subtotal = selectedItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const discount = 0;
   const delivery = selectedItems.length > 0 ? 50.00 : 0; // Base delivery
-  const tax = subtotal * 0.12;
 
 // Navigation - UPDATED TO NAVIGATE TO ORDERS.TSX
   const handleCheckout = () => {
@@ -672,8 +665,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
         subtotal,
         discount,
         delivery,
-        tax,
-        total: subtotal - discount + delivery + tax,
+        total: subtotal - discount + delivery,
         itemCount: selectedItems.length,
         shopCount: selectedShops
       }));
@@ -903,7 +895,6 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                       subtotal={subtotal}
                       discount={discount}
                       delivery={delivery}
-                      tax={tax}
                       onProceedToCheckout={handleCheckout}
                       itemCount={selectedItems.length}
                       shopCount={selectedShops}
