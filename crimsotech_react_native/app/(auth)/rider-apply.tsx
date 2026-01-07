@@ -1,0 +1,512 @@
+import { API_CONFIG } from '@/utils/config';
+import { MaterialIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import { router } from 'expo-router';
+import React, { useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    Image,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+
+const VEHICLE_TYPES = [
+  { id: 'car', name: 'Car', icon: '🚗' },
+  { id: 'motorcycle', name: 'Motorcycle', icon: '🏍️' },
+  { id: 'bicycle', name: 'Bicycle', icon: '🚲' },
+  { id: 'scooter', name: 'Scooter', icon: '🛴' },
+  { id: 'van', name: 'Van', icon: '🚐' },
+  { id: 'truck', name: 'Truck', icon: '🚚' },
+];
+
+export default function RiderApplyScreen() {
+  const [vehicleType, setVehicleType] = useState('');
+  const [plateNumber, setPlateNumber] = useState('');
+  const [vehicleBrand, setVehicleBrand] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+  const [licenseNumber, setLicenseNumber] = useState('');
+  const [vehicleImage, setVehicleImage] = useState<any>(null);
+  const [licenseImage, setLicenseImage] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const pickImage = async (type: 'vehicle' | 'license') => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission required', 'Please allow photo library access to upload images.');
+        return;
+      }
+
+      const mediaTypes = (ImagePicker as any).MediaType?.Images || ImagePicker.MediaTypeOptions?.Images || ImagePicker.MediaType?.All;
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        if (type === 'vehicle') {
+          setVehicleImage(result.assets[0]);
+        } else {
+          setLicenseImage(result.assets[0]);
+        }
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick image');
+    }
+  };
+
+  const validateForm = () => {
+    const newErrors: Record<string, string> = {};
+
+    if (!vehicleType) {
+      newErrors.vehicle_type = 'Vehicle type is required';
+    }
+    if (!plateNumber.trim()) {
+      newErrors.plate_number = 'Plate number is required';
+    } else if (plateNumber.length > 20) {
+      newErrors.plate_number = 'Plate number should be at most 20 characters';
+    }
+    if (!vehicleBrand.trim()) {
+      newErrors.vehicle_brand = 'Vehicle brand is required';
+    } else if (vehicleBrand.length > 50) {
+      newErrors.vehicle_brand = 'Vehicle brand should be at most 50 characters';
+    }
+    if (!vehicleModel.trim()) {
+      newErrors.vehicle_model = 'Vehicle model is required';
+    } else if (vehicleModel.length > 50) {
+      newErrors.vehicle_model = 'Vehicle model should be at most 50 characters';
+    }
+    if (!licenseNumber.trim()) {
+      newErrors.license_number = 'License number is required';
+    } else if (licenseNumber.length > 20) {
+      newErrors.license_number = 'License number should be at most 20 characters';
+    }
+    if (!vehicleImage) {
+      newErrors.vehicle_image = 'Vehicle image is required';
+    }
+    if (!licenseImage) {
+      newErrors.license_image = 'License image is required';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
+      Alert.alert('Validation Error', 'Please fill all required fields');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('vehicle_type', vehicleType);
+      formData.append('plate_number', plateNumber.trim());
+      formData.append('vehicle_brand', vehicleBrand.trim());
+      formData.append('vehicle_model', vehicleModel.trim());
+      formData.append('license_number', licenseNumber.trim());
+
+      // Append vehicle image
+      if (vehicleImage) {
+        const vehicleExt = vehicleImage.uri.split('.').pop() || 'jpg';
+        const vehicleUri = vehicleImage.uri.startsWith('file://')
+          ? vehicleImage.uri
+          : `file://${vehicleImage.uri}`;
+        const vehicleImageFile: any = {
+          uri: vehicleUri,
+          type: 'image/jpeg',
+          name: vehicleImage.fileName || `vehicle_${Date.now()}.${vehicleExt}`,
+        };
+        formData.append('vehicle_image', vehicleImageFile);
+      }
+
+      // Append license image
+      if (licenseImage) {
+        const licenseExt = licenseImage.uri.split('.').pop() || 'jpg';
+        const licenseUri = licenseImage.uri.startsWith('file://')
+          ? licenseImage.uri
+          : `file://${licenseImage.uri}`;
+        const licenseImageFile: any = {
+          uri: licenseUri,
+          type: 'image/jpeg',
+          name: licenseImage.fileName || `license_${Date.now()}.${licenseExt}`,
+        };
+        formData.append('license_image', licenseImageFile);
+      }
+
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/rider/register/`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.log('Rider apply response status:', response.status, data);
+      }
+
+      if (response.ok && data.user_id) {
+        // Store rider info in AsyncStorage for signup step
+        await AsyncStorage.setItem('riderId', data.rider_id);
+        await AsyncStorage.setItem('userId', data.user_id);
+        await AsyncStorage.setItem('registration_stage', '1');
+        await AsyncStorage.setItem('is_rider', 'true');
+
+        Alert.alert(
+          'Success',
+          'Vehicle information submitted! Please create your account.',
+          [{ text: 'Continue', onPress: () => router.replace('/(auth)/rider-signup') }]
+        );
+      } else {
+        // Handle validation errors
+        if (data.errors) {
+          setErrors(data.errors);
+          const errorMessages = Object.values(data.errors).join('\n');
+          Alert.alert('Validation Error', errorMessages);
+        } else {
+          Alert.alert('Error', data.error || 'Registration failed');
+        }
+      }
+    } catch (error: any) {
+      console.error('Rider registration error:', error);
+      Alert.alert('Error', 'Failed to submit application. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <MaterialIcons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Apply as Rider</Text>
+          <View style={{ width: 24 }} />
+        </View>
+
+        <View style={styles.content}>
+          <Text style={styles.title}>Become a Courier Partner</Text>
+          <Text style={styles.subtitle}>
+            Enter your vehicle and license details to apply as a rider
+          </Text>
+
+          {/* Vehicle Type Selector */}
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              Vehicle Type <Text style={styles.required}>*</Text>
+            </Text>
+            <View style={styles.vehicleGrid}>
+              {VEHICLE_TYPES.map((vehicle) => (
+                <TouchableOpacity
+                  key={vehicle.id}
+                  style={[
+                    styles.vehicleCard,
+                    vehicleType === vehicle.id && styles.vehicleCardSelected,
+                  ]}
+                  onPress={() => setVehicleType(vehicle.id)}
+                >
+                  <Text style={styles.vehicleIcon}>{vehicle.icon}</Text>
+                  <Text style={styles.vehicleName}>{vehicle.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {errors.vehicle_type && <Text style={styles.errorText}>{errors.vehicle_type}</Text>}
+          </View>
+
+          {/* Plate Number */}
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              Plate Number <Text style={styles.required}>*</Text>
+            </Text>
+            <TextInput
+              style={[styles.input, errors.plate_number && styles.inputError]}
+              value={plateNumber}
+              onChangeText={setPlateNumber}
+              placeholder="Enter plate number"
+              maxLength={20}
+              autoCapitalize="characters"
+            />
+            {errors.plate_number && <Text style={styles.errorText}>{errors.plate_number}</Text>}
+          </View>
+
+          {/* Vehicle Brand */}
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              Vehicle Brand <Text style={styles.required}>*</Text>
+            </Text>
+            <TextInput
+              style={[styles.input, errors.vehicle_brand && styles.inputError]}
+              value={vehicleBrand}
+              onChangeText={setVehicleBrand}
+              placeholder="e.g., Honda, Toyota"
+              maxLength={50}
+            />
+            {errors.vehicle_brand && <Text style={styles.errorText}>{errors.vehicle_brand}</Text>}
+          </View>
+
+          {/* Vehicle Model */}
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              Vehicle Model <Text style={styles.required}>*</Text>
+            </Text>
+            <TextInput
+              style={[styles.input, errors.vehicle_model && styles.inputError]}
+              value={vehicleModel}
+              onChangeText={setVehicleModel}
+              placeholder="e.g., Civic, Vios"
+              maxLength={50}
+            />
+            {errors.vehicle_model && <Text style={styles.errorText}>{errors.vehicle_model}</Text>}
+          </View>
+
+          {/* License Number */}
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              License Number <Text style={styles.required}>*</Text>
+            </Text>
+            <TextInput
+              style={[styles.input, errors.license_number && styles.inputError]}
+              value={licenseNumber}
+              onChangeText={setLicenseNumber}
+              placeholder="Enter driver's license number"
+              maxLength={20}
+              autoCapitalize="characters"
+            />
+            {errors.license_number && <Text style={styles.errorText}>{errors.license_number}</Text>}
+          </View>
+
+          {/* Vehicle Image */}
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              Vehicle Photo <Text style={styles.required}>*</Text>
+            </Text>
+            <TouchableOpacity
+              style={[styles.imageUpload, errors.vehicle_image && styles.inputError]}
+              onPress={() => pickImage('vehicle')}
+            >
+              {vehicleImage ? (
+                <Image source={{ uri: vehicleImage.uri }} style={styles.imagePreview} />
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <MaterialIcons name="add-a-photo" size={32} color="#999" />
+                  <Text style={styles.imagePlaceholderText}>Upload Vehicle Photo</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            {errors.vehicle_image && <Text style={styles.errorText}>{errors.vehicle_image}</Text>}
+          </View>
+
+          {/* License Image */}
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              License Photo <Text style={styles.required}>*</Text>
+            </Text>
+            <TouchableOpacity
+              style={[styles.imageUpload, errors.license_image && styles.inputError]}
+              onPress={() => pickImage('license')}
+            >
+              {licenseImage ? (
+                <Image source={{ uri: licenseImage.uri }} style={styles.imagePreview} />
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <MaterialIcons name="add-a-photo" size={32} color="#999" />
+                  <Text style={styles.imagePlaceholderText}>Upload License Photo</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            {errors.license_image && <Text style={styles.errorText}>{errors.license_image}</Text>}
+          </View>
+
+          {/* Submit Button */}
+          <TouchableOpacity
+            style={[styles.submitButton, loading && styles.submitButtonDisabled]}
+            onPress={handleSubmit}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.submitButtonText}>Continue to Sign Up</Text>
+            )}
+          </TouchableOpacity>
+
+          <Text style={styles.infoText}>
+            Your application will be reviewed by our team. You'll be notified once approved.
+          </Text>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  scrollContent: {
+    paddingBottom: 24,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    marginTop: 40,
+  },
+  backButton: {
+    padding: 4,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  content: {
+    padding: 16,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  section: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  required: {
+    color: '#ff6d0b',
+  },
+  vehicleGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  vehicleCard: {
+    width: '30%',
+    aspectRatio: 1,
+    borderWidth: 2,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    backgroundColor: '#fff',
+  },
+  vehicleCardSelected: {
+    borderColor: '#ff6d0b',
+    backgroundColor: '#fff5f0',
+  },
+  vehicleIcon: {
+    fontSize: 32,
+    marginBottom: 4,
+  },
+  vehicleName: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#333',
+    textAlign: 'center',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    color: '#333',
+    backgroundColor: '#fff',
+  },
+  inputError: {
+    borderColor: '#ff3b30',
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#ff3b30',
+    marginTop: 4,
+  },
+  imageUpload: {
+    height: 200,
+    borderWidth: 2,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    borderStyle: 'dashed',
+    overflow: 'hidden',
+  },
+  imagePreview: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  imagePlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f9f9f9',
+  },
+  imagePlaceholderText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#999',
+  },
+  submitButton: {
+    backgroundColor: '#ff6d0b',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  submitButtonDisabled: {
+    opacity: 0.6,
+  },
+  submitButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  infoText: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'center',
+    marginTop: 16,
+    lineHeight: 18,
+  },
+});

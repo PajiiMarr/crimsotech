@@ -1399,3 +1399,56 @@ class RefundProof(models.Model):
 
     def __str__(self):
         return f"Proof for Refund {self.refund.refund_id}"
+
+
+
+
+
+class AppliedGift(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    shop_id = models.ForeignKey(
+        'Shop',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='applied_gifts'
+    )
+    gift_product_id = models.ForeignKey(
+        'Product',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='gift_promotions'
+    )
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    minimum_spend = models.DecimalField(max_digits=10, decimal_places=2)
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Gift: {self.gift_product_id.name if self.gift_product_id else 'No Product'} (Min: ${self.minimum_spend})"
+
+
+class AppliedGiftProduct(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    applied_gift_id = models.ForeignKey(
+        AppliedGift,
+        on_delete=models.CASCADE,
+        related_name='eligible_products'
+    )
+    product_id = models.ForeignKey(
+        'Product',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+
+    class Meta:
+        unique_together = ['applied_gift_id', 'product_id']
+
+    def __str__(self):
+        product_name = self.product_id.name if self.product_id else 'No Product'
+        return f"Eligible: {product_name}"

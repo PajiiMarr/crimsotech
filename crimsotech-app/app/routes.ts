@@ -79,6 +79,7 @@ export default [
         route("seller-vouchers", "routes/seller/seller-vouchers.tsx"), 
         route("seller-notifications", "routes/seller/seller-notifications.tsx"), 
         route("gift", "routes/seller/seller-gift.tsx"), 
+        route("apply-gift", "routes/seller/apply-gift/apply-gift.tsx"),
         route("seller-create-gift", "routes/seller/seller-create-gift.tsx"), 
 
 

@@ -775,3 +775,17 @@ class RefundSerializer(serializers.ModelSerializer):
     class Meta:
         model = Refund
         fields = '__all__'
+
+
+
+
+class AppliedGiftSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AppliedGift
+        fields = '__all__'
+
+
+class AppliedGiftProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AppliedGiftProduct
+        fields = '__all__'
