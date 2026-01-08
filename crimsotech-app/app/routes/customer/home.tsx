@@ -384,10 +384,42 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       console.log(`Loaded ${categories.length} categories`);
     }
 
+    // Prepare containers for applied gift info
+    let hiddenGiftIds: string[] = [];
+    let giftDetails: Record<string, any> = {};
+
+    // Fetch active applied gift product IDs and filter out gift products that are currently
+    // used as applied gifts (i.e., gift products that are assigned to active promotions
+    // and have eligible products defined). We only hide gift products (price === 0).
+    try {
+      const giftsResp = await AxiosInstance.get('/customer-gift/active-applied-gift-product-ids/');
+      hiddenGiftIds = (giftsResp.data && giftsResp.data.gift_product_ids) || [];
+      giftDetails = (giftsResp.data && giftsResp.data.gift_details) || {};
+      console.log('Active applied gift ids (from server):', hiddenGiftIds, giftDetails);
+
+      if (hiddenGiftIds.length > 0) {
+        products = products.filter(p => {
+          const isGift = Number(p.price || 0) === 0;
+          const pid = String(p.id);
+          if (isGift && hiddenGiftIds.map(String).includes(pid)) {
+            console.log('Hiding applied gift product', pid, p.name);
+            return false;
+          }
+          return true;
+        });
+        console.log(`Filtered out ${hiddenGiftIds.length} gift products that are applied to promotions`);
+      }
+    } catch (err) {
+      // Non-fatal: if this fails, keep showing products as before
+      console.warn('Failed to fetch active applied gift product ids, skipping gift filtering:', err);
+    }
+
     return {
       user,
       products,
       categories,
+      appliedGiftIds: hiddenGiftIds || [],
+      giftDetails: giftDetails || {},
     };
   } catch (error) {
     console.error('Error in loader:', error);
@@ -403,7 +435,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 // Home Component
 // ----------------------------
 export default function Home({ loaderData }: any) {
-  const { user, products, categories } = loaderData;
+  const { user, products, categories, appliedGiftIds = [], giftDetails = {} } = loaderData;
   const [searchTerm, setSearchTerm] = useState("");
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [minPrice, setMinPrice] = useState<string>('');
@@ -428,6 +460,11 @@ export default function Home({ loaderData }: any) {
       console.error('Failed to fetch favorites:', err);
     }
   };
+
+  // Log applied gift ids for debugging
+  useEffect(() => {
+    console.log('Home appliedGiftIds:', appliedGiftIds, giftDetails);
+  }, [appliedGiftIds, giftDetails]);
 
   useEffect(() => {
     fetchFavorites();
@@ -470,8 +507,13 @@ export default function Home({ loaderData }: any) {
     const matchesCategory = selectedCategory === '' || 
       (prodCatId && prodCatId === selectedCategory);
 
+    // Exclude applied gift products (always hide gifts that are already applied)
+    const isGift = Number(product.price || 0) === 0;
+    const appliedSet = appliedGiftIds.map(String);
+    if (isGift && appliedSet.includes(String(product.id))) return false;
+
     // View mode filter: if 'gifts', only include products with zero price
-    const matchesView = viewMode === 'gifts' ? (Number(product.price || 0) === 0) : true;
+    const matchesView = viewMode === 'gifts' ? isGift : true;
 
     return matchesSearch && matchesMin && matchesMax && matchesCondition && matchesCategory && matchesView;
   });

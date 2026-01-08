@@ -381,16 +381,18 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
           </Button>
         );
       case 'completed':
-        if (item.item?.can_review) {
+        // Show Rate button either when item reports it's reviewable or when the overall order status is completed
+        if (item.item?.can_review || item.order?.status === 'completed') {
           return (
             <Button
               size="sm"
               variant="ghost"
-              className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+              className="h-6 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
               title="Rate Product"
-              onClick={() => navigate(`/rate/${item.item?.product_id}`)}
+              onClick={() => navigate(`/product-rate?productId=${item.item?.product_id}`)}
             >
-              <CheckCircle className="w-3 h-3" />
+              <CheckCircle className="w-3 h-3 mr-1" />
+              <span className="text-xs">Rate</span>
             </Button>
           );
         }

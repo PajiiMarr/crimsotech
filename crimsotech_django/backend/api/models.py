@@ -1421,7 +1421,6 @@ class AppliedGift(models.Model):
         related_name='gift_promotions'
     )
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
-    minimum_spend = models.DecimalField(max_digits=10, decimal_places=2)
     start_time = models.DateTimeField()
     end_time = models.DateTimeField()
     is_active = models.BooleanField(default=True)
@@ -1429,7 +1428,7 @@ class AppliedGift(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Gift: {self.gift_product_id.name if self.gift_product_id else 'No Product'} (Min: ${self.minimum_spend})"
+        return f"Gift: {self.gift_product_id.name if self.gift_product_id else 'No Product'}"
 
 
 class AppliedGiftProduct(models.Model):

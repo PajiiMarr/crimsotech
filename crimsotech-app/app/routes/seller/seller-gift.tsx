@@ -141,7 +141,7 @@ export default function SellerGiftList() {
       setLoading(true)
       try {
         const response = await AxiosInstance.get('/seller-products/', {
-          params: { customer_id: userId }
+          params: { customer_id: userId, shop_id: shopId }
         })
 
         if (response.data && response.data.success) {

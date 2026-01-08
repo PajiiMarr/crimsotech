@@ -26,6 +26,7 @@ export default [
     route('comgift', 'routes/customer/comgift.tsx'),
     route('trade', 'routes/customer/trade.tsx'),
     route('purchases', 'routes/customer/purchases.tsx'),
+    route('product-rate', 'routes/customer/product-rate.tsx'),
     route('subscription-plan', 'routes/customer/subscription-plan.tsx'),
     route("track-order/:id", "components/customer/track-order.tsx"),
     route("decision/:id", "components/customer/decision.tsx"),

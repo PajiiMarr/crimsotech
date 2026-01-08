@@ -124,7 +124,8 @@ export default function SellerProductList() {
       try {
         const response = await AxiosInstance.get<ProductListResponse>('/seller-products/', {
           params: {
-            customer_id: userId
+            customer_id: userId,
+            shop_id: shopId
           }
         });
         
