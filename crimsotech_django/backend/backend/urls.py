@@ -62,8 +62,11 @@ router.register(r'customer-products-viewset', CustomerProductViewSet, basename='
 router.register(r'customer-product-list', CustomerProductsList, basename='customer-product-list')
 
 
+
 router.register(r'seller-gift', SellerGifts, basename='seller-gift')
 router.register(r'customer-gift', CustomerGiftViewSet, basename='customer-gift')
+
+router.register(r'rider-dashboard', RiderDashboardViewSet, basename='rider-dashboard')
 
 urlpatterns = [
     path('admin/', admin.site.urls),

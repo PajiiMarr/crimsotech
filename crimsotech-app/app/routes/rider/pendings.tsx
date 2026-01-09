@@ -10,6 +10,10 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
+export async function loader () {
+  console.log("hello")
+}
+
 export default function PendingRoute() {
   return (
     <main className="flex flex-col items-center justify-center min-h-screen text-center px-6 bg-gray-50">

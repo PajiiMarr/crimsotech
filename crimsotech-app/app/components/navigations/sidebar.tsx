@@ -121,8 +121,7 @@ const menuItems = [
   {
     group: "Dashboard",
     children: [
-      { title: "Dashboard", url: "/rider/dashboard", icon: Home, roles: ["rider"] },
-      { title: "My Stats", url: "/rider/stats", icon: BarChart, roles: ["rider"] },
+      { title: "Dashboard", url: "/rider/", icon: Home, roles: ["rider"] },
     ]
   },
   {

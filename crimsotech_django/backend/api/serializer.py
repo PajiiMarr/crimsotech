@@ -775,3 +775,70 @@ class RefundSerializer(serializers.ModelSerializer):
     class Meta:
         model = Refund
         fields = '__all__'
+
+class DeliveryStatsSerializer(serializers.ModelSerializer):
+    order_id = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
+    pickup_location = serializers.SerializerMethodField()
+    delivery_location = serializers.SerializerMethodField()
+    amount = serializers.DecimalField(source='order.total_amount', max_digits=12, decimal_places=2, read_only=True)
+    distance = serializers.DecimalField(source='distance_km', max_digits=6, decimal_places=2, read_only=True)
+    estimated_time = serializers.IntegerField(source='estimated_minutes', read_only=True)
+    actual_time = serializers.IntegerField(source='actual_minutes', read_only=True)
+    rating = serializers.IntegerField(source='delivery_rating', read_only=True)
+    completed_at = serializers.DateTimeField(source='delivered_at', read_only=True)
+    
+    class Meta:
+        model = Delivery
+        fields = [
+            'id', 'order_id', 'customer_name', 'pickup_location', 
+            'delivery_location', 'status', 'amount', 'distance', 
+            'estimated_time', 'actual_time', 'rating', 'completed_at',
+            'picked_at', 'delivered_at', 'created_at'
+        ]
+    
+    def get_order_id(self, obj):
+        return str(obj.order.order)
+    
+    def get_customer_name(self, obj):
+        user = obj.order.user
+        if user.first_name and user.last_name:
+            return f"{user.first_name} {user.last_name}"
+        return user.username or "Unknown Customer"
+    
+    def get_pickup_location(self, obj):
+        # Assuming shop location for pickup
+        try:
+            # Get the first product's shop from the order
+            # You might need to adjust this based on your order structure
+            from api.models import OrderItem  # Import if you have OrderItem model
+            order_items = obj.order.orderitem_set.all() if hasattr(obj.order, 'orderitem_set') else []
+            if order_items:
+                shop = order_items[0].product.shop
+                if shop:
+                    return f"{shop.name}, {shop.city}"
+        except:
+            pass
+        return "Pickup Location"
+    
+    def get_delivery_location(self, obj):
+        # Get from shipping address
+        shipping_address = obj.order.shipping_address
+        if shipping_address:
+            return f"{shipping_address.city}, {shipping_address.province}"
+        return "Delivery Location"
+
+
+class RiderMetricsSerializer(serializers.Serializer):
+    total_deliveries = serializers.IntegerField()
+    completed_deliveries = serializers.IntegerField()
+    pending_deliveries = serializers.IntegerField()
+    cancelled_deliveries = serializers.IntegerField()
+    total_earnings = serializers.DecimalField(max_digits=12, decimal_places=2)
+    avg_delivery_time = serializers.FloatField()
+    avg_rating = serializers.FloatField()
+    on_time_percentage = serializers.FloatField()
+    current_week_deliveries = serializers.IntegerField()
+    current_month_earnings = serializers.DecimalField(max_digits=12, decimal_places=2)
+    has_data = serializers.BooleanField()
+    growth_metrics = serializers.DictField(required=False)
