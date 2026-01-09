@@ -1,5 +1,5 @@
 import { useAuth } from '@/contexts/AuthContext';
-import { checkout as checkoutApi, getCartItems, removeCartItem, validateVoucher } from '@/utils/cartApi';
+import { checkout as checkoutApi, getCartItems, removeCartItem } from '@/utils/cartApi';
 import { API_CONFIG } from '@/utils/config';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -193,10 +193,31 @@ export default function CheckoutScreen() {
       }
     } catch (e: any) {
       Alert.alert('Checkout failed', e?.message || 'Please try again');
-    } finally {
+  } finally {
       setPlacing(false);
     }
   };
+
+  // Local voucher validation helper (previously imported from utils/cartApi)
+  async function validateVoucher(code: string, shopId: string, amount: number) {
+    try {
+      const url = `${API_CONFIG.BASE_URL}/api/vouchers/validate/`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, shop_id: shopId, amount }),
+      });
+      if (!resp.ok) {
+        const t = await resp.text();
+        throw new Error(`HTTP ${resp.status}: ${t}`);
+      }
+      const data = await resp.json();
+      // Expected response shape: { success, valid, voucher, discount_amount, error }
+      return data;
+    } catch (e: any) {
+      return { success: false, valid: false, error: e?.message || 'Network error' };
+    }
+  }
 
   const handleSelectVoucher = async (selectedVoucher: any) => {
     try {

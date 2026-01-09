@@ -110,8 +110,8 @@ export default function CartScreen() {
     const grouped: { [key: string]: ShopGroup } = {};
     
     cartItems.forEach(item => {
-      const shopId = item?.product_details?.shop?.id || 'individual';
-      const shopName = item?.product_details?.shop?.name || 'Individual Seller';
+      const shopId = (item as any)?.product_details?.shop?.id || 'individual';
+      const shopName = (item as any)?.product_details?.shop?.name || 'Individual Seller';
       
       if (!grouped[shopId]) {
         grouped[shopId] = {
@@ -161,7 +161,7 @@ export default function CartScreen() {
 
   const calculateTotal = () => {
     return cartItems.reduce((total, item) => {
-      const raw = (item?.product?.price ?? item?.item_price ?? item?.product_details?.price ?? '0') as string | number;
+      const raw = (item?.product?.price ?? (item as any)?.item_price ?? (item as any)?.product_details?.price ?? '0') as string | number;
       const num = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/[₱,]/g, '')) || 0;
       return total + (num * (item.quantity || 0));
     }, 0);
@@ -176,16 +176,16 @@ export default function CartScreen() {
       </View>
       
       <View style={styles.itemDetails}>
-        <Text style={styles.itemName} numberOfLines={2}>{(item?.product?.name ?? item?.item_name ?? item?.product_details?.name ?? 'Product')}</Text>
-        { (item?.product?.condition || item?.product_details?.condition) && (
-          <Text style={styles.itemCondition}>{item?.product?.condition ?? item?.product_details?.condition}</Text>
+        <Text style={styles.itemName} numberOfLines={2}>{(item?.product?.name ?? item?.item_name ?? (item as any)?.product_details?.name ?? 'Product')}</Text>
+        { (item?.product?.condition || (item as any)?.product_details?.condition) && (
+          <Text style={styles.itemCondition}>{item?.product?.condition ?? (item as any)?.product_details?.condition}</Text>
         )}
         
         <View style={styles.quantityContainer}>
           <TouchableOpacity 
             style={styles.quantityButton}
             onPress={() => {
-              const stock = item?.available_stock ?? item?.product_details?.quantity ?? 999;
+              const stock = item?.available_stock ?? (item as any)?.product_details?.quantity ?? 999;
               handleUpdateQuantity(item.id, item.quantity - 1, stock);
             }}
           >
@@ -197,7 +197,7 @@ export default function CartScreen() {
           <TouchableOpacity 
             style={styles.quantityButton}
             onPress={() => {
-              const stock = item?.available_stock ?? item?.product_details?.quantity ?? 999;
+              const stock = item?.available_stock ?? (item as any)?.product_details?.quantity ?? 999;
               handleUpdateQuantity(item.id, item.quantity + 1, stock);
             }}
           >
@@ -212,7 +212,7 @@ export default function CartScreen() {
       <View style={styles.itemPriceContainer}>
         <Text style={styles.itemPrice}>
           {(() => {
-            const raw = (item?.product?.price ?? item?.item_price ?? item?.product_details?.price ?? '0') as string | number;
+            const raw = (item?.product?.price ?? (item as any)?.item_price ?? (item as any)?.product_details?.price ?? '0') as string | number;
             const num = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/[₱,]/g, '')) || 0;
             return `₱${(num * (item.quantity || 0)).toFixed(2)}`;
           })()}
@@ -273,7 +273,7 @@ export default function CartScreen() {
           <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
             {groupItemsByShop().map((shopGroup) => {
               const shopTotal = shopGroup.items.reduce((sum, item) => {
-                const raw = (item?.product?.price ?? item?.item_price ?? item?.product_details?.price ?? '0') as string | number;
+                const raw = (item?.product?.price ?? (item as any)?.item_price ?? (item as any)?.product_details?.price ?? '0') as string | number;
                 const num = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/[₱,]/g, '')) || 0;
                 return sum + (num * (item.quantity || 0));
               }, 0);

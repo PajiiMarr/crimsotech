@@ -62,7 +62,9 @@ interface RiderData {
 }
 
 const ShopOrders = () => {
-  const { shop } = useShop();
+  const { state } = useShop();
+  // derive the current shop from state.shops and state.currentShopId (fallback to first shop or null)
+  const shop = state.shops.find((s: any) => s.id === state.currentShopId) ?? state.shops[0] ?? null;
   const { user } = useAuth();
   const params = useLocalSearchParams();
   const shopIdFromParams = params.shopId as string;

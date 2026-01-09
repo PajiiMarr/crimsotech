@@ -13,6 +13,12 @@ interface CartItem {
   added_at: string;
 }
 
+interface AddToCartResponse {
+  success: boolean;
+  cart_item?: CartItem;
+  error?: string;
+}
+
 interface AuthContextType {
   user: any; // In a real app, this would be a more specific user type
   login: (username: string, password: string) => Promise<void>;
@@ -20,7 +26,7 @@ interface AuthContextType {
   register: (username: string, password: string, email?: string) => Promise<void>;
   completeRegistration: (userData: any) => Promise<void>;
   updateUserProfile: (profileData: any) => Promise<void>;
-  addToCart: (product_id: string, quantity?: number) => Promise<void>;
+  addToCart: (product_id: string, quantity?: number) => Promise<AddToCartResponse>;
   getCartItems: () => Promise<CartItem[]>;
   cartItems: CartItem[];
   cartCount: number;
@@ -93,7 +99,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   // Add item to cart
-  const addToCart = async (product_id: string, quantity: number = 1) => {
+  const addToCart = async (product_id: string, quantity: number = 1): Promise<AddToCartResponse> => {
     if (!user) {
       throw new Error('User not authenticated');
     }

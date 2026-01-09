@@ -770,11 +770,6 @@ const styles = StyleSheet.create({
     padding: 16,
     marginTop: 8,
   },
-  description: {
-    fontSize: 14,
-    color: '#666',
-    lineHeight: 20,
-  },
   dimensionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

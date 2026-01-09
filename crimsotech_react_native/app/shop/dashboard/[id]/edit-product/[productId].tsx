@@ -448,9 +448,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
+  placeholder: {
+    width: 40,
+  },
   content: {
     flex: 1,
     padding: 16,
+  },
+  // Ensure the ScrollView's contentContainerStyle has a defined style
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 24,
   },
   section: {
     marginBottom: 24,

@@ -23,8 +23,8 @@ import {
 const { width } = Dimensions.get('window');
 const isSmallDevice = width < 375;
 
-type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
-type FilterType = 'all' | 'unpaid' | 'to_ship' | 'shipped' | 'to_review' | 'returns';
+type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'completed' | 'cancelled';
+type FilterType = 'all' | 'unpaid' | 'to_ship' | 'shipped' | 'to_review' | 'returns' | 'cancelled';
 
 type OrderItem = {
   id: string;
@@ -222,20 +222,25 @@ export default function PurchasesScreen() {
     })}`;
   };
 
-  const getStatusLabel = (status: OrderStatus) => {
+  const getStatusLabel = (status: OrderStatus | string) => {
     switch (status) {
       case 'pending': return 'Pending';
       case 'processing': return 'To Ship';
       case 'shipped': return 'To Receive';
-      case 'delivered': return 'Completed';
+      case 'delivered':
+      case 'completed':
+        return 'Completed';
       case 'cancelled': return 'Cancelled';
-      default: return status.charAt(0).toUpperCase() + status.slice(1);
+      default: {
+        const s = String(status);
+        return s.charAt(0).toUpperCase() + s.slice(1);
+      }
     }
   };
 
   const navigateToOrderDetails = (order: Order) => {
     router.push({
-      pathname: '/pages/purchase-details',
+      pathname: '/purchase-details',
       params: {
         id: order.id,
         orderId: order.orderId,
@@ -246,7 +251,7 @@ export default function PurchasesScreen() {
         location: order.location || '',
         items: JSON.stringify(order.items),
       },
-    });
+    } as any);
   };
 
   return (
@@ -393,7 +398,7 @@ export default function PurchasesScreen() {
                     </View>
 
                     {/* Quick Review Buttons for Completed Orders */}
-                    {order.status === 'delivered' && (
+                    {(order.status === 'delivered' || order.status === 'completed') && (
                       <View style={styles.reviewSection}>
                         {order.items.filter(item => !item.isReviewed).map((item) => (
                           <TouchableOpacity
