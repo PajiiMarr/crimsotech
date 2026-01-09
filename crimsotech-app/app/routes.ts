@@ -118,6 +118,6 @@ export default [
         route('orders/active', 'routes/rider/active-orders.tsx'),
         route('orders/active/:orderId', 'routes/rider/active-orders/active-orders-details.tsx'),
         route('orders/history', 'routes/rider/history.tsx'),
+        route('schedule', 'routes/rider/schedule.tsx'),
     ]),
 ] satisfies RouteConfig;
-
