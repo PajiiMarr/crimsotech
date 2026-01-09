@@ -13,8 +13,36 @@ import { MaterialIcons } from "@expo/vector-icons";
 
 const { width } = Dimensions.get("window");
 
+type StatItem = {
+  id: string;
+  title: string;
+  value: string;
+  color: string;
+};
+
+type HowItWorksItem = {
+  id: string;
+  title: string;
+  number: string;
+  color: string;
+};
+
+type GiftItem = {
+  id: string;
+  name: string;
+  condition: string;
+  seller: string;
+  rating: number;
+  location: string;
+  timeAgo: string;
+  views: number;
+  claims: number;
+  badge: string;
+  badgeColor: string;
+};
+
 // Updated mock data to match the image
-const availableGifts = [
+const availableGifts: GiftItem[] = [
   {
     id: "1",
     name: "Samsung Galaxy S10",
@@ -139,16 +167,16 @@ const howItWorksData = [
 
 export default function ComgiftScreen() {
   const [activeTab, setActiveTab] = useState("Available");
-  const [setSelectedItem] = useState(null);
+  const [selectedItem, setSelectedItem] = useState<GiftItem | null>(null);
 
-  const renderStatsCard = (item) => (
+  const renderStatsCard = (item: StatItem) => (
     <View key={item.id} style={[styles.statCard, { backgroundColor: item.color }]}>
       <Text style={styles.statValue}>{item.value}</Text>
       <Text style={styles.statTitle}>{item.title}</Text>
     </View>
   );
 
-  const renderHowItWorks = (item) => (
+  const renderHowItWorks = (item: HowItWorksItem) => (
     <View key={item.id} style={styles.stepCard}>
       <View style={[styles.stepNumber, { backgroundColor: `${item.color}15` }]}>
         <Text style={[styles.stepNumberText, { color: item.color }]}>
@@ -159,7 +187,7 @@ export default function ComgiftScreen() {
     </View>
   );
 
-  const renderGiftItem = ({ item }) => (
+  const renderGiftItem = ({ item }: { item: GiftItem }) => (
     <TouchableOpacity style={styles.giftItem} onPress={() => setSelectedItem(item)}>
       <View style={styles.giftHeader}>
         <View style={[styles.badge, { backgroundColor: item.badgeColor }]}>
@@ -260,7 +288,7 @@ export default function ComgiftScreen() {
         {/* Gifts Grid */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Available Electronics</Text>
-          <FlatList
+          <FlatList<GiftItem>
             data={availableGifts}
             renderItem={renderGiftItem}
             keyExtractor={(item) => item.id}

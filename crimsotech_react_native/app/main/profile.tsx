@@ -23,6 +23,9 @@ export default function ProfileScreen() {
   const [hasShop, setHasShop] = useState<boolean | null>(null);
   const [loadingShop, setLoadingShop] = useState(false);
 
+  // helper to avoid strict typed route errors from expo-router's generated union
+  const pushRoute = (path: string) => router.push(path as any);
+
   useEffect(() => {
     checkUserShop();
   }, [user]);
@@ -78,7 +81,7 @@ export default function ProfileScreen() {
 
     if (!hasShop) {
       // Navigate to create shop screen
-      router.push('/main/create-shop');
+      pushRoute('/main/create-shop');
     } else {
       // Navigate to shop dashboard/mode
       // For now, show alert - you can create a shop dashboard screen later
@@ -142,7 +145,7 @@ export default function ProfileScreen() {
           style={styles.shopCard}
           onPress={() => {
             // Always go to shop management page where users can create or manage shops
-            router.push('/shop');
+            pushRoute('/shop');
           }}
         >
           <View style={styles.shopCardLeft}>
@@ -172,7 +175,7 @@ export default function ProfileScreen() {
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => router.push('/pages/purchases')}
+          onPress={() => pushRoute('/pages/purchases')}
         >
           <View style={styles.menuLeft}>
             <View style={[styles.menuIcon, { backgroundColor: '#ffffffff' }]}>
@@ -192,7 +195,7 @@ export default function ProfileScreen() {
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => router.push('/pages/favorites')}
+          onPress={() => pushRoute('/pages/favorites')}
         >
           <View style={styles.menuLeft}>
             <View style={[styles.menuIcon, { backgroundColor: '#ffffffff' }]}>
@@ -208,7 +211,7 @@ export default function ProfileScreen() {
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => router.push('/pages/addresses')}
+          onPress={() => pushRoute('/pages/addresses')}
         >
           <View style={styles.menuLeft}>
             <View style={[styles.menuIcon, { backgroundColor: '#ffffffff' }]}>
@@ -224,7 +227,7 @@ export default function ProfileScreen() {
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => router.push('/pages/my-vouchers')}
+          onPress={() => pushRoute('/pages/my-vouchers')}
         >
           <View style={styles.menuLeft}>
             <View style={[styles.menuIcon, { backgroundColor: '#FCE4EC' }]}>

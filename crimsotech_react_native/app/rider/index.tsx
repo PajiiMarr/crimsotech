@@ -166,14 +166,14 @@ export default function RiderHomeScreen() {
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           renderItem={({ item }) => (
             <TouchableOpacity 
-              style={[styles.linkCard, { borderLeftColor: item.color }]} 
-              onPress={() => router.push(item.route)}
-            >
-              <View style={[styles.linkIconCircle, { backgroundColor: `${item.color}20` }]}>
-                <Text style={[styles.linkIcon, { color: item.color }]}>{item.icon}</Text>
-              </View>
-              <Text style={styles.linkTitle}>{item.title}</Text>
-            </TouchableOpacity>
+                style={[styles.linkCard, { borderLeftColor: item.color }]} 
+                onPress={() => router.push(item.route as any)}
+              >
+                <View style={[styles.linkIconCircle, { backgroundColor: `${item.color}20` }]}>
+                  <Text style={[styles.linkIcon, { color: item.color }]}>{item.icon}</Text>
+                </View>
+                <Text style={styles.linkTitle}>{item.title}</Text>
+              </TouchableOpacity>
           )}
           contentContainerStyle={{ paddingTop: 12, paddingBottom: 24 }}
         />
