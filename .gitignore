@@ -12,6 +12,7 @@ crimsotech_django/staticfiles/
 crimsotech_django/backend/backend/.env
 crimsotech_django/myenv/
 crimsotech_django/env/
+crimsotech_django/.env
 crimsotech_django/ENV/
 crimsotech_django/.venv/
 crimsotech_django/.idea/
@@ -23,6 +24,7 @@ crimsotech_django/nosetests.xml
 crimsotech_django/coverage.xml
 crimsotech_django/*.cover
 crimsotech_django/*.py,cover
+crimsotech\.venv
 # Optional migrations
 # crimsotech_django/*/migrations/*
 # !crimsotech_django/*/migrations/__init__.py
@@ -40,6 +42,7 @@ crimsotech-app/.cache/
 crimsotech-app/.vite/
 crimsotech-app/.next/
 crimsotech-app/app/routes/admin/starters.tsx
+crimsotech-app/.env
 
 # =======================
 # React Native / Expo app
