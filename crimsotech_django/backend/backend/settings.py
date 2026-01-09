@@ -36,7 +36,7 @@ ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",     # web
     "0.0.0.0",        # technically optional, safe to include
-    "192.168.1.28",   # your PC LAN IP for mobile
+    "192.168.1.27",   # your PC LAN IP for mobile
 ]
 
 # Application definition
