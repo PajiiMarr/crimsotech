@@ -202,110 +202,16 @@ export default function HomeScreen() {
   );
 
   const handleUpdateProduct = async () => {
-    if (!validateForm()) return;
-    if (productImages.length === 0) {
-      Alert.alert('Error', 'Please add at least one product image.');
-      return;
-    }
-
-    const existing = state.products.find(p => p.id === productId);
-    if (!existing) {
-      Alert.alert('Error', 'Product not found. Please refresh the dashboard.');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Prepare FormData payload similar to add-product
-      const payload = new FormData();
-      payload.append('name', formData.name);
-      payload.append('description', formData.description);
-      payload.append('price', formData.price);
-      payload.append('quantity', formData.quantity);
-      payload.append('condition', formData.condition);
-      payload.append('shop', shopId);
-      payload.append('customer_id', user?.user_id || user?.id || '');
-      payload.append('category', formData.category || '');
-      payload.append('upload_status', 'published'); // Add this to keep it visible
-      payload.append('status', 'active');
-
-      // Append new media files
-      newMediaFiles.forEach((file, index) => {
-        payload.append('media_files', {
-          uri: file.uri,
-          type: file.type,
-          name: file.name || `media_${index}.jpg`
-        } as any);
-      });
-
-      // Update product in context (local state)
-      const updatedProduct = {
-        ...existing,
-        name: formData.name,
-        description: formData.description,
-        price: parseFloat(formData.price),
-        quantity: parseInt(formData.quantity),
-        condition: formData.condition,
-        category: formData.category,
-        images: productImages,
-        updatedAt: new Date().toISOString(),
-      };
-
-      dispatch({ type: 'UPDATE_PRODUCT', payload: updatedProduct });
-      Alert.alert('Product Updated!', `"${formData.name}" has been updated successfully!`, [
-        { text: 'OK', onPress: () => router.push(`/shop/dashboard/${shopId}`) },
-      ]);
-    } catch (error: any) {
-      console.error('Update product error:', error);
-      Alert.alert('Error', error.message || 'Failed to update product. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    // Product update is not implemented on the Home screen; keep a no-op stub to avoid referencing
+    // form-related helpers/variables that are defined only in the product-edit screen.
+    console.warn('handleUpdateProduct called on Home screen but is not implemented here.');
+    return;
   };
 
   const handleDeleteProduct = (productId: string, productName: string) => {
-    Alert.alert(
-      'Delete Product',
-      `Are you sure you want to delete "${productName}"? This action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              
-              // Call backend API to delete product
-              const response = await fetch(`${API_CONFIG.BASE_URL}/seller-products/${productId}/`, {
-                method: 'DELETE',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  customer_id: user?.user_id || user?.id
-                })
-              });
-
-              if (response.ok) {
-                // Dispatch delete action to remove from local context
-                dispatch({ type: 'DELETE_PRODUCT', payload: productId });
-                
-                Alert.alert('Success', 'Product deleted successfully');
-              } else {
-                const errorData = await response.json();
-                Alert.alert('Error', errorData.error || 'Failed to delete product');
-              }
-            } catch (error) {
-              console.error('Delete product error:', error);
-              Alert.alert('Error', 'Failed to delete product. Please try again.');
-            } finally {
-              setLoading(false);
-            }
-          }
-        }
-      ]
-    );
+    // Deleting products is not available from Home screen; keep a simple stub to avoid referencing
+    // dispatch/setLoading/API calls that belong in the seller dashboard.
+    console.warn(`handleDeleteProduct called for ${productId} (${productName}) but is not implemented on Home screen.`);
   };
 
   return (

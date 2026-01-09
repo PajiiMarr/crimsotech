@@ -207,8 +207,13 @@ export function AppSidebar() {
     <Sidebar variant="floating" collapsible="icon">
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>
-            <h1 className="text-lg">Logo Placeholder</h1>
+          <SidebarGroupLabel className="mb-5">
+            <Link to="/" className="h-20 flex  w-full pt-5">
+              <img
+                src="/logo_crimsotech.jpg"
+                alt="CrimsoTech"
+              />
+            </Link>
           </SidebarGroupLabel>
           <SidebarGroupContent>
             {accessibleMenuItems.map(group => (

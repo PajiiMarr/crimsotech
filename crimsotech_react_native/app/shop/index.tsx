@@ -70,7 +70,7 @@ export default function ShopManagementScreen() {
   };
 
   const handleEditShop = (shopId: string) => {
-    router.push(`/setup/edit-shop/${shopId}`);
+    router.push({ pathname: '/setup/edit-shop/[id]', params: { id: shopId } } as any);
   };
 
   const handleDeleteShop = async (shopId: string) => {

@@ -90,12 +90,13 @@ export default function ShopProfileScreen() {
 
 
   const handleEditShop = () => {
-    router.push(`/setup/edit-shop/${shopId}`);
+    // use pathname + params to satisfy typed router.push signatures
+    router.push({ pathname: '/setup/edit-shop/[id]', params: { id: shopId } } as any);
   };
 
   const handleViewProducts = () => {
     // Navigate to dedicated shop products view (not shop management mode)
-    router.push(`/shop/${shopId}/products`);
+    router.push({ pathname: '/shop/[id]/products', params: { id: shopId } } as any);
   };
 
   const handleDeleteShop = () => {
@@ -335,7 +336,7 @@ export default function ShopProfileScreen() {
                   {
                     text: 'Switch',
                     onPress: () => {
-                      router.push(`/shop/dashboard/${shopId}`);
+                      router.push({ pathname: '/shop/dashboard/[id]', params: { id: shopId } } as any);
                     }
                   }
                 ]

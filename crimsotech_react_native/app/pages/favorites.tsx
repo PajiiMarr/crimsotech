@@ -225,7 +225,6 @@ export default function FavoritesScreen() {
           onRefresh={handleRefresh}
         />
       )}
-      )}
     </View>
   );
 }
