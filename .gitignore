@@ -11,7 +11,8 @@ crimsotech_django/backend/media/
 crimsotech_django/staticfiles/
 crimsotech_django/backend/backend/.env
 crimsotech_django/myenv/
-crimsotech_django/env/
+crimsotech_django/venv/
+crimsotech_django/.env
 crimsotech_django/ENV/
 crimsotech_django/.venv/
 crimsotech_django/.idea/
