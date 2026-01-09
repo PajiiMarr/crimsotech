@@ -32,8 +32,12 @@ SECRET_KEY = 'django-insecure-fc_zep_u6#jb6bk=%in45jo82%6%5*v1%xj1(%h&upkj(&+af0
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
-
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",     # web
+    "0.0.0.0",        # technically optional, safe to include
+    "192.168.1.28",   # your PC LAN IP for mobile
+]
 
 # Application definition
 
@@ -72,6 +76,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
+    
 ]
 
 CORS_ALLOW_CREDENTIALS = True

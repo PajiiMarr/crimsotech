@@ -8,7 +8,7 @@
 
 export const API_CONFIG = {
   // Change this to your current IP address or use the appropriate value for your platform
-  BASE_URL: 'http://192.168.254.107:8000', // Real device - your computer's IP
+  BASE_URL: 'http://192.168.1.28:8000', // Real device - your computer's IP
 
   // Platform-specific URLs (uncomment the one you need)
   // ANDROID_EMULATOR: 'http://10.0.2.2:8000',
