@@ -5,8 +5,8 @@ import json
 import re
 import time
 from django.shortcuts import render
-from django.db.models import Prefetch
-from django.db.models.functions import TruncMonth
+from django.db.models import Prefetch, DecimalField
+from django.db.models.functions import TruncMonth, Coalesce
 from django.db import transaction
 from decimal import Decimal
 from rest_framework import status
@@ -31,9 +31,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 import uuid
-
-
-
+from django.db.models import Min, Max
 
 
 class UserView(APIView):
@@ -18510,8 +18508,719 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+class RiderDashboardViewSet(viewsets.ViewSet):
+    """
+    Rider Dashboard API endpoints with optimized queries and data integrity
+    User authentication via X-User-Id header from frontend middleware
+    """
+    
+    def _get_user_from_header(self, request):
+        """Extract and validate user from X-User-Id header"""
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            raise ValueError('X-User-Id header is required')
+        
+        try:
+            user = User.objects.get(id=user_id)
+            return user
+        except User.DoesNotExist:
+            raise ValueError(f'User with ID {user_id} does not exist')
+    
+    def get_queryset(self, user):
+        """Get deliveries for the authenticated rider"""
+        try:
+            rider = user.rider
+            return Delivery.objects.filter(rider=rider).select_related(
+                'order',
+                'order__user',
+                'order__shipping_address'
+            ).prefetch_related(
+                'order__orderitem_set__product__shop'
+            ).order_by('-created_at')
+        except (Rider.DoesNotExist, AttributeError):
+            return Delivery.objects.none()
+    
+    @action(detail=False, methods=['get'])
+    def rider_dashboard(self, request):
+        """
+        Get comprehensive dashboard data for rider
+        Returns metrics and recent delivery stats with date filtering
+        """
+        try:
+            # Get user from X-User-Id header
+            user = self._get_user_from_header(request)
+            
+            # Check if user is a rider
+            if not hasattr(user, 'rider'):
+                return Response({
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get base queryset
+            deliveries = self.get_queryset(user)
+            
+            # Get date range parameters from request
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            
+            # Apply date filtering if provided
+            if start_date and end_date:
+                try:
+                    start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+                    
+                    # Filter deliveries by date range
+                    deliveries = deliveries.filter(
+                        created_at__date__gte=start_date_obj,
+                        created_at__date__lte=end_date_obj
+                    )
+                except ValueError:
+                    return Response(
+                        {'error': 'Invalid date format. Use YYYY-MM-DD'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            if not deliveries.exists():
+                return Response({
+                    'metrics': self._get_empty_metrics(),
+                    'deliveries': []
+                })
+            
+            # Calculate metrics efficiently (now based on filtered deliveries)
+            metrics = self._calculate_metrics(deliveries, user.rider)
+            
+            # Get recent deliveries (all filtered or up to 50)
+            recent_deliveries = deliveries[:50]  # Increased limit for date ranges
+            delivery_serializer = DeliveryStatsSerializer(recent_deliveries, many=True)
+            
+            return Response({
+                'metrics': metrics,
+                'deliveries': delivery_serializer.data
+            })
+            
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _calculate_metrics(self, deliveries, rider):
+        """Calculate all metrics in optimized queries based on filtered deliveries"""
+        
+        # 1. Basic counts (single query)
+        status_counts = deliveries.aggregate(
+            total=Count('id'),
+            delivered=Count('id', filter=Q(status='delivered')),
+            pending=Count('id', filter=Q(status__in=['pending', 'picked_up'])),
+            cancelled=Count('id', filter=Q(status='cancelled'))
+        )
+        
+        # 2. Total earnings from delivered orders
+        total_earnings = deliveries.filter(
+            status='delivered',
+            order__payment__status='success'
+        ).aggregate(
+            total=Sum('order__total_amount')
+        )['total'] or Decimal('0.00')
+        
+        # 3. Average delivery time in minutes
+        delivered_deliveries = deliveries.filter(
+            status='delivered',
+            picked_at__isnull=False,
+            delivered_at__isnull=False
+        )
+        
+        avg_delivery_minutes = 0
+        if delivered_deliveries.exists():
+            # Calculate average time difference in minutes
+            total_seconds = 0
+            count = 0
+            
+            for delivery in delivered_deliveries:
+                if delivery.picked_at and delivery.delivered_at:
+                    time_diff = (delivery.delivered_at - delivery.picked_at).total_seconds()
+                    total_seconds += time_diff
+                    count += 1
+            
+            if count > 0:
+                avg_delivery_minutes = total_seconds / (60 * count)
+        
+        # 4. Average rating
+        avg_rating = deliveries.filter(
+            delivery_rating__isnull=False
+        ).aggregate(
+            avg=Avg('delivery_rating')
+        )['avg'] or 0
+        
+        # 5. On-time percentage (delivered within estimated time)
+        on_time_deliveries = deliveries.filter(
+            status='delivered',
+            estimated_minutes__isnull=False,
+            actual_minutes__isnull=False,
+            actual_minutes__lte=F('estimated_minutes')  # Actual <= Estimated
+        ).count()
+        
+        delivered_count = status_counts['delivered']
+        on_time_percentage = (on_time_deliveries / delivered_count * 100) if delivered_count > 0 else 0
+        
+        # 6. Current week deliveries (based on filtered data, but use actual current week)
+        week_start = timezone.now() - timedelta(days=timezone.now().weekday())
+        current_week_deliveries = deliveries.filter(
+            created_at__gte=week_start,
+            status='delivered'
+        ).count()
+        
+        # 7. Current month earnings (based on filtered data, but use actual current month)
+        month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        current_month_earnings = deliveries.filter(
+            status='delivered',
+            delivered_at__gte=month_start,
+            order__payment__status='success'
+        ).aggregate(
+            total=Sum('order__total_amount')
+        )['total'] or Decimal('0.00')
+        
+        # 8. Growth metrics - calculate based on the filtered date range
+        # If date range is provided, use it for growth calculation
+        growth_metrics = self._calculate_growth_metrics(deliveries)
+        
+        return {
+            'total_deliveries': status_counts['total'],
+            'completed_deliveries': status_counts['delivered'],
+            'pending_deliveries': status_counts['pending'],
+            'cancelled_deliveries': status_counts['cancelled'],
+            'total_earnings': float(total_earnings),
+            'avg_delivery_time': round(avg_delivery_minutes, 1),
+            'avg_rating': round(avg_rating, 1),
+            'on_time_percentage': round(on_time_percentage, 1),
+            'current_week_deliveries': current_week_deliveries,
+            'current_month_earnings': float(current_month_earnings),
+            'has_data': status_counts['total'] > 0,
+            'growth_metrics': growth_metrics
+        }
+    
+    def _calculate_growth_metrics(self, deliveries):
+        """
+        Calculate growth compared to previous period of same duration
+        Based on the filtered date range or default to last 7 days
+        """
+        # Get the date range of the filtered deliveries
+        if deliveries.exists():
+            date_range = deliveries.aggregate(
+                min_date=Min('created_at'),
+                max_date=Max('created_at')
+            )
+            
+            start_date = date_range['min_date']
+            end_date = date_range['max_date']
+            
+            # Calculate period duration in days
+            if start_date and end_date:
+                period_days = (end_date - start_date).days + 1
+            else:
+                period_days = 7
+        else:
+            period_days = 7
+        
+        # Current period (the filtered date range)
+        current_deliveries = deliveries.filter(status='delivered').count()
+        current_earnings = deliveries.filter(
+            status='delivered',
+            order__payment__status='success'
+        ).aggregate(
+            total=Sum('order__total_amount')
+        )['total'] or Decimal('0.00')
+        
+        # For growth comparison, we need to get previous period data
+        # If we have a date range, get the same duration before that
+        try:
+            if deliveries.exists() and 'min_date' in locals():
+                previous_start = start_date - timedelta(days=period_days)
+                previous_end = start_date - timedelta(days=1)
+                
+                # Get all deliveries for the rider to query previous period
+                all_deliveries = deliveries.model.objects.filter(
+                    rider=deliveries.first().rider
+                )
+                
+                previous_period = all_deliveries.filter(
+                    created_at__date__gte=previous_start.date(),
+                    created_at__date__lte=previous_end.date()
+                )
+                
+                previous_deliveries = previous_period.filter(status='delivered').count()
+                previous_earnings = previous_period.filter(
+                    status='delivered',
+                    order__payment__status='success'
+                ).aggregate(
+                    total=Sum('order__total_amount')
+                )['total'] or Decimal('0.00')
+                
+                # Rating for previous period
+                previous_rating = previous_period.filter(
+                    delivery_rating__isnull=False
+                ).aggregate(
+                    avg=Avg('delivery_rating')
+                )['avg'] or 0
+                
+            else:
+                # Default to 7-day comparison if no date range
+                previous_deliveries = 0
+                previous_earnings = Decimal('0.00')
+                previous_rating = 0
+                
+        except:
+            # Fallback in case of any error
+            previous_deliveries = 0
+            previous_earnings = Decimal('0.00')
+            previous_rating = 0
+            period_days = 7
+        
+        # Calculate growth percentages
+        deliveries_growth = 0
+        earnings_growth = 0
+        
+        if previous_deliveries > 0:
+            deliveries_growth = ((current_deliveries - previous_deliveries) / previous_deliveries) * 100
+        elif current_deliveries > 0:
+            deliveries_growth = 100  # 100% growth from 0
+        
+        if previous_earnings > 0:
+            earnings_growth = ((current_earnings - previous_earnings) / previous_earnings) * 100
+        elif current_earnings > 0:
+            earnings_growth = 100  # 100% growth from 0
+        
+        # Rating growth
+        current_rating = deliveries.filter(
+            delivery_rating__isnull=False
+        ).aggregate(
+            avg=Avg('delivery_rating')
+        )['avg'] or 0
+        
+        rating_growth = 0
+        if previous_rating > 0:
+            rating_growth = ((current_rating - previous_rating) / previous_rating) * 100
+        elif current_rating > 0:
+            rating_growth = 100  # 100% growth from 0
+        
+        return {
+            'deliveries_growth': round(deliveries_growth, 1),
+            'earnings_growth': round(earnings_growth, 1),
+            'rating_growth': round(rating_growth, 1),
+            'previous_period_deliveries': previous_deliveries,
+            'previous_period_earnings': float(previous_earnings),
+            'period_days': period_days
+        }
+    
+    def _get_empty_metrics(self):
+        """Return empty metrics structure"""
+        return {
+            'total_deliveries': 0,
+            'completed_deliveries': 0,
+            'pending_deliveries': 0,
+            'cancelled_deliveries': 0,
+            'total_earnings': 0.0,
+            'avg_delivery_time': 0,
+            'avg_rating': 0,
+            'on_time_percentage': 0,
+            'current_week_deliveries': 0,
+            'current_month_earnings': 0.0,
+            'has_data': False,
+            'growth_metrics': {
+                'deliveries_growth': 0,
+                'earnings_growth': 0,
+                'rating_growth': 0,
+                'previous_period_deliveries': 0,
+                'previous_period_earnings': 0.0,
+                'period_days': 7
+            }
+        }
 
-
+class RiderOrderHistoryViewSet(viewsets.ViewSet):
+    """
+    Rider Order History API endpoints with optimized queries and data integrity
+    """
+    
+    def _get_user_from_header(self, request):
+        """Extract and validate user from X-User-Id header"""
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            raise ValueError('X-User-Id header is required')
+        
+        try:
+            # Try UUID conversion for validation
+            user_uuid = uuid.UUID(user_id)
+            user = User.objects.get(id=user_uuid)
+            return user
+        except (ValueError, User.DoesNotExist):
+            raise ValueError(f'Invalid or non-existent user ID: {user_id}')
+    
+    def get_queryset(self, user):
+        """Get optimized queryset for rider's deliveries with all necessary relations"""
+        try:
+            rider = user.rider
+            # Get all deliveries for the rider with optimized queries
+            return Delivery.objects.filter(rider=rider).select_related(
+                'order',
+                'order__user',
+                'order__shipping_address'
+            ).prefetch_related(
+                'order__payment_set'
+            ).order_by('-created_at')
+        except (Rider.DoesNotExist, AttributeError):
+            return Delivery.objects.none()
+    
+    def _apply_date_filter(self, queryset, start_date, end_date):
+        """Apply date filtering to queryset"""
+        if start_date and end_date:
+            return queryset.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            )
+        return queryset
+    
+    @action(detail=False, methods=['get'])
+    def order_history(self, request):
+        """
+        Get comprehensive order history for rider with metrics
+        Query params: start_date, end_date, status
+        """
+        try:
+            # Get user from X-User-Id header
+            user = self._get_user_from_header(request)
+            
+            # Check if user is a rider
+            if not hasattr(user, 'rider'):
+                return Response({
+                    'success': False,
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get query parameters
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            status_filter = request.query_params.get('status', 'all')
+            
+            # Get base queryset
+            deliveries = self.get_queryset(user)
+            
+            # Apply date filtering
+            if start_date and end_date:
+                deliveries = self._apply_date_filter(deliveries, start_date, end_date)
+            
+            # Apply status filter
+            if status_filter != 'all':
+                if status_filter == 'completed':
+                    deliveries = deliveries.filter(status='delivered')
+                elif status_filter == 'active':
+                    deliveries = deliveries.filter(status__in=['pending', 'picked_up', 'in_progress'])
+                else:
+                    deliveries = deliveries.filter(status=status_filter)
+            
+            # Calculate metrics
+            metrics = self._calculate_metrics(deliveries, user.rider, start_date, end_date)
+            
+            # Format response data
+            deliveries_data = self._format_delivery_data(deliveries)
+            
+            return Response({
+                'success': True,
+                'metrics': metrics,
+                'deliveries': deliveries_data,
+                'count': len(deliveries_data),
+                'filters': {
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'status': status_filter
+                }
+            })
+            
+        except ValueError as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'An unexpected error occurred: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _calculate_metrics(self, deliveries, rider, start_date=None, end_date=None):
+        """Calculate comprehensive metrics for the rider"""
+        if not deliveries.exists():
+            return self._get_empty_metrics()
+        
+        # Use database aggregation for efficiency
+        aggregated = deliveries.aggregate(
+            total_deliveries=Count('id'),
+            delivered_count=Count('id', filter=Q(status='delivered')),
+            cancelled_count=Count('id', filter=Q(status='cancelled')),
+            total_earnings=Coalesce(
+                Sum(
+                    'order__total_amount',
+                    filter=Q(status='delivered', order__payment__status='success')
+                ),
+                Decimal('0.00'),
+                output_field=DecimalField()
+            ),
+            avg_delivery_time=Avg(
+                F('actual_minutes'),
+                filter=Q(status='delivered', actual_minutes__isnull=False)
+            ),
+            avg_rating=Avg('delivery_rating', filter=Q(delivery_rating__isnull=False)),
+            on_time_count=Count(
+                'id',
+                filter=Q(
+                    status='delivered',
+                    estimated_minutes__isnull=False,
+                    actual_minutes__isnull=False,
+                    actual_minutes__lte=F('estimated_minutes')
+                )
+            )
+        )
+        
+        # Calculate percentages
+        delivered_count = aggregated['delivered_count'] or 0
+        on_time_percentage = 0
+        if delivered_count > 0:
+            on_time_percentage = round((aggregated['on_time_count'] / delivered_count) * 100, 1)
+        
+        # Today's deliveries
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_deliveries = deliveries.filter(
+            status='delivered',
+            delivered_at__gte=today_start
+        ).count()
+        
+        # This week's earnings
+        week_start = timezone.now() - timedelta(days=timezone.now().weekday())
+        week_earnings = deliveries.filter(
+            status='delivered',
+            delivered_at__gte=week_start,
+            order__payment__status='success'
+        ).aggregate(
+            total=Coalesce(
+                Sum('order__total_amount'),
+                Decimal('0.00'),
+                output_field=DecimalField()
+            )
+        )['total']
+        
+        return {
+            'total_deliveries': aggregated['total_deliveries'],
+            'delivered_count': aggregated['delivered_count'],
+            'cancelled_count': aggregated['cancelled_count'],
+            'total_earnings': float(aggregated['total_earnings']),
+            'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
+            'avg_rating': round(aggregated['avg_rating'] or 0, 1),
+            'on_time_percentage': on_time_percentage,
+            'today_deliveries': today_deliveries,
+            'week_earnings': float(week_earnings),
+            'has_data': aggregated['total_deliveries'] > 0,
+            'date_range': {
+                'start_date': start_date,
+                'end_date': end_date
+            }
+        }
+    
+    def _format_delivery_data(self, deliveries):
+        """Format delivery data for frontend consumption"""
+        formatted_deliveries = []
+        
+        for delivery in deliveries:
+            order = delivery.order
+            customer = order.user
+            shipping_address = order.shipping_address
+            payment = order.payment_set.filter(status='success').first()
+            
+            # Calculate time elapsed for pending deliveries
+            time_elapsed = None
+            is_late = False
+            if delivery.status in ['pending', 'picked_up', 'in_progress']:
+                time_diff = timezone.now() - delivery.created_at
+                hours = int(time_diff.total_seconds() // 3600)
+                minutes = int((time_diff.total_seconds() % 3600) // 60)
+                time_elapsed = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+                
+                # Check if delivery is late (more than estimated time or 2 hours for pending)
+                if delivery.estimated_minutes:
+                    expected_delivery_time = delivery.created_at + timedelta(minutes=delivery.estimated_minutes)
+                    is_late = timezone.now() > expected_delivery_time
+                else:
+                    # Default: pending for more than 2 hours is late
+                    is_late = time_diff.total_seconds() > 7200  # 2 hours in seconds
+            
+            # Get shop name from order items if available
+            shop_name = None
+            try:
+                if order.orderitem_set.exists():
+                    first_item = order.orderitem_set.first()
+                    if first_item.product and first_item.product.shop:
+                        shop_name = first_item.product.shop.name
+            except:
+                shop_name = None
+            
+            formatted_deliveries.append({
+                'id': str(delivery.id),
+                'order_id': str(order.order),
+                'order_number': str(order.order)[:8].upper(),
+                'customer_name': f"{customer.first_name} {customer.last_name}".strip() or customer.username,
+                'customer_contact': customer.contact_number,
+                'customer_email': customer.email,
+                
+                # Shipping address info
+                'pickup_location': shop_name or "Pickup Location",
+                'delivery_location': shipping_address.get_full_address() if shipping_address else "Address not available",
+                'recipient_name': shipping_address.recipient_name if shipping_address else customer.first_name,
+                'recipient_phone': shipping_address.recipient_phone if shipping_address else customer.contact_number,
+                
+                # Delivery details
+                'status': delivery.status,
+                'distance_km': float(delivery.distance_km) if delivery.distance_km else None,
+                'estimated_minutes': delivery.estimated_minutes,
+                'actual_minutes': delivery.actual_minutes,
+                'delivery_rating': delivery.delivery_rating,
+                'notes': delivery.notes,
+                
+                # Order financials
+                'order_amount': float(order.total_amount),
+                'delivery_fee': 0.0,  # Can be calculated from order if separate field exists
+                'payment_method': order.payment_method,
+                'payment_status': payment.status if payment else 'unknown',
+                
+                # Shop information
+                'shop_name': shop_name,
+                'shop_contact': None,  # Could be fetched from shop if available
+                
+                # Timestamps
+                'order_created_at': order.created_at.isoformat(),
+                'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
+                'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                'created_at': delivery.created_at.isoformat(),
+                
+                # Additional metadata
+                'items_count': order.orderitem_set.count(),
+                'items_summary': self._get_items_summary(order),
+                'is_late': is_late,
+                'time_elapsed': time_elapsed,
+            })
+        
+        return formatted_deliveries
+    
+    def _get_items_summary(self, order):
+        """Get a brief summary of order items"""
+        items = order.orderitem_set.all()[:3]  # Get first 3 items
+        if not items.exists():
+            return "No items"
+        
+        item_names = []
+        for item in items:
+            if item.product:
+                item_names.append(item.product.name)
+            else:
+                item_names.append("Unknown Product")
+        
+        summary = ", ".join(item_names)
+        if order.orderitem_set.count() > 3:
+            summary += f" and {order.orderitem_set.count() - 3} more"
+        
+        return summary
+    
+    def _get_empty_metrics(self):
+        """Return empty metrics structure"""
+        return {
+            'total_deliveries': 0,
+            'delivered_count': 0,
+            'cancelled_count': 0,
+            'total_earnings': 0.0,
+            'avg_delivery_time': 0,
+            'avg_rating': 0,
+            'on_time_percentage': 0,
+            'today_deliveries': 0,
+            'week_earnings': 0.0,
+            'has_data': False,
+        }
+    
+    @action(detail=False, methods=['get'])
+    def export_history(self, request):
+        """Export order history as CSV or JSON"""
+        try:
+            user = self._get_user_from_header(request)
+            
+            if not hasattr(user, 'rider'):
+                return Response({
+                    'success': False,
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            format_type = request.query_params.get('format', 'json')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            
+            deliveries = self.get_queryset(user)
+            
+            if start_date and end_date:
+                deliveries = self._apply_date_filter(deliveries, start_date, end_date)
+            
+            if format_type == 'csv':
+                # Return CSV response
+                import csv
+                from django.http import HttpResponse
+                
+                response = HttpResponse(content_type='text/csv')
+                response['Content-Disposition'] = 'attachment; filename="rider_history.csv"'
+                
+                writer = csv.writer(response)
+                writer.writerow([
+                    'Order ID', 'Customer', 'Delivery Address', 'Status',
+                    'Amount', 'Payment Method', 'Rating', 'Delivery Time',
+                    'Order Date', 'Delivered Date'
+                ])
+                
+                for delivery in deliveries:
+                    order = delivery.order
+                    customer = order.user
+                    shipping_address = order.shipping_address
+                    
+                    writer.writerow([
+                        str(order.order)[:8],
+                        f"{customer.first_name} {customer.last_name}",
+                        shipping_address.get_full_address() if shipping_address else "N/A",
+                        delivery.get_status_display(),
+                        str(order.total_amount),
+                        order.payment_method,
+                        str(delivery.delivery_rating) if delivery.delivery_rating else "N/A",
+                        f"{delivery.actual_minutes}m" if delivery.actual_minutes else "N/A",
+                        order.created_at.strftime('%Y-%m-%d'),
+                        delivery.delivered_at.strftime('%Y-%m-%d') if delivery.delivered_at else "N/A"
+                    ])
+                
+                return response
+            
+            else:
+                # Return JSON response
+                deliveries_data = self._format_delivery_data(deliveries)
+                
+                return Response({
+                    'success': True,
+                    'format': 'json',
+                    'count': len(deliveries_data),
+                    'data': deliveries_data
+                })
+                
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class Reviews(viewsets.ModelViewSet):
     """
@@ -18732,3 +19441,5 @@ class Reviews(viewsets.ModelViewSet):
                 "success": False,
                 "error": "Review not found"
             }, status=status.HTTP_404_NOT_FOUND)
+
+            

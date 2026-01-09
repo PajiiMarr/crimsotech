@@ -4,6 +4,7 @@ from datetime import timedelta
 import uuid
 from django.core.exceptions import ValidationError
 from decimal import Decimal
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 class User(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -773,11 +774,29 @@ class Review(models.Model):
     def __str__(self):
         return f"Review by {self.customer} - {self.rating} stars"
 
+# In your models.py, update the Delivery model
 class Delivery(models.Model):
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
     rider = models.ForeignKey(Rider, on_delete=models.SET_NULL, null=True)
-    status = models.CharField(max_length=20, choices=[('pending','Pending'),('picked_up','Picked Up'),('delivered','Delivered')])
+    
+    # Original status choices
+    status = models.CharField(max_length=20, choices=[
+        ('pending','Pending'),
+        ('picked_up','Picked Up'),
+        ('in_progress','In Progress'),  # Added for frontend compatibility
+        ('delivered','Delivered'),
+        ('cancelled','Cancelled'),      # Added for frontend compatibility
+    ], default='pending')
+    
+    # New fields for frontend requirements
+    distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    estimated_minutes = models.IntegerField(null=True, blank=True)
+    actual_minutes = models.IntegerField(null=True, blank=True)
+    delivery_rating = models.IntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)])
+    notes = models.TextField(blank=True, null=True)
+    
     picked_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -785,7 +804,7 @@ class Delivery(models.Model):
 
     def __str__(self):
         return f"Delivery {self.id} for Order {self.order.order}"
-    
+
 class Payment(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
