@@ -141,7 +141,7 @@ export default function SellerGiftList() {
       setLoading(true)
       try {
         const response = await AxiosInstance.get('/seller-products/', {
-          params: { customer_id: userId }
+          params: { customer_id: userId, shop_id: shopId }
         })
 
         if (response.data && response.data.success) {
@@ -348,46 +348,52 @@ export default function SellerGiftList() {
         return formatDate(row.original.created_at)
       },
     },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: ({ row }) => {
-        const gift = row.original
-        return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => handleViewGift(gift.id)}>
-                <Eye className="h-4 w-4 mr-2" />
-                View Gift
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleEditGift(gift.id)}>
-                <Edit className="h-4 w-4 mr-2" />
-                Edit Gift
-              </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={() => handleToggleStatus(gift.id, gift.status)}
-              >
-                {gift.status === 'active' ? 'Deactivate' : 'Activate'}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem 
-                onClick={() => handleDeleteGift(gift.id)}
-                className="text-red-600 focus:text-red-600"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Delete Gift
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )
-      },
-    },
+    // In your seller-gift.tsx, update the actions column cell:
+{
+  id: "actions",
+  header: "Actions",
+  cell: ({ row }) => {
+    const gift = row.original
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" className="h-8 w-8 p-0">
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => handleViewGift(gift.id)}>
+            <Eye className="h-4 w-4 mr-2" />
+            View Gift
+          </DropdownMenuItem>
+          {/* UPDATE THIS PART - Remove the asChild and use onClick */}
+          <DropdownMenuItem onClick={() => window.location.href = `/seller/apply-gift?giftId=${gift.id}`}>
+            <Award className="h-4 w-4 mr-2" />
+            Apply Gift
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => handleEditGift(gift.id)}>
+            <Edit className="h-4 w-4 mr-2" />
+            Edit Gift
+          </DropdownMenuItem>
+          <DropdownMenuItem 
+            onClick={() => handleToggleStatus(gift.id, gift.status)}
+          >
+            {gift.status === 'active' ? 'Deactivate' : 'Activate'}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem 
+            onClick={() => handleDeleteGift(gift.id)}
+            className="text-red-600 focus:text-red-600"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete Gift
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  },
+}
   ]
 
   // Configuration for filters

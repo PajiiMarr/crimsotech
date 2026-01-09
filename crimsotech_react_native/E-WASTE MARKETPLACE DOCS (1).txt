@@ -1,0 +1,714 @@
+
+Republic of the Philippines
+Western Mindanao State University
+College of Computing Studies
+Department of Computer Science
+Zamboanga City
+
+
+
+
+Development of a Web-Based Marketplace for Individuals to Promote Responsible Disposal and Recycling of Electronic Waste
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Development of a Web-Based Marketplace for Individuals to Promote Responsible Disposal and Recycling of Electronic Waste	1
+CHAPTER 1 - PRODUCT OVERVIEW	1
+1.1.  PRODUCT OVERVIEW	1
+1.2. PROJECT SITE	1
+1.3 BACKGROUND OF THE CLIENT	1
+1.4. PROPOSED SOLUTION	1
+1.4.1. PRODUCT SUMMARY	2
+1.4.2. LIST OF FEATURES	2
+CHAPTER 2 - THE COMPANY	4
+2.1 COMPANY PROFILE	4
+2.2 COMPANY LOGO	4
+2.3 COMPANY VISION	4
+2.4 COMPANY MISSION	4
+2.5 COMPANY GOALS	4
+2.6 COMPANY ORGANIZATIONAL STRUCTURE	5
+2.6.1 OVERALL TEAM STRUCTURE	5
+2.6.2 MANAGEMENT TEAM	5
+2.6.3 ANALYSIS AND DESIGN TEAM	5
+2.6.4 DEVELOPMENT TEAM	5
+2.6.5 TESTING TEAM	5
+2.6.6 TRAINING TEAM	5
+2.7 COMPANY POLICIES	5
+WORK SUBMISSION	5
+2.8 COMPANY AGREEMENT	6
+2.9 CLIENT AGREEMENT	7
+CHAPTER 3 - PROJECT PLAN AND SCHEDULE	9
+3.1. ACTION PLAN	9
+Figure 1: The Crimsonity Breakdown Action Plan	10
+3.2. WORKBREAKDOWN STRUCTURE	11
+Figure 2: The Crimsonity Workbreakdown Structure	11
+3.3. NETWORK DIAGRAM	12
+Figure 3: The Crimsonity Network Diagram Phase 2	12
+Figure 4: The Crimsonity Network Diagram Phase 3	13
+Figure 5: The Crimsonity Network Diagram Phase 4	13
+Figure 6: The Crimsonity Network Diagram Phase 5	13
+Figure 7: The Crimsonity Network Diagram Phase 6	14
+3.4. MILESTONES AND DELIVERABLES	14
+Figure 8: The Crimsonity Milestones and Deliverables	15
+CHAPTER 4 - PROJECT COST	16
+4.1. COST OF PROJECT RESOURCES	16
+4.1.1. Effort Cost	16
+4.1.2. Hardware Cost	16
+4.1.3. Software Cost	16
+4.1.4. Miscellaneous Cost	17
+4.1.5. Overall Cost	17
+4.2. Return-On-Investment	17
+4.3. Operational Costs	17
+4.4. Intangible Benefits	18
+CHAPTER 5 - REQUIREMENTS ENGINEERING	19
+5.1. Methodology	19
+Planning Phase	19
+Analysis Phase	19
+Design Phase	19
+Implementation Phase	19
+Testing Phase	20
+Deployment Phase	20
+Maintenance Phase	20
+5.2.  Client, Customers, and other Stakeholders	20
+Client	20
+Customers / End-Users	20
+Sellers	20
+Buyers	20
+Administrators	21
+Other Stakeholders	21
+Crimsonity Development Team	21
+Instructors / Academic Supervisors	21
+Recyclers and Repair Centers	21
+Indirect Beneficiaries	21
+5.3.  Project Constraints	21
+5.3.1. Development Environment	21
+5.3.1.1. Software Requirements	22
+1. Development Tools	22
+2. Programming Languages & Frameworks	22
+3. Database	22
+4. Runtime & Environment	22
+5. Supporting Software	22
+6. Deployment & Hosting	22
+5.3.1.2. Hardware Requirements	23
+Server Requirements	23
+Client Requirements	23
+Optional / Additional Hardware	23
+5.3.1.3. Network Communication Requirements	23
+5.3.2. Implementation Environment	23
+5.3.2.1. Software Constraints	23
+5.3.2.2. Hardware Constraints	24
+5.3.2.3. Deployment Constraints	24
+5.4. Scope of the Product	24
+5.5. Functional Requirements	25
+5.6. Non-Functional Requirements	26
+5.7. Project Issues	27
+5.7.1. Open Issues	27
+5.7.2. Off-the-Shelf Solutions	27
+5.7.3. Risks	27
+5.7.4. Waiting Room	28
+CHAPTER 6 - SYSTEM DESIGN	29
+6.1. Context Flow Diagram	29
+6.2. Data Flow Diagram	29
+6.3. Data Model (ERD)	30
+6.4. Proposed Prototype	31
+Figure 6.4.1: The Crimsonity Transaction - Ordering	31
+Figure 6.4.2: The Crimsonity Transaction - Checkout	32
+Figure 6.4.3: The Crimsonity Transaction - Payment Successful	32
+Figure 6.4.4: The Crimsonity Transaction - Order Delivery	33
+
+CHAPTER 1 - PRODUCT OVERVIEW
+
+1.1.  PRODUCT OVERVIEW
+       Many households retain old or malfunctioning electronic devices due to uncertainty regarding appropriate disposal methods. As a result, these items are frequently stockpiled or discarded improperly, contributing to the escalating problem of electronic waste (e-waste). In response to this issue, the present project proposes the development of a web-based marketplace designed to facilitate the exchange of non-functional or partially functional electronic devices.
+       Through this platform, individuals can connect with buyers such as repair shops, recyclers, and electronics restoration services. These buyers can then reuse parts, recycle materials, or give the devices a new purpose. The system is designed to create a safe and organized space for e-waste transactions, making it easier for people to dispose of electronics responsibly while also promoting sustainability.
+       By giving households a convenient way to clear out unused gadgets and providing buyers with affordable access to parts and materials, the platform helps reduce the amount of e-waste that ends up being discarded improperly. At the same time, it supports the idea of a circular economy that focusing on reuse, resource efficiency, and minimizing waste.
+       
+1.2. PROJECT SITE
+       The project site serves as the central digital platform through which all interactions related to electronic waste exchange are conducted. It is designed to facilitate the listing, browsing, purchasing, and management of non-functional or partially functional electronic devices. The site provides a structured environment where individual sellers can post electronic items for sale, and authorized buyers such as repair shops, recyclers, and electronics restoration services can acquire these items for component recovery, recycling, or repurposing.
+       
+       The platform emphasizes user-friendliness, reliability, and scalability in its design. It supports various user roles with tailored access and functions, such as listing management for sellers, inventory and transaction tracking for buyers, and administrative tools for oversight. To further enhance efficiency, the system also integrates features like search optimization, transaction processing, and user feedback mechanisms, ensuring a smooth and reliable user experience."
+
+1.3 BACKGROUND OF THE CLIENT
+       The client for this project comprises individuals and organizations that generate, collect, or process electronic waste. These include households that often accumulate unused or malfunctioning electronic devices, small businesses that dispose of outdated equipment, and local recycling or repair centers seeking accessible sources of recoverable components. Despite the increasing volume of discarded electronics, most households and institutions lack structured systems for proper disposal, leading to the storage of idle devices or their inappropriate disposal.
+       
+       The absence of an organized mechanism to connect sellers of non-functional electronics with potential buyers, such as repair shops, recyclers, and component recovery entities, results in wasted resources and contributes to environmental concerns. The proposed platform seeks to address this gap by providing a structured and user-friendly system that facilitates transactions, encourages sustainable practices, and promotes accountability in electronic waste management.
+       
+1.4. PROPOSED SOLUTION
+       To address the growing issue of improperly managed electronic waste, this project proposes the development of a web-based marketplace that connects individuals who own non-functional or unused electronic devices with certified buyers such as repair shops, recyclers, and parts recovery businesses.
+       The platform will serve as a centralized and user-friendly system where sellers can list their devices and buyers can easily browse, purchase, and manage acquisitions. It will be designed with features such as role-specific access, transaction monitoring, search optimization, and feedback mechanisms to ensure a smooth and reliable user experience.
+       By providing a structured digital space for responsible e-waste exchange, the system not only offers households a convenient way to dispose of unused electronics but also supplies buyers with affordable sources of parts and materials. Ultimately, the platform encourages sustainable practices, reduces electronic waste accumulation, and supports the principles of a circular economy.
+       
+1.4.1. PRODUCT SUMMARY
+       The proposed system is a web-based marketplace aimed at addressing the challenges associated with the improper disposal and accumulation of electronic waste. It provides a structured platform where individuals can sell non-functional or obsolete electronic devices to accredited entities such as repair shops, recycling centers, and component recovery businesses.
+       
+       The system is designed with emphasis on user-friendliness, reliability, and scalability. Core functionalities include product listing, inventory browsing, transaction monitoring, and user feedback integration, all of which support efficient and transparent exchanges. For sellers, the platform offers an accessible means of responsibly disposing of unused devices, while buyers gain a cost-effective source of reusable parts and raw materials.
+       
+       By creating a direct link between households retaining unused electronics and organizations capable of reuse or recycling, the system fosters sustainable e-waste management practices and contributes to advancing the principles of the circular economy.
+       
+1.4.2. LIST OF FEATURES
+? User Account Management - Supports role-based access
+
+? Item Listing Module - Enables sellers to upload details of non-functional or unused electronic devices, including descriptions and images.
+
+? Inventory Browsing and Search - Allows buyers to filter and search through listed items efficiently using categories, keywords, or specifications.
+
+? Shopping Cart Functionality - Enables buyers to add multiple items to a virtual cart before completing a purchase. This feature allows for better management of selected products, comparison of options, and more efficient checkout processes.
+
+? AI-Based Recommendation System - Utilizes machine learning algorithms to analyze user activity, such as browsing history, search queries, and past transactions. Based on this data, the system suggests relevant electronic items to buyers.
+
+? Transaction Management - Facilitates secure and transparent purchase processes, including order tracking and transaction history.
+
+? Shop Promotion and Boosting Plans - Provides sellers or partner shops with the option to enhance the visibility of their listings through paid promotion or subscription-based boosting plans. This feature prioritizes promoted items in search results or recommendation feeds, thereby increasing exposure to potential buyers.
+
+? Feedback and Rating System - Provides a mechanism for users to rate transactions, shop, enhancing trust and accountability.
+
+? Analytics and Reporting - Generates data on transaction volume, user activity, and e-waste recovery to support monitoring and evaluation.
+
+? Administrative Dashboard - Offers administrators tools for user oversight
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            	
+
+CHAPTER 2 - THE COMPANY
+
+2.1 COMPANY PROFILE
+
+       Crimsonity is a software development team founded by students from Western Mindanao State University (WMSU). The company operates on the core belief that frustrations are not dead ends but stepping stones to discovery. We specialize in building usable software that addresses simple, everyday problems, creating practical and reliable solutions for our clients. Our approach is to transform struggles into lessons, challenges into creativity, and setbacks into opportunities for growth, helping individuals and organizations navigate obstacles and achieve progress.
+       
+2.2 COMPANY LOGO
+
+
+       The logo features a crimson bird rising alongside simple geometric shapes. It symbolizes strength, unity, and the belief that challenges can lead to new opportunities, reflecting the company's core mission of transforming frustrations into growth and positive change.
+      
+2.3 COMPANY VISION
+	To create a world where frustrations spark fascination, innovation, and growth.
+
+2.4 COMPANY MISSION
+	Crimsonity is committed to guiding individuals and organizations in turning frustrations into meaningful breakthroughs. Through creativity, resilience, and practical solutions, we aim to inspire fascination, strengthen confidence, and drive positive change in every journey.
+
+2.5 COMPANY GOALS
+
+1. Help people and organizations find value in challenges to achieve lasting personal growth. 
+2. Provide simple tools and ideas that spark new solutions for everyday practical problem-solving. 
+3. Build confidence by encouraging flexibility and learning in both personal and professional life. 
+4. Support steady growth through real and useful results that create meaningful long-term change. 
+5. Create connections that strengthen teamwork and trust while promoting collaboration across communities. 
+6. Turn problems into opportunities for improvement and inspire innovation through fresh thinking. 
+7. Guide individuals to see setbacks as lessons that develop resilience and inner strength. 
+8. Encourage creativity in solving everyday issues to unlock hidden potential and opportunities. 
+9. Promote a positive outlook when facing difficulties to maintain hope and forward momentum. 
+10. Deliver practical solutions that people can depend on for consistent progress and sustainable success.
+
+
+2.6 COMPANY ORGANIZATIONAL STRUCTURE
+	2.6.1 OVERALL TEAM STRUCTURE
+       Crimsonity employs a flat, collaborative team structure organized around key functional roles necessary for software project development, including management, analysis, design, development, and quality assurance.                                                                                    
+       2.6.2 MANAGEMENT TEAM
+? Project Manager: Nesty V. Omongos
+? Assistant Project Manager: Marlo B. Manon-og
+       2.6.3 ANALYSIS AND DESIGN TEAM
+? Analyst: Marlo B. Manon-og
+? UI/UX Designer: Nesty V. Omongos
+? Assistant UI/UX Designer: Earl Jancee Jacomilla Colminas
+       2.6.4 DEVELOPMENT TEAM
+? Lead Programmer: Marlo B. Manon-og
+? Assistant Programmer: Austin Kelly Villarta Ramillano
+       2.6.5 TESTING TEAM
+? Quality Assurance: Almashud H. Jumli
+       2.6.6 TRAINING TEAM
+		(To be determined based on project requirements. This role is often fulfilled by members of the Development and Analysis teams.)
+2.7 COMPANY POLICIES
+1. Discord Meetings Meetings will be held 1-2 times per week. These will cover discussions, updates, and project progress. Mandatory testing will be conducted every Thursday or Friday before the SE class. Attendance during testing is required; no absences will be excused.
+
+2. Offense Policy (3 offenses = removal from group) An offense will be recorded if a weekly task is incomplete or incorrect. Accumulating three offenses will result in informing Sir Rham for removal from the group. This is not personal; it ensures accountability and responsibility. Valid reasons for exemption from an offense (with proof required): Medical reasons. Extreme situations affecting mental well-being. Any other reasons will not be accepted and will count as an offense. Failure to submit a valid excuse before 10:00 PM on Friday will automatically result in an additional offense.
+
+WORK SUBMISSION
+? All assigned tasks and deliverables must be submitted on or before the deadline.
+
+? Submissions must be complete, accurate, and compliant with the required standards.
+
+? Incomplete, incorrect, or substandard work will be returned for revision and may affect performance evaluations.
+
+2.8 COMPANY AGREEMENT
+Team Crimsonity Member Agreement
+       As members of Team Crimsonity, we share the responsibility of creating a collaborative and supportive environment that allows our project to succeed. By being part of this team, we agree to the following guidelines:
+1. Commitment to Our Roles:
+	Each member is responsible for completing assigned tasks and maintaining honest, open communication to help the team function effectively.
+
+2. Meeting Attendance:
+	All members are expected to attend scheduled Discord meetings, which occur once or twice a week, as well as the required Thursday or Friday testing sessions. If a member cannot attend, a valid and reasonable explanation is required.
+
+3. Timely Completion of Tasks:
+	Weekly tasks must be completed carefully and submitted on time in order to keep the project moving smoothly.
+
+4. If a Task Is Missed:
+	Missing a weekly task or submitting incorrect work will result in one strike. A member who accumulates three strikes will be removed from the group. This policy helps ensure fairness and shared responsibility.
+
+5. Valid Reasons for Missing Work:
+ Only two types of excuses will be accepted, and both require proper documentation:
+1. Medical conditions
+2. Serious circumstances affecting mental health
+
+6. Any other reason will be counted as an offense.  The Project Manager must be informed before 10:00 PM on Friday if an issue arises.
+
+7. Quality of Work:
+	All submitted work must be complete, accurate, and aligned with the standards agreed upon by the team.
+       By acknowledging this agreement, each member confirms that they have read, understood, and accepted these expectations.
+Team Members:
+? Nesty V. Omongos (Project Manager)
+? Marlo B. Manon-og (Assistant Project Manager)
+? Earl Jancee Jacomilla Colminas (Assistant UI/UX Designer)
+? Austin Kelly Villarta Ramillano (Assistant Programmer)
+? Almashud H. Jumli (Quality Assurance)
+
+
+2.9 CLIENT AGREEMENT
+Client Agreement Form
+
+Organization Name:[Client's Company]Organization Address:[Client's Company Address]Project Working Title:Development of a Web-Based Marketplace for Individuals to Promote Responsible Disposal and Recycling of Electronic WasteProject Description:A web-based marketplace designed to connect individuals with non-functional or obsolete electronic devices to certified buyers such as repair shops, recyclers, and parts recovery businesses. The platform facilitates responsible e-waste disposal by providing a structured system for listing, browsing, and transacting electronic waste items, promoting sustainability and supporting circular economy principles.
+Developer (Students)? Nesty V. Omongos? Marlo B. Manon-og? Earl Jancee Jacomilla Colminas? Austin Kelly Villarta Ramillano? Almashud H. Jumli
+The undersigned hereby agreed to be their client and provide the necessary information and support to the above students to carry out an information system development project for our organization from the 1st Semester S.Y 2023 - 2024 to 2nd Semester S.Y. 2023 - 2024 following the academic year of Western Mindanao State University.
+
+The Client (Top-Management Member of the Organization):
+
+Signature: 
+(Can be digitally signed)
+
+
+Name of the Client:Designation:Office:Email:Contact Number:
+The Contact Person (Top-Management Member or Employee of the Organization):
+
+Signature: 
+(Can be digitally signed)
+
+
+Name of the Person:Designation:Office:Email:Contact Number:
+Note: Upon successful completion of the project, the client should be able to issue a letter certifying the suitability and acceptance of the developed software for the organization.
+
+
+
+
+CHAPTER 3 - PROJECT PLAN AND SCHEDULE
+3.1. ACTION PLAN
+ActivityTime EstimatesRequired ResourcesDependenciesPerson-in-Charge#Activity NameDurationStartEndPhase 1 - Planning1.1Create a company1 DayAug. 16, 2025Aug. 17, 2025Internet, laptop-All1.2Design a company logo1 DayAug. 17, 2025Aug. 18, 2025Internet, laptop1.1Colminas, Manon-og1.3Define company mission, vision, and goals1 DayAug. 18, 2025Aug. 19, 2025Internet, laptop1.2Manon-og1.4Define company organizational structure1 DayAug. 23, 2025Aug. 24, 2025Internet, laptop1.3All1.5Define company policies and penalties1 DayAug. 24, 2025Aug. 25, 2025Internet, laptop1.4Manon-og1.6Establish and promote company1 DayAug. 25, 2025Aug. 26, 2025Internet, laptop1.5All1.7Close a deal with a client 2 DaysSept. 2, 2025Sept. 4, 2025Docs, Internet, Laptop and Money 1.6All1.8Create project action plan1 DaySept. 13, 2025Sept. 13, 2025Internet, Phone1.7All1.9Determine project milestones and deliverables3 DaysSept. 15, 2025Sept. 18, 2025Internet, Laptop1.8All1.10Create workbreakdown structure3 DaysSept. 15, 2025Sept. 18, 2025Internet, Laptop1.8All1.11Create an online project board3 DaysSept. 15, 2025Sept. 18, 2025Internet, Laptop1.8All1.12Create an online Gantt Chart3 DaysSept. 15, 2025Sept. 18, 2025Internet, Laptop 1.8All1.13Create Activity Network Diagram3 Days Sept. 15, 2025Sept. 18, 2025Internet, Laptop1.8All1.14Determine project critical path and slack time 3 DaysSept. 15, 2025Sept. 18, 2025Internet, Laptop1.8All1.15Collate project documentation for Phase 11 DaySept. 18, 2025Sept. 19, 2025Internet, Laptop1.9 - 1.14AllPhase 2 - Analysis2.1Identify data collection method1 DaySept. 19, 2025Sept 20, 2025Internet, Laptop1.15Manon-og2.2Conduct initial data gathering2 DaysSept. 20, 2025Sept. 22, 2025Internet, Laptop, Money2.1Manon-og2.3Transcribe and analyze collected data2 DaysSept. 20, 2025Sept. 22, 2025Internet, Laptop, Money2.1Manon-og2.4Propose initial solution for the project2 DaysSept. 20, 2025Sept. 22, 2025Internet, Laptop, Money2.1Manon-og2.5Determine project cost2 DaysSept. 20, 2025Sept. 22, 2025Internet, Laptop, Money2.1Manon-og2.6Conduct feasibility study2 DaysSept. 20, 2025Sept. 22, 2025Internet, Laptop, Money2.1Manon-og2.7List initial project requirements1 DaySept. 22, 2025Sept. 23, 2025Internet, Laptop2.2 - 2.6Ramillano2.8Determine hardware requirements1 DaySept. 22, 2025Sept. 23, 2025Internet, Laptop2.2 - 2.6Ramillano2.9Determine software requirements1 DaySept. 22, 2025Sept. 23, 2025Internet, Laptop2.2 - 2.6Colminas2.10Determine network requirements1 DaySept. 22, 2025Sept. 23, 2025Internet, Laptop2.2 - 2.6Colminas2.11Determine database requirements1 DaySept. 22, 2025Sept. 23, 2025Internet, Laptop2.2 - 2.6Jumli2.12Identify software specifications1 DaySept. 22, 2025Sept. 23, 2025Internet, Laptop2.2 - 2.6Jumli2.13List product features1 DaySept. 23, 2025Sept. 24, 2025Internet, Laptop2.7 - 2.12Omongos2.14List product attributes1 DaySept. 23, 2025Sept. 24, 2025Internet, Laptop2.7 - 2.12Omongos2.15Create product mockups1 DaySept. 23, 2025Sept. 24, 2025Internet, Laptop2.7 - 2.12Omongos2.16Finalize documentation for Phase II1 DaySept. 24, 2025Sept. 25, 2025Internet, Laptop2.13 - 2.15Manon-ogPhase 3 - Design3.1Determine system architecture1 DaySept. 25, 2025Sept. 26, 2025Internet, Laptop2.16Manon-og3.2Create business use case1 DaySept. 25, 2025Sept. 26, 2025Internet, Laptop2.16Omongos3.3Create context and data flow diagram1 Day Sept. 26, 2025Sept. 27, 2025Internet, Laptop3.1 - 3.2Ramillano, Colminas3.4Design system models1 DaySept. 26, 2025Sept. 27, 2025Internet, Laptop3.1 - 3.2Jumli3.5Design user interface4 DaysSept. 27, 2025Oct. 1, 2025Internet, Laptop3.3 - 3.4Manon-og, Omongos, Colminas3.6Create product prototype4 DaysOct. 1, 2025Oct. 5, 2025Internet, Laptop3.5Omongos3.7Finalize documentation for Phase III1 DayOct. 5, 2025Oct. 6, 2025Internet, Laptop3.6Manon-ogPhase 4 - Coding4.1Write System Module 1 - User Management6 DaysOct. 6, 2025Oct. 12, 2025Internet, Laptop3.7Manon-og, Ramillano4.2Write System Module 2 - Marketplace Browsing & Shopping6 DaysOct. 6, 2025Oct. 12, 2025Internet, Laptop3.7Manon-og, Omongos4.3Get feedback from a consultant 11 DayOct. 12, 2025Oct. 13, 2025Internet, Laptop4.1 - 4.2All4.4Debug, fix bugs, and update modules1 DayOct. 13, 2025Oct. 14, 2025Internet, Laptop4.3All4.5Write System Module 3 - Seller & Item Management
+5 DaysOct. 14, 2025Oct. 19, 2025Internet, Laptop4.4Manon-og, Colminas4.6Write System Module 4 - Advanced Features & Monetization6 DaysOct. 19, 2025Oct. 25, 2025Internet, Laptop4.5Manon-og, Jumli4.7Write System Module 5 - Administration & Analytics6 DaysOct. 25, 2025Oct. 31, 2025Internet, Laptop4.6Manon-og, Omongos4.8Integrate System Modules10 DaysOct. 31, 2025Nov. 10, 2025Internet, Laptop4.7Manon-og4.9Get feedback from a consultant 23 DaysNov. 10, 2025Nov. 13, 2025Internet, Laptop4.8Omongos4.10Debug, fix bugs, and update modules28 DaysNov. 15, 2025Dec. 13, 2025Internet, Laptop4.9Ramillano, Colminas4.11Conduct unit testing7 DaysJan. 5, 2026Jan. 12, 2026Internet, Laptop4.10Jumli4.12Finalize product design and coding8 DaysJan. 12, 2026Jan. 15, 2026Internet, Laptop4.11Manon-ogPhase 5 - Testing5.1Create testing plan1 DayJan. 15, 2026Jan. 16, 2026Internet, Laptop4.12Colminas5.2Create test cases4 DaysJan. 16, 2026Jan. 20, 2026Internet, Laptop5.1Omongos5.3Conduct alpha testing3 DaysJan. 20, 2026Jan. 23, 2026Internet, Laptop5.2Manon-og5.4Conduct beta testing3 DaysJan. 23, 2026Jan. 26, 2026Internet, Laptop5.3Jumli5.5Fix system errors5 DaysJan. 26, 2026Jan. 31, 2026Internet, Laptop5.4Manonog, Omongos5.6Conduct software/product attributes testing12 DaysJan. 31, 2026Feb. 12, 2026Internet, Laptop5.5Colminas5.7Conduct user acceptance testing12 DaysFeb. 12, 2026Feb. 24, 2026Internet, Laptop5.6Ramillano5.8Create migration plan5 DaysFeb. 24, 2026Mar. 1, 2026Internet, Laptop5.7Colminas5.9Deploy system/product to client's site7 DaysMar. 1, 2026Mar. 8, 2026Internet, Laptop, Money5.8OmongosPhase 6 - Maintenance6.1 Create product manual9 DaysMar. 8, 2026Mar. 17, 2026Internet, Laptop5.9Colminas, Jumli6.2Gather and analyze customer feedback3 DaysMar. 17, 2026Mar. 20, 2026Internet, Laptop6.1Ramillano6.3Perform corrective maintenance6 DaysMar. 25, 2026Mar. 31, 2026Internet, Laptop6.2Jumli6.4Perform perfective maintenance7 DaysMar. 31, 2026Apr. 7, 2026Internet, Laptop6.3Jumli6.5Perform adaptive maintenance7 DaysApr. 7, 2026Apr. 14, 2026Internet, Laptop6.4Jumli6.6Finalize project documentation20 DaysApr. 14, 2026May 4, 2026Internet, Laptop6.5Manon-og, Omongos6.7Turn-over project to client and close the project1 DayMay 4, 2026May 5, 2026Internet, Laptop, Money6.6Manon-og
+Figure 1: The Crimsonity Breakdown Action Plan
+
+
+
+3.2. WORKBREAKDOWN STRUCTURE
+
+Figure 2: The Crimsonity Workbreakdown Structure
+
+
+3.3. NETWORK DIAGRAM
+Phase 1
+
+Figure 10: The Crimsonity Network Diagram Phase 1
+
+Phase 2
+
+Figure 3: The Crimsonity Network Diagram Phase 2
+
+
+
+
+
+
+
+
+Phase 3
+
+Figure 4: The Crimsonity Network Diagram Phase 3
+
+Phase 4
+
+Figure 5: The Crimsonity Network Diagram Phase 4
+Phase 5
+
+Figure 6: The Crimsonity Network Diagram Phase 5
+
+
+
+
+Phase 6
+
+Figure 7: The Crimsonity Network Diagram Phase 6
+
+3.4. MILESTONES AND DELIVERABLES
+MILESTONESDELIVERABLESPhase 1 - PlanningCreate a companyInternet, laptopDesign a company logoInternet, laptopDefine company mission, vision, and goalsInternet, laptopDefine company organizational structureInternet, laptopDefine company policies and penaltiesInternet, laptopEstablish and promote companyInternet, laptopClose a deal with a client Docs, Internet, Laptop and Money Create project action planInternet, PhoneDetermine project milestones and deliverablesInternet, LaptopCreate workbreakdown structureInternet, LaptopCreate an online project boardInternet, LaptopCreate an online Gantt ChartInternet, Laptop Create Activity Network DiagramInternet, LaptopDetermine project critical path and slack timeInternet, LaptopCollate project documentation for Phase 1Internet, LaptopPhase 2 - AnalysisIdentify data collection methodInternet, LaptopConduct initial data gatheringInternet, Laptop, MoneyTranscribe and analyze collected dataInternet, Laptop, MoneyPropose initial solution for the projectInternet, Laptop, MoneyDetermine project costInternet, Laptop, MoneyConduct feasibility studyInternet, Laptop, MoneyList initial project requirementsInternet, LaptopDetermine hardware requirementsInternet, LaptopDetermine software requirementsInternet, LaptopDetermine network requirementsInternet, LaptopDetermine database requirementsInternet, LaptopIdentify software specificationsInternet, LaptopList product featuresInternet, LaptopList product attributesInternet, LaptopCreate product mockupsInternet, LaptopFinalize documentation for Phase IIInternet, LaptopPhase 3 - DesignDetermine system architectureInternet, LaptopCreate business use caseInternet, LaptopCreate context and data flow diagramInternet, LaptopDesign system modelsInternet, LaptopDesign user interfaceInternet, LaptopCreate product prototypeInternet, LaptopFinalize documentation for Phase IIIInternet, LaptopPhase 4 - CodingWrite System Module 1 - User ManagementInternet, LaptopWrite System Module 2 - Marketplace Browsing & ShoppingInternet, LaptopGet feedback from a consultant 1Internet, LaptopDebug, fix bugs, and update modulesInternet, LaptopWrite System Module 3 - Seller & Item Management
+Internet, LaptopWrite System Module 4 - Advanced Features & MonetizationInternet, LaptopWrite System Module 5 - Administration & AnalyticsInternet, LaptopIntegrate System ModulesInternet, LaptopGet feedback from a consultant 2Internet, LaptopDebug, fix bugs, and update modulesInternet, LaptopConduct unit testingInternet, LaptopFinalize product design and codingInternet, LaptopPhase 5 - TestingCreate testing planInternet, LaptopCreate test casesInternet, LaptopConduct alpha testingInternet, LaptopConduct beta testingInternet, LaptopFix system errorsInternet, LaptopConduct software/product attributes testingInternet, LaptopConduct user acceptance testingInternet, LaptopCreate migration planInternet, LaptopDeploy system/product to client's siteInternet, Laptop, MoneyPhase 6 - MaintenanceCreate product manualInternet, LaptopGather and analyze customer feedbackInternet, LaptopPerform corrective maintenanceInternet, LaptopPerform perfective maintenanceInternet, LaptopPerform adaptive maintenanceInternet, LaptopFinalize project documentationInternet, LaptopTurn-over project to client and close the projectInternet, Laptop, Money
+Figure 8: The Crimsonity Milestones and Deliverables
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CHAPTER 4 - PROJECT COST
+4.1. COST OF PROJECT RESOURCES
+4.1.1. EFFORT COST
+
+Job DescriptionPerson In ChargeHours
+/DayRate
+/HourTotal Working DaysTotalLead DeveloperManon-og, Marlo B8hrsPhp 80263Php 21,040Business Analyst Ramillano, Austin Kelly 8hrsPhp 80263Php 21,040Project ManagerOmongos, Nesty V.8hrsPhp 80263Php 21,040UI DesignerColminas, Earl Jancee J.8hrsPhp 80263Php 21,040UX DesignerJumli, Almashud8hrsPhp 80263Php 21,040Total:Php 105,200
+4.1.2. HARDWARE COST
+
+ItemsUnitPer/UnitQuantityTotalLaptopSetPhp 50,0005Php 250,000Flash Drive16GBPhp 7003Php 2,100Total:Php 256,100
+4.1.3 SOFTWARE COST
+
+ItemsUnitPrices/UnitQuantityTotalSoftware for Development-Free-FreeHTML, CCS, JavaScript, PHP, PostgreSQL, PythonLicenceFree-FreeHerokuAccountPhp 816MonthlyPhp 816VercelAccountFreeMonthlyFreeTotalPhp 816
+
+
+4.1.4. MISCELLANEOUS COST
+
+ItemsTotalFood Allowance (8-10 Months)Php 60,000TransportationPhp 20,000UtilityPhp 42,000DocumentationPhp 5,000TotalPhp 127,000
+4.1.5. OVERALL COST
+
+Expenses TotalEffort costPhp 105,200Hardware costPhp 256,100Software costPhp 816Miscellaneous costPhp 127,000TotalPhp 489,116
+       4.2. RETURN-ON-INVESTMENT
+
+Development Cost
+Type of CostYEAR
+Total202520262027 2028SalaryPhp 105,200000Php 105,200HardwarePhp 256,100000Php 256,100SoftwarePhp 816000Php 816MiscellaneousPhp 127,000000Php 127,000TotalPhp 489,116000Php 489,116
+       4.3. OPERATIONAL COST
+
+Operational Cost
+Type of CostYear
+Total2025202620272028Maintenance0Php 10,000Php 10,000Php 10,000Php 30,000Repairs0Php 10,000Php 10,000Php 10,000Php 30,000Upgrades0Php 20,000Php 30,000Php 50,000Php 100,000Utility0Php 10,000Php 20,000Php 30,000Php 60,000Hosting0Php 9,792Php 9,792Php 9,792Php 29,376Total0Php 59,792Php 79,792Php 109,792Php 249,376
+Benefits
+Type of CostYear
+Total2024202520262027Reduce office Supply0Php 10,000Php 10,000Php 10,000Php 30,000Increase Sales0Php 100,000Php 150,000Php 700,000Php 950,000Reduce Wages0Php 50,000Php 90,000Php 100,000Php 240,000Total0Php 160,000Php 250,000Php 810,000Php 1,120,000Given:
+? Development Cost: ?489,116
+? Operational Cost: ?249,376
+? Benefits: ?1,120,000
+
+Formula:
+ ROI = (Benefits - Total Cost) / Total Cost × 100
+Computation:
+ Total Cost = Development Cost + Operational Cost
+ Total Cost = ?489,116 + ?249,376
+ Total Cost = ?738,492
+ROI = (1,120,000 - 738,492) / 738,492 × 100
+ ROI = 381,508 /  738,492 × 100
+ ROI = 0.516 × 100
+ ROI = 51.6%
+4.4. INTANGIBLE BENEFITS
+1. Improved productivity and operational efficiency.
+2. Enhanced customer satisfaction and engagement.
+3. Strengthened organizational reputation and credibility.
+4. Better decision-making through real-time data.
+5. Increased employee skills and technological competency.
+
+
+CHAPTER 5 - REQUIREMENTS ENGINEERING
+5.1. METHODOLOGY
+       The team adopted the Waterfall Model as the software development methodology for the proposed system. This traditional and structured approach follows a clear sequence of stages: planning, analysis, design, implementation, testing, deployment, and maintenance. Each phase must be completed before proceeding to the next, ensuring that the development process is systematic and well-organized.
+Planning Phase
+       The planning phase focuses on defining the goals, scope, and direction of the system. The team begins by establishing the project's identity, including the system name, logo design, and overall theme. Research is conducted to understand how online marketplaces operate, particularly those that allow both buyers and sellers to interact within a single platform. The developers also analyze the challenges related to e-waste management to integrate sustainability into the system's concept. During this phase, key features such as user registration, item listing, AI recommendations, and boosting plans are identified. The project timeline, resource allocation, and role assignments are finalized to ensure an organized development process.
+Analysis Phase
+       The analysis phase involves gathering and studying all system requirements. The team evaluates the specific needs of users such as buyers, sellers, and administrators. A SWOT analysis is performed to identify strengths, weaknesses, opportunities, and threats of the proposed system. The goal of this stage is to ensure that the platform meets real user demands while addressing potential limitations like scalability and security. The findings from user interviews, surveys, and existing market studies are used to refine the system requirements and form the foundation for design decisions.
+Design Phase
+       The design phase focuses on creating the structure and layout of the system. The team develops wireframes and mockups for the buyer, seller, and admin interfaces. These designs include essential features such as product search, filtering options, transaction history, and the feedback system. The database schema is constructed to efficiently store and retrieve user, product, and transaction data. Entity-Relationship Diagrams and system flowcharts are created to represent the logical flow of data. The system is designed to be responsive, ensuring that it performs well on both web and mobile platforms. The finalized designs are reviewed and validated before proceeding to implementation.
+Implementation Phase
+       During the implementation phase, the actual coding and system integration take place. The backend is developed using Django for the REST API, ensuring secure data management and communication between the frontend and database. The frontend, built with React and React Router, focuses on providing an interactive and user-friendly interface. Key features such as product listing, shopping cart, checkout process, and AI-based recommendations are developed. Sellers can manage their listings, track transactions, and use boosting plans to promote their products. The admin dashboard is implemented to monitor activities, manage users, and maintain platform integrity. Continuous code reviews and optimizations are done to maintain performance and scalability.
+
+
+Testing Phase
+       The testing phase ensures that the system functions properly and meets user expectations. Unit testing is conducted to verify that each component performs correctly. Integration testing follows to confirm that all modules work together seamlessly. User Acceptance Testing (UAT) is performed to gather feedback from actual users, helping the team identify areas for improvement. The system is also tested across different devices and browsers to ensure compatibility and responsiveness. Security testing is included to protect user data, transactions, and authentication processes. Any detected bugs or inconsistencies are resolved before deployment.
+Deployment Phase
+       In the deployment phase, the system is moved to the live environment using Heroku for backend hosting and Vercel for frontend deployment. The team monitors performance, resolves any post-deployment issues, and ensures that all components function smoothly. Users, including buyers and sellers, are oriented on how to navigate and use the platform effectively. Documentation is provided for both administrators and end users to support easy adoption.
+Maintenance Phase
+       After deployment, the maintenance phase ensures the long-term stability and improvement of the system. Regular updates are scheduled to enhance features, improve security, and fix issues that may arise. User feedback is continuously collected and analyzed to guide future updates. This phase focuses on keeping the system reliable, efficient, and aligned with user needs and technological advancements.
+5.2.  CLIENT, CUSTOMERS AND STAKEHOLDERS
+       In developing the E-Waste Marketplace, several groups directly benefit from the system or have been involved in its creation. Each has a significant role in ensuring that the system is useful and reliable, befitting its purpose of promoting responsible electronic waste disposal.
+Client
+       The clients of this project are individuals and small organizations that require a better way of disposing of old, broken, or unused electronic devices. As explained in earlier chapters of the document, many households and small businesses retain outdated electronics because there are no appropriate channels through which to dispose of them. The system would thus provide them with a secure, organized online platform where they can place these items and get in contact with interested buyers-for instance, repair shops or recyclers.
+Customers / End-Users
+Sellers
+       The sellers are individuals or small groups that would like to dispose of their electronic devices that are already nonfunctional or outdated. They rely on the platform for uploading photos, adding descriptions of the items, and managing posts. For them, the system offers convenience and a responsible method of clearing out unused gadgets.
+Buyers
+       These buyers are repair shops, recyclers, restoration services, and anyone looking to acquire electronic components or scrap materials. They can use the system to browse listings, search for exactly what they need, compare options, and buy what they want. This provides direct access to a source of parts and materials at an affordable price.
+
+Administrators
+       Admins are responsible for the management of the whole platform. According to the feature list in your document, admins manage user accounts, listings, promotions, and the security and neatness of the site. They ensure trust between buyers and sellers.
+Other Stakeholders
+Crimsonity Development Team
+       The student development team for the project, Crimsonity, serves as both the developers and maintainers of the system. Planning, design, coding, testing, documentation, and deployment have been handled by them, as depicted throughout the project plan in this document.
+
+Instructors / Academic Supervisors
+       The academic supervisors of the said project are Mr. Rhamirl Jaafar and Ms. Marjorie Rojas, as indicated in your document. They provide guidance, evaluate the progress, and make sure that the system is up to the standards of Software Engineering 1.
+
+Recyclers and Repair Centers
+       Recyclers and repair centers do more than just buy old electronics. They take what others throw away and turn it into something useful again-maybe by salvaging parts, recycling materials, or fixing broken gadgets. Their work really pushes the whole project forward. They help people get rid of e-waste the right way and keep those sustainability goals from Chapter 1 moving in the right direction.
+
+Indirect Beneficiaries
+       Some folks benefit from the platform without ever logging in or using it themselves. People in the community who care about the environment get something out of it too. The system pushes everyone toward better waste disposal habits and cuts down on electronic junk piling up where it shouldn't. Even if they're not active users, they still see the difference.
+       
+5.3.  PROJECT CONSTRAINTS
+5.3.1. Development Environment
+       The backend uses Django for secure and scalable development, while the frontend uses React Native for a responsive user interface. Development takes place on the local machine with the help of VS Code, npm/pip for package management, and Git for version control. User accounts and item listing data can be stored in the local PostgreSQL or MySQL database. Virtual environments are also applied to manage the dependencies of the project. This setup ensures efficiency and dependability throughout the development process.
+       
+       5.3.1.1. SOFTWARE REQUIREMENTS
+1. Development Tools
+? Code Editor / IDE: Visual Studio Code, PyCharm, or Sublime Text
+? Version Control System: Git (GitHub, GitLab, or Bitbucket)
+2. Programming Languages & Frameworks
+1) Frontend: React Native (JavaScript/TypeScript) for mobile app development
+2) Backend: Django (Python) for server-side logic and API development
+3) Frameworks / Libraries:
+a) React Navigation (for navigation in React Native)
+b) Django REST Framework (for API endpoints)
+c) Axios API (for client-server communication)
+3. Database
+? Relational Database: PostgreSQL (recommended for Django)
+? Database Management Tool: pgAdmin or DBeaver
+4. Runtime & Environment
+? Python Runtime: Python 3.x (for Django)
+? Node.js & npm: Required for React Native development and package management
+? Expo CLI: Optional for faster React Native development and testing
+5. Supporting Software
+? Browser / Emulator Testing: Chrome, Firefox, Android Emulator, iOS Simulator
+? Design & Prototyping: Figma, Adobe XD, or Sketch for UI/UX
+? Package Managers: pip (Python), npm or yarn (Node.js)
+6. Deployment & Hosting
+? Backend Hosting: Heroku
+? Mobile App Deployment: Google Play Store (Android), Apple App Store (iOS)
+? Version Control Deployment Tools: Git for continuous integration/deployment
+
+5.3.1.2. HARDWARE REQUIREMENTS
+       Server Requirements
+? Processor: Intel i5 or higher / AMD Ryzen 5 or higher
+? RAM: Minimum 8 GB (16 GB recommended for better performance)
+? Storage: At least 500 GB HDD or 256 GB SSD (SSD preferred for faster access)
+? Network: Stable internet connection with minimum 10 Mbps upload/download speed
+? Operating System: MacOS or Windows Server
+       Client Requirements
+? Processor: Dual-core or higher
+? RAM: Minimum 4 GB
+? Storage: 8 GB free space
+? Display: 1366x768 resolution or higher
+? Network: Internet connection of at least 5 Mbps
+
+       Optional / Additional Hardware
+? Backup storage for data redundancy (external HDD or NAS)
+? UPS to prevent data loss during power interruptions
+
+5.3.1.3. NETWORK COMMUNICATION REQUIREMENTS
+       A reliable internet connection is necessary for the platform, with a minimum server speed of 10 Mbps and a minimum client speed of 5 Mbps. For safe and dependable data communication, it will employ TCP/IP and HTTP/HTTPS protocols. To avoid illegal access or data breaches, SSL/TLS encryption is required for all communications. The server needs to be available around-the-clock and able to manage several connections at once without experiencing any lag. Using a CDN to expedite content delivery and putting in place firewalls or network monitoring to preserve security and performance are examples of optional improvements.
+       
+5.3.2. IMPLEMENTATION ENVIRONMENT
+	The E-Waste Marketplace platform is developed using a web-based architecture that supports scalability, cross-platform accessibility, and streamlined deployment. The system operates through client-server communication, leveraging cloud technologies for data management and secure transactions.
+       5.3.2.1. SOFTWARE CONSTRAINTS
+       There are a few software-related limitations that will help in the development of the E-Waste Marketplace. The system depends on certain tools, frameworks, and platforms, bringing with themselves a certain level of restriction. The back-end depends on Django, which needs to structure a project and supports only Python-based libraries. In the case of front-end development, it is based on React, which keeps the interface component-based architecture and dependent on browser compatibility. Database maintenance is done on MySQL, so database design has to follow relational database rules and SQL standards.
+       Hosting platforms come with their own set of rules. Take Heroku, for example. When you use it for backend deployment, you run into caps on storage, runtime hours, and how much you can scale your servers-especially if you stick with the free or basic plans. Vercel handles the frontend pretty well and makes deploying fast, but you bump into file size restrictions, limits on bandwidth, and not much room for backend processing since it's really built for static and serverless front-end projects. So, these software limits end up shaping how you build the system and decide which features actually make sense to add.
+       5.3.2.2.  HARDWARE CONSTRAINTS
+       The project also faces certain hardware-related limitations: on the server side and during development. The system relies, for hosting, on the resources made available by Heroku and Vercel. These servers have a certain limitation in their processing power, storage capacity, and memory allocation, thus affecting how many transactions the system can handle at once.
+       On the development side, the team is limited by the capabilities of their own machines. Since this project needs to run backend services, frontend builds, databases, and testing tools, slower or lower-spec laptops may affect development speed and testing performance. Storage limitations affect how many images and logs can be kept locally. Plus, since users will be uploading product images, the system needs to handle file sizes to avoid overloading server storage and preventing performance issues.
+5.3.2.3. DEPLOYMENT CONSTRAINTS
+       Deployment of the system introduces a variety of practical constraints. The hosting platforms chosen, with Heroku for the backend and Vercel for the frontend, impose bandwidth and uptime limits, including a maximum number of requests handled without additional fees, especially on free or entry plans. The dependency on an active Internet connection means that any disruption caused by the host or unstable user access to the Internet disrupts platform use. Another driving factor is the security requirements. The system should operate over HTTPS, which introduces an extra layer of security in data transfer. This is necessary under all conditions to safeguard user information and login credentials. Patches and maintenance are strictly allowed only within the deployment windows, during which parts of the system can be unavailable for short lengths of time. Such constraints, therefore, guide the team in handling updates, user access, and overall stability of the platform.
+5.4. SCOPE OF THE PRODUCT
+       It is an online marketplace that will deal in all types of electronic wastes. To be simple, the system connects non-functional or obsolete electronic devices in households or from individuals to certified buyers such as repair shops, recyclers, and parts recovery businesses. The proposed system will offer listing, browsing, buying, and managing electronic devices in a secure environment, which shall be well-organized and user-friendly.
+       The platform supports role-based access:
+? Allows sellers to create accounts, list electronic items, upload descriptions and images, track their items, and promote listings.
+? Buyers can browse the inventory and filter or search for devices, add items to a cart, complete secure transactions, and even receive AI-based recommendations.
+? The administrative dashboard provides administrators with oversight over all user activities, transactions, and e-waste reporting.
+       The system has additional features such as feedback and ratings, analytics and reporting, transaction monitoring, and shop promotion, which ensure transparency, efficiency, and accountability.
+       Boundaries of the System:
+? The system does not provide physical collection or delivery services, and it strictly acts as an online marketplace for buyers and sellers.
+? It focuses on non-functional or partially functional electronics, and is not designed for the sales of fully functional products.
+? The platform manages all financial transactions, but the actual processing depends on integrated external payment gateways.
+       
+       Intended Impact: By streamlining the process for exchanging e-waste, it fosters responsibility in the area of disposal, reutilization, and sustainability, thus minimizing incorrect accumulations of electronic waste and upholding a circular economy.
+5.5. FUNCTIONAL REQUIREMENTS
+1. User Account Management
+? Users can register, log in, and manage their accounts: sellers, buyers, administrators.
+? Role-based access makes sure that the user views only the functionality relevant to them.
+
+2. Item Listing Module
+? The sellers can add, update, or remove listings of non-functional or partially functional electronic devices.
+? Each listing contains all item details, images, and specifications.
+
+3. Inventory Browsing and Search
+? Buyers can browse through the available products and search/ filter by category, keywords, or specifications.
+? The search results are updated dynamically to make it even easier.
+
+4. Shopping Cart Functionality
+? Shoppers can place multiple items in a virtual basket, review selections, and proceed with checkout.
+
+5. AI-Based Recommendation System
+? The system offers users personalized recommendations according to their browsing history, transactions made earlier, and preferences.
+
+6. Transaction Management
+? It allows buyers to make their purchases in a secure manner, while on the other hand, the order status can be traced by the seller.
+? The system keeps a record of the transaction history between the two parties.
+
+7. Shop Promotion and Boosting Plans
+? Sellers are able to boost their listings for increased visibility with paid or subscription-based boosting.
+
+8. Feedback and Rating System
+? Rating of transactions and leaving feedback about items and sellers builds trust and accountability among users.
+
+9. Analytics and Reporting
+? It allows administrators to create reports on user activities, transaction volume, and e-waste recovery metrics.
+
+10. Administrative Dashboard
+? Admin can view all users, listings, and transactions, and manage platform operations.
+
+5.6. NON-FUNCTIONAL REQUIREMENTS
+1. Performance Requirements
+? The system should load pages and search results in 3 seconds under normal traffic conditions from users.
+? It should support concurrent access from multiple users without any degradation in performance.
+
+2. Usability Requirements
+? The interface should be user-friendly, intuitive, and accessible for users at all levels of technical knowledge.
+? All major features should be easily navigated: listing, browsing, checkout.
+
+3. Reliability and Availability
+? It needs to ensure that the system is up and running for 99% of the time, and is brought down only during necessary maintenance.
+? It is a good thing to do regular backups to avoid loss of listings, transactions, and users' information.
+
+4. Security Requirements
+? This involves secure user authentication using password hashing and role-based access control.
+? The processing and storage of transactions and personal data should be encrypted.
+? The system should prevent unauthorized access, data breaches, and malicious attacks.
+
+5. Scalability
+? The platform should be able to scale horizontally and vertically to accommodate an increasing amount of users, listings, and transactions.
+
+6. Maintainability
+? Code and system architecture should allow easy updates, bug fixes, and feature enhancements.
+
+7. Compatibility
+? The platform must work properly on contemporary browsers such as Chrome, Firefox, Edge, and Safari.
+? The system should be responsive to mobile devices, tablets, and desktops.
+
+8. Legal and Regulatory Compliance
+? The system must adhere to data privacy regulations relevant to the regions it operates in.
+? All e-waste transactions must adhere to environmental disposal laws.
+
+5.7. PROJECT ISSUES
+	During development and implementation, there are a number of problems the system may face. Others need further research, such as AI recommendations and the integration of payment gateways. There may be technical challenges, including bugs, security concerns, or performance limitations as the user base grows. Additionally, user adoption and accurate item listings could affect the platform's reliability. These issues will be monitored and addressed as the project progresses.
+
+5.7.1. OPEN ISSUES
+	There are certain aspects of the system that need further clarification and refinement. Major features that might need further configuration before acting as expected include the AI-based recommendation system and the promotion/boosting module. Most importantly, transaction handling-issues regarding security and verification-are still under review. Some open questions also remain regarding the capability of the platform to handle a large number of listings and users when a spike in usage occurs. These will be resolved during the course of development.
+
+5.7.2. OFF-THE-SHELL SOLUTIONS
+	Online marketplaces and recycling management tools already provide some similar functionalities. However, almost all e-commerce systems available in the market are designed for general buying and selling without a focus on electronic waste reuse or recovery. On the other hand, specific recycling systems usually track waste but do not support buyer-seller marketplace interactions. As no available ready-made solution fully supports e-waste trading with sustainability-focused features and role-based access for recyclers and repair shops, a custom system is required.
+
+5.7.3. RISK
+	These are some of the risks of this project. Technical risks pertain to the complexity in implementing recommendations proposed by machine learning and supporting stable, predictable system performance. Security risks may be due to unauthorized access, fraud in the nature of listings, and data breaches. Operational risks pertain to incomplete or inaccurate descriptions of items posted by users. There is also a user adoption risk as this is a new platform, which takes substantial time to get active sellers and buyers on board. Management and monitoring will be required throughout the development cycle.
+
+5.7.4. WAITING ROOM
+	The waiting room also includes features and improvements that will be in future phases but are not within the scope of this current development. This can include a dedicated mobile application, integrated logistic or pickup services, automated pricing tools, third-party payment gateways, enhanced reporting tools, and multi-language support. These shall be considered once the core system is stable and fully operational.
+
+
+
+
+
+CHAPTER 6 - SYSTEM DESIGN
+6.1. CONTEXT FLOW DIAGRAM
+
+6.2. DATA FLOW DIAGRAM
+
+6.3. DATA MODEL (ERD)
+
+
+
+6.4. PROPOSED PROTOTYPE
+
+Figure 6.4.1: The Crimsonity Transaction - Ordering
+
+
+Figure 6.4.2: The Crimsonity Transaction - Checkout
+
+
+
+Figure 6.4.3: The Crimsonity Transaction - Payment Successful
+
+
+
+Figure 6.4.4: The Crimsonity Transaction - Order Delivery
+
+
+
+
+

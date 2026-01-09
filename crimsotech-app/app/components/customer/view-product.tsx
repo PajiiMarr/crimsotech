@@ -95,6 +95,7 @@ interface Product {
   height?: number | null;
   weight?: number | null;
   weight_unit?: string | null;
+  applied_gift?: any;
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -353,9 +354,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
   // Determine main display image
   const mainImageFromSKU = currentSKU?.image ? resolveImageUrl(currentSKU.image) : null;
-  const displayImageUrl = mainImageFromSKU || 
-                         thumbnailUrls[activeImage]?.url || 
-                         '/appliances.jpg';
+  const displayImageUrl = (mainImageFromSKU ?? thumbnailUrls[activeImage]?.url) ?? '/appliances.jpg';
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
@@ -609,6 +608,28 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                 </button>
               </div>
             </div>
+
+            {/* Show applied gift (if any) */}
+            {product?.applied_gift?.gift_product && (
+              <div className="p-3 border-2 border-emerald-100 bg-emerald-50 rounded-md flex items-center gap-3">
+                <img
+                  src={resolveImageUrl(product.applied_gift.gift_product.primary_image?.url || product.applied_gift.gift_product.media_files?.[0]?.file_data) ?? '/phon.jpg'}
+                  alt={product.applied_gift.gift_product.name}
+                  className="w-16 h-16 object-cover rounded"
+                />
+                <div className="flex-1">
+                  <div className="text-xs text-emerald-800 font-semibold">
+                    {product.applied_gift.status === 'upcoming' ? 'Free gift (Starts soon)' : product.applied_gift.status === 'expired' ? 'Gift expired' : 'Free gift available'}
+                  </div>
+                  <div className="text-sm font-medium">{product.applied_gift.gift_product.name}</div>
+
+                  {product.applied_gift.status === 'upcoming' && product.applied_gift.start_time && (
+                    <div className="text-xs text-gray-600">Starts: {new Date(product.applied_gift.start_time).toLocaleString()}</div>
+                  )}
+                </div>
+                <div className="text-xs text-emerald-700 font-medium">FREE</div>
+              </div>
+            )}
 
             <div className="flex items-center gap-2 flex-wrap text-sm">
               <div className="flex items-center">

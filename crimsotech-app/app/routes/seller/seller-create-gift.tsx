@@ -363,7 +363,7 @@ export async function action({ request }: Route.ActionArgs) {
       console.log("Gift created successfully:", response.data);
       
       // SSR Redirect to product list page
-      return redirect('/seller/seller-gift', {
+      return redirect('/seller/gift', {
         headers: {
           "Set-Cookie": await commitSession(session),
         },

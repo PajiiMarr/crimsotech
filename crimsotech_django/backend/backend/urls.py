@@ -65,6 +65,7 @@ router.register(r'customer-product-list', CustomerProductsList, basename='custom
 
 router.register(r'seller-gift', SellerGifts, basename='seller-gift')
 router.register(r'customer-gift', CustomerGiftViewSet, basename='customer-gift')
+router.register(r'reviews', Reviews, basename='reviews')
 
 router.register(r'rider-dashboard', RiderDashboardViewSet, basename='rider-dashboard')
 

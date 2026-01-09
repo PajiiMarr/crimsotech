@@ -17550,6 +17550,321 @@ class SellerGifts(viewsets.ModelViewSet):
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
 
+    def retrieve(self, request, pk=None):
+        """Retrieve an AppliedGift by id OR, if not found, return minimal product info when pk is a product id."""
+        shop_id = request.query_params.get('shop_id') or request.data.get('shop_id')
+        customer_id = request.query_params.get('customer_id') or request.data.get('customer_id')
+
+        # Try to find an AppliedGift by id OR by gift product id
+        qs = AppliedGift.objects.filter(Q(id=pk) | Q(gift_product_id__id=pk))
+        if shop_id:
+            qs = qs.filter(shop_id__id=shop_id)
+        elif customer_id:
+            try:
+                seller = Customer.objects.get(customer_id=customer_id)
+                qs = qs.filter(shop_id__customer=seller)
+            except Customer.DoesNotExist:
+                pass
+
+        ag = qs.order_by('-start_time').first()
+        if ag:
+            applied_data = {
+                "id": str(ag.id),
+                "shop_id": str(ag.shop_id.id) if ag.shop_id else None,
+                "gift_product_id": str(ag.gift_product_id.id) if ag.gift_product_id else None,
+                "gift_product_name": ag.gift_product_id.name if ag.gift_product_id else None,
+                "start_time": ag.start_time.isoformat() if ag.start_time else None,
+                "end_time": ag.end_time.isoformat() if ag.end_time else None,
+                "is_active": ag.is_active,
+                "eligible_product_ids": [str(ap.product_id.id) for ap in ag.eligible_products.all() if ap.product_id]
+            }
+            return Response({"success": True, "applied_gift": applied_data}, status=status.HTTP_200_OK)
+
+        # No AppliedGift found: try to treat pk as a product id and return minimal info
+        try:
+            product = None
+            if shop_id:
+                try:
+                    product = Product.objects.get(pk=pk, shop__id=shop_id)
+                except Product.DoesNotExist:
+                    product = None
+            if not product and customer_id:
+                try:
+                    seller = Customer.objects.get(customer_id=customer_id)
+                    product = Product.objects.get(pk=pk, customer=seller)
+                except (Customer.DoesNotExist, Product.DoesNotExist):
+                    product = None
+
+            if not product:
+                product = Product.objects.get(pk=pk)
+
+            prod_info = {
+                "id": str(product.id),
+                "gift_product_id": str(product.id),
+                "gift_product_name": getattr(product, 'name', None),
+                "price": str(getattr(product, 'price', '0')),
+                "start_time": None,
+                "end_time": None,
+                "is_active": False,
+                "eligible_product_ids": []
+            }
+            return Response({"success": True, "applied_gift": prod_info}, status=status.HTTP_200_OK)
+        except Product.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=False, methods=['get'], url_path='by-shop')
+    def get_applied_gifts_by_shop(self, request):
+        shop_id = request.query_params.get('shop_id')
+        if not shop_id:
+            return Response({"success": False, "error": "shop_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        applied = AppliedGift.objects.filter(shop_id__id=shop_id).order_by('-start_time')
+        data = []
+        for a in applied:
+            data.append({
+                'id': str(a.id),
+                'gift_product_id': str(a.gift_product_id.id) if a.gift_product_id else None,
+                'gift_product_name': a.gift_product_id.name if a.gift_product_id else None,
+                'start_time': a.start_time.isoformat() if a.start_time else None,
+                'end_time': a.end_time.isoformat() if a.end_time else None,
+                'is_active': a.is_active,
+                'eligible_product_ids': [str(ep.product_id.id) for ep in a.eligible_products.all() if ep.product_id]
+            })
+        return Response({"success": True, "applied_gifts": data}, status=status.HTTP_200_OK)
+
+    def update(self, request, pk=None):
+        """Update an AppliedGift by id or by gift product id (pk can be either).
+        Only the owning seller (via customer_id or X-User-Id) can update the applied gift."""
+        customer_id = request.data.get('customer_id') or request.headers.get('X-User-Id')
+        if not customer_id:
+            return Response({"success": False, "error": "customer_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            seller = Customer.objects.get(customer_id=customer_id)
+        except Customer.DoesNotExist:
+            return Response({"success": False, "error": "Seller not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Try to find AppliedGift by id or by gift_product_id (unscoped) and then check ownership
+        ag = AppliedGift.objects.filter(Q(id=pk) | Q(gift_product_id__id=pk)).order_by('-start_time').first()
+
+        if not ag:
+            # No existing AppliedGift found — attempt to create one if pk is a product id owned by this seller
+            try:
+                product_candidate = None
+                try:
+                    product_candidate = Product.objects.get(pk=pk, customer=seller)
+                except Product.DoesNotExist:
+                    try:
+                        product_candidate = Product.objects.get(pk=pk, shop__customer=seller)
+                    except Product.DoesNotExist:
+                        product_candidate = None
+
+                if product_candidate:
+                    # Determine shop for applied gift: prefer provided shop_id, else product's shop, else seller's first shop
+                    shop_id = request.data.get('shop_id') or request.query_params.get('shop_id')
+                    shop_obj = None
+                    if shop_id:
+                        try:
+                            shop_obj = Shop.objects.get(pk=shop_id, customer=seller)
+                        except Shop.DoesNotExist:
+                            # Provided shop does not belong to seller; reject
+                            return Response({"success": False, "error": "Shop not found or not owned by seller"}, status=status.HTTP_404_NOT_FOUND)
+                    elif product_candidate.shop:
+                        shop_obj = product_candidate.shop
+                    else:
+                        # Find a shop owned by seller if exists
+                        seller_shops = Shop.objects.filter(customer=seller)
+                        shop_obj = seller_shops.first() if seller_shops.exists() else None
+
+                    # Create AppliedGift using provided times (if any)
+                    from django.utils.dateparse import parse_datetime
+                    from django.utils import timezone
+                    start_time = None
+                    end_time = None
+                    if 'start_time' in request.data:
+                        st = parse_datetime(request.data.get('start_time'))
+                        if not st:
+                            return Response({"success": False, "error": "Invalid start_time format"}, status=status.HTTP_400_BAD_REQUEST)
+                        start_time = st
+                    if 'end_time' in request.data:
+                        et = parse_datetime(request.data.get('end_time'))
+                        if not et:
+                            return Response({"success": False, "error": "Invalid end_time format"}, status=status.HTTP_400_BAD_REQUEST)
+                        end_time = et
+
+                    # Provide sensible defaults if times are not provided
+                    if not start_time:
+                        start_time = timezone.now()
+                    if not end_time:
+                        end_time = timezone.now() + timedelta(days=30)
+
+                    ag = AppliedGift.objects.create(
+                        shop_id=shop_obj,
+                        gift_product_id=product_candidate,
+                        start_time=start_time,
+                        end_time=end_time,
+                        is_active=bool(request.data.get('is_active', True))
+                    )
+                else:
+                    return Response({"success": False, "error": "AppliedGift not found for this seller or product"}, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Authorization: allow if the shop on the applied gift is owned by seller, or the gift product is owned by seller (as customer or via shop)
+        authorized = False
+        if ag.shop_id and ag.shop_id.customer == seller:
+            authorized = True
+        elif ag.gift_product_id:
+            try:
+                gp = ag.gift_product_id
+                if gp.customer and gp.customer == seller:
+                    authorized = True
+                elif gp.shop and gp.shop.customer and gp.shop.customer == seller:
+                    authorized = True
+            except Exception:
+                authorized = False
+
+        if not authorized:
+            return Response({"success": False, "error": "You do not own this applied gift"}, status=status.HTTP_403_FORBIDDEN)
+
+        from django.utils.dateparse import parse_datetime
+        data = request.data
+        changed = False
+        if 'start_time' in data:
+            dt = parse_datetime(data.get('start_time'))
+            if not dt:
+                return Response({"success": False, "error": "Invalid start_time format"}, status=status.HTTP_400_BAD_REQUEST)
+            ag.start_time = dt
+            changed = True
+        if 'end_time' in data:
+            dt = parse_datetime(data.get('end_time'))
+            if not dt:
+                return Response({"success": False, "error": "Invalid end_time format"}, status=status.HTTP_400_BAD_REQUEST)
+            ag.end_time = dt
+            changed = True
+        if 'is_active' in data:
+            ag.is_active = bool(data.get('is_active'))
+            changed = True
+        def _get_seller_product(pid):
+            try:
+                return Product.objects.get(pk=pid, customer=seller)
+            except Product.DoesNotExist:
+                try:
+                    return Product.objects.get(pk=pid, shop__customer=seller)
+                except Product.DoesNotExist:
+                    raise
+
+        if 'gift_product_id' in data:
+            gp_id = data.get('gift_product_id')
+            try:
+                gp = _get_seller_product(gp_id)
+            except Product.DoesNotExist:
+                return Response({"success": False, "error": "Gift product not found or not owned by seller"}, status=status.HTTP_404_NOT_FOUND)
+            ag.gift_product_id = gp
+            changed = True
+
+        if 'eligible_product_ids' in data:
+            ids = data.get('eligible_product_ids') or []
+            if isinstance(ids, str):
+                try:
+                    import json
+                    ids = json.loads(ids)
+                except Exception:
+                    ids = [i.strip() for i in ids.split(',') if i.strip()]
+            valid_prods = []
+            for pid in ids:
+                try:
+                    prod = _get_seller_product(pid)
+                    valid_prods.append(prod)
+                except Product.DoesNotExist:
+                    return Response({"success": False, "error": f"Eligible product {pid} not found or not owned by seller"}, status=status.HTTP_400_BAD_REQUEST)
+            # Replace eligible products
+            ag.eligible_products.all().delete()
+            for p in valid_prods:
+                AppliedGiftProduct.objects.create(applied_gift_id=ag, product_id=p)
+            changed = True
+
+        if changed:
+            ag.save()
+
+        applied_data = {
+            "id": str(ag.id),
+            "shop_id": str(ag.shop_id.id) if ag.shop_id else None,
+            "gift_product_id": str(ag.gift_product_id.id) if ag.gift_product_id else None,
+            "gift_product_name": ag.gift_product_id.name if ag.gift_product_id else None,
+            "start_time": ag.start_time.isoformat() if ag.start_time else None,
+            "end_time": ag.end_time.isoformat() if ag.end_time else None,
+            "is_active": ag.is_active,
+            "eligible_product_ids": [str(ap.product_id.id) for ap in ag.eligible_products.all() if ap.product_id]
+        }
+
+        return Response({"success": True, "applied_gift": applied_data}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='apply-to-product')
+    def apply_to_product(self, request, pk=None):
+        """Attach product(s) as eligible for this AppliedGift."""
+        customer_id = request.data.get('customer_id') or request.headers.get('X-User-Id')
+        if not customer_id:
+            return Response({"success": False, "error": "customer_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            seller = Customer.objects.get(customer_id=customer_id)
+        except Customer.DoesNotExist:
+            return Response({"success": False, "error": "Seller not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            ag = AppliedGift.objects.get(id=pk)
+        except AppliedGift.DoesNotExist:
+            return Response({"success": False, "error": "AppliedGift not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not ag.shop_id or ag.shop_id.customer != seller:
+            return Response({"success": False, "error": "You do not own this applied gift"}, status=status.HTTP_403_FORBIDDEN)
+
+        raw_ids = request.data.get('product_ids') or request.data.get('product_id')
+        if not raw_ids:
+            return Response({"success": False, "error": "product_id or product_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        ids = []
+        if isinstance(raw_ids, list):
+            ids = raw_ids
+        elif isinstance(raw_ids, str):
+            try:
+                import json
+                parsed = json.loads(raw_ids)
+                if isinstance(parsed, list):
+                    ids = parsed
+                else:
+                    ids = [s.strip() for s in raw_ids.split(',') if s.strip()]
+            except Exception:
+                ids = [s.strip() for s in raw_ids.split(',') if s.strip()]
+        else:
+            return Response({"success": False, "error": "Invalid product_ids format"}, status=status.HTTP_400_BAD_REQUEST)
+
+        added = []
+        errors = []
+        with transaction.atomic():
+            for pid in ids:
+                if ag.gift_product_id and str(ag.gift_product_id.id) == str(pid):
+                    errors.append(f"Product {pid} is the gift product itself and cannot be an eligible product")
+                    continue
+                try:
+                    prod = Product.objects.get(pk=pid, customer=seller)
+                except Product.DoesNotExist:
+                    errors.append(f"Product {pid} not found or not owned by seller")
+                    continue
+                if AppliedGiftProduct.objects.filter(applied_gift_id=ag, product_id=prod).exists():
+                    continue
+                AppliedGiftProduct.objects.create(applied_gift_id=ag, product_id=prod)
+                added.append(str(prod.id))
+
+        ag.refresh_from_db()
+        eligible_ids = [str(ep.product_id.id) for ep in ag.eligible_products.all() if ep.product_id]
+
+        return Response({
+            "success": True, 
+            "added": added, 
+            "errors": errors, 
+            "eligible_product_ids": eligible_ids,
+            "message": f"Successfully added {len(added)} product(s) to gift promotion"
+        }, status=status.HTTP_200_OK)
 
 class CustomerGiftViewSet(viewsets.ViewSet):
     """
@@ -18530,3 +18845,223 @@ class RiderDashboardViewSet(viewsets.ViewSet):
                 'period_days': 7
             }
         }
+
+class Reviews(viewsets.ModelViewSet):
+    """
+    Simple viewset for handling product reviews
+    """
+    queryset = Review.objects.all()
+    serializer_class = ReviewSerializer
+    
+    def get_queryset(self):
+        """
+        Simple filtering for reviews
+        """
+        queryset = Review.objects.all()
+        
+        # Filter by product
+        product_id = self.request.query_params.get('product_id')
+        if product_id:
+            queryset = queryset.filter(product_id=product_id)
+        
+        # Filter by shop
+        shop_id = self.request.query_params.get('shop_id')
+        if shop_id:
+            queryset = queryset.filter(shop_id=shop_id)
+        
+        # Order by most recent first
+        return queryset.order_by('-created_at')
+    
+    def create(self, request):
+        """
+        Create a new review - SIMPLE VERSION with user header support
+        """
+        try:
+            # Get customer_id from request data OR from X-User-Id header
+            customer_id = request.data.get('customer_id') or request.headers.get('X-User-Id')
+            
+            if not customer_id:
+                return Response({
+                    "success": False,
+                    "error": "customer_id is required (send in request body or X-User-Id header)"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Resolve customer: support passing either the User id (X-User-Id) or a Customer primary key
+            try:
+                # First try to find a User with this id
+                user = User.objects.get(id=customer_id)
+                customer = Customer.objects.get(customer=user)
+            except User.DoesNotExist:
+                # If not a User id, try to find Customer by its user pk value if provided directly
+                try:
+                    customer = Customer.objects.get(customer__id=customer_id)
+                except Customer.DoesNotExist:
+                    return Response({
+                        "success": False,
+                        "error": "Customer not found"
+                    }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Validate required fields
+            required_fields = ['product_id', 'rating']
+            missing_fields = [field for field in required_fields if field not in request.data]
+            if missing_fields:
+                return Response({
+                    "success": False,
+                    "error": f"Missing required fields: {', '.join(missing_fields)}"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate rating
+            rating = request.data.get('rating')
+            try:
+                rating_int = int(rating)
+                if rating_int < 1 or rating_int > 5:
+                    return Response({
+                        "success": False,
+                        "error": "Rating must be between 1 and 5"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            except ValueError:
+                return Response({
+                    "success": False,
+                    "error": "Rating must be a valid number (1-5)"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the product
+            product_id = request.data.get('product_id')
+            try:
+                product = Product.objects.get(id=product_id)
+            except Product.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "error": "Product not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if customer already reviewed this product
+            existing_review = Review.objects.filter(
+                customer=customer,
+                product=product
+            ).first()
+            
+            if existing_review:
+                return Response({
+                    "success": False,
+                    "error": "You have already reviewed this product"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the shop from the product
+            shop = product.shop
+            if not shop:
+                return Response({
+                    "success": False,
+                    "error": "Product does not belong to a shop"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+# Prepare review data (use User id as customer pk for serializer)
+            review_data = {
+                'customer': customer.customer.id,
+                'shop': shop.id,
+                'product': product.id,
+                'rating': rating_int,
+                'comment': request.data.get('comment', '')
+            }
+            
+            # Create the review
+            serializer = self.get_serializer(data=review_data)
+            if serializer.is_valid():
+                review = serializer.save()
+                
+                # Update product's average rating if product has average_rating field
+                try:
+                    self._update_product_rating(product)
+                except Exception as e:
+                    print(f"Note: Could not update product rating: {e}")
+                    # Continue even if rating update fails
+                
+                return Response({
+                    "success": True,
+                    "message": "Review created successfully",
+                    "review": serializer.data
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    "success": False,
+                    "error": "Validation failed",
+                    "details": serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            print(f"Error creating review: {str(e)}")
+            return Response({
+                "success": False,
+                "error": "Failed to create review",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _update_product_rating(self, product):
+        """
+        Update product's average rating (optional - only if Product model has these fields)
+        """
+        try:
+            # Check if product model has average_rating field
+            if hasattr(product, 'average_rating'):
+                reviews = Review.objects.filter(product=product)
+                if reviews.exists():
+                    avg_rating = reviews.aggregate(Avg('rating'))['rating__avg']
+                    # Round to 1 decimal place
+                    product.average_rating = round(avg_rating, 1)
+                    product.review_count = reviews.count()
+                else:
+                    product.average_rating = 0.0
+                    product.review_count = 0
+                
+                product.save(update_fields=['average_rating', 'review_count'])
+        except Exception as e:
+            print(f"Note: Could not update product rating: {e}")
+            # Silently fail - this is optional functionality
+    
+    def list(self, request):
+        """
+        List reviews with simple response format
+        """
+        try:
+            queryset = self.get_queryset()
+            
+            # Simple pagination
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response({
+                    "success": True,
+                    "reviews": serializer.data
+                })
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return Response({
+                "success": True,
+                "reviews": serializer.data,
+                "count": queryset.count()
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error listing reviews: {str(e)}")
+            return Response({
+                "success": False,
+                "error": "Failed to fetch reviews"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def retrieve(self, request, pk=None):
+        """
+        Get a single review
+        """
+        try:
+            review = self.get_object()
+            serializer = self.get_serializer(review)
+            return Response({
+                "success": True,
+                "review": serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"Error retrieving review: {str(e)}")
+            return Response({
+                "success": False,
+                "error": "Review not found"
+            }, status=status.HTTP_404_NOT_FOUND)

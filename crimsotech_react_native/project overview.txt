@@ -1,0 +1,148 @@
+ Database Used: PostgreSQL
+   - Configuration in settings.py specifies:
+     - ENGINE: django.db.backends.postgresql
+     - NAME: crimsotech_database
+     - USER: crimsotech_user
+     - PASSWORD: jumlipogi143
+     - HOST: localhost
+     - PORT: 5432
+
+  System Architecture:
+   - Backend: Django REST API
+   - Mobile App: React Native/Expo
+   - Web App: React Router v7 with TypeScript
+
+  ---
+
+  User Types, Pages & Functions
+
+  1. CUSTOMER (Shopper/Buyer)
+  Pages/Functions:
+   - Registration & Profiling (signup, profiling, phone verification)
+   - Login/Logout
+   - Product browsing & search
+   - Shopping cart functionality
+   - Order management & tracking
+   - Favorites & wishlists
+   - Shop following
+   - Product reviews & ratings
+   - Return/Refund requests
+   - Personal shop creation (if they become sellers)
+   - Notifications
+   - Shopping history & purchases
+
+  Key Web Routes:
+   - /home - Main shopping dashboard
+   - /shop-list - Browse shops
+   - /cart - Shopping cart
+   - /orders - Order history
+   - /favorites - Saved products
+   - /purchases - Purchase history
+   - /request-refund-return/:id - Refund requests
+   - /view-order/:orderId - Order details
+   - /create-shop - Create seller account
+
+  2. SELLER (Shop Owner)
+  Pages/Functions:
+   - Complete shop management
+   - Product listing & management
+   - Order processing & fulfillment
+   - Voucher creation & management
+   - Earnings dashboard
+   - Return/Refund management from buyers
+   - Shop notifications
+   - Customer service for their shop
+
+  Key Web Routes:
+   - /seller/dashboard - Seller dashboard
+   - /seller/seller-product-list - Manage products
+   - /seller/seller-create-product - Add new products
+   - /seller/seller-order-list - Manage orders
+   - /seller/seller-earnings - View earnings
+   - /seller/seller-vouchers - Create discounts
+   - /seller/seller-return-refund-cancel - Handle returns
+
+  3. RIDER (Delivery Personnel)
+  Pages/Functions:
+   - Registration with vehicle documentation
+   - Delivery order acceptance/rejection
+   - Delivery status tracking
+   - Order pickup & delivery management
+   - Earnings tracking
+   - Profile management
+
+  Key Web Routes:
+   - /rider - Rider dashboard
+   - /rider/pendings - Pending deliveries
+   - Vehicle registration form
+
+  4. ADMIN (Super Administrator)
+  Pages/Functions:
+   - Complete system dashboard & analytics
+   - User management & oversight
+   - Product moderation & approval
+   - Shop management & verification
+   - Order oversight & disputes
+   - Rider management & verification
+   - Voucher management
+   - Refund processing
+   - Team management (moderators)
+   - Report handling & content moderation
+   - Boost plan management
+   - Comprehensive analytics & reporting
+
+  Key Web Routes:
+   - /admin - Main dashboard
+   - /admin/analytics - System analytics
+   - /admin/products - Product management
+   - /admin/shops - Shop management
+   - /admin/orders - Order oversight
+   - /admin/riders - Rider management
+   - /admin/vouchers - Voucher management
+   - /admin/refunds - Refund processing
+   - /admin/users - User management
+   - /admin/team - Team/moderator management
+   - /admin/reports - Content reports
+   - /admin/boosting - Boost plan management
+
+  5. MODERATOR (Content Moderator)
+  Pages/Functions:
+   - Content moderation
+   - User reports management
+   - Product approval/rejection
+   - Issue resolution
+   - Temporary user actions (warnings, suspensions)
+
+  Key Web Routes:
+   - /moderator - Moderator dashboard
+
+  ---
+
+  Database Schema (PostgreSQL)
+  The system has a comprehensive e-commerce database with:
+
+   1. User Management: User, Customer, Rider, Admin, Moderator models
+   2. Product Management: Product, Category, ProductMedia, Variants, Issues
+   3. Shop Management: Shop, ShopFollow, Vouchers
+   4. Order Management: Order, Checkout, CartItem, Delivery
+   5. Payment & Refunds: Payment, Refund, RefundMedias
+   6. Reviews & Ratings: Review system for products/shops
+   7. Content Moderation: Report, ReportAction, ReportMedia, ReportComment
+   8. Marketing: BoostPlan, Boost, Vouchers
+   9. Utilities: Notifications, Logs, OTP verification
+
+  ---
+
+  Key Features:
+   - Multi-role authentication system
+   - Full e-commerce functionality (products, orders, payments, delivery)
+   - Content moderation system
+   - Two-sided marketplace (buyers + sellers)
+   - Delivery management (riders)
+   - Advanced analytics for admins
+   - Refund/return system
+   - Boosting/promotion system
+   - Review/rating system
+
+  The system is designed as a comprehensive e-commerce marketplace platform similar to Shopee or Amazon, with
+  integrated delivery services, content moderation, and a sophisticated user role system.

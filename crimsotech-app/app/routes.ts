@@ -26,6 +26,7 @@ export default [
     route('comgift', 'routes/customer/comgift.tsx'),
     route('trade', 'routes/customer/trade.tsx'),
     route('purchases', 'routes/customer/purchases.tsx'),
+    route('product-rate', 'routes/customer/product-rate.tsx'),
     route('subscription-plan', 'routes/customer/subscription-plan.tsx'),
     route("track-order/:id", "components/customer/track-order.tsx"),
     route("decision/:id", "components/customer/decision.tsx"),
@@ -79,6 +80,7 @@ export default [
         route("seller-vouchers", "routes/seller/seller-vouchers.tsx"), 
         route("seller-notifications", "routes/seller/seller-notifications.tsx"), 
         route("gift", "routes/seller/seller-gift.tsx"), 
+        route("apply-gift", "routes/seller/apply-gift/apply-gift.tsx"),
         route("seller-create-gift", "routes/seller/seller-create-gift.tsx"), 
 
 

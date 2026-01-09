@@ -776,6 +776,20 @@ class RefundSerializer(serializers.ModelSerializer):
         model = Refund
         fields = '__all__'
 
+
+
+
+class AppliedGiftSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AppliedGift
+        fields = '__all__'
+
+
+class AppliedGiftProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AppliedGiftProduct
+        fields = '__all__'
+
 class DeliveryStatsSerializer(serializers.ModelSerializer):
     order_id = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
