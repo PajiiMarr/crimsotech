@@ -94,6 +94,20 @@ class Rider(models.Model):
     verified = models.BooleanField(default=False)
     approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_riders')
     approval_date = models.DateTimeField(null=True, blank=True)
+    availability_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('offline', 'Offline'),
+            ('available', 'Available for Deliveries'),
+            ('busy', 'Busy - On Delivery'),
+            ('break', 'On Break'),
+            ('unavailable', 'Temporarily Unavailable')
+        ],
+        default='offline'
+    )
+    is_accepting_deliveries = models.BooleanField(default=False)
+    last_status_update = models.DateTimeField(auto_now=True)
+    
 
     def __str__(self):
         return f"Rider: {self.rider.username}"
@@ -802,6 +816,10 @@ class Delivery(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    scheduled_pickup_time = models.DateTimeField(null=True, blank=True)  # ⬅️ Add this
+    scheduled_delivery_time = models.DateTimeField(null=True, blank=True)  # ⬅️ Add this
+    is_scheduled = models.BooleanField(default=False)  # ⬅️ Add this
+
     def __str__(self):
         return f"Delivery {self.id} for Order {self.order.order}"
 
@@ -1470,3 +1488,18 @@ class AppliedGiftProduct(models.Model):
     def __str__(self):
         product_name = self.product_id.name if self.product_id else 'No Product'
         return f"Eligible: {product_name}"
+
+# Models that DON'T exist in your schema:
+class RiderSchedule(models.Model):
+    rider = models.ForeignKey(Rider, on_delete=models.CASCADE)
+    day_of_week = models.IntegerField()  # 0=Monday, 6=Sunday
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    is_available = models.BooleanField(default=True)
+
+class TimeOffRequest(models.Model):
+    rider = models.ForeignKey(Rider, on_delete=models.CASCADE)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    reason = models.TextField()
+    status = models.CharField(max_length=20)  # pending/approved/rejected
