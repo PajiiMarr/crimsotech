@@ -8630,6 +8630,1092 @@ class ModeratorAnalytics(viewsets.ViewSet):
         return stages.get(stage, f'Stage {stage}')
 
 
+class ModeratorProduct(viewsets.ViewSet):
+    """
+    ViewSet for admin product metrics and analytics
+    """
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """
+        Get comprehensive product metrics for admin dashboard with date range support
+        """
+        try:
+            # Get date range parameters from request
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            range_type = request.query_params.get('range_type', 'weekly')
+            
+            # Set up date range filters
+            date_filters = {}
+            if start_date and end_date:
+                try:
+                    # Use datetime class from datetime module
+                    start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+                    
+                    # Adjust end date to include the entire day
+                    end_date_obj_with_time = datetime.combine(end_date_obj, time.max)
+                    
+                    # Create timezone aware datetimes
+                    tz = timezone.get_current_timezone()
+                    start_datetime = timezone.make_aware(datetime.combine(start_date_obj, time.min), tz)
+                    end_datetime = timezone.make_aware(end_date_obj_with_time, tz)
+                    
+                    date_filters = {
+                        'created_at__gte': start_datetime,
+                        'created_at__lte': end_datetime
+                    }
+                    
+                except ValueError as e:
+                    print(f"Date parsing error: {str(e)}")
+                    # If date parsing fails, use default (all time)
+                    pass
+            
+            # Total products within date range
+            total_products = Product.objects.filter(**date_filters).count()
+            
+            # Low Stock Alert (quantity < 5) with fallback
+            low_stock_count = Product.objects.filter(
+                quantity__lt=5,
+                **date_filters
+            ).count()
+            
+            # Active Boosts within date range with fallback
+            active_boosts_count = Boost.objects.filter(
+                product__isnull=False,
+                status='active',
+                **date_filters
+            ).count()
+            
+            # Compute average rating from Reviews within date range (using product-based reviews)
+            rating_agg = Review.objects.filter(
+                product__isnull=False,
+                created_at__gte=date_filters.get('created_at__gte', datetime.min),
+                created_at__lte=date_filters.get('created_at__lte', datetime.max)
+            ).aggregate(
+                avg_rating=Avg('rating'),
+                total_reviews=Count('id')
+            )
+            avg_rating = rating_agg['avg_rating'] or 0.0
+            
+            # Compute engagement metrics from CustomerActivity within date range
+            engagement_filters = {}
+            if 'created_at__gte' in date_filters and 'created_at__lte' in date_filters:
+                engagement_filters = {
+                    'created_at__gte': date_filters['created_at__gte'],
+                    'created_at__lte': date_filters['created_at__lte']
+                }
+            
+            engagement_data = CustomerActivity.objects.filter(
+                product__isnull=False,
+                **engagement_filters
+            ).values('product', 'activity_type').annotate(
+                count=Count('activity_type')
+            )
+            
+            # Create a dictionary to store engagement metrics per product
+            product_engagement = {}
+            for engagement in engagement_data:
+                product_id = engagement['product']
+                activity_type = engagement['activity_type']
+                count = engagement['count']
+                
+                if product_id not in product_engagement:
+                    product_engagement[product_id] = {
+                        'views': 0,
+                        'purchases': 0,
+                        'favorites': 0,
+                        'total_engagement': 0
+                    }
+                
+                if activity_type == 'view':
+                    product_engagement[product_id]['views'] = count
+                elif activity_type == 'purchase':
+                    product_engagement[product_id]['purchases'] = count
+                elif activity_type == 'favorite':
+                    product_engagement[product_id]['favorites'] = count
+                
+                # Calculate total engagement
+                product_engagement[product_id]['total_engagement'] = (
+                    product_engagement[product_id]['views'] +
+                    product_engagement[product_id]['purchases'] +
+                    product_engagement[product_id]['favorites']
+                )
+            
+            # Get top products by engagement within date range
+            top_products_data = []
+            if product_engagement:
+                # Get product details for top engaged products
+                top_product_ids = sorted(
+                    product_engagement.keys(),
+                    key=lambda x: product_engagement[x]['total_engagement'],
+                    reverse=True
+                )[:5]
+                
+                # Apply date filters to products
+                top_products_qs = Product.objects.filter(id__in=top_product_ids)
+                if date_filters:
+                    top_products_qs = top_products_qs.filter(**date_filters)
+                
+                top_products = top_products_qs.all()
+                product_map = {product.id: product for product in top_products}
+                
+                for product_id in top_product_ids:
+                    if product_id in product_map:
+                        product = product_map[product_id]
+                        engagement = product_engagement[product_id]
+                        top_products_data.append({
+                            'name': product.name,
+                            'views': engagement['views'],
+                            'purchases': engagement['purchases'],
+                            'favorites': engagement['favorites'],
+                            'total_engagement': engagement['total_engagement']
+                        })
+            
+            # If no engagement data, get top products by creation date as fallback
+            if not top_products_data:
+                top_products = Product.objects.filter(**date_filters).order_by('-created_at')[:5]
+                top_products_data = [
+                    {
+                        'name': product.name,
+                        'views': 0,
+                        'purchases': 0,
+                        'favorites': 0,
+                        'total_engagement': 0
+                    }
+                    for product in top_products
+                ]
+            
+            # Rating Distribution from Reviews (product-based) within date range
+            rating_distribution = Review.objects.filter(
+                created_at__gte=date_filters.get('created_at__gte', datetime.min),
+                created_at__lte=date_filters.get('created_at__lte', datetime.max)
+            ).values('rating').annotate(
+                count=Count('rating')
+            ).order_by('-rating')
+            
+            rating_distribution_data = [
+                {
+                    'name': f'{rating["rating"]} Stars',
+                    'value': rating['count']
+                }
+                for rating in rating_distribution
+                if rating['rating'] is not None
+            ]
+            
+            # Fill in missing ratings
+            existing_ratings = {rd['name'][0] for rd in rating_distribution_data}
+            for rating_val in [5, 4, 3, 2, 1]:
+                if str(rating_val) not in existing_ratings:
+                    rating_distribution_data.append({
+                        'name': f'{rating_val} Stars',
+                        'value': 0
+                    })
+            
+            # Sort rating distribution
+            rating_distribution_data.sort(key=lambda x: x['name'], reverse=True)
+            
+            # Calculate growth metrics if comparing to previous period
+            growth_metrics = {}
+            if start_date and end_date and start_date_obj and end_date_obj:
+                try:
+                    # Calculate previous period (same duration before start date)
+                    period_days = (end_date_obj - start_date_obj).days + 1
+                    prev_end_date = start_date_obj - timedelta(days=1)
+                    prev_start_date = prev_end_date - timedelta(days=period_days - 1)
+                    
+                    prev_start_datetime = timezone.make_aware(
+                        datetime.combine(prev_start_date, time.min), tz
+                    )
+                    prev_end_datetime = timezone.make_aware(
+                        datetime.combine(prev_end_date, time.max), tz
+                    )
+                    
+                    # Previous period total products
+                    prev_total_products = Product.objects.filter(
+                        created_at__gte=prev_start_datetime,
+                        created_at__lte=prev_end_datetime
+                    ).count()
+                    
+                    # Previous period low stock
+                    prev_low_stock = Product.objects.filter(
+                        quantity__lt=5,
+                        created_at__gte=prev_start_datetime,
+                        created_at__lte=prev_end_datetime
+                    ).count()
+                    
+                    # Calculate growth percentages
+                    if prev_total_products > 0:
+                        product_growth = ((total_products - prev_total_products) / prev_total_products) * 100
+                    else:
+                        product_growth = 100 if total_products > 0 else 0
+                    
+                    if prev_low_stock > 0:
+                        low_stock_growth = ((low_stock_count - prev_low_stock) / prev_low_stock) * 100
+                    else:
+                        low_stock_growth = 100 if low_stock_count > 0 else 0
+                    
+                    growth_metrics = {
+                        'product_growth': round(product_growth, 1),
+                        'low_stock_growth': round(low_stock_growth, 1),
+                        'previous_period_total': prev_total_products,
+                        'previous_period_low_stock': prev_low_stock,
+                        'period_days': period_days
+                    }
+                    
+                except Exception as e:
+                    print(f"Error calculating growth metrics: {str(e)}")
+                    growth_metrics = {}
+            
+            response_data = {
+                'success': True,
+                'metrics': {
+                    'total_products': total_products,
+                    'low_stock_alert': low_stock_count,
+                    'active_boosts': active_boosts_count,
+                    'avg_rating': round(avg_rating, 1),
+                    'top_products': top_products_data,
+                    'rating_distribution': rating_distribution_data,
+                    'growth_metrics': growth_metrics,
+                    'has_data': any([
+                        total_products > 0,
+                        low_stock_count > 0,
+                        active_boosts_count > 0,
+                        avg_rating > 0,
+                        len(top_products_data) > 0
+                    ]),
+                    'date_range': {
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'range_type': range_type
+                    } if start_date and end_date else None
+                },
+                'message': 'Metrics retrieved successfully',
+                'data_source': 'database'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error retrieving metrics: {str(e)}")
+            return Response(
+                {'success': False, 'error': f'Error retrieving metrics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+    @action(detail=False, methods=['get'])
+    def get_products_list(self, request):
+        """
+        Get complete list of products for admin with search, filter, and date range support
+        (No pagination - returns all products)
+        """
+        try:
+            # Get query parameters
+            search = request.query_params.get('search', '')
+            category = request.query_params.get('category', 'all')
+            
+            # Get date range parameters
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            range_type = request.query_params.get('range_type', 'weekly')
+            
+            # Start with base query
+            products = Product.objects.all().order_by('name').select_related('shop', 'category')
+            
+            # Apply date range filter if provided
+            start_datetime = None
+            end_datetime = None
+            
+            if start_date and end_date:
+                try:
+                    start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+                    
+                    # Adjust end date to include the entire day
+                    end_date_obj_with_time = datetime.combine(end_date_obj, time.max)
+                    
+                    # Create timezone aware datetimes
+                    tz = timezone.get_current_timezone()
+                    start_datetime = timezone.make_aware(datetime.combine(start_date_obj, time.min), tz)
+                    end_datetime = timezone.make_aware(end_date_obj_with_time, tz)
+                    
+                    products = products.filter(
+                        created_at__gte=start_datetime,
+                        created_at__lte=end_datetime
+                    )
+                    
+                except ValueError as e:
+                    print(f"Date parsing error in get_products_list: {str(e)}")
+                    # If date parsing fails, ignore date filter
+                    pass
+            
+            # Apply search filter
+            if search:
+                products = products.filter(
+                    Q(name__icontains=search) | 
+                    Q(description__icontains=search)
+                )
+            
+            # Apply category filter
+            if category != 'all':
+                products = products.filter(category__name=category)
+            
+            # Get all products (no pagination)
+            all_products = list(products)
+            total_count = len(all_products)
+            
+            # Get product IDs for related data queries
+            product_ids = [product.id for product in all_products]
+            
+            # Compute engagement data from CustomerActivity with date range
+            engagement_filters = {}
+            if start_datetime and end_datetime:
+                engagement_filters = {
+                    'created_at__gte': start_datetime,
+                    'created_at__lte': end_datetime
+                }
+            
+            engagement_data = CustomerActivity.objects.filter(
+                product__in=product_ids,
+                **engagement_filters
+            ).values('product', 'activity_type').annotate(
+                count=Count('activity_type')
+            )
+            
+            engagement_map = {}
+            for engagement in engagement_data:
+                product_id = engagement['product']
+                activity_type = engagement['activity_type']
+                count = engagement['count']
+                
+                if product_id not in engagement_map:
+                    engagement_map[product_id] = {'views': 0, 'purchases': 0, 'favorites': 0}
+                
+                if activity_type == 'view':
+                    engagement_map[product_id]['views'] = count
+                elif activity_type == 'purchase':
+                    engagement_map[product_id]['purchases'] = count
+                elif activity_type == 'favorite':
+                    engagement_map[product_id]['favorites'] = count
+            
+            # Compute variants count
+            variants_data = Variants.objects.filter(
+                product__in=product_ids
+            ).values('product').annotate(
+                variants_count=Count('id')
+            )
+            
+            variants_map = {vd['product']: vd['variants_count'] for vd in variants_data}
+            
+            # Compute issues count
+            issues_data = Issues.objects.filter(
+                product__in=product_ids
+            ).values('product').annotate(
+                issues_count=Count('id')
+            )
+            
+            issues_map = {id['product']: id['issues_count'] for id in issues_data}
+            
+            # Compute boost plan
+            boost_data = Boost.objects.filter(
+                product__in=product_ids
+            ).select_related('boost_plan')
+            
+            boost_map = {}
+            for boost in boost_data:
+                if boost.boost_plan:
+                    boost_map[boost.product.id] = boost.boost_plan.name
+            
+            # Serialize with computed fields
+            products_data = []
+            for product in all_products:
+                product_id = product.id
+                
+                # Get computed engagement data
+                engagement = engagement_map.get(product_id, {'views': 0, 'purchases': 0, 'favorites': 0})
+                
+                # Get product rating from reviews with date range
+                review_filters = {'product': product}
+                if start_datetime and end_datetime:
+                    review_filters.update({
+                        'created_at__gte': start_datetime,
+                        'created_at__lte': end_datetime
+                    })
+                
+                product_rating = Review.objects.filter(**review_filters).aggregate(
+                    avg_rating=Avg('rating')
+                )['avg_rating'] or 0.0
+                
+                # Get computed counts
+                variants_count = variants_map.get(product_id, 0)
+                issues_count = issues_map.get(product_id, 0)
+                
+                # Get boost plan
+                boost_plan = boost_map.get(product_id, 'None')
+                
+                # Determine low stock
+                low_stock = product.quantity < 5
+                
+                # Build product data
+                product_data = {
+                    'id': str(product_id),
+                    'name': product.name,
+                    'category': product.category.name if product.category else 'Uncategorized',
+                    'shop': product.shop.name if product.shop else 'No Shop',
+                    'price': str(product.price),
+                    'quantity': product.quantity,
+                    'condition': product.condition,
+                    'status': product.status,
+                    'views': engagement['views'],
+                    'purchases': engagement['purchases'],
+                    'favorites': engagement['favorites'],
+                    'rating': round(product_rating, 1),
+                    'boostPlan': boost_plan,
+                    'variants': variants_count,
+                    'issues': issues_count,
+                    'lowStock': low_stock,
+                    'created_at': product.created_at.isoformat() if product.created_at else None,
+                    'updated_at': product.updated_at.isoformat() if product.updated_at else None
+                }
+                products_data.append(product_data)
+            
+            response_data = {
+                'success': True,
+                'products': products_data,
+                'total_count': total_count,
+                'date_range': {
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'range_type': range_type
+                } if start_date and end_date else None,
+                'message': f'{total_count} products retrieved successfully',
+                'data_source': 'database'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error retrieving products: {str(e)}")
+            return Response(
+                {'success': False, 'error': f'Error retrieving products: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+    @action(detail=False, methods=['get'])    
+    def get_product(self, request):
+        product_id = request.query_params.get('product_id')
+        
+        # Validate product_id parameter
+        if not product_id:
+            return Response(
+                {"error": "product_id parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate UUID format
+        try:
+            uuid.UUID(product_id)
+        except ValueError:
+            return Response(
+                {"error": "Invalid product ID format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get product with all related data
+            product = Product.objects.select_related(
+                'shop',
+                'customer',
+                'category_admin',
+                'category',
+                'customer__customer'  # Access the User through Customer
+            ).prefetch_related(
+                'productmedia_set',
+                'variants_set',
+                'variants_set__variantoptions_set',
+                'reviews',
+                'reviews__customer__customer',  # Access User through Customer for reviews
+                'favorites_set',
+                'favorites_set__customer__customer',
+                'boost_set',
+                'boost_set__boost_plan',
+                'reports_against',
+                'reports_against__reporter'
+            ).get(id=product_id)
+            
+            # Build the response data
+            product_data = {
+                "id": str(product.id),
+                "name": product.name,
+                "description": product.description,
+                "quantity": product.quantity,
+                "price": str(product.price),
+                "upload_status": product.upload_status,
+                "status": product.status,
+                "condition": product.condition,
+                "created_at": product.created_at.isoformat(),
+                "updated_at": product.updated_at.isoformat(),
+                "is_removed": product.is_removed,
+                "removal_reason": product.removal_reason,
+                "removed_at": product.removed_at.isoformat() if product.removed_at else None,
+                "active_report_count": product.active_report_count,
+                "favorites_count": product.favorites_set.count(),
+            }
+            
+            # Shop data
+            if product.shop:
+                product_data["shop"] = {
+                    "id": str(product.shop.id),
+                    "name": product.shop.name,
+                    "verified": product.shop.verified,
+                    "city": product.shop.city,
+                    "barangay": product.shop.barangay,
+                    "total_sales": str(product.shop.total_sales),
+                    "created_at": product.shop.created_at.isoformat(),
+                    "is_suspended": product.shop.is_suspended,
+                }
+            else:
+                product_data["shop"] = None
+            
+            # Customer data
+            if product.customer:
+                product_data["customer"] = {
+                    "username": product.customer.customer.username if product.customer.customer else None,
+                    "email": product.customer.customer.email if product.customer.customer else None,
+                    "contact_number": product.customer.customer.contact_number if product.customer.customer else None,
+                    "product_limit": product.customer.product_limit,
+                    "current_product_count": product.customer.current_product_count,
+                }
+            else:
+                product_data["customer"] = None
+            
+            # Category data
+            if product.category:
+                product_data["category"] = {
+                    "id": str(product.category.id),
+                    "name": product.category.name,
+                }
+            else:
+                product_data["category"] = None
+            
+            # Admin category data
+            if product.category_admin:
+                product_data["category_admin"] = {
+                    "id": str(product.category_admin.id),
+                    "name": product.category_admin.name,
+                }
+            else:
+                product_data["category_admin"] = None
+            
+            # Media files
+            product_data["media"] = [
+                {
+                    "id": str(media.id),
+                    "file_data": media.file_data.url if media.file_data else None,
+                    "file_type": media.file_type,
+                }
+                for media in product.productmedia_set.all()
+            ]
+            
+            # Variants
+            product_data["variants"] = [
+                {
+                    "id": str(variant.id),
+                    "title": variant.title,
+                    "options": [
+                        {
+                            "id": str(option.id),
+                            "title": option.title,
+                            "quantity": option.quantity,
+                            "price": str(option.price),
+                        }
+                        for option in variant.variantoptions_set.all()
+                    ]
+                }
+                for variant in product.variants_set.all()
+            ]
+            
+            # Reviews
+            product_data["reviews"] = [
+                {
+                    "id": str(review.id),
+                    "rating": review.rating,
+                    "comment": review.comment,
+                    "customer": review.customer.customer.username if review.customer and review.customer.customer else None,
+                    "created_at": review.created_at.isoformat(),
+                }
+                for review in product.reviews.all()
+            ]
+            
+            # Active boost
+            active_boost = product.boost_set.filter(
+                status='active',
+                end_date__gt=timezone.now()
+            ).first()
+            
+            if active_boost:
+                product_data["boost"] = {
+                    "id": str(active_boost.id),
+                    "status": active_boost.status,
+                    "plan": active_boost.boost_plan.name if active_boost.boost_plan else None,
+                    "end_date": active_boost.end_date.isoformat(),
+                }
+            else:
+                product_data["boost"] = None
+            
+            # Reports summary
+            product_data["reports"] = {
+                "active": product.reports_against.filter(status__in=['pending', 'under_review']).count(),
+                "total": product.reports_against.count(),
+            }
+            
+            return Response(product_data, status=status.HTTP_200_OK)
+            
+        except Product.DoesNotExist:
+            return Response(
+                {"error": "Product not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": "An error occurred while fetching product data"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['put'])
+    def update_product_status(self, request):
+        """
+        Update product status based on the requested action.
+        Actions: publish, deleteDraft, unpublish, archive, restore, 
+                remove, restoreRemoved, suspend, unsuspend
+        """
+        print(request.body)
+        # Parse request data
+        try:
+            data = json.loads(request.body)
+            product_id = data.get('product_id')
+            action_type = data.get('action_type')
+            user_id = data.get('user_id')  # Get user_id from request data
+            reason = data.get('reason', '')
+            suspension_days = data.get('suspension_days', 7)  # Default 7 days
+            
+            # Validate required fields
+            if not product_id:
+                return Response(
+                    {"error": "product_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not action_type:
+                return Response(
+                    {"error": "action_type is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not user_id:
+                return Response(
+                    {"error": "user_id is required to identify the admin performing the action"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate UUID format
+            try:
+                uuid.UUID(product_id)
+            except ValueError:
+                return Response(
+                    {"error": "Invalid product ID format"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                uuid.UUID(user_id)
+            except ValueError:
+                return Response(
+                    {"error": "Invalid user ID format"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate action type
+            valid_actions = [
+                'publish', 'deleteDraft', 'unpublish', 'archive', 'restore',
+                'remove', 'restoreRemoved', 'suspend', 'unsuspend'
+            ]
+            
+            if action_type not in valid_actions:
+                return Response(
+                    {"error": f"Invalid action_type. Must be one of: {', '.join(valid_actions)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+        except json.JSONDecodeError:
+            return Response(
+                {"error": "Invalid JSON data"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get product with related data
+            product = Product.objects.select_related(
+                'customer',
+                'shop'
+            ).get(id=product_id)
+            
+            # Get admin user from user_id
+            try:
+                admin_user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {"error": "Admin user not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify user is an admin
+            if not admin_user.is_admin:
+                return Response(
+                    {"error": "Only admin users can perform this action"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Perform action based on action_type
+            with transaction.atomic():
+                if action_type == 'publish':
+                    # Validate product can be published
+                    if product.upload_status != 'draft':
+                        return Response(
+                            {"error": f"Product is not in draft status. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Validate product has required fields
+                    if not product.name or not product.description or not product.price:
+                        return Response(
+                            {"error": "Product must have name, description, and price before publishing"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    if product.quantity < 0:
+                        return Response(
+                            {"error": "Product quantity cannot be negative"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.upload_status = 'published'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Published product: {product.name}"
+                    )
+                    
+                    return Response({
+                        "message": "Product published successfully",
+                        "upload_status": product.upload_status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'deleteDraft':
+                    # Validate product can be deleted
+                    if product.upload_status != 'draft':
+                        return Response(
+                            {"error": f"Only draft products can be deleted. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Decrement customer product count
+                    if product.customer:
+                        product.customer.decrement_product_count()
+                    
+                    # Create log entry before deletion
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Deleted draft product: {product.name}"
+                    )
+                    
+                    # Delete the product
+                    product.delete()
+                    
+                    return Response({
+                        "message": "Draft product deleted successfully",
+                        "deleted_at": timezone.now().isoformat()
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'unpublish':
+                    # Validate product can be unpublished
+                    if product.upload_status != 'published':
+                        return Response(
+                            {"error": f"Only published products can be unpublished. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.upload_status = 'draft'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Unpublished product: {product.name}"
+                    )
+                    
+                    return Response({
+                        "message": "Product unpublished successfully",
+                        "upload_status": product.upload_status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'archive':
+                    # Validate product can be archived
+                    if product.upload_status != 'published' and product.upload_status != 'draft':
+                        return Response(
+                            {"error": f"Only published or draft products can be archived. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.upload_status = 'archived'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Archived product: {product.name}"
+                    )
+                    
+                    return Response({
+                        "message": "Product archived successfully",
+                        "upload_status": product.upload_status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'restore':
+                    # Validate product can be restored (from archived)
+                    if product.upload_status != 'archived':
+                        return Response(
+                            {"error": f"Only archived products can be restored. Current status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Default to published, but could be based on previous state if tracked
+                    product.upload_status = 'published'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Restored product from archive: {product.name}"
+                    )
+                    
+                    return Response({
+                        "message": "Product restored successfully",
+                        "upload_status": product.upload_status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'remove':
+                    # Validate product can be removed
+                    if product.is_removed:
+                        return Response(
+                            {"error": "Product is already removed"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.is_removed = True
+                    product.removal_reason = reason
+                    product.removed_at = timezone.now()
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Removed product: {product.name}. Reason: {reason}"
+                    )
+                    
+                    # Get user to send notification (customer)
+                    if product.customer and product.customer.customer:
+                        Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Removal",
+                            type="product_removal",
+                            message=f"Your product '{product.name}' has been removed by admin. Reason: {reason}",
+                            is_read=False
+                        )
+                    
+                    return Response({
+                        "message": "Product removed successfully",
+                        "is_removed": product.is_removed,
+                        "removal_reason": product.removal_reason,
+                        "removed_at": product.removed_at,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'restoreRemoved':
+                    # Validate product can be restored (from removed)
+                    if not product.is_removed:
+                        return Response(
+                            {"error": "Product is not removed"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.is_removed = False
+                    product.removal_reason = None
+                    product.removed_at = None
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Restored removed product: {product.name}"
+                    )
+                    
+                    # Get user to send notification (customer)
+                    if product.customer and product.customer.customer:
+                        Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Restored",
+                            type="product_restoration",
+                            message=f"Your product '{product.name}' has been restored by admin.",
+                            is_read=False
+                        )
+                    
+                    return Response({
+                        "message": "Product restored successfully",
+                        "is_removed": product.is_removed,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'suspend':
+                    # Validate product can be suspended
+                    if product.status == 'Suspended':
+                        return Response(
+                            {"error": "Product is already suspended"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    if product.is_removed:
+                        return Response(
+                            {"error": "Cannot suspend a removed product"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    if product.upload_status != 'published':
+                        return Response(
+                            {"error": f"Only published products can be suspended. Current upload status: {product.upload_status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    previous_status = product.status
+                    product.status = 'Suspended'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Suspended product: {product.name}. Previous status: {previous_status}. Reason: {reason}"
+                    )
+                    
+                    # Create suspension record (optional - if you have a Suspension model)
+                    # Suspension.objects.create(
+                    #     product=product,
+                    #     suspended_by=admin_user,
+                    #     reason=reason,
+                    #     suspension_days=suspension_days,
+                    #     suspended_until=timezone.now() + timedelta(days=suspension_days)
+                    # )
+                    
+                    # Get user to send notification (customer)
+                    if product.customer and product.customer.customer:
+                        Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Suspension",
+                            type="product_suspension",
+                            message=f"Your product '{product.name}' has been suspended for {suspension_days} days. Reason: {reason}",
+                            is_read=False
+                        )
+                    
+                    return Response({
+                        "message": "Product suspended successfully",
+                        "status": product.status,
+                        "suspension_days": suspension_days,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                    
+                elif action_type == 'unsuspend':
+                    # Validate product can be unsuspended
+                    if product.status != 'Suspended':
+                        return Response(
+                            {"error": f"Product is not suspended. Current status: {product.status}"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Update product
+                    product.status = 'Active'
+                    product.save()
+                    
+                    # Create log entry
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Unsuspended product: {product.name}"
+                    )
+                    
+                    # Update suspension record if exists (optional)
+                    # suspension = Suspension.objects.filter(
+                    #     product=product,
+                    #     is_active=True
+                    # ).first()
+                    # if suspension:
+                    #     suspension.is_active = False
+                    #     suspension.unsuspended_at = timezone.now()
+                    #     suspension.save()
+                    
+                    # Get user to send notification (customer)
+                    if product.customer and product.customer.customer:
+                        Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Unsuspended",
+                            type="product_unsuspension",
+                            message=f"Your product '{product.name}' has been unsuspended by admin.",
+                            is_read=False
+                        )
+                    
+                    return Response({
+                        "message": "Product unsuspended successfully",
+                        "status": product.status,
+                        "updated_at": product.updated_at
+                    }, status=status.HTTP_200_OK)
+                
+                else:
+                    return Response(
+                        {"error": "Invalid action type"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+        except Product.DoesNotExist:
+            return Response(
+                {"error": "Product not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValidationError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error updating product status: {str(e)}", exc_info=True)
+            return Response(
+                {"error": "An error occurred while updating product status"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+
+
 class CustomerProducts(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_products(self, request):

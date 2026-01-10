@@ -123,7 +123,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user = await fetchUserRole({ request, context });
   }
 
-  await requireRole(request, context, ["isAdmin"]);
+  await requireRole(request, context, ["isModerator"]);
 
   // Get session for authentication
   const { getSession } = await import('~/sessions.server');
@@ -170,7 +170,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     if (rangeType) params.append('range_type', rangeType);
 
     // Fetch product metrics from the backend with date range
-    const metricsResponse = await AxiosInstance.get(`/admin-products/get_metrics/?${params.toString()}`, {
+    const metricsResponse = await AxiosInstance.get(`/moderator-product/get_metrics/?${params.toString()}`, {
       headers: {
         "X-User-Id": session.get("userId")
       }
@@ -194,7 +194,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     productsParams.append('page', '1');
     productsParams.append('page_size', '50');
 
-    const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`, {
+    const productsResponse = await AxiosInstance.get(`/moderator-product/get_products_list/?${productsParams.toString()}`, {
       headers: {
         "X-User-Id": session.get("userId")
       }
@@ -304,7 +304,7 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
       params.append('range_type', rangeType);
 
       // Fetch metrics with date range
-      const metricsResponse = await AxiosInstance.get(`/admin-products/get_metrics/?${params.toString()}`);
+      const metricsResponse = await AxiosInstance.get(`/moderator-product/get_metrics/?${params.toString()}`);
       
       if (metricsResponse.data.success) {
         setProductMetrics(metricsResponse.data.metrics);
@@ -313,7 +313,7 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
       // Fetch products list with date range
       const productsParams = new URLSearchParams(params);
 
-      const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`);
+      const productsResponse = await AxiosInstance.get(`/moderator-product/get_products_list/?${productsParams.toString()}`);
 
       if (productsResponse.data.success) {
         setProducts(productsResponse.data.products);
