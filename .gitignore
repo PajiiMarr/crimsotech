@@ -2,7 +2,9 @@
 
 # =======================
 # Django (backend)
-# =======================
+# =======================# Python
+__pycache__/
+*.py[cod]
 crimsotech_django/__pycache__/
 crimsotech_django/*.py[cod]
 crimsotech_django/*$py.class
