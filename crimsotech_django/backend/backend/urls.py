@@ -21,6 +21,11 @@ router.register(r'admin-refunds', AdminRefunds, basename='admin-refunds')
 router.register(r'admin-users', AdminUsers, basename='admin-users')
 router.register(r'admin-team', AdminTeam, basename='admin-team')
 router.register(r'admin-reports', AdminReports, basename='admin-reports')
+
+router.register(r'moderator-dashboard', ModeratorDashboard, basename='moderator-dashboard')
+router.register(r'moderator-analytics', ModeratorAnalytics, basename='moderator-analytics')
+router.register(r'moderator-product', ModeratorProduct, basename='moderator-product')
+
 router.register(r'rider-status', RiderStatus, basename='rider-status')
 router.register(r'seller-products', SellerProducts, basename='seller-products')
 router.register(r'shop-add-product', CustomerShopsAddSeller, basename='shop-add-product')
