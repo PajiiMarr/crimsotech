@@ -145,7 +145,7 @@ const menuItems = [
     group: "Dashboard",
     children: [
       { title: "Dashboard", url: "/moderator", icon: Home, roles: ["moderator"] },
-      { title: "Reports Queue", url: "/moderator/reports", icon: AlertCircle, roles: ["moderator"] },
+      { title: "Analytics", url: "/moderator/analytics", icon: BarChart, roles: ["moderator"] },
     ]
   },
   {

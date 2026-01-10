@@ -66,10 +66,10 @@ class Command(BaseCommand):
                 self.create_rider_data(products, customers, shops, admin_user)
                 
                 # CREATE REFUND DATA
-                self.create_refund_data(products, customers, shops, admin_user)
+                # self.create_refund_data(products, customers, shops, admin_user)
                 
                 # CREATE REFUND ANALYTICS DATA
-                self.create_refund_analytics_data()
+                # self.create_refund_analytics_data()
                 
                 # CREATE REPORT DATA - ADD ALL REPORT FUNCTIONS HERE
                 self.create_report_data(products, customers, shops, admin_user)
@@ -3969,109 +3969,47 @@ class Command(BaseCommand):
         except Exception as e:
             self.stdout.write(f"   ⚠️  Could not delete users: {e}")
 
-    def create_refund_data(self, products, customers, shops, admin_user):
-        """Create comprehensive refund data for testing"""
-        self.stdout.write("💰 Creating refund data...")
-        
+    
+    def create_counter_refund_request(self, refund, shops):
+        """Create counter refund request for negotiation"""
         try:
-            # Get some orders to create refunds for
-            orders = Order.objects.all()[:20]  # Get first 20 orders
+            # Find the shop for this order
+            order = refund.order_id
+            shop = Shop.objects.filter(customer__customer=order.user).first()
             
-            if not orders.exists():
-                self.stdout.write(self.style.WARNING("⚠️ No orders found. Creating sample orders first..."))
-                orders = self.create_sample_orders(products, customers, shops)
+            if not shop:
+                shop = random.choice(shops)
             
-            refund_reasons = [
-                "Product damaged during shipping",
-                "Wrong item received", 
-                "Product not as described",
-                "Changed my mind",
-                "Found better price elsewhere",
-                "Product defective",
-                "Size doesn't fit",
-                "Color different from pictures",
-                "Missing parts/accessories",
-                "Delivery took too long",
-                "Item no longer needed",
-                "Bought by mistake",
-                "Duplicate order",
-                "Cancelled order after shipping",
-                "Package never arrived"
-            ]
+            counter_type = random.choice(['return', 'keep'])
             
-            refund_methods = [
-                "Bank Transfer",
-                "Credit Card Refund", 
-                "E-wallet",
-                "Store Credit",
-                "Cash on Pickup",
-                "Payment Gateway Refund"
-            ]
-            
-            logistic_services = [
-                "LBC Express",
-                "J&T Express",
-                "Ninja Van",
-                "Flash Express",
-                "2Go",
-                "Lalamove",
-                "Grab Express",
-                "Mr. Speedy"
-            ]
-            
-            status_distribution = {
-                'pending': 8,      # 40%
-                'approved': 4,     # 20% 
-                'rejected': 2,     # 10%
-                'waiting': 3,      # 15%
-                'to process': 2,   # 10%
-                'completed': 1     # 5%
-            }
-            
-            refunds_created = []
-            
-            for i, order in enumerate(orders):
-                # Distribute statuses according to our distribution
-                status_index = i % sum(status_distribution.values())
-                cumulative = 0
-                status = 'pending'  # default
-                
-                for stat, count in status_distribution.items():
-                    cumulative += count
-                    if status_index < cumulative:
-                        status = stat
-                        break
-                
-                # Create refund with realistic data
-                refund = Refund.objects.create(
-                    order_id=order,
-                    requested_by=order.user,
-                    reason=random.choice(refund_reasons),
-                    status=status,
-                    requested_at=timezone.now() - timedelta(days=random.randint(1, 90)),
-                    logistic_service=random.choice(logistic_services) if status in ['approved', 'completed', 'waiting'] else None,
-                    tracking_number=f"TRK{random.randint(1000000000, 9999999999)}" if status in ['approved', 'completed', 'waiting'] else None,
-                    buyer_preferred_refund_method=random.choice(refund_methods),
-                    final_refund_method=random.choice(refund_methods) if status in ['approved', 'completed'] else None,
-                    processed_at=timezone.now() - timedelta(days=random.randint(1, 30)) if status in ['approved', 'completed'] else None,
-                    processed_by=admin_user if status in ['approved', 'completed', 'rejected'] else None
-                )
-                
-                refunds_created.append(refund)
-                
-                # Create refund media for some refunds
-                if random.random() < 0.6:  # 60% of refunds have media
-                    self.create_refund_media(refund)
-                
-                self.stdout.write(f"   Created refund {refund.refund_id} with status: {status}")
-            
-            self.stdout.write(self.style.SUCCESS(f"✅ Created {len(refunds_created)} refund records"))
-            return refunds_created
-            
+            CounterRefundRequest.objects.create(
+                counter_id=uuid.uuid4(),
+                refund_id=refund,
+                requested_by='seller',
+                seller_id=shop.customer.customer if shop.customer else order.user,
+                shop_id=shop,
+                counter_refund_method=random.choice(['wallet', 'bank', 'voucher']),
+                counter_refund_amount=Decimal(str(float(refund.total_refund_amount or 0) * random.uniform(0.3, 0.8))),
+                counter_refund_type=counter_type,
+                status='pending' if random.random() < 0.5 else 'accepted',
+                notes=f"Counter offer from seller: {random.choice(['Partial refund', 'Store credit', 'Replacement'])}"
+            )
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"❌ Error creating refund data: {str(e)}"))
-            return []
-
+            self.stdout.write(f"⚠️ Error creating counter request: {str(e)}")
+    
+    def create_dispute_request(self, refund):
+        """Create dispute request"""
+        try:
+            DisputeRequest.objects.create(
+                id=uuid.uuid4(),
+                refund_id=refund,
+                requested_by=refund.requested_by,
+                reason=f"Dispute regarding refund {refund.refund_id}: {random.choice(['Amount incorrect', 'Process too slow', 'Seller unresponsive'])}",
+                status=random.choice(['filed', 'under_review', 'approved', 'rejected'])
+            )
+        except Exception as e:
+            self.stdout.write(f"⚠️ Error creating dispute: {str(e)}")    
+    
     def create_refund_media(self, refund):
         """Create sample refund media attachments"""
         media_types = [
@@ -4112,109 +4050,130 @@ class Command(BaseCommand):
         
         return orders
 
+
     def create_refund_data(self, products, customers, shops, admin_user):
-        """Create comprehensive refund data for testing"""
-        self.stdout.write("💰 Creating refund data...")
+        """Create comprehensive refund data for testing with correct field names"""
+        self.stdout.write("💰 Creating refund data with correct field names...")
         
         try:
-            # Get some orders to create refunds for
-            orders = Order.objects.all()[:20]  # Get first 20 orders
+            from api.models import Refund
+            self.stdout.write(f"Debug: Refund model fields: {[f.name for f in Refund._meta.fields]}")
+            
+            # Get some orders to create refunds for - only orders that can be refunded
+            orders = Order.objects.filter(
+                status__in=['delivered', 'processing', 'shipped'],
+                total_amount__gt=0
+            )[:5]  # Start with fewer for testing
             
             if not orders.exists():
-                self.stdout.write(self.style.WARNING("⚠️ No orders found. Creating sample orders first..."))
-                orders = self.create_sample_orders(products, customers, shops)
+                self.stdout.write(self.style.WARNING("⚠️ No refundable orders found."))
+                return []
             
             refund_reasons = [
                 "Product damaged during shipping",
                 "Wrong item received", 
                 "Product not as described",
                 "Changed my mind",
-                "Found better price elsewhere",
-                "Product defective",
-                "Size doesn't fit",
-                "Color different from pictures",
-                "Missing parts/accessories",
-                "Delivery took too long",
-                "Item no longer needed",
-                "Bought by mistake",
-                "Duplicate order",
-                "Cancelled order after shipping",
-                "Package never arrived"
+                "Product arrived too late"
             ]
-            
-            refund_methods = [
-                "Bank Transfer",
-                "Credit Card Refund", 
-                "E-wallet",
-                "Store Credit",
-                "Cash on Pickup",
-                "Payment Gateway Refund"
-            ]
-            
-            logistic_services = [
-                "LBC Express",
-                "J&T Express",
-                "Ninja Van",
-                "Flash Express",
-                "2Go",
-                "Lalamove",
-                "Grab Express",
-                "Mr. Speedy"
-            ]
-            
-            status_distribution = {
-                'pending': 8,      # 40%
-                'approved': 4,     # 20% 
-                'rejected': 2,     # 10%
-                'waiting': 3,      # 15%
-                'to process': 2,   # 10%
-                'completed': 1     # 5%
-            }
             
             refunds_created = []
             
             for i, order in enumerate(orders):
-                # Distribute statuses according to our distribution
-                status_index = i % sum(status_distribution.values())
-                cumulative = 0
-                status = 'pending'  # default
-                
-                for stat, count in status_distribution.items():
-                    cumulative += count
-                    if status_index < cumulative:
-                        status = stat
-                        break
-                
-                # Create refund with realistic data - REMOVED the extra fields
-                refund = Refund.objects.create(
-                    order=order,
-                    requested_by=order.user,
-                    reason=random.choice(refund_reasons),
-                    status=status,
-                    requested_at=timezone.now() - timedelta(days=random.randint(1, 90)),
-                    logistic_service=random.choice(logistic_services) if status in ['approved', 'completed', 'waiting'] else None,
-                    tracking_number=f"TRK{random.randint(1000000000, 9999999999)}" if status in ['approved', 'completed', 'waiting'] else None,
-                    buyer_preferred_refund_method=random.choice(refund_methods),
-                    final_refund_method=random.choice(refund_methods) if status in ['approved', 'completed'] else None,
-                    processed_at=timezone.now() - timedelta(days=random.randint(1, 30)) if status in ['approved', 'completed'] else None,
-                    processed_by=admin_user if status in ['approved', 'completed', 'rejected'] else None
-                    # REMOVED: preferred_refund_method_details and final_refund_method_details
-                )
-                
-                refunds_created.append(refund)
-                
-                # Create refund media for some refunds
-                if random.random() < 0.6:  # 60% of refunds have media
-                    self.create_refund_media(refund)
-                
-                self.stdout.write(f"   Created refund {refund.refund} with status: {status}")
+                try:
+                    # Create the refund object first WITHOUT saving
+                    refund = Refund(
+                        order_id=order,
+                        requested_by=order.user,
+                        reason=random.choice(refund_reasons),
+                        refund_type=random.choice(['return', 'keep']),
+                        status='pending',
+                        buyer_preferred_refund_method=random.choice(['wallet', 'bank', 'voucher']),
+                        total_refund_amount=order.total_amount * Decimal('0.8'),  # 80% refund
+                        approved_refund_amount=None,  # Will be set when processed
+                    )
+                    
+                    # Save the refund
+                    refund.save()
+                    
+                    refunds_created.append(refund)
+                    self.stdout.write(f"  ✓ Created refund ID: {refund.refund_id} for order: {order.order}")
+                    
+                    # Create related refund data based on refund type
+                    if refund.refund_type == 'return':
+                        # Create return request
+                        self.create_return_request(refund)
+                        
+                        # Create return address
+                        if random.random() < 0.7:
+                            shop = order.checkout_set.first().cart_item.product.shop if hasattr(order, 'checkout_set') else None
+                            if shop:
+                                ReturnAddress.objects.create(
+                                    refund=refund,
+                                    shop=shop,
+                                    seller=shop.customer.customer if shop.customer else None,
+                                    recipient_name=f"{shop.customer.customer.first_name} {shop.customer.customer.last_name}",
+                                    contact_number=shop.customer.customer.contact_number or "09123456789",
+                                    country="Philippines",
+                                    province=shop.province,
+                                    city=shop.city,
+                                    barangay=shop.barangay,
+                                    street=shop.street,
+                                    zip_code="1234",
+                                    created_by=shop.customer.customer
+                                )
+                    
+                    # Create refund media for some refunds
+                    if random.random() < 0.4:
+                        RefundMedia.objects.create(
+                            refund_id=refund,
+                            file_type=random.choice(['image/jpeg', 'image/png']),
+                            uploaded_by=refund.requested_by
+                        )
+                    
+                except Exception as e:
+                    self.stdout.write(f"  ✗ Error creating refund {i}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
             
             self.stdout.write(self.style.SUCCESS(f"✅ Created {len(refunds_created)} refund records"))
             return refunds_created
             
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"❌ Error creating refund data: {str(e)}"))
+            self.stdout.write(self.style.ERROR(f"❌ Error in create_refund_data: {str(e)}"))
+            import traceback
+            traceback.print_exc()
             return []
+    
+
+    def create_return_request(self, refund):
+        """Create return request for return-type refunds"""
+        try:
+            # Check if ReturnRequestItem model exists and has correct fields
+            return_request = ReturnRequestItem.objects.create(
+                # Primary key is 'return_id' based on your model
+                refund_id=refund,
+                return_method=random.choice(['LBC Express', 'J&T Express', 'Ninja Van']),
+                logistic_service=random.choice(['LBC Express', 'J&T Express', 'Ninja Van']),
+                tracking_number=f"RTN{random.randint(1000000000, 9999999999)}",
+                status='shipped' if random.random() < 0.5 else 'pending',
+                shipped_at=timezone.now() - timedelta(days=random.randint(1, 7)) if random.random() < 0.5 else None,
+                return_deadline=timezone.now() + timedelta(days=random.randint(7, 30))
+            )
+            
+            # Create return media for some return requests
+            if random.random() < 0.4:
+                ReturnRequestMedia.objects.create(
+                    return_id=return_request,
+                    file_type=random.choice(['image/jpeg', 'image/png', 'application/pdf']),
+                    file_data='',  # In real scenario, would have actual file
+                    uploaded_by=refund.requested_by
+                )
+            
+            return return_request
+        except Exception as e:
+            self.stdout.write(f"⚠️ Error creating return request: {str(e)}")
+            return None
 
     def create_refund_analytics_data(self):
         """Create refund analytics data spanning multiple months"""
@@ -4299,7 +4258,7 @@ class Command(BaseCommand):
                 moderator_user = User.objects.create(
                     username=f'moderator_{i+1}',
                     email=f'moderator_{i+1}@example.com',
-                    password='temp_password_123',
+                    password=make_password('temp_password_123'),
                     first_name=f'Moderator',
                     last_name=f'User {i+1}',
                     is_moderator=True

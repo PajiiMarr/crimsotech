@@ -111,6 +111,8 @@ export default [
     ]),
     ...prefix("moderator", [
         index("routes/moderator/home.tsx"),
+        route("analytics", "routes/moderator/analytics.tsx"),
+        
     ]),
     ...prefix("rider", [
         index("routes/rider/home.tsx"),
