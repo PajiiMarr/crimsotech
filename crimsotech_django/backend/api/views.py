@@ -5042,72 +5042,181 @@ class AdminOrders(viewsets.ViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
 class AdminRiders(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2026-01-04T06:11:55.816Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2026-01-04)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
-        """Get rider metrics and analytics data for admin dashboard"""
+        """Get rider metrics and analytics data for admin dashboard with date range support"""
         try:
-            # Calculate date ranges
-            today = timezone.now().date()
-            month_ago = today - timedelta(days=30)
+            # Accept both parameter names for compatibility
+            start_date_str = request.GET.get('start_date') or request.GET.get('start')
+            end_date_str = request.GET.get('end_date') or request.GET.get('end')
             
-            # Get all riders
-            all_riders = Rider.objects.all()
-            total_riders = all_riders.count()
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-            # Calculate rider status counts based on verification and approval
-            pending_riders = all_riders.filter(verified=False, approval_date__isnull=True).count()
-            approved_riders = all_riders.filter(verified=True, approval_date__isnull=False).count()
+            # DEBUG: Print date range for troubleshooting
+            print(f"Rider metrics date range filter: {start_date} to {end_date}")
             
-            # Get active riders (those with deliveries in the last 30 days)
+            # Base queryset with date filter applied for rider registrations
+            rider_registrations_qs = Rider.objects.all()
+            if start_date and end_date:
+                rider_registrations_qs = rider_registrations_qs.filter(
+                    rider__created_at__range=[start_date, end_date]
+                )
+            
+            # Get rider counts within date range
+            total_riders_in_period = rider_registrations_qs.count()
+            pending_riders_in_period = rider_registrations_qs.filter(
+                verified=False, 
+                approval_date__isnull=True
+            ).count()
+            approved_riders_in_period = rider_registrations_qs.filter(
+                verified=True, 
+                approval_date__isnull=False
+            ).count()
+            
+            # Get active riders (those with deliveries in the date range)
             active_rider_ids = Delivery.objects.filter(
-                created_at__date__gte=month_ago
+                created_at__range=[start_date, end_date]
             ).values_list('rider_id', flat=True).distinct()
-            active_riders = all_riders.filter(rider_id__in=active_rider_ids).count()
+            active_riders_in_period = rider_registrations_qs.filter(
+                rider_id__in=active_rider_ids
+            ).count()
             
-            # Delivery statistics
-            total_deliveries = Delivery.objects.count()
-            completed_deliveries = Delivery.objects.filter(status='delivered').count()
+            # Delivery statistics within date range
+            deliveries_in_period = Delivery.objects.filter(
+                created_at__range=[start_date, end_date]
+            )
+            total_deliveries_in_period = deliveries_in_period.count()
+            completed_deliveries_in_period = deliveries_in_period.filter(
+                status='delivered'
+            ).count()
             
-            # Success rate
-            success_rate = Decimal('0')
-            if total_deliveries > 0:
-                success_rate = (completed_deliveries / total_deliveries) * 100
+            # Success rate for the period
+            success_rate_in_period = Decimal('0')
+            if total_deliveries_in_period > 0:
+                success_rate_in_period = (completed_deliveries_in_period / total_deliveries_in_period) * 100
             
-            # Average rating from reviews (assuming reviews can be for riders via deliveries)
-            # This would need a proper relationship between reviews and riders
-            average_rating = Decimal('4.5')  # Placeholder - you'd need to implement this
+            # Calculate average rating - using placeholder since we can't link reviews to riders directly
+            # If you have a way to link reviews to riders (through orders/deliveries), implement it here
+            average_rating_in_period = Decimal('4.5')  # Placeholder
             
-            # Total earnings (from completed deliveries)
-            # This would need a proper earnings model or calculation
-            total_earnings = Decimal('0')  # Placeholder
+            # Calculate total earnings - placeholder
+            total_earnings_in_period = Decimal('0')
             
-            # Compile metrics
+            # For frontend compatibility, also include all-time counts
+            all_time_total_riders = Rider.objects.all().count()
+            all_time_total_deliveries = Delivery.objects.all().count()
+            all_time_completed_deliveries = Delivery.objects.filter(status='delivered').count()
+            
+            # Compile metrics - use date-filtered values for consistency
             rider_metrics = {
-                'total_riders': total_riders,
-                'pending_riders': pending_riders,
-                'approved_riders': approved_riders,
-                'active_riders': active_riders,
-                'total_deliveries': total_deliveries,
-                'completed_deliveries': completed_deliveries,
-                'success_rate': float(success_rate),
-                'average_rating': float(average_rating),
-                'total_earnings': float(total_earnings),
+                'total_riders': total_riders_in_period,
+                'pending_riders': pending_riders_in_period,
+                'approved_riders': approved_riders_in_period,
+                'active_riders': active_riders_in_period,
+                'total_deliveries': total_deliveries_in_period,
+                'completed_deliveries': completed_deliveries_in_period,
+                'success_rate': float(success_rate_in_period),
+                'average_rating': float(average_rating_in_period),
+                'total_earnings': float(total_earnings_in_period),
+                # Include all-time stats for reference if needed
+                'all_time_total_riders': all_time_total_riders,
+                'all_time_total_deliveries': all_time_total_deliveries,
+                'all_time_completed_deliveries': all_time_completed_deliveries
             }
             
-            # Get analytics data
-            analytics_data = self._get_analytics_data()
+            # Get analytics data with date range (simplified to avoid Review model issues)
+            analytics_data = self._get_analytics_data(start_date, end_date)
             
-            # Get riders with related data
-            riders_data = self._get_riders_data()
+            # Get riders data within date range
+            riders_data = self._get_riders_data(start_date, end_date)
             
-            return Response({
+            response_data = {
                 'success': True,
                 'metrics': rider_metrics,
                 'analytics': analytics_data,
-                'riders': riders_data
-            })
+                'riders': riders_data,
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data)
             
         except Exception as e:
             return Response({
@@ -5115,42 +5224,75 @@ class AdminRiders(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _get_analytics_data(self):
-        """Generate analytics data for charts"""
-        today = timezone.now().date()
+    def _get_analytics_data(self, start_date=None, end_date=None):
+        """Generate analytics data for charts with date range support - SIMPLIFIED VERSION"""
+        # If no date range provided, use last 30 days
+        if not start_date or not end_date:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
         
-        # Rider registrations for the past 30 days
+        # Rider registrations within date range
         rider_registrations = []
-        for i in range(29, -1, -1):  # Last 30 days including today
-            date = today - timedelta(days=i)
-            count = Rider.objects.filter(
-                rider__created_at__date=date
-            ).count()
-            
-            rider_registrations.append({
-                'date': date.strftime('%b %d'),
-                'count': count
-            })
+        current_date = start_date.date()
+        end_date_date = end_date.date()
         
-        # Status distribution
+        # Determine if we should show daily or monthly data
+        days_diff = (end_date_date - current_date).days
+        
+        if days_diff <= 90:  # For 3 months or less, show daily data
+            while current_date <= end_date_date:
+                count = Rider.objects.filter(
+                    rider__created_at__date=current_date
+                ).count()
+                
+                rider_registrations.append({
+                    'date': current_date.strftime('%b %d'),
+                    'count': count
+                })
+                
+                current_date += timedelta(days=1)
+        else:  # For longer periods, show monthly data
+            current_month = start_date.replace(day=1)
+            while current_month <= end_date:
+                next_month = current_month + relativedelta(months=1)
+                
+                count = Rider.objects.filter(
+                    rider__created_at__gte=current_month,
+                    rider__created_at__lt=next_month
+                ).count()
+                
+                rider_registrations.append({
+                    'date': current_month.strftime('%b %Y'),
+                    'count': count
+                })
+                
+                current_month = next_month
+        
+        # Status distribution within date range
+        riders_in_period = Rider.objects.filter(
+            rider__created_at__range=[start_date, end_date]
+        )
+        
         status_distribution = [
             {
                 'name': 'Approved',
-                'value': Rider.objects.filter(verified=True, approval_date__isnull=False).count()
+                'value': riders_in_period.filter(verified=True, approval_date__isnull=False).count()
             },
             {
                 'name': 'Pending',
-                'value': Rider.objects.filter(verified=False, approval_date__isnull=True).count()
+                'value': riders_in_period.filter(verified=False, approval_date__isnull=True).count()
             },
             {
                 'name': 'Rejected',
-                'value': Rider.objects.filter(verified=False, approval_date__isnull=False).count()
+                'value': riders_in_period.filter(verified=False, approval_date__isnull=False).count()
             }
         ]
         
-        # Vehicle type distribution
+        # Vehicle type distribution within date range
         vehicle_type_distribution = []
-        vehicle_counts = Rider.objects.exclude(vehicle_type='').values('vehicle_type').annotate(count=Count('rider'))
+        vehicle_counts = riders_in_period.exclude(vehicle_type='').values('vehicle_type').annotate(
+            count=Count('rider')
+        )
         
         for vehicle_data in vehicle_counts:
             vehicle_type_distribution.append({
@@ -5158,44 +5300,90 @@ class AdminRiders(viewsets.ViewSet):
                 'value': vehicle_data['count']
             })
         
-        # Performance trends (last 6 months)
+        # Performance trends within date range (simplified - only deliveries)
         performance_trends = []
-        for i in range(5, -1, -1):
-            month_start = today.replace(day=1) - timedelta(days=30*i)
-            month_name = month_start.strftime('%b %Y')
-            
-            # This would need proper implementation based on your business logic
-            performance_trends.append({
-                'month': month_name,
-                'deliveries': Delivery.objects.filter(
-                    created_at__year=month_start.year,
-                    created_at__month=month_start.month
-                ).count(),
-                'earnings': 0,  # Placeholder - implement based on your earnings model
-                'rating': 4.5   # Placeholder - implement based on your rating system
-            })
+        
+        # Determine time intervals based on date range
+        range_days = (end_date - start_date).days
+        
+        if range_days <= 180:  # 6 months or less
+            # Show monthly trends
+            current_month = start_date.replace(day=1)
+            while current_month <= end_date:
+                next_month = current_month + relativedelta(months=1)
+                month_name = current_month.strftime('%b %Y')
+                
+                # Get deliveries in this month
+                monthly_deliveries = Delivery.objects.filter(
+                    created_at__gte=current_month,
+                    created_at__lt=next_month
+                ).count()
+                
+                performance_trends.append({
+                    'month': month_name,
+                    'deliveries': monthly_deliveries,
+                    'earnings': 0,  # Placeholder
+                    'rating': 4.5   # Placeholder
+                })
+                
+                current_month = next_month
+        else:
+            # For longer periods, show quarterly trends
+            current_quarter = start_date
+            while current_quarter <= end_date:
+                next_quarter = current_quarter + relativedelta(months=3)
+                quarter_name = f"Q{(current_quarter.month-1)//3 + 1} {current_quarter.year}"
+                
+                # Get deliveries in this quarter
+                quarterly_deliveries = Delivery.objects.filter(
+                    created_at__gte=current_quarter,
+                    created_at__lt=next_quarter
+                ).count()
+                
+                performance_trends.append({
+                    'month': quarter_name,
+                    'deliveries': quarterly_deliveries,
+                    'earnings': 0,  # Placeholder
+                    'rating': 4.5   # Placeholder
+                })
+                
+                current_quarter = next_quarter
         
         return {
             'rider_registrations': rider_registrations,
             'status_distribution': status_distribution,
             'vehicle_type_distribution': vehicle_type_distribution,
-            'performance_trends': performance_trends
+            'performance_trends': performance_trends,
+            'period_type': 'daily' if days_diff <= 90 else 'monthly'
         }
     
-    def _get_riders_data(self, limit=50):
-        """Get riders with all related data"""
-        riders = Rider.objects.select_related(
+    def _get_riders_data(self, start_date=None, end_date=None, limit=100):
+        """Get riders with all related data with date range support"""
+        riders_qs = Rider.objects.select_related(
             'rider',
             'approved_by'
         ).prefetch_related(
             'delivery_set'
-        ).order_by('-rider__created_at')[:limit]
+        ).order_by('-rider__created_at')
+        
+        # Apply date filter if provided
+        if start_date and end_date:
+            riders_qs = riders_qs.filter(
+                rider__created_at__range=[start_date, end_date]
+            )
+        
+        riders = riders_qs[:limit]
         
         rider_list = []
         
         for rider in riders:
-            # Calculate performance metrics for this rider
+            # Calculate performance metrics for this rider within date range
             rider_deliveries = rider.delivery_set.all()
+            if start_date and end_date:
+                rider_deliveries = rider_deliveries.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
             total_deliveries = rider_deliveries.count()
             completed_deliveries = rider_deliveries.filter(status='delivered').count()
             
@@ -5208,6 +5396,12 @@ class AdminRiders(viewsets.ViewSet):
                 rider_status = 'rejected'
             else:
                 rider_status = 'pending'
+            
+            # Calculate average rating - placeholder since we can't link reviews to riders
+            average_rating = Decimal('4.5')
+            
+            # Calculate total earnings - placeholder
+            total_earnings = Decimal('0')
             
             rider_data = {
                 'rider': {
@@ -5236,8 +5430,8 @@ class AdminRiders(viewsets.ViewSet):
                 # Computed fields for frontend
                 'total_deliveries': total_deliveries,
                 'completed_deliveries': completed_deliveries,
-                'average_rating': 4.5,  # Placeholder - implement proper rating calculation
-                'total_earnings': 0,    # Placeholder - implement proper earnings calculation
+                'average_rating': float(average_rating),
+                'total_earnings': float(total_earnings),
                 'rider_status': rider_status,
             }
             
@@ -5249,6 +5443,8 @@ class AdminRiders(viewsets.ViewSet):
     def get_rider_details(self, request):
         """Get detailed rider information"""
         rider_id = request.query_params.get('rider_id')
+        start_date_str = request.GET.get('start_date')
+        end_date_str = request.GET.get('end_date')
         
         if not rider_id:
             return Response({
@@ -5257,6 +5453,18 @@ class AdminRiders(viewsets.ViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            # Get date range if provided
+            start_date = None
+            end_date = None
+            if start_date_str and end_date_str:
+                try:
+                    start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+                except ValueError as e:
+                    return Response(
+                        {'success': False, 'error': str(e)}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
             rider = Rider.objects.select_related(
                 'rider',
                 'approved_by'
@@ -5265,8 +5473,14 @@ class AdminRiders(viewsets.ViewSet):
                 'delivery_set__order'
             ).get(rider_id=rider_id)
             
-            # Get rider's delivery history
-            deliveries = rider.delivery_set.select_related('order').all()
+            # Get rider's delivery history with date range filter
+            deliveries_qs = rider.delivery_set.select_related('order').all()
+            if start_date and end_date:
+                deliveries_qs = deliveries_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            deliveries = deliveries_qs
             delivery_history = []
             
             for delivery in deliveries:
@@ -5280,10 +5494,16 @@ class AdminRiders(viewsets.ViewSet):
                 }
                 delivery_history.append(delivery_data)
             
-            # Calculate performance metrics
+            # Calculate performance metrics with date range
             total_deliveries = deliveries.count()
             completed_deliveries = deliveries.filter(status='delivered').count()
             success_rate = (completed_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0
+            
+            # Calculate average rating - placeholder
+            average_rating = Decimal('4.5')
+            
+            # Calculate total earnings - placeholder
+            total_earnings = Decimal('0')
             
             rider_details = {
                 'rider': {
@@ -5316,11 +5536,20 @@ class AdminRiders(viewsets.ViewSet):
                     'total_deliveries': total_deliveries,
                     'completed_deliveries': completed_deliveries,
                     'success_rate': float(success_rate),
-                    'average_rating': 4.5,  # Placeholder
-                    'total_earnings': 0,    # Placeholder
+                    'average_rating': float(average_rating),
+                    'total_earnings': float(total_earnings),
+                    'date_range_applied': bool(start_date and end_date),
                 },
                 'delivery_history': delivery_history,
             }
+            
+            if start_date and end_date:
+                rider_details['date_range'] = {
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
             
             return Response({
                 'success': True,
@@ -5389,50 +5618,75 @@ class AdminRiders(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_rider_stats(self, request):
-        """Get additional rider statistics"""
+        """Get additional rider statistics with date range support"""
         try:
-            # Time-based statistics
-            today = timezone.now().date()
-            week_ago = today - timedelta(days=7)
-            month_ago = today - timedelta(days=30)
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
             
-            # Delivery statistics
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Delivery statistics within date range
+            weekly_start = end_date - timedelta(days=7)
             weekly_deliveries = Delivery.objects.filter(
-                created_at__date__gte=week_ago
+                created_at__range=[weekly_start, end_date]
             ).count()
             
+            monthly_start = end_date - timedelta(days=30)
             monthly_deliveries = Delivery.objects.filter(
-                created_at__date__gte=month_ago
+                created_at__range=[monthly_start, end_date]
             ).count()
             
-            # Top riders by delivery count
+            # Top riders by delivery count within date range
             top_riders = Rider.objects.annotate(
-                delivery_count=Count('delivery'),
-                completed_deliveries=Count('delivery', filter=Q(delivery__status='delivered'))
+                delivery_count=Count('delivery', filter=Q(
+                    delivery__created_at__range=[start_date, end_date]
+                )),
+                completed_deliveries=Count('delivery', filter=Q(
+                    delivery__created_at__range=[start_date, end_date],
+                    delivery__status='delivered'
+                ))
             ).filter(delivery_count__gt=0).order_by('-delivery_count')[:10]
             
             top_riders_data = []
             for rider in top_riders:
+                success_rate = (rider.completed_deliveries / rider.delivery_count * 100) if rider.delivery_count > 0 else 0
                 top_riders_data.append({
                     'username': rider.rider.username,
                     'first_name': rider.rider.first_name,
                     'last_name': rider.rider.last_name,
                     'delivery_count': rider.delivery_count,
                     'completed_deliveries': rider.completed_deliveries,
-                    'success_rate': (rider.completed_deliveries / rider.delivery_count * 100) if rider.delivery_count > 0 else 0
+                    'success_rate': float(success_rate)
                 })
             
-            # Vehicle type statistics
-            vehicle_stats = Rider.objects.exclude(vehicle_type='').values('vehicle_type').annotate(
+            # Vehicle type statistics within date range
+            vehicle_stats = Rider.objects.filter(
+                rider__created_at__range=[start_date, end_date]
+            ).exclude(vehicle_type='').values('vehicle_type').annotate(
                 count=Count('rider'),
-                active_count=Count('rider', filter=Q(delivery__created_at__date__gte=month_ago))
+                active_count=Count('rider', filter=Q(
+                    delivery__created_at__range=[start_date, end_date]
+                ))
             )
             
             stats = {
                 'weekly_deliveries': weekly_deliveries,
                 'monthly_deliveries': monthly_deliveries,
                 'top_riders': top_riders_data,
-                'vehicle_stats': list(vehicle_stats)
+                'vehicle_stats': list(vehicle_stats),
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
             }
             
             return Response({
@@ -5445,6 +5699,7 @@ class AdminRiders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+             
 
 class AdminVouchers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
