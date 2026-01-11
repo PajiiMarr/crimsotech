@@ -30,6 +30,7 @@ from datetime import datetime, time, timedelta
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.utils.dateparse import parse_date
 import uuid
 from django.db.models import Min, Max
 from dateutil.relativedelta import relativedelta
@@ -5705,37 +5706,120 @@ class AdminVouchers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """
-        Get voucher metrics for admin dashboard
+        Get voucher metrics for admin dashboard with date range filtering
         """
         try:
-            # Calculate total vouchers
-            total_vouchers = Voucher.objects.count()
+            from django.utils.dateparse import parse_datetime, parse_date
+            
+            # Parse date range parameters
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Initialize date filters
+            date_filter = {}
+            
+            if start_date_str:
+                try:
+                    # Try parsing as datetime first, then as date
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        date_filter['added_at__gte'] = start_date.date()
+                    else:
+                        # Try parsing as date string
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            date_filter['added_at__gte'] = start_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date: {e}")
+                    pass
+                    
+            if end_date_str:
+                try:
+                    # Try parsing as datetime first, then as date
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        date_filter['added_at__lte'] = end_date.date()
+                    else:
+                        # Try parsing as date string
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            date_filter['added_at__lte'] = end_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date: {e}")
+                    pass
+            
+            print(f"Date filter: {date_filter}")
+            
+            # Calculate total vouchers with date filter
+            total_vouchers = Voucher.objects.filter(**date_filter).count()
             
             # Calculate active vouchers (is_active=True and not expired)
             now = timezone.now().date()
-            active_vouchers = Voucher.objects.filter(
-                is_active=True,
-                valid_until__gte=now
-            ).count()
+            active_filter = date_filter.copy()
+            active_filter.update({
+                'is_active': True,
+                'valid_until__gte': now
+            })
+            active_vouchers = Voucher.objects.filter(**active_filter).count()
             
             # Calculate expired vouchers
-            expired_vouchers = Voucher.objects.filter(
-                valid_until__lt=now
-            ).count()
+            expired_filter = date_filter.copy()
+            expired_filter['valid_until__lt'] = now
+            expired_vouchers = Voucher.objects.filter(**expired_filter).count()
             
-            # Calculate total usage from Checkout model
+            # Calculate total usage from Checkout model with date range
+            usage_filter = {}
+            if start_date_str:
+                try:
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        usage_filter['created_at__gte'] = start_date
+                    else:
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            # Convert date to datetime for start of day
+                            start_datetime = timezone.make_aware(
+                                datetime.combine(start_date, datetime.min.time())
+                            )
+                            usage_filter['created_at__gte'] = start_datetime
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date for usage: {e}")
+                    pass
+                    
+            if end_date_str:
+                try:
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        # Include the entire end date (up to end of day)
+                        end_date = end_date.replace(hour=23, minute=59, second=59)
+                        usage_filter['created_at__lte'] = end_date
+                    else:
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            # Convert date to datetime for end of day
+                            end_datetime = timezone.make_aware(
+                                datetime.combine(end_date, datetime.max.time())
+                            ).replace(second=59)
+                            usage_filter['created_at__lte'] = end_datetime
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date for usage: {e}")
+                    pass
+            
+            print(f"Usage filter: {usage_filter}")
+            
             total_usage = Checkout.objects.filter(
-                voucher__isnull=False
+                voucher__isnull=False,
+                **usage_filter
             ).count()
             
-            # Calculate total discount amount
-            # This would need to be calculated based on actual usage
-            # For now, we'll use a placeholder calculation
-            total_discount = Checkout.objects.filter(
-                voucher__isnull=False
+            # Calculate total discount amount with date range
+            total_discount_result = Checkout.objects.filter(
+                voucher__isnull=False,
+                **usage_filter
             ).aggregate(
                 total_discount=Sum('voucher__value')
-            )['total_discount'] or 0
+            )
+            total_discount = total_discount_result['total_discount'] or 0
             
             metrics = {
                 'total_vouchers': total_vouchers,
@@ -5751,6 +5835,9 @@ class AdminVouchers(viewsets.ViewSet):
             })
             
         except Exception as e:
+            import traceback
+            print(f"Error in get_metrics: {e}")
+            print(traceback.format_exc())
             return Response({
                 'success': False,
                 'error': str(e)
@@ -5759,9 +5846,12 @@ class AdminVouchers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def vouchers_list(self, request):
         """
-        Get paginated list of vouchers with all required fields
+        Get paginated list of vouchers with all required fields and date range filtering
         """
         try:
+            from django.utils.dateparse import parse_datetime, parse_date
+            from datetime import datetime
+            
             # Get query parameters
             page = int(request.GET.get('page', 1))
             page_size = int(request.GET.get('page_size', 10))
@@ -5770,12 +5860,51 @@ class AdminVouchers(viewsets.ViewSet):
             discount_type = request.GET.get('discount_type', '')
             shop_filter = request.GET.get('shop', '')
             
-            # Start with all vouchers
+            # Parse date range parameters
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Initialize date filters
+            date_filter = {}
+            
+            if start_date_str:
+                try:
+                    # Try parsing as datetime first, then as date
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        date_filter['added_at__gte'] = start_date.date()
+                    else:
+                        # Try parsing as date string
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            date_filter['added_at__gte'] = start_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date: {e}")
+                    pass
+                    
+            if end_date_str:
+                try:
+                    # Try parsing as datetime first, then as date
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        date_filter['added_at__lte'] = end_date.date()
+                    else:
+                        # Try parsing as date string
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            date_filter['added_at__lte'] = end_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date: {e}")
+                    pass
+            
+            print(f"Date filter for vouchers_list: {date_filter}")
+            
+            # Start with all vouchers with date filter
             vouchers_qs = Voucher.objects.select_related(
                 'shop', 'created_by'
             ).prefetch_related(
                 'checkout_set'
-            ).all()
+            ).filter(**date_filter)
             
             # Apply search filter
             if search:
@@ -5813,6 +5942,9 @@ class AdminVouchers(viewsets.ViewSet):
                 else:
                     vouchers_qs = vouchers_qs.filter(shop__name=shop_filter)
             
+            # Apply ordering by latest added
+            vouchers_qs = vouchers_qs.order_by('-added_at')
+            
             # Calculate total count before pagination
             total_count = vouchers_qs.count()
             
@@ -5824,9 +5956,6 @@ class AdminVouchers(viewsets.ViewSet):
             # Serialize voucher data
             vouchers_data = []
             for voucher in vouchers_page:
-                # Calculate usage count for this voucher
-                usage_count = voucher.checkout_set.count()
-                
                 # Get shop data if exists
                 shop_data = None
                 if voucher.shop:
@@ -5862,22 +5991,23 @@ class AdminVouchers(viewsets.ViewSet):
                     'shop': shop_data,
                     'discount_type': voucher.discount_type,
                     'value': float(voucher.value),
-                    'minimum_spend': float(voucher.minimum_spend),
-                    'maximum_usage': voucher.maximum_usage,
                     'valid_until': voucher.valid_until.isoformat(),
                     'added_at': voucher.added_at.isoformat(),
                     'created_by': created_by_data,
                     'is_active': voucher.is_active,
-                    'usage_count': usage_count,
                     'status': status_value,
                     'shopName': shop_data['name'] if shop_data else 'Global'
                 }
                 vouchers_data.append(voucher_data)
             
-            # Get filter options for frontend
+            # Get filter options for frontend (respecting date range)
+            # Get shops that have vouchers in the current date range
+            shop_ids = vouchers_qs.filter(shop__isnull=False).values_list('shop_id', flat=True).distinct()
+            shops_with_vouchers = Shop.objects.filter(id__in=shop_ids)
+            
             filter_options = {
-                'discount_types': list(Voucher.objects.values_list('discount_type', flat=True).distinct()),
-                'shops': list(Shop.objects.values_list('name', flat=True).distinct()),
+                'discount_types': list(Voucher.objects.filter(**date_filter).values_list('discount_type', flat=True).distinct()),
+                'shops': list(shops_with_vouchers.values_list('name', flat=True).distinct()),
                 'statuses': ['active', 'expired', 'scheduled']
             }
             
@@ -5894,108 +6024,14 @@ class AdminVouchers(viewsets.ViewSet):
             })
             
         except Exception as e:
+            import traceback
+            print(f"Error in vouchers_list: {e}")
+            print(traceback.format_exc())
             return Response({
                 'success': False,
                 'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
 
-    @action(detail=True, methods=['post'])
-    def toggle_active(self, request, pk=None):
-        """
-        Toggle voucher active status
-        """
-        try:
-            voucher = Voucher.objects.get(id=pk)
-            voucher.is_active = not voucher.is_active
-            voucher.save()
-            
-            return Response({
-                'success': True,
-                'is_active': voucher.is_active,
-                'message': f'Voucher {"activated" if voucher.is_active else "deactivated"} successfully'
-            })
-            
-        except Voucher.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Voucher not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['delete'])
-    def delete_voucher(self, request, pk=None):
-        """
-        Delete a voucher
-        """
-        try:
-            voucher = Voucher.objects.get(id=pk)
-            voucher_name = voucher.name
-            voucher.delete()
-            
-            return Response({
-                'success': True,
-                'message': f'Voucher "{voucher_name}" deleted successfully'
-            })
-            
-        except Voucher.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Voucher not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['post'])
-    def bulk_action(self, request):
-        """
-        Perform bulk actions on vouchers
-        """
-        try:
-            voucher_ids = request.data.get('voucher_ids', [])
-            action_type = request.data.get('action', '')
-            
-            if not voucher_ids:
-                return Response({
-                    'success': False,
-                    'error': 'No vouchers selected'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            vouchers = Voucher.objects.filter(id__in=voucher_ids)
-            
-            if action_type == 'activate':
-                vouchers.update(is_active=True)
-                message = f'{vouchers.count()} vouchers activated successfully'
-            elif action_type == 'deactivate':
-                vouchers.update(is_active=False)
-                message = f'{vouchers.count()} vouchers deactivated successfully'
-            elif action_type == 'delete':
-                count = vouchers.count()
-                vouchers.delete()
-                message = f'{count} vouchers deleted successfully'
-            else:
-                return Response({
-                    'success': False,
-                    'error': 'Invalid action'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            return Response({
-                'success': True,
-                'message': message
-            })
-            
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-  
 class AdminRefunds(viewsets.ViewSet):    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
