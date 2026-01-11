@@ -198,7 +198,7 @@ export default function SearchPage() {
   return (
     <RoleGuard allowedRoles={["customer"]}>
       <View style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
-        <SearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} onFocus={() => router.push('/customer/search')} onPressFilter={() => openFilter()} />
+        <SearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} onFocus={() => router.push('/customer/includes/search')} onPressFilter={() => openFilter()} />
 
 
 
