@@ -22,9 +22,7 @@ export default function CustomerHeader() {
             <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/customer/comgift')}>
               <Ionicons name="notifications-outline" size={24} color="#111" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/customer/comgift')}>
-              <Ionicons name="cart-outline" size={24} color="#111" />
-            </TouchableOpacity>
+           
           </View>
         </View>
       </View>

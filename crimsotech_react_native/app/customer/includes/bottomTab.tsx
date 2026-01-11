@@ -10,7 +10,8 @@ export default function BottomTab() {
   const tabs = [
     { name: 'Home', icon: 'home-outline', route: '/customer/home' },
     { name: 'Favorite', icon: 'heart-outline', route: '/customer/favorite' },
-    { name: 'Orders', icon: 'cube-outline', route: '/customer/orders' },
+    { name: 'Cart', icon: 'cart-outline', route: '/customer/cart' },
+    { name: 'Products', icon: 'list-outline', route: '/customer/personal-listing' },
     { name: 'Profile', icon: 'person-outline', route: '/customer/profile' },
   ] as const;
 
