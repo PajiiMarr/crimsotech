@@ -1,4 +1,3 @@
-// app/routes/admin/checkouts.tsx
 import type { Route } from './+types/orders';
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -43,6 +42,9 @@ import {
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
+import DateRangeFilter from '~/components/ui/date-range-filter';
+import { useState, useEffect } from 'react';
+import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -119,6 +121,11 @@ interface LoaderData {
     success_rate: number;
   };
   orders: Order[];
+  dateRange: {
+    start: string;
+    end: string;
+    rangeType: string;
+  };
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
@@ -140,6 +147,24 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
+  // Parse URL search params for date range
+  const url = new URL(request.url);
+  const startParam = url.searchParams.get('start');
+  const endParam = url.searchParams.get('end');
+  const rangeTypeParam = url.searchParams.get('rangeType');
+
+  // Set default date range (last 7 days)
+  const defaultStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const defaultEnd = new Date();
+  
+  const startDate = startParam ? new Date(startParam) : defaultStart;
+  const endDate = endParam ? new Date(endParam) : defaultEnd;
+  const rangeType = rangeTypeParam || 'weekly';
+
+  // Validate dates
+  const validStart = !isNaN(startDate.getTime()) ? startDate : defaultStart;
+  const validEnd = !isNaN(endDate.getTime()) ? endDate : defaultEnd;
+
   // Initialize empty data structures
   let orderMetrics = {
     total_orders: 0,
@@ -156,8 +181,12 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   let ordersList: Order[] = [];
 
   try {
-    // Fetch real data from API - Updated endpoint to match your Django URL
+    // Fetch real data from API with date range parameters
     const response = await AxiosInstance.get('/admin-orders/get_metrics/', {
+      params: {
+        start_date: validStart.toISOString(),
+        end_date: validEnd.toISOString()
+      },
       headers: {
         "X-User-Id": session.get("userId")
       }
@@ -176,6 +205,11 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user, 
     orderMetrics,
     orders: ordersList,
+    dateRange: {
+      start: validStart.toISOString(),
+      end: validEnd.toISOString(),
+      rangeType
+    }
   };
 }
 
@@ -199,8 +233,45 @@ const EmptyTable = () => (
   </div>
 );
 
-export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
-  const { user, orderMetrics, orders } = loaderData;
+export default function Checkouts() {
+  const loaderData = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { user, orderMetrics, orders, dateRange } = loaderData;
+
+  // State management for date range
+  const [currentDateRange, setCurrentDateRange] = useState({
+    start: new Date(dateRange.start),
+    end: new Date(dateRange.end),
+    rangeType: dateRange.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+  });
+
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Handle date range change - update URL search params
+  const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
+    setIsLoading(true);
+    
+    // Update URL search params
+    const newSearchParams = new URLSearchParams(searchParams);
+    newSearchParams.set('start', range.start.toISOString());
+    newSearchParams.set('end', range.end.toISOString());
+    newSearchParams.set('rangeType', range.rangeType);
+    
+    // Navigate to update the URL, which will trigger a new loader call
+    navigate(`?${newSearchParams.toString()}`, { replace: true });
+    
+    setCurrentDateRange({
+      start: range.start,
+      end: range.end,
+      rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+    });
+  };
+
+  // Reset loading state when loader data changes
+  useEffect(() => {
+    setIsLoading(false);
+  }, [loaderData]);
 
   if (!loaderData) {
     return (
@@ -261,6 +332,22 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
     }
   };
 
+  // MetricCardSkeleton for loading state
+  const MetricCardSkeleton = () => (
+    <Card>
+      <CardContent className="p-4 sm:p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <Skeleton className="h-4 w-20 mb-2" />
+            <Skeleton className="h-8 w-16 mt-1" />
+            <Skeleton className="h-3 w-24 mt-2" />
+          </div>
+          <Skeleton className="w-10 h-10 sm:w-12 sm:h-12 rounded-full" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <UserProvider user={user}>
       <SidebarLayout>
@@ -272,126 +359,179 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
             </div>
           </div>
 
+          {/* Date Range Filter */}
+          <DateRangeFilter 
+            onDateRangeChange={handleDateRangeChange}
+            isLoading={isLoading}
+            // initialRange={currentDateRange}
+          />
+
           {/* Key Metrics */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4 sm:p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Orders</p>
-                    <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_orders}</p>
-                    <p className="text-xs text-muted-foreground mt-2">{safeMetrics.today_orders} today</p>
-                  </div>
-                  <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
-                    <ShoppingCart className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            {isLoading ? (
+              <>
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+              </>
+            ) : (
+              <>
+                <Card>
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Total Orders</p>
+                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_orders}</p>
+                        <p className="text-xs text-muted-foreground mt-2">{safeMetrics.today_orders} today</p>
+                      </div>
+                      <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
+                        <ShoppingCart className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardContent className="p-4 sm:p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Revenue</p>
-                    <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.total_revenue.toLocaleString()}</p>
-                    <p className="text-xs text-muted-foreground mt-2">From all orders</p>
-                  </div>
-                  <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                    <DollarSign className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                <Card>
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Total Revenue</p>
+                        <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.total_revenue.toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground mt-2">From all orders</p>
+                      </div>
+                      <div className="p-2 sm:p-3 bg-green-100 rounded-full">
+                        <DollarSign className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardContent className="p-4 sm:p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Success Rate</p>
-                    <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.success_rate}%</p>
-                    <p className="text-xs text-muted-foreground mt-2">Order completion</p>
-                  </div>
-                  <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                    <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                <Card>
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Success Rate</p>
+                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.success_rate}%</p>
+                        <p className="text-xs text-muted-foreground mt-2">Order completion</p>
+                      </div>
+                      <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
+                        <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardContent className="p-4 sm:p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Avg. Order Value</p>
-                    <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.avg_order_value}</p>
-                    <p className="text-xs text-muted-foreground mt-2">Per order</p>
-                  </div>
-                  <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                    <CreditCard className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                <Card>
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Avg. Order Value</p>
+                        <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.avg_order_value}</p>
+                        <p className="text-xs text-muted-foreground mt-2">Per order</p>
+                      </div>
+                      <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
+                        <CreditCard className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            )}
           </div>
 
           {/* Status Overview Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Completed</p>
-                    <p className="text-lg font-bold mt-1 text-green-600">{safeMetrics.completed_orders}</p>
-                  </div>
-                  <CheckCircle className="w-4 h-4 text-green-600" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Pending</p>
-                    <p className="text-lg font-bold mt-1 text-yellow-600">{safeMetrics.pending_orders}</p>
-                  </div>
-                  <Clock className="w-4 h-4 text-yellow-600" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Cancelled</p>
-                    <p className="text-lg font-bold mt-1 text-red-600">{safeMetrics.cancelled_orders}</p>
-                  </div>
-                  <XCircle className="w-4 h-4 text-red-600" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">This Month</p>
-                    <p className="text-lg font-bold mt-1 text-blue-600">{safeMetrics.monthly_orders}</p>
-                  </div>
-                  <Calendar className="w-4 h-4 text-blue-600" />
-                </div>
-              </CardContent>
-            </Card>
+            {isLoading ? (
+              <>
+                <Card>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+              </>
+            ) : (
+              <>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Completed</p>
+                        <p className="text-lg font-bold mt-1 text-green-600">{safeMetrics.completed_orders}</p>
+                      </div>
+                      <CheckCircle className="w-4 h-4 text-green-600" />
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Pending</p>
+                        <p className="text-lg font-bold mt-1 text-yellow-600">{safeMetrics.pending_orders}</p>
+                      </div>
+                      <Clock className="w-4 h-4 text-yellow-600" />
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Cancelled</p>
+                        <p className="text-lg font-bold mt-1 text-red-600">{safeMetrics.cancelled_orders}</p>
+                      </div>
+                      <XCircle className="w-4 h-4 text-red-600" />
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">This Month</p>
+                        <p className="text-lg font-bold mt-1 text-blue-600">{safeMetrics.monthly_orders}</p>
+                      </div>
+                      <Calendar className="w-4 h-4 text-blue-600" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            )}
           </div>
-
 
           {/* Orders Table */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg sm:text-xl">All Order Items</CardTitle>
-              <CardDescription>Manage and view all customer order items</CardDescription>
+              <CardDescription>
+                {isLoading ? 'Loading orders...' : `Showing ${transformedOrderItems.length} order items`}
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {hasOrderItems ? (
+              {isLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : hasOrderItems ? (
                 <div className="rounded-md">
                   <DataTable 
                     columns={columns} 
@@ -401,6 +541,7 @@ export default function Checkouts({ loaderData }: { loaderData: LoaderData }) {
                       column: "customerName",
                       placeholder: "Search by customer name..."
                     }}
+                    isLoading={isLoading}
                   />
                 </div>
               ) : (

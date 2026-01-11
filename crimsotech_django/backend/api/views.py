@@ -32,6 +32,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 import uuid
 from django.db.models import Min, Max
+from dateutil.relativedelta import relativedelta
 
 
 class UserView(APIView):
@@ -4375,72 +4376,195 @@ class AdminBoosting(viewsets.ViewSet):
              
 
 class AdminOrders(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2025-12-07)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
-        """Get order metrics and analytics data for admin dashboard"""
+        """Get order metrics and analytics data for admin dashboard with date range support"""
         try:
-            # Calculate date ranges
-            today = timezone.now().date()
-            week_ago = today - timedelta(days=7)
-            month_ago = today - timedelta(days=30)
+            # FIX: Accept both parameter names for compatibility
+            start_date_str = request.GET.get('start_date') or request.GET.get('start')
+            end_date_str = request.GET.get('end_date') or request.GET.get('end')
             
-            # Calculate metrics based on Orders
-            total_orders = Order.objects.count()
-            completed_orders = Order.objects.filter(status='completed').count()
-            pending_orders = Order.objects.filter(status='pending').count()
-            cancelled_orders = Order.objects.filter(status='cancelled').count()
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-            # Calculate revenue from Orders
-            revenue_data = Order.objects.filter(status='completed').aggregate(
+            # DEBUG: Print date range for troubleshooting
+            print(f"Order metrics date range filter: {start_date} to {end_date}")
+            
+            # Base queryset with date filter applied
+            date_filtered_orders_qs = Order.objects.all()
+            if start_date and end_date:
+                date_filtered_orders_qs = date_filtered_orders_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # All metrics should be calculated within the date range for consistency
+            total_orders_in_period = date_filtered_orders_qs.count()
+            completed_orders_in_period = date_filtered_orders_qs.filter(status='completed').count()
+            pending_orders_in_period = date_filtered_orders_qs.filter(status='pending').count()
+            cancelled_orders_in_period = date_filtered_orders_qs.filter(status='cancelled').count()
+            
+            # Calculate revenue from orders in the date range
+            revenue_data_in_period = date_filtered_orders_qs.filter(status='completed').aggregate(
                 total_revenue=Sum('total_amount')
             )
-            total_revenue = revenue_data['total_revenue'] or Decimal('0')
+            total_revenue_in_period = revenue_data_in_period['total_revenue'] or Decimal('0')
             
-            # Today's orders
-            today_orders = Order.objects.filter(
-                created_at__date=today
-            ).count()
+            # Today's orders within the date range (not necessarily actual today)
+            today_in_range = False
+            today_orders_in_period = 0
             
-            # Monthly orders
-            monthly_orders = Order.objects.filter(
-                created_at__date__gte=month_ago
-            ).count()
+            # Check if "today" is within the date range
+            today = timezone.now().date()
+            start_date_date = start_date.date() if start_date else None
+            end_date_date = end_date.date() if end_date else None
             
-            # Average order value
-            avg_order_value = Decimal('0')
-            if completed_orders > 0:
-                avg_order_value = total_revenue / completed_orders
+            if start_date_date and end_date_date and start_date_date <= today <= end_date_date:
+                # Today is within the date range, calculate today's orders
+                today_orders_in_period = Order.objects.filter(
+                    created_at__date=today,
+                    created_at__gte=start_date,
+                    created_at__lte=end_date
+                ).count()
             
-            # Success rate
-            success_rate = Decimal('0')
-            if total_orders > 0:
-                success_rate = (completed_orders / total_orders) * 100
+            # Monthly orders within the date range
+            # Calculate the start and end of the current month within the date range
+            current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            monthly_orders_in_period = 0
             
-            # Compile metrics
+            if start_date and end_date:
+                # Determine the overlapping period between the date range and current month
+                month_range_start = max(start_date, current_month_start)
+                month_range_end = min(end_date, timezone.now())
+                
+                if month_range_start <= month_range_end:
+                    monthly_orders_in_period = Order.objects.filter(
+                        created_at__range=[month_range_start, month_range_end]
+                    ).count()
+            
+            # Average order value for the period
+            avg_order_value_in_period = Decimal('0')
+            if completed_orders_in_period > 0:
+                avg_order_value_in_period = total_revenue_in_period / completed_orders_in_period
+            
+            # Success rate for the period
+            success_rate_in_period = Decimal('0')
+            if total_orders_in_period > 0:
+                success_rate_in_period = (completed_orders_in_period / total_orders_in_period) * 100
+            
+            # For frontend compatibility, also include all-time total orders
+            all_time_total_orders = Order.objects.all().count()
+            all_time_revenue_data = Order.objects.filter(status='completed').aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            all_time_revenue = all_time_revenue_data['total_revenue'] or Decimal('0')
+            
+            # Compile metrics - use date-filtered values for consistency
             order_metrics = {
-                'total_orders': total_orders,
-                'pending_orders': pending_orders,
-                'completed_orders': completed_orders,
-                'cancelled_orders': cancelled_orders,
-                'total_revenue': float(total_revenue),
-                'today_orders': today_orders,
-                'monthly_orders': monthly_orders,
-                'avg_order_value': float(avg_order_value),
-                'success_rate': float(success_rate),
+                'total_orders': total_orders_in_period,  # Use date-filtered total
+                'pending_orders': pending_orders_in_period,
+                'completed_orders': completed_orders_in_period,
+                'cancelled_orders': cancelled_orders_in_period,
+                'total_revenue': float(total_revenue_in_period),
+                'today_orders': today_orders_in_period,  # Today's orders within date range
+                'monthly_orders': monthly_orders_in_period,  # Monthly orders within date range
+                'avg_order_value': float(avg_order_value_in_period),
+                'success_rate': float(success_rate_in_period),
+                # Include all-time stats for reference if needed
+                'all_time_total_orders': all_time_total_orders,
+                'all_time_revenue': float(all_time_revenue)
             }
             
-            # Get analytics data
-            analytics_data = self._get_analytics_data()
+            # Get analytics data with date range
+            analytics_data = self._get_analytics_data(start_date, end_date)
             
-            # Get recent orders with related data
-            recent_orders = self._get_recent_orders()
+            # Get recent orders with related data within date range
+            recent_orders = self._get_recent_orders(start_date, end_date)
             
-            return Response({
+            response_data = {
                 'success': True,
                 'metrics': order_metrics,
                 'analytics': analytics_data,
-                'orders': recent_orders
-            })
+                'orders': recent_orders,
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data)
             
         except Exception as e:
             return Response({
@@ -4448,28 +4572,47 @@ class AdminOrders(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _get_analytics_data(self):
-        """Generate analytics data for charts"""
-        # Daily orders for the past 7 days
-        daily_orders = []
-        today = timezone.now().date()
+    def _get_analytics_data(self, start_date=None, end_date=None):
+        """Generate analytics data for charts with date range support"""
+        # If no date range provided, use last 7 days
+        if not start_date or not end_date:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=7)
         
-        for i in range(6, -1, -1):  # Last 7 days including today
-            date = today - timedelta(days=i)
-            day_data = Order.objects.filter(created_at__date=date).aggregate(
+        # Calculate number of days in the range
+        days_diff = (end_date - start_date).days
+        if days_diff > 365:  # For large ranges, use monthly data
+            return self._get_monthly_analytics_data(start_date, end_date)
+        else:
+            return self._get_daily_analytics_data(start_date, end_date)
+    
+    def _get_daily_analytics_data(self, start_date, end_date):
+        """Generate daily analytics data"""
+        daily_orders = []
+        current_date = start_date.date()
+        end_date_date = end_date.date()
+        
+        while current_date <= end_date_date:
+            day_data = Order.objects.filter(
+                created_at__date=current_date
+            ).aggregate(
                 count=Count('order'),
                 revenue=Sum('total_amount')
             )
             
             daily_orders.append({
-                'date': date.strftime('%b %d'),
+                'date': current_date.strftime('%b %d'),
                 'count': day_data['count'] or 0,
                 'revenue': float(day_data['revenue'] or 0)
             })
+            
+            current_date += timedelta(days=1)
         
-        # Status distribution
+        # Status distribution within date range
         status_distribution = []
-        status_counts = Order.objects.values('status').annotate(count=Count('order'))
+        status_counts = Order.objects.filter(
+            created_at__range=[start_date, end_date]
+        ).values('status').annotate(count=Count('order'))
         
         for status_data in status_counts:
             status_distribution.append({
@@ -4477,25 +4620,59 @@ class AdminOrders(viewsets.ViewSet):
                 'value': status_data['count']
             })
         
-        # Payment method distribution (from Order model)
+        # Payment method distribution within date range
         payment_method_distribution = []
-        payment_counts = Order.objects.values('payment_method').annotate(count=Count('order'))
+        payment_counts = Order.objects.filter(
+            created_at__range=[start_date, end_date]
+        ).values('payment_method').annotate(count=Count('order'))
         
         for payment_data in payment_counts:
-            payment_method_distribution.append({
-                'name': payment_data['payment_method'],
-                'value': payment_data['count']
-            })
+            if payment_data['payment_method']:
+                payment_method_distribution.append({
+                    'name': payment_data['payment_method'],
+                    'value': payment_data['count']
+                })
         
         return {
             'daily_orders': daily_orders,
             'status_distribution': status_distribution,
-            'payment_method_distribution': payment_method_distribution
+            'payment_method_distribution': payment_method_distribution,
+            'period_type': 'daily'
         }
     
-    def _get_recent_orders(self, limit=50):
-        """Get recent orders with all related data"""
-        orders = Order.objects.select_related(
+    def _get_monthly_analytics_data(self, start_date, end_date):
+        """Generate monthly analytics data for large date ranges"""
+        monthly_orders = []
+        
+        # Get all months in the range
+        current_month = start_date.replace(day=1)
+        while current_month <= end_date:
+            next_month = current_month + relativedelta(months=1)
+            
+            month_data = Order.objects.filter(
+                created_at__gte=current_month,
+                created_at__lt=next_month
+            ).aggregate(
+                count=Count('order'),
+                revenue=Sum('total_amount')
+            )
+            
+            monthly_orders.append({
+                'date': current_month.strftime('%b %Y'),
+                'count': month_data['count'] or 0,
+                'revenue': float(month_data['revenue'] or 0)
+            })
+            
+            current_month = next_month
+        
+        return {
+            'daily_orders': monthly_orders,
+            'period_type': 'monthly'
+        }
+    
+    def _get_recent_orders(self, start_date=None, end_date=None):
+        """Get recent orders with all related data with date range support"""
+        orders_qs = Order.objects.select_related(
             'user'
         ).prefetch_related(
             'checkout_set',
@@ -4503,7 +4680,13 @@ class AdminOrders(viewsets.ViewSet):
             'checkout_set__cart_item__product',
             'checkout_set__cart_item__product__shop',
             'checkout_set__voucher'
-        ).order_by('-created_at')[:limit]
+        ).order_by('-created_at')
+        
+        # Apply date filter if provided
+        if start_date and end_date:
+            orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+        
+        orders = orders_qs[:]
         
         order_list = []
         
@@ -4564,6 +4747,20 @@ class AdminOrders(viewsets.ViewSet):
                 
                 items.append(item_data)
             
+            # FIX: Use delivery_address_text instead of delivery_address
+            # Also include shipping address info if available
+            delivery_address = order.delivery_address_text or ''
+            shipping_address_info = {}
+            
+            if order.shipping_address:
+                shipping_address_info = {
+                    'id': str(order.shipping_address.id),
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type
+                }
+            
             order_data = {
                 'order_id': str(order.order),
                 'user': {
@@ -4576,7 +4773,8 @@ class AdminOrders(viewsets.ViewSet):
                 'status': order.status,
                 'total_amount': float(order.total_amount),
                 'payment_method': order.payment_method,
-                'delivery_address': order.delivery_address,
+                'delivery_address': delivery_address,  # Use the correct field name
+                'shipping_address': shipping_address_info,  # Add structured shipping address data
                 'created_at': order.created_at.isoformat() if order.created_at else None,
                 'updated_at': order.updated_at.isoformat() if order.updated_at else None,
                 'items': items
@@ -4585,7 +4783,7 @@ class AdminOrders(viewsets.ViewSet):
             order_list.append(order_data)
         
         return order_list
-    
+
     @action(detail=False, methods=['get'])
     def get_order_details(self, request):
         """Get detailed order information"""
@@ -4660,6 +4858,31 @@ class AdminOrders(viewsets.ViewSet):
                 
                 items.append(item_data)
             
+            # FIX: Use delivery_address_text instead of delivery_address
+            delivery_address = order.delivery_address_text or ''
+            
+            # Include shipping address info if available
+            shipping_address_info = {}
+            if order.shipping_address:
+                shipping_address_info = {
+                    'id': str(order.shipping_address.id),
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'street': order.shipping_address.street,
+                    'barangay': order.shipping_address.barangay,
+                    'city': order.shipping_address.city,
+                    'province': order.shipping_address.province,
+                    'zip_code': order.shipping_address.zip_code,
+                    'country': order.shipping_address.country,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type,
+                    'building_name': order.shipping_address.building_name,
+                    'floor_number': order.shipping_address.floor_number,
+                    'unit_number': order.shipping_address.unit_number,
+                    'landmark': order.shipping_address.landmark,
+                    'instructions': order.shipping_address.instructions
+                }
+            
             order_data = {
                 'order_id': str(order.order),
                 'user': {
@@ -4673,7 +4896,8 @@ class AdminOrders(viewsets.ViewSet):
                 'status': order.status,
                 'total_amount': float(order.total_amount),
                 'payment_method': order.payment_method,
-                'delivery_address': order.delivery_address,
+                'delivery_address': delivery_address,  # Use the correct field name
+                'shipping_address': shipping_address_info,  # Add structured shipping address
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat(),
                 'items': items
@@ -4694,7 +4918,8 @@ class AdminOrders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
+        
     @action(detail=False, methods=['post'])
     def update_order_status(self, request):
         """Update order status"""
@@ -4730,31 +4955,40 @@ class AdminOrders(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_order_stats(self, request):
-        """Get additional order statistics"""
+        """Get additional order statistics with date range support"""
         try:
-            # Time-based statistics
-            today = timezone.now().date()
-            week_ago = today - timedelta(days=7)
-            month_ago = today - timedelta(days=30)
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
             
-            # Revenue statistics
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset with date filter
+            orders_qs = Order.objects.filter(status='completed')
+            if start_date and end_date:
+                orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+            
+            # Revenue statistics for the period
+            revenue_data = orders_qs.aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            period_revenue = revenue_data['total_revenue'] or Decimal('0')
+            
+            # Daily revenue for today (still actual today)
+            today = timezone.now().date()
             daily_revenue = Order.objects.filter(
                 status='completed',
                 created_at__date=today
             ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
             
-            weekly_revenue = Order.objects.filter(
-                status='completed',
-                created_at__date__gte=week_ago
-            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
-            
-            monthly_revenue = Order.objects.filter(
-                status='completed',
-                created_at__date__gte=month_ago
-            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
-            
-            # Top customers by order count
-            top_customers = Order.objects.values(
+            # Top customers by order count in the period
+            top_customers = orders_qs.values(
                 'user__username',
                 'user__first_name',
                 'user__last_name'
@@ -4763,22 +4997,37 @@ class AdminOrders(viewsets.ViewSet):
                 total_spent=Sum('total_amount')
             ).order_by('-total_spent')[:10]
             
-            # Top products by order count (through checkouts)
-            top_products = Checkout.objects.filter(
-                order__isnull=False,
-                cart_item__product__isnull=False
-            ).values(
+            # Top products by order count in the period (through checkouts)
+            checkouts_qs = Checkout.objects.filter(order__isnull=False, cart_item__product__isnull=False)
+            if start_date and end_date:
+                checkouts_qs = checkouts_qs.filter(created_at__range=[start_date, end_date])
+            
+            top_products = checkouts_qs.values(
                 'cart_item__product__name'
             ).annotate(
                 order_count=Count('order', distinct=True)
             ).order_by('-order_count')[:10]
             
+            # Top shops by revenue in the period
+            top_shops = checkouts_qs.values(
+                'cart_item__product__shop__name'
+            ).annotate(
+                total_revenue=Sum('total_amount'),
+                order_count=Count('order', distinct=True)
+            ).order_by('-total_revenue')[:10]
+            
             stats = {
+                'period_revenue': float(period_revenue),
                 'revenue_today': float(daily_revenue),
-                'revenue_week': float(weekly_revenue),
-                'revenue_month': float(monthly_revenue),
                 'top_customers': list(top_customers),
-                'top_products': list(top_products)
+                'top_products': list(top_products),
+                'top_shops': list(top_shops),
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
             }
             
             return Response({
@@ -4791,6 +5040,8 @@ class AdminOrders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
 class AdminRiders(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
