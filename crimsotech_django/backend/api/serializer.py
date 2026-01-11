@@ -260,10 +260,18 @@ class ProductSerializer(serializers.ModelSerializer):
     def get_primary_image(self, obj):
         """Get the first media file as primary image"""
         media = obj.productmedia_set.first()
-        if media:
+        if media and media.file_data:
+            url = media.file_data.url
+            request = self.context.get('request')
+            if request:
+                try:
+                    url = request.build_absolute_uri(url)
+                except Exception:
+                    # Fallback to raw url if anything goes wrong
+                    url = media.file_data.url
             return {
                 'id': str(media.id),
-                'url': media.file_data.url if media.file_data else None,
+                'url': url,
                 'file_type': media.file_type
             }
         return None

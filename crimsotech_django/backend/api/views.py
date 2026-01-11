@@ -25521,3 +25521,259 @@ class Reviews(viewsets.ModelViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
 
             
+
+
+class ProfileView(APIView):
+    """Get user profile and shop information in one API call"""
+
+    def get_shop_for_customer(self, customer: Customer, current_user: User):
+        """
+        Fetch the first shop owned by the customer and return a serialized dict.
+        Includes follower count, follow status, active status, and location.
+        """
+        shop = Shop.objects.filter(customer=customer).first()
+        if not shop:
+            return None
+
+        follower_count = ShopFollow.objects.filter(shop=shop).count()
+        current_user_follows = ShopFollow.objects.filter(
+            shop=shop,
+            customer=customer
+        ).exists()
+
+        # Compute orders and unique customers using Checkout -> CartItem -> Product -> Shop relationship
+        try:
+            orders_qs = Checkout.objects.filter(
+                cart_item__product__shop=shop,
+                order__status__in=['confirmed', 'processing', 'shipped', 'delivered']
+            ).select_related('order')
+            orders_count = orders_qs.values('order').distinct().count()
+
+            # Count unique customers who had delivered orders involving this shop
+            delivered_order_ids = Checkout.objects.filter(
+                cart_item__product__shop=shop,
+                order__status='delivered'
+            ).values('order').distinct()
+            customer_count = Order.objects.filter(order__in=delivered_order_ids).values('user').distinct().count()
+        except Exception as e:
+            logger.exception('Error computing shop order/customer counts: %s', e)
+            orders_count = 0
+            customer_count = 0
+
+        return {
+            'id': str(shop.id),
+            'name': shop.name,
+            'description': shop.description,
+            'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
+            'contact_number': shop.contact_number,
+            'verified': shop.verified,
+            'status': shop.status,
+            'total_sales': str(shop.total_sales),
+            'created_at': shop.created_at.isoformat(),
+            'is_suspended': shop.is_suspended,
+            'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None,
+            'follower_count': follower_count,
+            'is_following': current_user_follows,
+            'is_active': shop.status == "Active" and not shop.is_suspended,
+            'location': f"{shop.barangay}, {shop.city}, {shop.province}" if shop.barangay and shop.city and shop.province else "",
+            # Additional shop stats for dashboard
+            'orders_count': orders_count,
+            # Product model uses `is_removed` and `status` fields; filter accordingly for active products
+            'products_count': shop.products.filter(is_removed=False, status__iexact='active').count(),
+            'customer_count': customer_count,
+            'total_orders': Checkout.objects.filter(cart_item__product__shop=shop).values('order').distinct().count(),
+        }
+
+    def get(self, request):
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {"error": "X-User-Id header is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Get user
+            user = User.objects.get(id=user_id)
+            user_data = UserSerializer(user).data
+
+            # Add user headers (user-specific info)
+            user_data['full_name'] = " ".join(filter(None, [
+                user.first_name, 
+                user.middle_name, 
+                user.last_name
+            ]))
+            # Safely handle profile picture (user may not have this attribute)
+            profile_pic = getattr(user, 'profile_picture', None)
+            user_data['has_profile_picture'] = bool(profile_pic)
+            user_data['profile_picture_url'] = profile_pic.url if profile_pic else None
+
+            user_data['is_complete_profile'] = all([
+                user.first_name,
+                user.last_name,
+                user.email,
+                user.contact_number
+            ])
+            user_data['registration_complete'] = user.registration_stage >= 3 if user.registration_stage else False
+
+            # Check if user is a customer
+            try:
+                customer = Customer.objects.get(customer=user)
+                customer_data = CustomerSerializer(customer).data
+                # Use the related User's created_at if available
+                try:
+                    customer_since_dt = customer.customer.created_at if hasattr(customer, 'customer') and customer.customer else None
+                except Exception:
+                    customer_since_dt = None
+
+                customer_data.update({
+                    'is_customer': True,
+                    'can_add_product': customer.can_add_product(),
+                    'products_remaining': customer.product_limit - customer.current_product_count,
+                    'has_max_products': customer.current_product_count >= customer.product_limit,
+                    # Customer headers
+                    'customer_since': customer_since_dt.strftime('%B %d, %Y') if customer_since_dt else None,
+                    'product_limit_info': f"{customer.current_product_count}/{customer.product_limit} products",
+                    'can_manage_shop': True,  # All customers can potentially have a shop
+                })
+            except Customer.DoesNotExist:
+                customer_data = {
+                    'customer': None,
+                    'product_limit': 0,
+                    'current_product_count': 0,
+                    'is_customer': False,
+                    'can_add_product': False,
+                    'products_remaining': 0,
+                    'has_max_products': False,
+                    'customer_since': None,
+                    'product_limit_info': "0/0 products",
+                    'can_manage_shop': False,
+                }
+
+            # Get shop if customer
+            shop_data = None
+            if customer_data.get('is_customer'):
+                try:
+                    shop_data = self.get_shop_for_customer(customer, user)
+                    if shop_data:
+                        # Compute shop age safely
+                        try:
+                            shop_created = shop_data.get('created_at')
+                            if shop_created:
+                                try:
+                                    shop_age_days = (timezone.now() - datetime.fromisoformat(shop_created)).days
+                                except Exception:
+                                    logger.exception('Invalid shop created_at format for shop %s', shop_data.get('id'))
+                                    shop_age_days = 0
+                            else:
+                                shop_age_days = 0
+                        except Exception:
+                            logger.exception('Error computing shop_age_days')
+                            shop_age_days = 0
+
+                        # Compute performance safely (total_sales might be a string like '0.00' or Decimal)
+                        try:
+                            total_sales_raw = shop_data.get('total_sales', 0)
+                            if total_sales_raw is None:
+                                total_sales_val = 0.0
+                            else:
+                                try:
+                                    total_sales_val = float(total_sales_raw)
+                                except Exception:
+                                    # try Decimal then float
+                                    try:
+                                        from decimal import Decimal
+                                        total_sales_val = float(Decimal(str(total_sales_raw)))
+                                    except Exception:
+                                        logger.exception('Failed to parse total_sales for shop %s', shop_data.get('id'))
+                                        total_sales_val = 0.0
+                        except Exception:
+                            logger.exception('Error parsing total_sales')
+                            total_sales_val = 0.0
+
+                        # Add shop headers (additional shop metadata)
+                        shop_data.update({
+                            'shop_headers': {
+                                'has_shop': True,
+                                'is_shop_owner': True,
+                                'can_manage_shop': True,
+                                'shop_created': shop_data.get('created_at'),
+                                'shop_age_days': shop_age_days,
+                                'is_eligible_for_promotions': shop_data.get('is_active') and shop_data.get('verified'),
+                                'needs_attention': shop_data.get('is_suspended') or not shop_data.get('is_active'),
+                                'shop_performance': 'good' if total_sales_val > 1000 else 'average' if total_sales_val > 0 else 'new',
+                                'has_unread_notifications': Notification.objects.filter(
+                                    recipient=user,
+                                    notification_type__in=['order_received', 'product_review', 'shop_update'],
+                                    is_read=False
+                                ).exists(),
+                            }
+                        })
+                except Exception as e:
+                    logger.error(f"Error fetching shop data: {str(e)}")
+                    shop_data = None
+            else:
+                # Add headers for non-customers
+                shop_data = {
+                    'shop_headers': {
+                        'has_shop': False,
+                        'is_shop_owner': False,
+                        'can_manage_shop': False,
+                        'message': 'Create a customer account to start a shop',
+                    }
+                }
+
+            # Create response data with headers
+            response_data = {
+                "success": True,
+                "profile": {
+                    "user": user_data,
+                    "customer": customer_data,
+                    "shop": shop_data
+                },
+                # Global response headers
+                "headers": {
+                    "timestamp": timezone.now().isoformat(),
+                    "api_version": "1.0",
+                    "requires_shop": True if shop_data else False,
+                    "user_type": "seller" if shop_data else ("customer" if customer_data.get('is_customer') else "guest"),
+                    "has_active_session": True,
+                    "can_switch_mode": customer_data.get('is_customer', False),
+                    # Navigation headers
+                    "available_routes": {
+                        "seller_dashboard": bool(shop_data),
+                        "customer_dashboard": customer_data.get('is_customer', False),
+                        "create_shop": customer_data.get('is_customer', False) and not shop_data,
+                        "manage_products": bool(shop_data),
+                        "view_orders": bool(shop_data),
+                    }
+                }
+            }
+
+            return Response(response_data)
+
+        except User.DoesNotExist:
+            return Response(
+                {
+                    "success": False, 
+                    "error": "User not found",
+                    "headers": {
+                        "requires_authentication": True,
+                        "redirect_to": "/login"
+                    }
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error fetching profile: {str(e)}")
+            return Response(
+                {
+                    "success": False, 
+                    "error": "Internal server error",
+                    "headers": {
+                        "retry_available": True,
+                        "error_code": "PROFILE_FETCH_ERROR"
+                    }
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

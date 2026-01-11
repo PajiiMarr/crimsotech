@@ -1,5 +1,5 @@
-import { useAuth } from '@/contexts/AuthContext';
-import { API_CONFIG } from '@/utils/config';
+import { useAuth } from '../../contexts/AuthContext';
+import { API_CONFIG } from '../../utils/config';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';

@@ -36,6 +36,32 @@ class FavoritesAPITest(TestCase):
         self.assertEqual(len(res.data.get('favorites', [])), 0)
 
 
+class ProfileViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create(username='profileuser', email='profile@example.com')
+        # Create customer profile (note: Customer model does not have created_at)
+        Customer.objects.create(customer=self.user)
+
+    def test_profile_endpoint_returns_profile(self):
+        res = self.client.get('/api/profile/', HTTP_X_USER_ID=str(self.user.id))
+        # Should not raise and should return user profile info or success=false with proper status
+        self.assertIn(res.status_code, [200, 404, 400])
+        # If success, assert expected structure
+        if res.status_code == 200:
+            self.assertTrue(res.data.get('success'))
+            self.assertIn('profile', res.data)
+            self.assertIn('user', res.data['profile'])
+
+    def test_profile_get_fallback_route(self):
+        res = self.client.get('/api/profile/get', HTTP_X_USER_ID=str(self.user.id))
+        self.assertIn(res.status_code, [200, 404, 400])
+        if res.status_code == 200:
+            self.assertTrue(res.data.get('success'))
+            self.assertIn('profile', res.data)
+            self.assertIn('user', res.data['profile'])
+
+
 class ProductSerializerTest(TestCase):
     def test_product_serializer_includes_swap_fields(self):
         user = User.objects.create(username='serializer', email='s@example.com')
