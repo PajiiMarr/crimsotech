@@ -1,4 +1,4 @@
-import type { Route } from './+types/orders';
+import type { Route } from './+types/riders';
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { 
@@ -23,21 +23,32 @@ import {
   Cell,
   Legend,
   CartesianGrid,
+  LineChart,
+  Line,
 } from 'recharts';
 import { 
-  ShoppingCart,
+  Users,
   TrendingUp,
   Clock,
   ArrowUpDown,
   User,
-  Package,
-  Calendar,
-  DollarSign,
-  CreditCard,
   CheckCircle,
   XCircle,
   AlertCircle,
-  Store,
+  Calendar,
+  Star,
+  Package,
+  MapPin,
+  Phone,
+  Mail,
+  Car,
+  FileText,
+  Shield,
+  Download,
+  Eye,
+  Edit,
+  Filter,
+  Search,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
@@ -49,78 +60,58 @@ import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
 export function meta(): Route.MetaDescriptors {
   return [
     {
-      title: "Orders | Admin",
+      title: "Riders | Moderator",
     },
   ];
 }
 
-// Interface that matches Django AdminOrders response
-interface OrderItem {
-  id: string;
-  cart_item: {
-    id: string;
-    product: {
-      id: string;
-      name: string;
-      price: number;
-      shop: {
-        id: string;
-        name: string;
-      };
-    };
-    quantity: number;
-    user: {
-      id: string;
-      username: string;
-      email: string;
-      first_name: string;
-      last_name: string;
-    };
-  };
-  voucher?: {
-    id: string;
-    name: string;
-    code: string;
-    value: number;
-  };
-  quantity: number;
-  total_amount: number;
-  status: string;
-  created_at: string;
-}
-
-interface Order {
-  order_id: string;
-  user: {
+// Interface that matches EXACT Django Rider model structure
+interface Rider {
+  rider: {
     id: string;
     username: string;
     email: string;
     first_name: string;
     last_name: string;
+    contact_number: string;
+    created_at: string;
+    is_rider: boolean;
   };
-  status: string;
-  total_amount: number;
-  payment_method: string;
-  delivery_address: string;
-  created_at: string;
-  updated_at: string;
-  items: OrderItem[];
+  vehicle_type: string;
+  plate_number: string;
+  vehicle_brand: string;
+  vehicle_model: string;
+  vehicle_image: string | null;
+  license_number: string;
+  license_image: string | null;
+  verified: boolean;
+  approved_by: {
+    id: string;
+    username: string;
+  } | null;
+  approval_date: string | null;
+  // Computed fields for frontend display
+  total_deliveries?: number;
+  completed_deliveries?: number;
+  average_rating?: number;
+  total_earnings?: number;
+  rider_status?: 'pending' | 'approved' | 'rejected' | 'suspended';
 }
 
 interface LoaderData {
   user: any;
-  orderMetrics: {
-    total_orders: number;
-    pending_orders: number;
-    completed_orders: number;
-    cancelled_orders: number;
-    total_revenue: number;
-    today_orders: number;
-    monthly_orders: number;
-    avg_order_value: number;
+  riderMetrics: {
+    total_riders: number;
+    pending_riders: number;
+    approved_riders: number;
+    active_riders: number;
+    total_deliveries: number;
+    completed_deliveries: number;
     success_rate: number;
+    average_rating: number;
+    total_earnings: number;
   };
-  orders: Order[];
+  riders: Rider[];
   dateRange: {
     start: string;
     end: string;
@@ -141,7 +132,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user = await fetchUserRole({ request, context });
   }
 
-  await requireRole(request, context, ["isAdmin"]);
+  await requireRole(request, context, ["isModerator"]);
 
   // Get session for authentication
   const { getSession } = await import('~/sessions.server');
@@ -165,24 +156,24 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const validStart = !isNaN(startDate.getTime()) ? startDate : defaultStart;
   const validEnd = !isNaN(endDate.getTime()) ? endDate : defaultEnd;
 
-  // Initialize empty data structures
-  let orderMetrics = {
-    total_orders: 0,
-    pending_orders: 0,
-    completed_orders: 0,
-    cancelled_orders: 0,
-    total_revenue: 0,
-    today_orders: 0,
-    monthly_orders: 0,
-    avg_order_value: 0,
+  // Initialize empty data structures - NO FALLBACK DATA
+  let riderMetrics = {
+    total_riders: 0,
+    pending_riders: 0,
+    approved_riders: 0,
+    active_riders: 0,
+    total_deliveries: 0,
+    completed_deliveries: 0,
     success_rate: 0,
+    average_rating: 0,
+    total_earnings: 0,
   };
 
-  let ordersList: Order[] = [];
+  let ridersList: Rider[] = [];
 
   try {
     // Fetch real data from API with date range parameters
-    const response = await AxiosInstance.get('/admin-orders/get_metrics/', {
+    const response = await AxiosInstance.get('/moderator-riders/get_metrics/', {
       params: {
         start_date: validStart.toISOString(),
         end_date: validEnd.toISOString()
@@ -193,18 +184,18 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     });
 
     if (response.data.success) {
-      orderMetrics = response.data.metrics || orderMetrics;
-      ordersList = response.data.orders || [];
+      riderMetrics = response.data.metrics || riderMetrics;
+      ridersList = response.data.riders || [];
     }
   } catch (error) {
-    console.log('API fetch failed, using empty data fallback');
-    // Empty fallback - no mock data
+    console.log('API fetch failed - no data available');
+    // NO FALLBACK DATA - everything remains empty
   }
 
   return { 
     user, 
-    orderMetrics,
-    orders: ordersList,
+    riderMetrics,
+    riders: ridersList,
     dateRange: {
       start: validStart.toISOString(),
       end: validEnd.toISOString(),
@@ -214,7 +205,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 }
 
 const COLORS = ['#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6'];
-const PAYMENT_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b'];
+const VEHICLE_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b'];
 
 // Empty state components
 const EmptyChart = ({ message }: { message: string }) => (
@@ -228,16 +219,44 @@ const EmptyChart = ({ message }: { message: string }) => (
 const EmptyTable = () => (
   <div className="flex items-center justify-center h-32">
     <div className="text-center text-muted-foreground">
-      <p>No orders found</p>
+      <p>No riders found</p>
     </div>
   </div>
 );
 
-export default function Checkouts() {
+// MetricCardSkeleton for loading state
+const MetricCardSkeleton = () => (
+  <Card>
+    <CardContent className="p-4 sm:p-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <Skeleton className="h-4 w-20 mb-2" />
+          <Skeleton className="h-8 w-16 mt-1" />
+          <Skeleton className="h-3 w-24 mt-2" />
+        </div>
+        <Skeleton className="w-10 h-10 sm:w-12 sm:h-12 rounded-full" />
+      </div>
+    </CardContent>
+  </Card>
+);
+
+// Helper function to compute rider status based on model fields
+const getRiderStatus = (rider: Rider): 'pending' | 'approved' | 'rejected' | 'suspended' => {
+  if (rider.verified && rider.approval_date) {
+    return 'approved';
+  } else if (!rider.verified && !rider.approval_date) {
+    return 'pending';
+  } else if (!rider.verified && rider.approval_date) {
+    return 'rejected';
+  }
+  return 'pending';
+};
+
+export default function Riders() {
   const loaderData = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user, orderMetrics, orders, dateRange } = loaderData;
+  const { user, riderMetrics, riders, dateRange } = loaderData;
 
   // State management for date range
   const [currentDateRange, setCurrentDateRange] = useState({
@@ -276,77 +295,49 @@ export default function Checkouts() {
   if (!loaderData) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div>Loading orders...</div>
+        <div>Loading riders...</div>
       </div>
     );
   }
 
-  const safeOrders = orders || [];
-  const safeMetrics = orderMetrics || {
-    total_orders: 0,
-    pending_orders: 0,
-    completed_orders: 0,
-    cancelled_orders: 0,
-    total_revenue: 0,
-    today_orders: 0,
-    monthly_orders: 0,
-    avg_order_value: 0,
+  // Use only the fetched data - no fallbacks
+  const safeRiders = riders || [];
+  const safeMetrics = riderMetrics || {
+    total_riders: 0,
+    pending_riders: 0,
+    approved_riders: 0,
+    active_riders: 0,
+    total_deliveries: 0,
+    completed_deliveries: 0,
     success_rate: 0,
+    average_rating: 0,
+    total_earnings: 0,
   };
 
-  // Flatten orders into individual items for the table
-  const orderItems = safeOrders.flatMap(order => 
-    order.items.map(item => ({
-      ...item,
-      order_id: order.order_id,
-      order_user: order.user,
-      payment_method: order.payment_method,
-      delivery_address: order.delivery_address,
-      order_created_at: order.created_at,
-      order_status: order.status
-    }))
-  );
+  const hasRiders = safeRiders.length > 0;
 
-  const hasOrders = safeOrders.length > 0;
-  const hasOrderItems = orderItems.length > 0;
-
-  // Transform data to include shopName for filtering
-  const transformedOrderItems = orderItems.map(item => ({
-    ...item,
-    shopName: item.cart_item?.product?.shop?.name || 'Unknown Shop',
-    customerName: `${item.cart_item?.user?.first_name || ''} ${item.cart_item?.user?.last_name || ''}`.trim() || 'Unknown Customer'
+  // Add computed status to riders for filtering
+  const ridersWithComputedStatus = safeRiders.map(rider => ({
+    ...rider,
+    rider_status: getRiderStatus(rider),
+    // Add a computed field for full name for search
+    riderName: `${rider.rider.first_name} ${rider.rider.last_name}`.trim()
   }));
 
-  const orderFilterConfig = {
-    status: {
-      options: [...new Set(transformedOrderItems.map(item => item.status))],
+  const riderFilterConfig = {
+    rider_status: {
+      options: [...new Set(ridersWithComputedStatus.map(rider => rider.rider_status))],
       placeholder: 'Status'
     },
-    shopName: {
-      options: [...new Set(transformedOrderItems.map(item => item.shopName))].filter(Boolean),
-      placeholder: 'Shop'
+    vehicle_type: {
+      options: [...new Set(ridersWithComputedStatus.map(rider => rider.vehicle_type))].filter(Boolean),
+      placeholder: 'Vehicle Type'
     },
-    order_status: {
-      options: [...new Set(transformedOrderItems.map(item => item.order_status))],
-      placeholder: 'Order Status'
+    verified: {
+      options: ['Verified', 'Not Verified'],
+      placeholder: 'Verification'
     }
   };
-
-  // MetricCardSkeleton for loading state
-  const MetricCardSkeleton = () => (
-    <Card>
-      <CardContent className="p-4 sm:p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <Skeleton className="h-4 w-20 mb-2" />
-            <Skeleton className="h-8 w-16 mt-1" />
-            <Skeleton className="h-3 w-24 mt-2" />
-          </div>
-          <Skeleton className="w-10 h-10 sm:w-12 sm:h-12 rounded-full" />
-        </div>
-      </CardContent>
-    </Card>
-  );
 
   return (
     <UserProvider user={user}>
@@ -355,18 +346,17 @@ export default function Checkouts() {
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">Orders</h1>
-            </div>
+              <h1 className="text-2xl sm:text-3xl font-bold">Riders Management</h1>
+            </div>            
           </div>
 
           {/* Date Range Filter */}
           <DateRangeFilter 
             onDateRangeChange={handleDateRangeChange}
             isLoading={isLoading}
-            // initialRange={currentDateRange}
           />
 
-          {/* Key Metrics */}
+          {/* Key Metrics - Will show zeros if no data */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {isLoading ? (
               <>
@@ -381,12 +371,12 @@ export default function Checkouts() {
                   <CardContent className="p-4 sm:p-6">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Total Orders</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_orders}</p>
-                        <p className="text-xs text-muted-foreground mt-2">{safeMetrics.today_orders} today</p>
+                        <p className="text-sm text-muted-foreground">Total Riders</p>
+                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_riders}</p>
+                        <p className="text-xs text-muted-foreground mt-2">{safeMetrics.active_riders} active</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
-                        <ShoppingCart className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
+                        <Users className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
                       </div>
                     </div>
                   </CardContent>
@@ -396,12 +386,12 @@ export default function Checkouts() {
                   <CardContent className="p-4 sm:p-6">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Total Revenue</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.total_revenue.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground mt-2">From all orders</p>
+                        <p className="text-sm text-muted-foreground">Total Deliveries</p>
+                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_deliveries.toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground mt-2">{safeMetrics.completed_deliveries} completed</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                        <DollarSign className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
+                        <Package className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
                       </div>
                     </div>
                   </CardContent>
@@ -413,7 +403,7 @@ export default function Checkouts() {
                       <div>
                         <p className="text-sm text-muted-foreground">Success Rate</p>
                         <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.success_rate}%</p>
-                        <p className="text-xs text-muted-foreground mt-2">Order completion</p>
+                        <p className="text-xs text-muted-foreground mt-2">Delivery completion</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
                         <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
@@ -426,12 +416,12 @@ export default function Checkouts() {
                   <CardContent className="p-4 sm:p-6">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Avg. Order Value</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.avg_order_value}</p>
-                        <p className="text-xs text-muted-foreground mt-2">Per order</p>
+                        <p className="text-sm text-muted-foreground">Avg. Rating</p>
+                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.average_rating}</p>
+                        <p className="text-xs text-muted-foreground mt-2">From all deliveries</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                        <CreditCard className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
+                        <Star className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
                       </div>
                     </div>
                   </CardContent>
@@ -440,7 +430,7 @@ export default function Checkouts() {
             )}
           </div>
 
-          {/* Status Overview Cards */}
+          {/* Status Overview Cards - Will show zeros if no data */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {isLoading ? (
               <>
@@ -471,8 +461,8 @@ export default function Checkouts() {
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Completed</p>
-                        <p className="text-lg font-bold mt-1 text-green-600">{safeMetrics.completed_orders}</p>
+                        <p className="text-sm text-muted-foreground">Approved</p>
+                        <p className="text-lg font-bold mt-1 text-green-600">{safeMetrics.approved_riders}</p>
                       </div>
                       <CheckCircle className="w-4 h-4 text-green-600" />
                     </div>
@@ -483,7 +473,7 @@ export default function Checkouts() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-muted-foreground">Pending</p>
-                        <p className="text-lg font-bold mt-1 text-yellow-600">{safeMetrics.pending_orders}</p>
+                        <p className="text-lg font-bold mt-1 text-yellow-600">{safeMetrics.pending_riders}</p>
                       </div>
                       <Clock className="w-4 h-4 text-yellow-600" />
                     </div>
@@ -493,10 +483,10 @@ export default function Checkouts() {
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Cancelled</p>
-                        <p className="text-lg font-bold mt-1 text-red-600">{safeMetrics.cancelled_orders}</p>
+                        <p className="text-sm text-muted-foreground">Active</p>
+                        <p className="text-lg font-bold mt-1 text-blue-600">{safeMetrics.active_riders}</p>
                       </div>
-                      <XCircle className="w-4 h-4 text-red-600" />
+                      <User className="w-4 h-4 text-blue-600" />
                     </div>
                   </CardContent>
                 </Card>
@@ -504,10 +494,10 @@ export default function Checkouts() {
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">This Month</p>
-                        <p className="text-lg font-bold mt-1 text-blue-600">{safeMetrics.monthly_orders}</p>
+                        <p className="text-sm text-muted-foreground">Total Earnings</p>
+                        <p className="text-lg font-bold mt-1 text-purple-600">₱{safeMetrics.total_earnings.toLocaleString()}</p>
                       </div>
-                      <Calendar className="w-4 h-4 text-blue-600" />
+                      <TrendingUp className="w-4 h-4 text-purple-600" />
                     </div>
                   </CardContent>
                 </Card>
@@ -515,12 +505,12 @@ export default function Checkouts() {
             )}
           </div>
 
-          {/* Orders Table */}
+          {/* Riders Table - Will show empty state if no data */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg sm:text-xl">All Order Items</CardTitle>
+              <CardTitle className="text-lg sm:text-xl">All Riders</CardTitle>
               <CardDescription>
-                {isLoading ? 'Loading orders...' : `Showing ${transformedOrderItems.length} order items`}
+                {isLoading ? 'Loading riders...' : `Showing ${ridersWithComputedStatus.length} riders`}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -531,15 +521,15 @@ export default function Checkouts() {
                     <Skeleton key={i} className="h-12 w-full" />
                   ))}
                 </div>
-              ) : hasOrderItems ? (
+              ) : hasRiders ? (
                 <div className="rounded-md">
                   <DataTable 
                     columns={columns} 
-                    data={transformedOrderItems}
-                    filterConfig={orderFilterConfig}
+                    data={ridersWithComputedStatus}
+                    filterConfig={riderFilterConfig}
                     searchConfig={{
-                      column: "customerName",
-                      placeholder: "Search by customer name..."
+                      column: "riderName",
+                      placeholder: "Search by rider name..."
                     }}
                     isLoading={isLoading}
                   />
@@ -557,7 +547,7 @@ export default function Checkouts() {
 
 const columns: ColumnDef<any>[] = [
   {
-    accessorKey: "order_id",
+    accessorKey: "riderName",
     header: ({ column }) => {
       return (
         <Button
@@ -565,183 +555,89 @@ const columns: ColumnDef<any>[] = [
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           className="text-xs sm:text-sm"
         >
-          Order ID
+          Rider
           <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
         </Button>
       )
     },
-    cell: ({ row }: { row: any}) => (
-      <div className="font-medium text-xs sm:text-sm">{row.getValue("order_id")?.slice(0, 8)}...</div>
-    ),
-  },
-  {
-    accessorKey: "customerName",
-    header: "Customer",
     cell: ({ row }: { row: any}) => {
-      const customer = row.original.cart_item?.user;
-      if (!customer) return <div className="text-muted-foreground">N/A</div>;
+      const rider = row.original.rider;
+      if (!rider) return <div className="text-muted-foreground">N/A</div>;
       
       return (
-        <div className="flex items-center gap-1 text-xs sm:text-sm">
-          <User className="w-3 h-3 text-muted-foreground" />
+        <div className="flex items-center gap-2 text-xs sm:text-sm">
+          <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+            <User className="w-4 h-4 text-gray-600" />
+          </div>
           <div>
-            <div className="font-medium">{customer.first_name} {customer.last_name}</div>
-            <div className="text-xs text-muted-foreground">{customer.email}</div>
+            <div className="font-medium">{rider.first_name} {rider.last_name}</div>
+            <div className="text-xs text-muted-foreground">@{rider.username}</div>
+            <div className="text-xs text-muted-foreground">
+              Joined: {new Date(rider.created_at).toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric', 
+                year: 'numeric' 
+              })}
+            </div>
           </div>
         </div>
       );
     },
   },
   {
-    accessorKey: "product",
-    header: "Product",
+    accessorKey: "contact",
+    header: "Contact",
     cell: ({ row }: { row: any}) => {
-      const product = row.original.cart_item?.product;
-      if (!product) return <div className="text-muted-foreground">N/A</div>;
+      const rider = row.original.rider;
+      if (!rider) return <div className="text-muted-foreground">N/A</div>;
       
       return (
-        <div className="flex items-center gap-1 text-xs sm:text-sm">
-          <Package className="w-3 h-3 text-muted-foreground" />
-          <div>
-            <div className="font-medium">{product.name}</div>
-            <div className="text-xs text-muted-foreground">₱{product.price}</div>
+        <div className="text-xs sm:text-sm">
+          <div className="flex items-center gap-1">
+            <Phone className="w-3 h-3 text-muted-foreground" />
+            {rider.contact_number || 'N/A'}
+          </div>
+          <div className="flex items-center gap-1 mt-1">
+            <Mail className="w-3 h-3 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground truncate">{rider.email}</span>
           </div>
         </div>
       );
     },
   },
   {
-    accessorKey: "shopName",
-    header: "Shop",
+    accessorKey: "vehicle",
+    header: "Vehicle",
     cell: ({ row }: { row: any}) => {
-      const shop = row.original.cart_item?.product?.shop;
-      if (!shop) return <div className="text-muted-foreground">N/A</div>;
+      const vehicle = row.original;
+      if (!vehicle.vehicle_type) return <div className="text-muted-foreground">N/A</div>;
       
       return (
         <div className="flex items-center gap-1 text-xs sm:text-sm">
-          <Store className="w-3 h-3 text-muted-foreground" />
-          <span>{shop.name}</span>
+          <Car className="w-3 h-3 text-muted-foreground" />
+          <div>
+            <div className="font-medium">{vehicle.vehicle_type}</div>
+            <div className="text-xs text-muted-foreground">
+              {vehicle.vehicle_brand} {vehicle.vehicle_model}
+            </div>
+            <div className="text-xs text-muted-foreground">{vehicle.plate_number}</div>
+          </div>
         </div>
       );
     },
   },
   {
-    accessorKey: "quantity",
-    header: "Qty",
-    cell: ({ row }: { row: any}) => (
-      <div className="text-xs sm:text-sm text-center">
-        {row.original.cart_item?.quantity || 0}
-      </div>
-    ),
-  },
-  {
-    accessorKey: "total_amount",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm"
-        >
-          Amount
-          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      )
-    },
+    accessorKey: "license",
+    header: "License",
     cell: ({ row }: { row: any}) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
-        <DollarSign className="w-3 h-3 text-muted-foreground" />
-        ₱{row.getValue("total_amount")}
-        {row.original.voucher && (
-          <Badge variant="outline" className="ml-1 text-xs">
-            -₱{row.original.voucher.value}
-          </Badge>
-        )}
+        <FileText className="w-3 h-3 text-muted-foreground" />
+        <span>{row.original.license_number || 'N/A'}</span>
       </div>
     ),
   },
   {
-    accessorKey: "status",
-    header: "Item Status",
-    cell: ({ row }: { row: any}) => {
-      const status = row.getValue("status") as string;
-      const getColor = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'completed': return '#10b981';
-          case 'paid': return '#3b82f6';
-          case 'pending': return '#f59e0b';
-          case 'cancelled': return '#ef4444';
-          case 'failed': return '#6b7280';
-          default: return '#6b7280';
-        }
-      };
-      const getIcon = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'completed': return <CheckCircle className="w-3 h-3" />;
-          case 'paid': return <DollarSign className="w-3 h-3" />;
-          case 'pending': return <Clock className="w-3 h-3" />;
-          case 'cancelled': return <XCircle className="w-3 h-3" />;
-          case 'failed': return <AlertCircle className="w-3 h-3" />;
-          default: return <AlertCircle className="w-3 h-3" />;
-        }
-      };
-      const color = getColor(status);
-      const icon = getIcon(status);
-      
-      return (
-        <Badge 
-          variant="secondary"
-          className="text-xs capitalize flex items-center gap-1"
-          style={{ backgroundColor: `${color}20`, color: color }}
-        >
-          {icon}
-          {status || 'Unknown'}
-        </Badge>
-      );
-    },
-  },
-  {
-    accessorKey: "order_status",
-    header: "Order Status",
-    cell: ({ row }: { row: any}) => {
-      const status = row.getValue("order_status") as string;
-      const getColor = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'completed': return '#10b981';
-          case 'paid': return '#3b82f6';
-          case 'pending': return '#f59e0b';
-          case 'cancelled': return '#ef4444';
-          case 'failed': return '#6b7280';
-          default: return '#6b7280';
-        }
-      };
-      const getIcon = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'completed': return <CheckCircle className="w-3 h-3" />;
-          case 'paid': return <DollarSign className="w-3 h-3" />;
-          case 'pending': return <Clock className="w-3 h-3" />;
-          case 'cancelled': return <XCircle className="w-3 h-3" />;
-          case 'failed': return <AlertCircle className="w-3 h-3" />;
-          default: return <AlertCircle className="w-3 h-3" />;
-        }
-      };
-      const color = getColor(status);
-      const icon = getIcon(status);
-      
-      return (
-        <Badge 
-          variant="secondary"
-          className="text-xs capitalize flex items-center gap-1"
-          style={{ backgroundColor: `${color}20`, color: color }}
-        >
-          {icon}
-          {status || 'Unknown'}
-        </Badge>
-      );
-    },
-  },
-  {
-    accessorKey: "order_created_at",
+    accessorKey: "verified",
     header: ({ column }) => {
       return (
         <Button
@@ -749,16 +645,97 @@ const columns: ColumnDef<any>[] = [
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           className="text-xs sm:text-sm"
         >
-          Created
+          Verified
           <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
         </Button>
       )
     },
     cell: ({ row }: { row: any}) => {
-      const date = new Date(row.getValue("order_created_at"));
-      if (isNaN(date.getTime())) return <div className="text-muted-foreground">N/A</div>;
+      const verified = row.original.verified;
       
-      const formattedDate = date.toLocaleDateString('en-US', {
+      return (
+        <Badge 
+          variant="secondary"
+          className={`text-xs capitalize flex items-center gap-1 ${
+            verified 
+              ? 'bg-green-100 text-green-800' 
+              : 'bg-yellow-100 text-yellow-800'
+          }`}
+        >
+          <Shield className="w-3 h-3" />
+          {verified ? 'Verified' : 'Pending'}
+        </Badge>
+      );
+    },
+  },
+  {
+    accessorKey: "rider_status",
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="text-xs sm:text-sm"
+        >
+          Status
+          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }: { row: any}) => {
+      const status = row.getValue("rider_status") as string;
+      const getColor = (status: string) => {
+        switch(status?.toLowerCase()) {
+          case 'approved': return '#10b981';
+          case 'pending': return '#f59e0b';
+          case 'rejected': return '#ef4444';
+          case 'suspended': return '#6b7280';
+          default: return '#6b7280';
+        }
+      };
+      const getIcon = (status: string) => {
+        switch(status?.toLowerCase()) {
+          case 'approved': return <CheckCircle className="w-3 h-3" />;
+          case 'pending': return <Clock className="w-3 h-3" />;
+          case 'rejected': return <XCircle className="w-3 h-3" />;
+          case 'suspended': return <AlertCircle className="w-3 h-3" />;
+          default: return <AlertCircle className="w-3 h-3" />;
+        }
+      };
+      const color = getColor(status);
+      const icon = getIcon(status);
+      
+      return (
+        <Badge 
+          variant="secondary"
+          className="text-xs capitalize flex items-center gap-1"
+          style={{ backgroundColor: `${color}20`, color: color }}
+        >
+          {icon}
+          {status || 'Unknown'}
+        </Badge>
+      );
+    },
+  },
+  {
+    accessorKey: "approval_date",
+    header: ({ column }) => {
+      return (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="text-xs sm:text-sm"
+        >
+          Approved Date
+          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
+        </Button>
+      )
+    },
+    cell: ({ row }: { row: any}) => {
+      const date = row.original.approval_date;
+      if (!date) return <div className="text-muted-foreground">N/A</div>;
+      
+      const formattedDate = new Date(date).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
         year: 'numeric'
@@ -768,6 +745,35 @@ const columns: ColumnDef<any>[] = [
         <div className="flex items-center gap-1 text-xs sm:text-sm">
           <Calendar className="w-3 h-3 text-muted-foreground" />
           {formattedDate}
+        </div>
+      );
+    },
+  },
+  {
+    id: "actions",
+    header: "Actions",
+    cell: ({ row }: { row: any}) => {
+      const rider = row.original;
+      const isPending = rider.rider_status === 'pending';
+      
+      return (
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+            <Eye className="w-4 h-4" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+            <Edit className="w-4 h-4" />
+          </Button>
+          {isPending && (
+            <>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-green-600">
+                <CheckCircle className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-600">
+                <XCircle className="w-4 h-4" />
+              </Button>
+            </>
+          )}
         </div>
       );
     },

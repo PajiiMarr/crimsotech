@@ -23,14 +23,17 @@ import {
   Calendar,
   Tag,
   User,
-  DollarSign,
   Percent,
   Copy,
-  Store
+  Store,
+  PhilippinePeso
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
+import DateRangeFilter from '~/components/ui/date-range-filter';
+import { useState, useEffect } from 'react';
+import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -40,7 +43,7 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
-// Interface to match Django Voucher model
+// Interface to match Django Voucher model - removed unnecessary attributes
 interface Voucher {
   id: string;
   name: string;
@@ -51,8 +54,6 @@ interface Voucher {
   } | null;
   discount_type: string;
   value: number;
-  minimum_spend: number;
-  maximum_usage: number;
   valid_until: string;
   added_at: string;
   created_by: {
@@ -62,7 +63,6 @@ interface Voucher {
     last_name: string;
   } | null;
   is_active: boolean;
-  usage_count?: number;
   status?: string;
   shopName?: string;
 }
@@ -77,6 +77,11 @@ interface LoaderData {
     total_discount: number;
   };
   vouchers: Voucher[];
+  dateRange: {
+    start: string;
+    end: string;
+    rangeType: string;
+  };
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
@@ -98,6 +103,24 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
+  // Parse URL search params for date range
+  const url = new URL(request.url);
+  const startParam = url.searchParams.get('start');
+  const endParam = url.searchParams.get('end');
+  const rangeTypeParam = url.searchParams.get('rangeType');
+
+  // Set default date range (last 7 days)
+  const defaultStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const defaultEnd = new Date();
+  
+  const startDate = startParam ? new Date(startParam) : defaultStart;
+  const endDate = endParam ? new Date(endParam) : defaultEnd;
+  const rangeType = rangeTypeParam || 'weekly';
+
+  // Validate dates
+  const validStart = !isNaN(startDate.getTime()) ? startDate : defaultStart;
+  const validEnd = !isNaN(endDate.getTime()) ? endDate : defaultEnd;
+
   // Initialize empty data structures
   let voucherMetrics = {
     total_vouchers: 0,
@@ -110,8 +133,12 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   let vouchersList: Voucher[] = [];
 
   try {
-    // Fetch metrics from API
+    // Fetch real data from API with date range parameters
     const metricsResponse = await AxiosInstance.get('/admin-vouchers/get_metrics/', {
+      params: {
+        start_date: validStart.toISOString(),
+        end_date: validEnd.toISOString()
+      },
       headers: {
         "X-User-Id": session.get("userId")
       }
@@ -121,12 +148,14 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       voucherMetrics = metricsResponse.data.metrics || voucherMetrics;
     }
 
-    // Fetch vouchers list from API
+    // Fetch vouchers list from API with date range parameters
     const vouchersResponse = await AxiosInstance.get('/admin-vouchers/vouchers_list/', {
       headers: {
         "X-User-Id": session.get("userId")
       },
       params: {
+        start_date: validStart.toISOString(),
+        end_date: validEnd.toISOString(),
         page: 1,
         page_size: 50 // Get first 50 vouchers for initial load
       }
@@ -136,14 +165,19 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       vouchersList = vouchersResponse.data.vouchers || [];
     }
   } catch (error) {
-    console.log('API fetch failed, using empty data fallback');
-    // Empty fallback - no mock data
+    console.log('API fetch failed - no data available');
+    // NO FALLBACK DATA - everything remains empty
   }
 
   return { 
     user, 
     voucherMetrics,
-    vouchers: vouchersList
+    vouchers: vouchersList,
+    dateRange: {
+      start: validStart.toISOString(),
+      end: validEnd.toISOString(),
+      rangeType
+    }
   };
 }
 
@@ -162,29 +196,45 @@ const EmptyTable = () => (
   </div>
 );
 
-const EmptyMetrics = () => (
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-    {[1, 2, 3, 4].map((item) => (
-      <Card key={item}>
-        <CardContent className="p-4 sm:p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="h-4 bg-gray-200 rounded w-20 mb-2"></div>
-              <div className="h-6 bg-gray-200 rounded w-12 mb-1"></div>
-              <div className="h-3 bg-gray-200 rounded w-16"></div>
-            </div>
-            <div className="p-2 sm:p-3 bg-gray-100 rounded-full">
-              <div className="w-4 h-4 sm:w-6 sm:h-6 bg-gray-300 rounded"></div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    ))}
-  </div>
-);
+export default function Vouchers() {
+  const loaderData = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { user, voucherMetrics, vouchers, dateRange } = loaderData;
 
-export default function Vouchers({ loaderData }: { loaderData: LoaderData }) {
-  const { user, voucherMetrics, vouchers } = loaderData;
+  // State management for date range
+  const [currentDateRange, setCurrentDateRange] = useState({
+    start: new Date(dateRange.start),
+    end: new Date(dateRange.end),
+    rangeType: dateRange.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+  });
+
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Handle date range change - update URL search params
+  const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
+    setIsLoading(true);
+    
+    // Update URL search params
+    const newSearchParams = new URLSearchParams(searchParams);
+    newSearchParams.set('start', range.start.toISOString());
+    newSearchParams.set('end', range.end.toISOString());
+    newSearchParams.set('rangeType', range.rangeType);
+    
+    // Navigate to update the URL, which will trigger a new loader call
+    navigate(`?${newSearchParams.toString()}`, { replace: true });
+    
+    setCurrentDateRange({
+      start: range.start,
+      end: range.end,
+      rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+    });
+  };
+
+  // Reset loading state when loader data changes
+  useEffect(() => {
+    setIsLoading(false);
+  }, [loaderData]);
 
   if (!loaderData) {
     return (
@@ -204,7 +254,6 @@ export default function Vouchers({ loaderData }: { loaderData: LoaderData }) {
   };
 
   const hasVouchers = safeVouchers.length > 0;
-  const hasMetrics = safeMetrics.total_vouchers > 0 || safeMetrics.total_usage > 0;
 
   // Calculate status based on is_active and valid_until date
   const getVoucherStatus = (voucher: Voucher) => {
@@ -249,117 +298,103 @@ export default function Vouchers({ loaderData }: { loaderData: LoaderData }) {
     }
   };
 
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
-    // You can add a toast notification here
-  };
-
   return (
     <UserProvider user={user}>
       <SidebarLayout>
-        <div className="space-y-6 p-4 sm:p-6">
+        <div className="space-y-6">
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">Vouchers</h1>
-              <p className="text-muted-foreground mt-1">Manage and track all voucher codes</p>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex items-center gap-2">
-                <Upload className="w-4 h-4" />
-                Import
-              </Button>
-              <Button variant="outline" className="flex items-center gap-2">
-                <Download className="w-4 h-4" />
-                Export
-              </Button>
-              <Button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700">
-                <Plus className="w-4 h-4" />
-                Create Voucher
-              </Button>
-            </div>
+            </div>            
           </div>
 
+          {/* Date Range Filter */}
+          <DateRangeFilter 
+            onDateRangeChange={handleDateRangeChange}
+            isLoading={isLoading}
+          />
+
           {/* Key Metrics */}
-          {hasMetrics ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card>
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Total Vouchers</p>
-                      <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_vouchers}</p>
-                      <p className="text-xs text-muted-foreground mt-2">{safeMetrics.active_vouchers} active</p>
-                    </div>
-                    <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
-                      <Tag className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
-                    </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-4 sm:p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Vouchers</p>
+                    <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_vouchers}</p>
+                    <p className="text-xs text-muted-foreground mt-2">{safeMetrics.active_vouchers} active</p>
                   </div>
-                </CardContent>
-              </Card>
+                  <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
+                    <Tag className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-              <Card>
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Total Usage</p>
-                      <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_usage}</p>
-                      <p className="text-xs text-muted-foreground mt-2">Times used</p>
-                    </div>
-                    <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                      <DollarSign className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
-                    </div>
+            <Card>
+              <CardContent className="p-4 sm:p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Usage</p>
+                    <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_usage}</p>
+                    <p className="text-xs text-muted-foreground mt-2">Times used</p>
                   </div>
-                </CardContent>
-              </Card>
+                  <div className="p-2 sm:p-3 bg-green-100 rounded-full">
+                    <PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-              <Card>
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Total Discount</p>
-                      <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.total_discount.toLocaleString()}</p>
-                      <p className="text-xs text-muted-foreground mt-2">Amount saved</p>
-                    </div>
-                    <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                      <Percent className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
-                    </div>
+            <Card>
+              <CardContent className="p-4 sm:p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Discount</p>
+                    <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.total_discount.toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground mt-2">Amount saved</p>
                   </div>
-                </CardContent>
-              </Card>
+                  <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
+                    <Percent className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-              <Card>
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Expired</p>
-                      <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.expired_vouchers}</p>
-                      <p className="text-xs text-muted-foreground mt-2">No longer valid</p>
-                    </div>
-                    <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                      <Calendar className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
-                    </div>
+            <Card>
+              <CardContent className="p-4 sm:p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Expired</p>
+                    <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.expired_vouchers}</p>
+                    <p className="text-xs text-muted-foreground mt-2">No longer valid</p>
                   </div>
-                </CardContent>
-              </Card>
-            </div>
-          ) : (
-            <EmptyMetrics />
-          )}
+                  <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
+                    <Calendar className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Vouchers Table */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg sm:text-xl">All Vouchers</CardTitle>
               <CardDescription>
-                {hasVouchers 
-                  ? `Manage and view all ${safeVouchers.length} voucher codes` 
-                  : 'No vouchers available. Create your first voucher to get started.'
-                }
+                {isLoading ? 'Loading vouchers...' : `Showing ${vouchersWithStatus.length} vouchers`}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {hasVouchers ? (
+              {isLoading ? (
+                <div className="space-y-3">
+                  <div className="h-10 bg-gray-200 rounded"></div>
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="h-12 bg-gray-200 rounded"></div>
+                  ))}
+                </div>
+              ) : hasVouchers ? (
                 <div className="rounded-md">
                   <DataTable 
                     columns={columns} 
@@ -369,6 +404,7 @@ export default function Vouchers({ loaderData }: { loaderData: LoaderData }) {
                       column: "name",
                       placeholder: "Search by voucher name..."
                     }}
+                    isLoading={isLoading}
                   />
                 </div>
               ) : (
@@ -383,27 +419,6 @@ export default function Vouchers({ loaderData }: { loaderData: LoaderData }) {
 }
 
 const columns: ColumnDef<any>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <input
-        type="checkbox"
-        className="w-4 h-4"
-        checked={table.getIsAllPageRowsSelected()}
-        onChange={table.getToggleAllPageRowsSelectedHandler()}
-      />
-    ),
-    cell: ({ row }) => (
-      <input
-        type="checkbox"
-        className="w-4 h-4"
-        checked={row.getIsSelected()}
-        onChange={row.getToggleSelectedHandler()}
-      />
-    ),
-    enableSorting: false,
-    enableHiding: false,
-  },
   {
     accessorKey: "name",
     header: "Name",
@@ -469,34 +484,6 @@ const columns: ColumnDef<any>[] = [
     },
   },
   {
-    accessorKey: "discount_type",
-    header: "Discount Type",
-    cell: ({ row }: { row: any}) => {
-      const type = row.getValue("discount_type") as string;
-      const getIcon = (type: string) => {
-        switch(type) {
-          case 'percentage': return <Percent className="w-3 h-3" />;
-          case 'fixed': return <DollarSign className="w-3 h-3" />;
-          default: return <Tag className="w-3 h-3" />;
-        }
-      };
-      const getLabel = (type: string) => {
-        switch(type) {
-          case 'percentage': return 'Percentage';
-          case 'fixed': return 'Fixed Amount';
-          default: return type;
-        }
-      };
-      
-      return (
-        <div className="flex items-center gap-2 text-xs sm:text-sm">
-          {getIcon(type)}
-          <span>{getLabel(type)}</span>
-        </div>
-      );
-    },
-  },
-  {
     accessorKey: "value",
     header: "Amount",
     cell: ({ row }: { row: any}) => {
@@ -507,30 +494,6 @@ const columns: ColumnDef<any>[] = [
         return <span className="text-xs sm:text-sm font-medium">{value}%</span>;
       }
       return <span className="text-xs sm:text-sm font-medium">₱{value}</span>;
-    },
-  },
-  {
-    accessorKey: "minimum_spend",
-    header: "Minimum Spend",
-    cell: ({ row }: { row: any}) => {
-      const minSpend = row.getValue("minimum_spend");
-      return (
-        <div className="text-xs sm:text-sm">
-          {minSpend ? `₱${minSpend}` : 'No minimum'}
-        </div>
-      );
-    },
-  },
-  {
-    accessorKey: "maximum_usage",
-    header: "Max Usage",
-    cell: ({ row }: { row: any}) => {
-      const maxUsage = row.getValue("maximum_usage");
-      return (
-        <div className="text-xs sm:text-sm text-center">
-          {maxUsage || 'Unlimited'}
-        </div>
-      );
     },
   },
   {
@@ -573,28 +536,6 @@ const columns: ColumnDef<any>[] = [
       return (
         <div className="text-xs sm:text-sm">
           {formattedDate}
-        </div>
-      );
-    },
-  },
-  {
-    accessorKey: "usage_count",
-    header: "Usage",
-    cell: ({ row }: { row: any}) => {
-      const usage = row.original.usage_count || 0;
-      const maxUsage = row.original.maximum_usage;
-      
-      return (
-        <div className="text-xs sm:text-sm">
-          <div className="text-center">{usage}{maxUsage ? `/${maxUsage}` : ''}</div>
-          {maxUsage && (
-            <div className="w-full bg-gray-200 rounded-full h-1 mt-1">
-              <div 
-                className="bg-blue-600 h-1 rounded-full" 
-                style={{ width: `${Math.min((usage / maxUsage) * 100, 100)}%` }}
-              />
-            </div>
-          )}
         </div>
       );
     },

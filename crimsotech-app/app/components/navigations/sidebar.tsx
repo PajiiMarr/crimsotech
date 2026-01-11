@@ -156,6 +156,13 @@ const menuItems = [
       { title: "Boosting Plans", url: "/moderator/boosting", icon: CreditCard, roles: ["moderator"] },
     ]
   },
+    {
+    group: "Orders & Delivery",
+    children: [
+      { title: "Orders", url: "/moderator/orders", icon: List, roles: ["moderator"] },
+      { title: "Riders", url: "/moderator/riders", icon: Bike, roles: ["moderator"] },
+    ]
+  },
   {
     group: "Content Review",
     children: [

@@ -30,8 +30,10 @@ from datetime import datetime, time, timedelta
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.utils.dateparse import parse_date
 import uuid
 from django.db.models import Min, Max
+from dateutil.relativedelta import relativedelta
 
 
 class UserView(APIView):
@@ -4375,72 +4377,195 @@ class AdminBoosting(viewsets.ViewSet):
              
 
 class AdminOrders(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2025-12-07)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
-        """Get order metrics and analytics data for admin dashboard"""
+        """Get order metrics and analytics data for admin dashboard with date range support"""
         try:
-            # Calculate date ranges
-            today = timezone.now().date()
-            week_ago = today - timedelta(days=7)
-            month_ago = today - timedelta(days=30)
+            # FIX: Accept both parameter names for compatibility
+            start_date_str = request.GET.get('start_date') or request.GET.get('start')
+            end_date_str = request.GET.get('end_date') or request.GET.get('end')
             
-            # Calculate metrics based on Orders
-            total_orders = Order.objects.count()
-            completed_orders = Order.objects.filter(status='completed').count()
-            pending_orders = Order.objects.filter(status='pending').count()
-            cancelled_orders = Order.objects.filter(status='cancelled').count()
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-            # Calculate revenue from Orders
-            revenue_data = Order.objects.filter(status='completed').aggregate(
+            # DEBUG: Print date range for troubleshooting
+            print(f"Order metrics date range filter: {start_date} to {end_date}")
+            
+            # Base queryset with date filter applied
+            date_filtered_orders_qs = Order.objects.all()
+            if start_date and end_date:
+                date_filtered_orders_qs = date_filtered_orders_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # All metrics should be calculated within the date range for consistency
+            total_orders_in_period = date_filtered_orders_qs.count()
+            completed_orders_in_period = date_filtered_orders_qs.filter(status='completed').count()
+            pending_orders_in_period = date_filtered_orders_qs.filter(status='pending').count()
+            cancelled_orders_in_period = date_filtered_orders_qs.filter(status='cancelled').count()
+            
+            # Calculate revenue from orders in the date range
+            revenue_data_in_period = date_filtered_orders_qs.filter(status='completed').aggregate(
                 total_revenue=Sum('total_amount')
             )
-            total_revenue = revenue_data['total_revenue'] or Decimal('0')
+            total_revenue_in_period = revenue_data_in_period['total_revenue'] or Decimal('0')
             
-            # Today's orders
-            today_orders = Order.objects.filter(
-                created_at__date=today
-            ).count()
+            # Today's orders within the date range (not necessarily actual today)
+            today_in_range = False
+            today_orders_in_period = 0
             
-            # Monthly orders
-            monthly_orders = Order.objects.filter(
-                created_at__date__gte=month_ago
-            ).count()
+            # Check if "today" is within the date range
+            today = timezone.now().date()
+            start_date_date = start_date.date() if start_date else None
+            end_date_date = end_date.date() if end_date else None
             
-            # Average order value
-            avg_order_value = Decimal('0')
-            if completed_orders > 0:
-                avg_order_value = total_revenue / completed_orders
+            if start_date_date and end_date_date and start_date_date <= today <= end_date_date:
+                # Today is within the date range, calculate today's orders
+                today_orders_in_period = Order.objects.filter(
+                    created_at__date=today,
+                    created_at__gte=start_date,
+                    created_at__lte=end_date
+                ).count()
             
-            # Success rate
-            success_rate = Decimal('0')
-            if total_orders > 0:
-                success_rate = (completed_orders / total_orders) * 100
+            # Monthly orders within the date range
+            # Calculate the start and end of the current month within the date range
+            current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            monthly_orders_in_period = 0
             
-            # Compile metrics
+            if start_date and end_date:
+                # Determine the overlapping period between the date range and current month
+                month_range_start = max(start_date, current_month_start)
+                month_range_end = min(end_date, timezone.now())
+                
+                if month_range_start <= month_range_end:
+                    monthly_orders_in_period = Order.objects.filter(
+                        created_at__range=[month_range_start, month_range_end]
+                    ).count()
+            
+            # Average order value for the period
+            avg_order_value_in_period = Decimal('0')
+            if completed_orders_in_period > 0:
+                avg_order_value_in_period = total_revenue_in_period / completed_orders_in_period
+            
+            # Success rate for the period
+            success_rate_in_period = Decimal('0')
+            if total_orders_in_period > 0:
+                success_rate_in_period = (completed_orders_in_period / total_orders_in_period) * 100
+            
+            # For frontend compatibility, also include all-time total orders
+            all_time_total_orders = Order.objects.all().count()
+            all_time_revenue_data = Order.objects.filter(status='completed').aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            all_time_revenue = all_time_revenue_data['total_revenue'] or Decimal('0')
+            
+            # Compile metrics - use date-filtered values for consistency
             order_metrics = {
-                'total_orders': total_orders,
-                'pending_orders': pending_orders,
-                'completed_orders': completed_orders,
-                'cancelled_orders': cancelled_orders,
-                'total_revenue': float(total_revenue),
-                'today_orders': today_orders,
-                'monthly_orders': monthly_orders,
-                'avg_order_value': float(avg_order_value),
-                'success_rate': float(success_rate),
+                'total_orders': total_orders_in_period,  # Use date-filtered total
+                'pending_orders': pending_orders_in_period,
+                'completed_orders': completed_orders_in_period,
+                'cancelled_orders': cancelled_orders_in_period,
+                'total_revenue': float(total_revenue_in_period),
+                'today_orders': today_orders_in_period,  # Today's orders within date range
+                'monthly_orders': monthly_orders_in_period,  # Monthly orders within date range
+                'avg_order_value': float(avg_order_value_in_period),
+                'success_rate': float(success_rate_in_period),
+                # Include all-time stats for reference if needed
+                'all_time_total_orders': all_time_total_orders,
+                'all_time_revenue': float(all_time_revenue)
             }
             
-            # Get analytics data
-            analytics_data = self._get_analytics_data()
+            # Get analytics data with date range
+            analytics_data = self._get_analytics_data(start_date, end_date)
             
-            # Get recent orders with related data
-            recent_orders = self._get_recent_orders()
+            # Get recent orders with related data within date range
+            recent_orders = self._get_recent_orders(start_date, end_date)
             
-            return Response({
+            response_data = {
                 'success': True,
                 'metrics': order_metrics,
                 'analytics': analytics_data,
-                'orders': recent_orders
-            })
+                'orders': recent_orders,
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data)
             
         except Exception as e:
             return Response({
@@ -4448,28 +4573,47 @@ class AdminOrders(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _get_analytics_data(self):
-        """Generate analytics data for charts"""
-        # Daily orders for the past 7 days
-        daily_orders = []
-        today = timezone.now().date()
+    def _get_analytics_data(self, start_date=None, end_date=None):
+        """Generate analytics data for charts with date range support"""
+        # If no date range provided, use last 7 days
+        if not start_date or not end_date:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=7)
         
-        for i in range(6, -1, -1):  # Last 7 days including today
-            date = today - timedelta(days=i)
-            day_data = Order.objects.filter(created_at__date=date).aggregate(
+        # Calculate number of days in the range
+        days_diff = (end_date - start_date).days
+        if days_diff > 365:  # For large ranges, use monthly data
+            return self._get_monthly_analytics_data(start_date, end_date)
+        else:
+            return self._get_daily_analytics_data(start_date, end_date)
+    
+    def _get_daily_analytics_data(self, start_date, end_date):
+        """Generate daily analytics data"""
+        daily_orders = []
+        current_date = start_date.date()
+        end_date_date = end_date.date()
+        
+        while current_date <= end_date_date:
+            day_data = Order.objects.filter(
+                created_at__date=current_date
+            ).aggregate(
                 count=Count('order'),
                 revenue=Sum('total_amount')
             )
             
             daily_orders.append({
-                'date': date.strftime('%b %d'),
+                'date': current_date.strftime('%b %d'),
                 'count': day_data['count'] or 0,
                 'revenue': float(day_data['revenue'] or 0)
             })
+            
+            current_date += timedelta(days=1)
         
-        # Status distribution
+        # Status distribution within date range
         status_distribution = []
-        status_counts = Order.objects.values('status').annotate(count=Count('order'))
+        status_counts = Order.objects.filter(
+            created_at__range=[start_date, end_date]
+        ).values('status').annotate(count=Count('order'))
         
         for status_data in status_counts:
             status_distribution.append({
@@ -4477,25 +4621,59 @@ class AdminOrders(viewsets.ViewSet):
                 'value': status_data['count']
             })
         
-        # Payment method distribution (from Order model)
+        # Payment method distribution within date range
         payment_method_distribution = []
-        payment_counts = Order.objects.values('payment_method').annotate(count=Count('order'))
+        payment_counts = Order.objects.filter(
+            created_at__range=[start_date, end_date]
+        ).values('payment_method').annotate(count=Count('order'))
         
         for payment_data in payment_counts:
-            payment_method_distribution.append({
-                'name': payment_data['payment_method'],
-                'value': payment_data['count']
-            })
+            if payment_data['payment_method']:
+                payment_method_distribution.append({
+                    'name': payment_data['payment_method'],
+                    'value': payment_data['count']
+                })
         
         return {
             'daily_orders': daily_orders,
             'status_distribution': status_distribution,
-            'payment_method_distribution': payment_method_distribution
+            'payment_method_distribution': payment_method_distribution,
+            'period_type': 'daily'
         }
     
-    def _get_recent_orders(self, limit=50):
-        """Get recent orders with all related data"""
-        orders = Order.objects.select_related(
+    def _get_monthly_analytics_data(self, start_date, end_date):
+        """Generate monthly analytics data for large date ranges"""
+        monthly_orders = []
+        
+        # Get all months in the range
+        current_month = start_date.replace(day=1)
+        while current_month <= end_date:
+            next_month = current_month + relativedelta(months=1)
+            
+            month_data = Order.objects.filter(
+                created_at__gte=current_month,
+                created_at__lt=next_month
+            ).aggregate(
+                count=Count('order'),
+                revenue=Sum('total_amount')
+            )
+            
+            monthly_orders.append({
+                'date': current_month.strftime('%b %Y'),
+                'count': month_data['count'] or 0,
+                'revenue': float(month_data['revenue'] or 0)
+            })
+            
+            current_month = next_month
+        
+        return {
+            'daily_orders': monthly_orders,
+            'period_type': 'monthly'
+        }
+    
+    def _get_recent_orders(self, start_date=None, end_date=None):
+        """Get recent orders with all related data with date range support"""
+        orders_qs = Order.objects.select_related(
             'user'
         ).prefetch_related(
             'checkout_set',
@@ -4503,7 +4681,13 @@ class AdminOrders(viewsets.ViewSet):
             'checkout_set__cart_item__product',
             'checkout_set__cart_item__product__shop',
             'checkout_set__voucher'
-        ).order_by('-created_at')[:limit]
+        ).order_by('-created_at')
+        
+        # Apply date filter if provided
+        if start_date and end_date:
+            orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+        
+        orders = orders_qs[:]
         
         order_list = []
         
@@ -4564,6 +4748,20 @@ class AdminOrders(viewsets.ViewSet):
                 
                 items.append(item_data)
             
+            # FIX: Use delivery_address_text instead of delivery_address
+            # Also include shipping address info if available
+            delivery_address = order.delivery_address_text or ''
+            shipping_address_info = {}
+            
+            if order.shipping_address:
+                shipping_address_info = {
+                    'id': str(order.shipping_address.id),
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type
+                }
+            
             order_data = {
                 'order_id': str(order.order),
                 'user': {
@@ -4576,7 +4774,8 @@ class AdminOrders(viewsets.ViewSet):
                 'status': order.status,
                 'total_amount': float(order.total_amount),
                 'payment_method': order.payment_method,
-                'delivery_address': order.delivery_address,
+                'delivery_address': delivery_address,  # Use the correct field name
+                'shipping_address': shipping_address_info,  # Add structured shipping address data
                 'created_at': order.created_at.isoformat() if order.created_at else None,
                 'updated_at': order.updated_at.isoformat() if order.updated_at else None,
                 'items': items
@@ -4585,7 +4784,7 @@ class AdminOrders(viewsets.ViewSet):
             order_list.append(order_data)
         
         return order_list
-    
+
     @action(detail=False, methods=['get'])
     def get_order_details(self, request):
         """Get detailed order information"""
@@ -4660,6 +4859,31 @@ class AdminOrders(viewsets.ViewSet):
                 
                 items.append(item_data)
             
+            # FIX: Use delivery_address_text instead of delivery_address
+            delivery_address = order.delivery_address_text or ''
+            
+            # Include shipping address info if available
+            shipping_address_info = {}
+            if order.shipping_address:
+                shipping_address_info = {
+                    'id': str(order.shipping_address.id),
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'street': order.shipping_address.street,
+                    'barangay': order.shipping_address.barangay,
+                    'city': order.shipping_address.city,
+                    'province': order.shipping_address.province,
+                    'zip_code': order.shipping_address.zip_code,
+                    'country': order.shipping_address.country,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type,
+                    'building_name': order.shipping_address.building_name,
+                    'floor_number': order.shipping_address.floor_number,
+                    'unit_number': order.shipping_address.unit_number,
+                    'landmark': order.shipping_address.landmark,
+                    'instructions': order.shipping_address.instructions
+                }
+            
             order_data = {
                 'order_id': str(order.order),
                 'user': {
@@ -4673,7 +4897,8 @@ class AdminOrders(viewsets.ViewSet):
                 'status': order.status,
                 'total_amount': float(order.total_amount),
                 'payment_method': order.payment_method,
-                'delivery_address': order.delivery_address,
+                'delivery_address': delivery_address,  # Use the correct field name
+                'shipping_address': shipping_address_info,  # Add structured shipping address
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat(),
                 'items': items
@@ -4694,7 +4919,8 @@ class AdminOrders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
+        
     @action(detail=False, methods=['post'])
     def update_order_status(self, request):
         """Update order status"""
@@ -4730,31 +4956,40 @@ class AdminOrders(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_order_stats(self, request):
-        """Get additional order statistics"""
+        """Get additional order statistics with date range support"""
         try:
-            # Time-based statistics
-            today = timezone.now().date()
-            week_ago = today - timedelta(days=7)
-            month_ago = today - timedelta(days=30)
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
             
-            # Revenue statistics
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset with date filter
+            orders_qs = Order.objects.filter(status='completed')
+            if start_date and end_date:
+                orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+            
+            # Revenue statistics for the period
+            revenue_data = orders_qs.aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            period_revenue = revenue_data['total_revenue'] or Decimal('0')
+            
+            # Daily revenue for today (still actual today)
+            today = timezone.now().date()
             daily_revenue = Order.objects.filter(
                 status='completed',
                 created_at__date=today
             ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
             
-            weekly_revenue = Order.objects.filter(
-                status='completed',
-                created_at__date__gte=week_ago
-            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
-            
-            monthly_revenue = Order.objects.filter(
-                status='completed',
-                created_at__date__gte=month_ago
-            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
-            
-            # Top customers by order count
-            top_customers = Order.objects.values(
+            # Top customers by order count in the period
+            top_customers = orders_qs.values(
                 'user__username',
                 'user__first_name',
                 'user__last_name'
@@ -4763,22 +4998,37 @@ class AdminOrders(viewsets.ViewSet):
                 total_spent=Sum('total_amount')
             ).order_by('-total_spent')[:10]
             
-            # Top products by order count (through checkouts)
-            top_products = Checkout.objects.filter(
-                order__isnull=False,
-                cart_item__product__isnull=False
-            ).values(
+            # Top products by order count in the period (through checkouts)
+            checkouts_qs = Checkout.objects.filter(order__isnull=False, cart_item__product__isnull=False)
+            if start_date and end_date:
+                checkouts_qs = checkouts_qs.filter(created_at__range=[start_date, end_date])
+            
+            top_products = checkouts_qs.values(
                 'cart_item__product__name'
             ).annotate(
                 order_count=Count('order', distinct=True)
             ).order_by('-order_count')[:10]
             
+            # Top shops by revenue in the period
+            top_shops = checkouts_qs.values(
+                'cart_item__product__shop__name'
+            ).annotate(
+                total_revenue=Sum('total_amount'),
+                order_count=Count('order', distinct=True)
+            ).order_by('-total_revenue')[:10]
+            
             stats = {
+                'period_revenue': float(period_revenue),
                 'revenue_today': float(daily_revenue),
-                'revenue_week': float(weekly_revenue),
-                'revenue_month': float(monthly_revenue),
                 'top_customers': list(top_customers),
-                'top_products': list(top_products)
+                'top_products': list(top_products),
+                'top_shops': list(top_shops),
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
             }
             
             return Response({
@@ -4792,71 +5042,182 @@ class AdminOrders(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
 class AdminRiders(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2026-01-04T06:11:55.816Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2026-01-04)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
-        """Get rider metrics and analytics data for admin dashboard"""
+        """Get rider metrics and analytics data for admin dashboard with date range support"""
         try:
-            # Calculate date ranges
-            today = timezone.now().date()
-            month_ago = today - timedelta(days=30)
+            # Accept both parameter names for compatibility
+            start_date_str = request.GET.get('start_date') or request.GET.get('start')
+            end_date_str = request.GET.get('end_date') or request.GET.get('end')
             
-            # Get all riders
-            all_riders = Rider.objects.all()
-            total_riders = all_riders.count()
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-            # Calculate rider status counts based on verification and approval
-            pending_riders = all_riders.filter(verified=False, approval_date__isnull=True).count()
-            approved_riders = all_riders.filter(verified=True, approval_date__isnull=False).count()
+            # DEBUG: Print date range for troubleshooting
+            print(f"Rider metrics date range filter: {start_date} to {end_date}")
             
-            # Get active riders (those with deliveries in the last 30 days)
+            # Base queryset with date filter applied for rider registrations
+            rider_registrations_qs = Rider.objects.all()
+            if start_date and end_date:
+                rider_registrations_qs = rider_registrations_qs.filter(
+                    rider__created_at__range=[start_date, end_date]
+                )
+            
+            # Get rider counts within date range
+            total_riders_in_period = rider_registrations_qs.count()
+            pending_riders_in_period = rider_registrations_qs.filter(
+                verified=False, 
+                approval_date__isnull=True
+            ).count()
+            approved_riders_in_period = rider_registrations_qs.filter(
+                verified=True, 
+                approval_date__isnull=False
+            ).count()
+            
+            # Get active riders (those with deliveries in the date range)
             active_rider_ids = Delivery.objects.filter(
-                created_at__date__gte=month_ago
+                created_at__range=[start_date, end_date]
             ).values_list('rider_id', flat=True).distinct()
-            active_riders = all_riders.filter(rider_id__in=active_rider_ids).count()
+            active_riders_in_period = rider_registrations_qs.filter(
+                rider_id__in=active_rider_ids
+            ).count()
             
-            # Delivery statistics
-            total_deliveries = Delivery.objects.count()
-            completed_deliveries = Delivery.objects.filter(status='delivered').count()
+            # Delivery statistics within date range
+            deliveries_in_period = Delivery.objects.filter(
+                created_at__range=[start_date, end_date]
+            )
+            total_deliveries_in_period = deliveries_in_period.count()
+            completed_deliveries_in_period = deliveries_in_period.filter(
+                status='delivered'
+            ).count()
             
-            # Success rate
-            success_rate = Decimal('0')
-            if total_deliveries > 0:
-                success_rate = (completed_deliveries / total_deliveries) * 100
+            # Success rate for the period
+            success_rate_in_period = Decimal('0')
+            if total_deliveries_in_period > 0:
+                success_rate_in_period = (completed_deliveries_in_period / total_deliveries_in_period) * 100
             
-            # Average rating from reviews (assuming reviews can be for riders via deliveries)
-            # This would need a proper relationship between reviews and riders
-            average_rating = Decimal('4.5')  # Placeholder - you'd need to implement this
+            # Calculate average rating - using placeholder since we can't link reviews to riders directly
+            # If you have a way to link reviews to riders (through orders/deliveries), implement it here
+            average_rating_in_period = Decimal('4.5')  # Placeholder
             
-            # Total earnings (from completed deliveries)
-            # This would need a proper earnings model or calculation
-            total_earnings = Decimal('0')  # Placeholder
+            # Calculate total earnings - placeholder
+            total_earnings_in_period = Decimal('0')
             
-            # Compile metrics
+            # For frontend compatibility, also include all-time counts
+            all_time_total_riders = Rider.objects.all().count()
+            all_time_total_deliveries = Delivery.objects.all().count()
+            all_time_completed_deliveries = Delivery.objects.filter(status='delivered').count()
+            
+            # Compile metrics - use date-filtered values for consistency
             rider_metrics = {
-                'total_riders': total_riders,
-                'pending_riders': pending_riders,
-                'approved_riders': approved_riders,
-                'active_riders': active_riders,
-                'total_deliveries': total_deliveries,
-                'completed_deliveries': completed_deliveries,
-                'success_rate': float(success_rate),
-                'average_rating': float(average_rating),
-                'total_earnings': float(total_earnings),
+                'total_riders': total_riders_in_period,
+                'pending_riders': pending_riders_in_period,
+                'approved_riders': approved_riders_in_period,
+                'active_riders': active_riders_in_period,
+                'total_deliveries': total_deliveries_in_period,
+                'completed_deliveries': completed_deliveries_in_period,
+                'success_rate': float(success_rate_in_period),
+                'average_rating': float(average_rating_in_period),
+                'total_earnings': float(total_earnings_in_period),
+                # Include all-time stats for reference if needed
+                'all_time_total_riders': all_time_total_riders,
+                'all_time_total_deliveries': all_time_total_deliveries,
+                'all_time_completed_deliveries': all_time_completed_deliveries
             }
             
-            # Get analytics data
-            analytics_data = self._get_analytics_data()
+            # Get analytics data with date range (simplified to avoid Review model issues)
+            analytics_data = self._get_analytics_data(start_date, end_date)
             
-            # Get riders with related data
-            riders_data = self._get_riders_data()
+            # Get riders data within date range
+            riders_data = self._get_riders_data(start_date, end_date)
             
-            return Response({
+            response_data = {
                 'success': True,
                 'metrics': rider_metrics,
                 'analytics': analytics_data,
-                'riders': riders_data
-            })
+                'riders': riders_data,
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data)
             
         except Exception as e:
             return Response({
@@ -4864,42 +5225,75 @@ class AdminRiders(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _get_analytics_data(self):
-        """Generate analytics data for charts"""
-        today = timezone.now().date()
+    def _get_analytics_data(self, start_date=None, end_date=None):
+        """Generate analytics data for charts with date range support - SIMPLIFIED VERSION"""
+        # If no date range provided, use last 30 days
+        if not start_date or not end_date:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
         
-        # Rider registrations for the past 30 days
+        # Rider registrations within date range
         rider_registrations = []
-        for i in range(29, -1, -1):  # Last 30 days including today
-            date = today - timedelta(days=i)
-            count = Rider.objects.filter(
-                rider__created_at__date=date
-            ).count()
-            
-            rider_registrations.append({
-                'date': date.strftime('%b %d'),
-                'count': count
-            })
+        current_date = start_date.date()
+        end_date_date = end_date.date()
         
-        # Status distribution
+        # Determine if we should show daily or monthly data
+        days_diff = (end_date_date - current_date).days
+        
+        if days_diff <= 90:  # For 3 months or less, show daily data
+            while current_date <= end_date_date:
+                count = Rider.objects.filter(
+                    rider__created_at__date=current_date
+                ).count()
+                
+                rider_registrations.append({
+                    'date': current_date.strftime('%b %d'),
+                    'count': count
+                })
+                
+                current_date += timedelta(days=1)
+        else:  # For longer periods, show monthly data
+            current_month = start_date.replace(day=1)
+            while current_month <= end_date:
+                next_month = current_month + relativedelta(months=1)
+                
+                count = Rider.objects.filter(
+                    rider__created_at__gte=current_month,
+                    rider__created_at__lt=next_month
+                ).count()
+                
+                rider_registrations.append({
+                    'date': current_month.strftime('%b %Y'),
+                    'count': count
+                })
+                
+                current_month = next_month
+        
+        # Status distribution within date range
+        riders_in_period = Rider.objects.filter(
+            rider__created_at__range=[start_date, end_date]
+        )
+        
         status_distribution = [
             {
                 'name': 'Approved',
-                'value': Rider.objects.filter(verified=True, approval_date__isnull=False).count()
+                'value': riders_in_period.filter(verified=True, approval_date__isnull=False).count()
             },
             {
                 'name': 'Pending',
-                'value': Rider.objects.filter(verified=False, approval_date__isnull=True).count()
+                'value': riders_in_period.filter(verified=False, approval_date__isnull=True).count()
             },
             {
                 'name': 'Rejected',
-                'value': Rider.objects.filter(verified=False, approval_date__isnull=False).count()
+                'value': riders_in_period.filter(verified=False, approval_date__isnull=False).count()
             }
         ]
         
-        # Vehicle type distribution
+        # Vehicle type distribution within date range
         vehicle_type_distribution = []
-        vehicle_counts = Rider.objects.exclude(vehicle_type='').values('vehicle_type').annotate(count=Count('rider'))
+        vehicle_counts = riders_in_period.exclude(vehicle_type='').values('vehicle_type').annotate(
+            count=Count('rider')
+        )
         
         for vehicle_data in vehicle_counts:
             vehicle_type_distribution.append({
@@ -4907,44 +5301,90 @@ class AdminRiders(viewsets.ViewSet):
                 'value': vehicle_data['count']
             })
         
-        # Performance trends (last 6 months)
+        # Performance trends within date range (simplified - only deliveries)
         performance_trends = []
-        for i in range(5, -1, -1):
-            month_start = today.replace(day=1) - timedelta(days=30*i)
-            month_name = month_start.strftime('%b %Y')
-            
-            # This would need proper implementation based on your business logic
-            performance_trends.append({
-                'month': month_name,
-                'deliveries': Delivery.objects.filter(
-                    created_at__year=month_start.year,
-                    created_at__month=month_start.month
-                ).count(),
-                'earnings': 0,  # Placeholder - implement based on your earnings model
-                'rating': 4.5   # Placeholder - implement based on your rating system
-            })
+        
+        # Determine time intervals based on date range
+        range_days = (end_date - start_date).days
+        
+        if range_days <= 180:  # 6 months or less
+            # Show monthly trends
+            current_month = start_date.replace(day=1)
+            while current_month <= end_date:
+                next_month = current_month + relativedelta(months=1)
+                month_name = current_month.strftime('%b %Y')
+                
+                # Get deliveries in this month
+                monthly_deliveries = Delivery.objects.filter(
+                    created_at__gte=current_month,
+                    created_at__lt=next_month
+                ).count()
+                
+                performance_trends.append({
+                    'month': month_name,
+                    'deliveries': monthly_deliveries,
+                    'earnings': 0,  # Placeholder
+                    'rating': 4.5   # Placeholder
+                })
+                
+                current_month = next_month
+        else:
+            # For longer periods, show quarterly trends
+            current_quarter = start_date
+            while current_quarter <= end_date:
+                next_quarter = current_quarter + relativedelta(months=3)
+                quarter_name = f"Q{(current_quarter.month-1)//3 + 1} {current_quarter.year}"
+                
+                # Get deliveries in this quarter
+                quarterly_deliveries = Delivery.objects.filter(
+                    created_at__gte=current_quarter,
+                    created_at__lt=next_quarter
+                ).count()
+                
+                performance_trends.append({
+                    'month': quarter_name,
+                    'deliveries': quarterly_deliveries,
+                    'earnings': 0,  # Placeholder
+                    'rating': 4.5   # Placeholder
+                })
+                
+                current_quarter = next_quarter
         
         return {
             'rider_registrations': rider_registrations,
             'status_distribution': status_distribution,
             'vehicle_type_distribution': vehicle_type_distribution,
-            'performance_trends': performance_trends
+            'performance_trends': performance_trends,
+            'period_type': 'daily' if days_diff <= 90 else 'monthly'
         }
     
-    def _get_riders_data(self, limit=50):
-        """Get riders with all related data"""
-        riders = Rider.objects.select_related(
+    def _get_riders_data(self, start_date=None, end_date=None, limit=100):
+        """Get riders with all related data with date range support"""
+        riders_qs = Rider.objects.select_related(
             'rider',
             'approved_by'
         ).prefetch_related(
             'delivery_set'
-        ).order_by('-rider__created_at')[:limit]
+        ).order_by('-rider__created_at')
+        
+        # Apply date filter if provided
+        if start_date and end_date:
+            riders_qs = riders_qs.filter(
+                rider__created_at__range=[start_date, end_date]
+            )
+        
+        riders = riders_qs[:limit]
         
         rider_list = []
         
         for rider in riders:
-            # Calculate performance metrics for this rider
+            # Calculate performance metrics for this rider within date range
             rider_deliveries = rider.delivery_set.all()
+            if start_date and end_date:
+                rider_deliveries = rider_deliveries.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
             total_deliveries = rider_deliveries.count()
             completed_deliveries = rider_deliveries.filter(status='delivered').count()
             
@@ -4957,6 +5397,12 @@ class AdminRiders(viewsets.ViewSet):
                 rider_status = 'rejected'
             else:
                 rider_status = 'pending'
+            
+            # Calculate average rating - placeholder since we can't link reviews to riders
+            average_rating = Decimal('4.5')
+            
+            # Calculate total earnings - placeholder
+            total_earnings = Decimal('0')
             
             rider_data = {
                 'rider': {
@@ -4985,8 +5431,8 @@ class AdminRiders(viewsets.ViewSet):
                 # Computed fields for frontend
                 'total_deliveries': total_deliveries,
                 'completed_deliveries': completed_deliveries,
-                'average_rating': 4.5,  # Placeholder - implement proper rating calculation
-                'total_earnings': 0,    # Placeholder - implement proper earnings calculation
+                'average_rating': float(average_rating),
+                'total_earnings': float(total_earnings),
                 'rider_status': rider_status,
             }
             
@@ -4998,6 +5444,8 @@ class AdminRiders(viewsets.ViewSet):
     def get_rider_details(self, request):
         """Get detailed rider information"""
         rider_id = request.query_params.get('rider_id')
+        start_date_str = request.GET.get('start_date')
+        end_date_str = request.GET.get('end_date')
         
         if not rider_id:
             return Response({
@@ -5006,6 +5454,18 @@ class AdminRiders(viewsets.ViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            # Get date range if provided
+            start_date = None
+            end_date = None
+            if start_date_str and end_date_str:
+                try:
+                    start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+                except ValueError as e:
+                    return Response(
+                        {'success': False, 'error': str(e)}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
             rider = Rider.objects.select_related(
                 'rider',
                 'approved_by'
@@ -5014,8 +5474,14 @@ class AdminRiders(viewsets.ViewSet):
                 'delivery_set__order'
             ).get(rider_id=rider_id)
             
-            # Get rider's delivery history
-            deliveries = rider.delivery_set.select_related('order').all()
+            # Get rider's delivery history with date range filter
+            deliveries_qs = rider.delivery_set.select_related('order').all()
+            if start_date and end_date:
+                deliveries_qs = deliveries_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            deliveries = deliveries_qs
             delivery_history = []
             
             for delivery in deliveries:
@@ -5029,10 +5495,16 @@ class AdminRiders(viewsets.ViewSet):
                 }
                 delivery_history.append(delivery_data)
             
-            # Calculate performance metrics
+            # Calculate performance metrics with date range
             total_deliveries = deliveries.count()
             completed_deliveries = deliveries.filter(status='delivered').count()
             success_rate = (completed_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0
+            
+            # Calculate average rating - placeholder
+            average_rating = Decimal('4.5')
+            
+            # Calculate total earnings - placeholder
+            total_earnings = Decimal('0')
             
             rider_details = {
                 'rider': {
@@ -5065,11 +5537,20 @@ class AdminRiders(viewsets.ViewSet):
                     'total_deliveries': total_deliveries,
                     'completed_deliveries': completed_deliveries,
                     'success_rate': float(success_rate),
-                    'average_rating': 4.5,  # Placeholder
-                    'total_earnings': 0,    # Placeholder
+                    'average_rating': float(average_rating),
+                    'total_earnings': float(total_earnings),
+                    'date_range_applied': bool(start_date and end_date),
                 },
                 'delivery_history': delivery_history,
             }
+            
+            if start_date and end_date:
+                rider_details['date_range'] = {
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
             
             return Response({
                 'success': True,
@@ -5138,50 +5619,75 @@ class AdminRiders(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_rider_stats(self, request):
-        """Get additional rider statistics"""
+        """Get additional rider statistics with date range support"""
         try:
-            # Time-based statistics
-            today = timezone.now().date()
-            week_ago = today - timedelta(days=7)
-            month_ago = today - timedelta(days=30)
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
             
-            # Delivery statistics
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Delivery statistics within date range
+            weekly_start = end_date - timedelta(days=7)
             weekly_deliveries = Delivery.objects.filter(
-                created_at__date__gte=week_ago
+                created_at__range=[weekly_start, end_date]
             ).count()
             
+            monthly_start = end_date - timedelta(days=30)
             monthly_deliveries = Delivery.objects.filter(
-                created_at__date__gte=month_ago
+                created_at__range=[monthly_start, end_date]
             ).count()
             
-            # Top riders by delivery count
+            # Top riders by delivery count within date range
             top_riders = Rider.objects.annotate(
-                delivery_count=Count('delivery'),
-                completed_deliveries=Count('delivery', filter=Q(delivery__status='delivered'))
+                delivery_count=Count('delivery', filter=Q(
+                    delivery__created_at__range=[start_date, end_date]
+                )),
+                completed_deliveries=Count('delivery', filter=Q(
+                    delivery__created_at__range=[start_date, end_date],
+                    delivery__status='delivered'
+                ))
             ).filter(delivery_count__gt=0).order_by('-delivery_count')[:10]
             
             top_riders_data = []
             for rider in top_riders:
+                success_rate = (rider.completed_deliveries / rider.delivery_count * 100) if rider.delivery_count > 0 else 0
                 top_riders_data.append({
                     'username': rider.rider.username,
                     'first_name': rider.rider.first_name,
                     'last_name': rider.rider.last_name,
                     'delivery_count': rider.delivery_count,
                     'completed_deliveries': rider.completed_deliveries,
-                    'success_rate': (rider.completed_deliveries / rider.delivery_count * 100) if rider.delivery_count > 0 else 0
+                    'success_rate': float(success_rate)
                 })
             
-            # Vehicle type statistics
-            vehicle_stats = Rider.objects.exclude(vehicle_type='').values('vehicle_type').annotate(
+            # Vehicle type statistics within date range
+            vehicle_stats = Rider.objects.filter(
+                rider__created_at__range=[start_date, end_date]
+            ).exclude(vehicle_type='').values('vehicle_type').annotate(
                 count=Count('rider'),
-                active_count=Count('rider', filter=Q(delivery__created_at__date__gte=month_ago))
+                active_count=Count('rider', filter=Q(
+                    delivery__created_at__range=[start_date, end_date]
+                ))
             )
             
             stats = {
                 'weekly_deliveries': weekly_deliveries,
                 'monthly_deliveries': monthly_deliveries,
                 'top_riders': top_riders_data,
-                'vehicle_stats': list(vehicle_stats)
+                'vehicle_stats': list(vehicle_stats),
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
             }
             
             return Response({
@@ -5194,42 +5700,126 @@ class AdminRiders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+             
 
 class AdminVouchers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """
-        Get voucher metrics for admin dashboard
+        Get voucher metrics for admin dashboard with date range filtering
         """
         try:
-            # Calculate total vouchers
-            total_vouchers = Voucher.objects.count()
+            from django.utils.dateparse import parse_datetime, parse_date
+            
+            # Parse date range parameters
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Initialize date filters
+            date_filter = {}
+            
+            if start_date_str:
+                try:
+                    # Try parsing as datetime first, then as date
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        date_filter['added_at__gte'] = start_date.date()
+                    else:
+                        # Try parsing as date string
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            date_filter['added_at__gte'] = start_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date: {e}")
+                    pass
+                    
+            if end_date_str:
+                try:
+                    # Try parsing as datetime first, then as date
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        date_filter['added_at__lte'] = end_date.date()
+                    else:
+                        # Try parsing as date string
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            date_filter['added_at__lte'] = end_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date: {e}")
+                    pass
+            
+            print(f"Date filter: {date_filter}")
+            
+            # Calculate total vouchers with date filter
+            total_vouchers = Voucher.objects.filter(**date_filter).count()
             
             # Calculate active vouchers (is_active=True and not expired)
             now = timezone.now().date()
-            active_vouchers = Voucher.objects.filter(
-                is_active=True,
-                valid_until__gte=now
-            ).count()
+            active_filter = date_filter.copy()
+            active_filter.update({
+                'is_active': True,
+                'valid_until__gte': now
+            })
+            active_vouchers = Voucher.objects.filter(**active_filter).count()
             
             # Calculate expired vouchers
-            expired_vouchers = Voucher.objects.filter(
-                valid_until__lt=now
-            ).count()
+            expired_filter = date_filter.copy()
+            expired_filter['valid_until__lt'] = now
+            expired_vouchers = Voucher.objects.filter(**expired_filter).count()
             
-            # Calculate total usage from Checkout model
+            # Calculate total usage from Checkout model with date range
+            usage_filter = {}
+            if start_date_str:
+                try:
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        usage_filter['created_at__gte'] = start_date
+                    else:
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            # Convert date to datetime for start of day
+                            start_datetime = timezone.make_aware(
+                                datetime.combine(start_date, datetime.min.time())
+                            )
+                            usage_filter['created_at__gte'] = start_datetime
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date for usage: {e}")
+                    pass
+                    
+            if end_date_str:
+                try:
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        # Include the entire end date (up to end of day)
+                        end_date = end_date.replace(hour=23, minute=59, second=59)
+                        usage_filter['created_at__lte'] = end_date
+                    else:
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            # Convert date to datetime for end of day
+                            end_datetime = timezone.make_aware(
+                                datetime.combine(end_date, datetime.max.time())
+                            ).replace(second=59)
+                            usage_filter['created_at__lte'] = end_datetime
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date for usage: {e}")
+                    pass
+            
+            print(f"Usage filter: {usage_filter}")
+            
             total_usage = Checkout.objects.filter(
-                voucher__isnull=False
+                voucher__isnull=False,
+                **usage_filter
             ).count()
             
-            # Calculate total discount amount
-            # This would need to be calculated based on actual usage
-            # For now, we'll use a placeholder calculation
-            total_discount = Checkout.objects.filter(
-                voucher__isnull=False
+            # Calculate total discount amount with date range
+            total_discount_result = Checkout.objects.filter(
+                voucher__isnull=False,
+                **usage_filter
             ).aggregate(
                 total_discount=Sum('voucher__value')
-            )['total_discount'] or 0
+            )
+            total_discount = total_discount_result['total_discount'] or 0
             
             metrics = {
                 'total_vouchers': total_vouchers,
@@ -5245,6 +5835,9 @@ class AdminVouchers(viewsets.ViewSet):
             })
             
         except Exception as e:
+            import traceback
+            print(f"Error in get_metrics: {e}")
+            print(traceback.format_exc())
             return Response({
                 'success': False,
                 'error': str(e)
@@ -5253,9 +5846,12 @@ class AdminVouchers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def vouchers_list(self, request):
         """
-        Get paginated list of vouchers with all required fields
+        Get paginated list of vouchers with all required fields and date range filtering
         """
         try:
+            from django.utils.dateparse import parse_datetime, parse_date
+            from datetime import datetime
+            
             # Get query parameters
             page = int(request.GET.get('page', 1))
             page_size = int(request.GET.get('page_size', 10))
@@ -5264,12 +5860,51 @@ class AdminVouchers(viewsets.ViewSet):
             discount_type = request.GET.get('discount_type', '')
             shop_filter = request.GET.get('shop', '')
             
-            # Start with all vouchers
+            # Parse date range parameters
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Initialize date filters
+            date_filter = {}
+            
+            if start_date_str:
+                try:
+                    # Try parsing as datetime first, then as date
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        date_filter['added_at__gte'] = start_date.date()
+                    else:
+                        # Try parsing as date string
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            date_filter['added_at__gte'] = start_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date: {e}")
+                    pass
+                    
+            if end_date_str:
+                try:
+                    # Try parsing as datetime first, then as date
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        date_filter['added_at__lte'] = end_date.date()
+                    else:
+                        # Try parsing as date string
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            date_filter['added_at__lte'] = end_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date: {e}")
+                    pass
+            
+            print(f"Date filter for vouchers_list: {date_filter}")
+            
+            # Start with all vouchers with date filter
             vouchers_qs = Voucher.objects.select_related(
                 'shop', 'created_by'
             ).prefetch_related(
                 'checkout_set'
-            ).all()
+            ).filter(**date_filter)
             
             # Apply search filter
             if search:
@@ -5307,6 +5942,9 @@ class AdminVouchers(viewsets.ViewSet):
                 else:
                     vouchers_qs = vouchers_qs.filter(shop__name=shop_filter)
             
+            # Apply ordering by latest added
+            vouchers_qs = vouchers_qs.order_by('-added_at')
+            
             # Calculate total count before pagination
             total_count = vouchers_qs.count()
             
@@ -5318,9 +5956,6 @@ class AdminVouchers(viewsets.ViewSet):
             # Serialize voucher data
             vouchers_data = []
             for voucher in vouchers_page:
-                # Calculate usage count for this voucher
-                usage_count = voucher.checkout_set.count()
-                
                 # Get shop data if exists
                 shop_data = None
                 if voucher.shop:
@@ -5356,22 +5991,23 @@ class AdminVouchers(viewsets.ViewSet):
                     'shop': shop_data,
                     'discount_type': voucher.discount_type,
                     'value': float(voucher.value),
-                    'minimum_spend': float(voucher.minimum_spend),
-                    'maximum_usage': voucher.maximum_usage,
                     'valid_until': voucher.valid_until.isoformat(),
                     'added_at': voucher.added_at.isoformat(),
                     'created_by': created_by_data,
                     'is_active': voucher.is_active,
-                    'usage_count': usage_count,
                     'status': status_value,
                     'shopName': shop_data['name'] if shop_data else 'Global'
                 }
                 vouchers_data.append(voucher_data)
             
-            # Get filter options for frontend
+            # Get filter options for frontend (respecting date range)
+            # Get shops that have vouchers in the current date range
+            shop_ids = vouchers_qs.filter(shop__isnull=False).values_list('shop_id', flat=True).distinct()
+            shops_with_vouchers = Shop.objects.filter(id__in=shop_ids)
+            
             filter_options = {
-                'discount_types': list(Voucher.objects.values_list('discount_type', flat=True).distinct()),
-                'shops': list(Shop.objects.values_list('name', flat=True).distinct()),
+                'discount_types': list(Voucher.objects.filter(**date_filter).values_list('discount_type', flat=True).distinct()),
+                'shops': list(shops_with_vouchers.values_list('name', flat=True).distinct()),
                 'statuses': ['active', 'expired', 'scheduled']
             }
             
@@ -5388,108 +6024,14 @@ class AdminVouchers(viewsets.ViewSet):
             })
             
         except Exception as e:
+            import traceback
+            print(f"Error in vouchers_list: {e}")
+            print(traceback.format_exc())
             return Response({
                 'success': False,
                 'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
 
-    @action(detail=True, methods=['post'])
-    def toggle_active(self, request, pk=None):
-        """
-        Toggle voucher active status
-        """
-        try:
-            voucher = Voucher.objects.get(id=pk)
-            voucher.is_active = not voucher.is_active
-            voucher.save()
-            
-            return Response({
-                'success': True,
-                'is_active': voucher.is_active,
-                'message': f'Voucher {"activated" if voucher.is_active else "deactivated"} successfully'
-            })
-            
-        except Voucher.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Voucher not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['delete'])
-    def delete_voucher(self, request, pk=None):
-        """
-        Delete a voucher
-        """
-        try:
-            voucher = Voucher.objects.get(id=pk)
-            voucher_name = voucher.name
-            voucher.delete()
-            
-            return Response({
-                'success': True,
-                'message': f'Voucher "{voucher_name}" deleted successfully'
-            })
-            
-        except Voucher.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Voucher not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['post'])
-    def bulk_action(self, request):
-        """
-        Perform bulk actions on vouchers
-        """
-        try:
-            voucher_ids = request.data.get('voucher_ids', [])
-            action_type = request.data.get('action', '')
-            
-            if not voucher_ids:
-                return Response({
-                    'success': False,
-                    'error': 'No vouchers selected'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            vouchers = Voucher.objects.filter(id__in=voucher_ids)
-            
-            if action_type == 'activate':
-                vouchers.update(is_active=True)
-                message = f'{vouchers.count()} vouchers activated successfully'
-            elif action_type == 'deactivate':
-                vouchers.update(is_active=False)
-                message = f'{vouchers.count()} vouchers deactivated successfully'
-            elif action_type == 'delete':
-                count = vouchers.count()
-                vouchers.delete()
-                message = f'{count} vouchers deleted successfully'
-            else:
-                return Response({
-                    'success': False,
-                    'error': 'Invalid action'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            return Response({
-                'success': True,
-                'message': message
-            })
-            
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-  
 class AdminRefunds(viewsets.ViewSet):    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
@@ -9714,7 +10256,2155 @@ class ModeratorProduct(viewsets.ViewSet):
             )
 
 
+class ModeratorShops(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """
+        Get comprehensive shop metrics for admin dashboard with date range support
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # DEBUG: Print date range for troubleshooting
+            print(f"Date range filter: {start_date} to {end_date}")
+            
+            # Base queryset for ALL shops (not filtered by date for total counts)
+            all_shops_qs = Shop.objects.all()
+            total_shops = all_shops_qs.count()
+            
+            # Get shop IDs for the date range (shops created in that period)
+            date_filtered_shops_qs = Shop.objects.all()
+            if start_date and end_date:
+                date_filtered_shops_qs = date_filtered_shops_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            date_filtered_shop_ids = list(date_filtered_shops_qs.values_list('id', flat=True))
+            
+            # Calculate total followers from ShopFollow (for all shops, not just date-filtered)
+            total_followers = ShopFollow.objects.count()
+            
+            # Calculate average rating from Reviews (for all shops)
+            rating_agg = Review.objects.aggregate(
+                avg_rating=Avg('rating'),
+                total_reviews=Count('id')
+            )
+            avg_rating = rating_agg['avg_rating'] or 0.0
+            
+            # Get verified shops count (for all shops)
+            verified_shops = all_shops_qs.filter(verified=True).count()
+            
+            # Get top shop by rating (for all shops)
+            top_shop = all_shops_qs.annotate(
+                avg_rating=Avg('reviews__rating'),
+                followers_count=Count('followers')
+            ).filter(avg_rating__isnull=False).order_by('-avg_rating').first()
+            
+            top_shop_name = top_shop.name if top_shop else "No shops"
+            
+            # Additional metrics for date range
+            new_shops_in_period = date_filtered_shops_qs.count()
+            verified_shops_in_period = date_filtered_shops_qs.filter(verified=True).count()
+            
+            response_data = {
+                'success': True,
+                'metrics': {
+                    'total_shops': total_shops,
+                    'total_followers': total_followers,
+                    'avg_rating': round(float(avg_rating), 1),
+                    'verified_shops': verified_shops,
+                    'top_shop_name': top_shop_name,
+                    'new_shops_in_period': new_shops_in_period,
+                    'verified_shops_in_period': verified_shops_in_period,
+                },
+                'message': 'Metrics retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving metrics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_shops_list(self, request):
+        """
+        Get list of all shops with computed metrics with optional date range filtering
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset - filter by date range if provided
+            shops_qs = Shop.objects.all().select_related('customer__customer')
+            
+            if start_date and end_date:
+                shops_qs = shops_qs.filter(created_at__range=[start_date, end_date])
+            
+            # DEBUG: Print query info
+            print(f"Found {shops_qs.count()} shops in date range")
+            
+            # Get shop IDs for related data queries
+            shop_ids = list(shops_qs.values_list('id', flat=True))
+            
+            # Compute followers count for each shop
+            followers_data = ShopFollow.objects.filter(
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                followers_count=Count('id')
+            )
+            followers_map = {fd['shop']: fd['followers_count'] for fd in followers_data}
+            
+            # Compute products count for each shop
+            products_data = Product.objects.filter(
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                products_count=Count('id')
+            )
+            products_map = {pd['shop']: pd['products_count'] for pd in products_data}
+            
+            # Compute ratings for each shop
+            ratings_data = Review.objects.filter(
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                avg_rating=Avg('rating'),
+                total_ratings=Count('id')
+            )
+            ratings_map = {rd['shop']: rd for rd in ratings_data}
+            
+            # Compute active boosts for each shop
+            boosts_data = Boost.objects.filter(
+                shop__in=shop_ids,
+                status='active'
+            ).values('shop').annotate(
+                active_boosts=Count('id')
+            )
+            boosts_map = {bd['shop']: bd['active_boosts'] for bd in boosts_data}
+            
+            # Build shops data
+            shops_data = []
+            for shop in shops_qs:
+                shop_id = shop.id
+                
+                # Get owner name
+                customer = shop.customer
+                if customer and customer.customer:
+                    user = customer.customer
+                    owner_name = f"{user.first_name} {user.last_name}".strip()
+                    if not owner_name:
+                        owner_name = user.username or "Unknown"
+                else:
+                    owner_name = "Unknown Owner"
+                
+                # Get computed metrics
+                followers = followers_map.get(shop_id, 0)
+                products_count = products_map.get(shop_id, 0)
+                rating_info = ratings_map.get(shop_id, {'avg_rating': 0.0, 'total_ratings': 0})
+                active_boosts = boosts_map.get(shop_id, 0)
+                
+                shop_data = {
+                    'id': str(shop_id),
+                    'name': shop.name,
+                    'owner': owner_name,
+                    'location': f"{shop.city}, {shop.province}" if shop.city and shop.province else shop.city or shop.province or 'Unknown',
+                    'followers': followers,
+                    'products': products_count,
+                    'rating': round(float(rating_info['avg_rating']), 1),
+                    'totalRatings': rating_info['total_ratings'],
+                    'status': shop.status,
+                    'joinedDate': shop.created_at.isoformat() if shop.created_at else None,
+                    'totalSales': float(shop.total_sales),
+                    'activeBoosts': active_boosts,
+                    'verified': shop.verified
+                }
+                shops_data.append(shop_data)
+            
+            response_data = {
+                'success': True,
+                'shops': shops_data,
+                'total_count': len(shops_data),
+                'message': 'Shops retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving shops: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
+class ModeratorBoosting(viewsets.ViewSet):
+    """
+    ViewSet for admin boost management and analytics
+    """
+    
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2025-12-07)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """
+        Get comprehensive boost metrics for admin dashboard with date range support
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # DEBUG: Print date range for troubleshooting
+            print(f"Boost metrics date range filter: {start_date} to {end_date}")
+            
+            # Base queryset for all boosts (not filtered by date for total counts)
+            all_boosts_qs = Boost.objects.all()
+            total_boosts = all_boosts_qs.count()
+            
+            # Calculate date-filtered metrics
+            date_filtered_boosts_qs = Boost.objects.all()
+            if start_date and end_date:
+                date_filtered_boosts_qs = date_filtered_boosts_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # Active boosts in the date range
+            active_boosts_in_period = date_filtered_boosts_qs.filter(status='active').count()
+            
+            # Calculate revenue from boosts in the date range
+            # Note: Since Boost model doesn't store price, we need to get it from BoostPlan
+            boosts_in_period = date_filtered_boosts_qs.select_related('boost_plan')
+            total_revenue_in_period = sum(
+                float(boost.boost_plan.price) if boost.boost_plan else 0
+                for boost in boosts_in_period
+            )
+            
+            # Get all boost plans for metrics
+            total_boost_plans = BoostPlan.objects.count()
+            active_boost_plans = BoostPlan.objects.filter(status='active').count()
+            
+            # Calculate expiring soon (within 7 days) from ALL boosts (not date-filtered)
+            seven_days_later = timezone.now() + timedelta(days=7)
+            expiring_soon = Boost.objects.filter(
+                status='active',
+                end_date__lte=seven_days_later,
+                end_date__gte=timezone.now()
+            ).count()
+            
+            # Get most popular boost plan in the period (based on usage)
+            popular_plan_data = boosts_in_period.values('boost_plan__name').annotate(
+                usage_count=Count('id')
+            ).order_by('-usage_count').first()
+            
+            most_popular_boost = popular_plan_data['boost_plan__name'] if popular_plan_data else "No boosts"
+            
+            # Additional metrics for the date range
+            new_boosts_in_period = date_filtered_boosts_qs.count()
+            
+            # Get pending boosts in the date range
+            pending_boosts_in_period = date_filtered_boosts_qs.filter(status='pending').count()
+            
+            # Get cancelled boosts in the date range
+            cancelled_boosts_in_period = date_filtered_boosts_qs.filter(status='cancelled').count()
+            
+            # Calculate total revenue from all boosts (not date-filtered)
+            all_boosts_revenue = sum(
+                float(boost.boost_plan.price) if boost.boost_plan else 0
+                for boost in all_boosts_qs.select_related('boost_plan')
+            )
+            
+            response_data = {
+                'success': True,
+                'metrics': {
+                    'total_boosts': total_boosts,
+                    'active_boosts': active_boosts_in_period,
+                    'total_boost_plans': total_boost_plans,
+                    'active_boost_plans': active_boost_plans,
+                    'total_revenue': float(total_revenue_in_period),
+                    'expiring_soon': expiring_soon,
+                    'most_popular_boost': most_popular_boost,
+                    'new_boosts_in_period': new_boosts_in_period,
+                    'pending_boosts': pending_boosts_in_period,
+                    'cancelled_boosts': cancelled_boosts_in_period,
+                    'all_time_revenue': float(all_boosts_revenue)
+                },
+                'message': 'Metrics retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving metrics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_boost_plans(self, request):
+        """
+        Get all boost plans with features and additional data with date range support
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset for boost plans with features
+            boost_plans = BoostPlan.objects.all().select_related('user').prefetch_related(
+                Prefetch(
+                    'features',
+                    queryset=BoostPlanFeature.objects.select_related('feature'),
+                    to_attr='plan_features'
+                )
+            )
+            
+            # Get boosts for usage calculation within date range
+            boosts_qs = Boost.objects.all()
+            if start_date and end_date:
+                boosts_qs = boosts_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # Calculate usage count for each plan within date range
+            plan_usage = boosts_qs.values('boost_plan').annotate(
+                usage_count=Count('id')
+            )
+            usage_map = {item['boost_plan']: item['usage_count'] for item in plan_usage}
+            
+            # Calculate revenue for each plan within date range
+            plan_revenue = boosts_qs.values('boost_plan').annotate(
+                revenue=Sum('boost_plan__price')
+            )
+            revenue_map = {item['boost_plan']: float(item['revenue'] or 0) for item in plan_revenue}
+            
+            plans_data = []
+            for plan in boost_plans:
+                # Get features for this plan
+                features_data = []
+                for plan_feature in getattr(plan, 'plan_features', []):
+                    features_data.append({
+                        'name': plan_feature.feature.name,
+                        'description': plan_feature.feature.description,
+                        'value': plan_feature.value
+                    })
+                
+                plan_data = {
+                    'boost_plan_id': str(plan.id),
+                    'name': plan.name,
+                    'price': float(plan.price),
+                    'duration': plan.duration,
+                    'time_unit': plan.time_unit,
+                    'status': plan.status,
+                    'user_id': str(plan.user.id) if plan.user else None,
+                    'user_name': plan.user.username if plan.user else 'System',
+                    'user_email': plan.user.email if plan.user else None,
+                    'features': features_data,
+                    'usage_count': usage_map.get(plan.id, 0),
+                    'revenue': revenue_map.get(plan.id, 0),
+                    'created_at': plan.created_at.isoformat(),
+                    'updated_at': plan.updated_at.isoformat(),
+                }
+                plans_data.append(plan_data)
+            
+            response_data = {
+                'success': True,
+                'boost_plans': plans_data,
+                'message': 'Boost plans retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving boost plans: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_active_boosts(self, request):
+        """
+        Get all boosts with related data with date range support
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset - filter by date range if provided
+            boosts_qs = Boost.objects.all().order_by('-created_at').select_related(
+                'product',
+                'boost_plan',
+                'shop',
+                'customer',
+                'customer__customer'
+            )
+            
+            if start_date and end_date:
+                boosts_qs = boosts_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # DEBUG: Print query info
+            print(f"Found {boosts_qs.count()} boosts in date range")
+            
+            boosts_data = []
+            for boost in boosts_qs:
+                # Get customer info
+                customer_name = "Unknown"
+                customer_email = "No email"
+                if boost.customer and boost.customer.customer:
+                    user = boost.customer.customer
+                    customer_name = f"{user.first_name} {user.last_name}".strip()
+                    if not customer_name:
+                        customer_name = user.username
+                    customer_email = user.email or "No email"
+                
+                # Get shop info
+                shop_name = boost.shop.name if boost.shop else "No shop"
+                shop_id = str(boost.shop.id) if boost.shop else None
+                
+                # Get product info
+                product_name = boost.product.name if boost.product else "No product"
+                product_id = str(boost.product.id) if boost.product else None
+                
+                # Get boost plan info
+                boost_plan_name = boost.boost_plan.name if boost.boost_plan else "No plan"
+                boost_plan_price = float(boost.boost_plan.price) if boost.boost_plan else 0.0
+                
+                # Calculate duration in days for display
+                duration_days = 0
+                if boost.start_date and boost.end_date:
+                    duration_days = (boost.end_date - boost.start_date).days
+                
+                boost_data = {
+                    'boost_id': str(boost.id),
+                    'product_id': product_id,
+                    'product_name': product_name,
+                    'boost_plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
+                    'boost_plan_name': boost_plan_name,
+                    'shop_id': shop_id,
+                    'shop_name': shop_name,
+                    'customer_id': str(boost.customer.customer) if boost.customer else None,
+                    'customer_name': customer_name,
+                    'customer_email': customer_email,
+                    'status': boost.status,
+                    'amount': boost_plan_price,
+                    'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                    'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                    'duration_days': duration_days,
+                    'created_at': boost.created_at.isoformat(),
+                    'updated_at': boost.updated_at.isoformat(),
+                }
+                boosts_data.append(boost_data)
+            
+            response_data = {
+                'success': True,
+                'boosts': boosts_data,
+                'total_count': len(boosts_data),
+                'message': 'Boosts retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving boosts: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_plan_revenue_data(self, start_date=None, end_date=None):
+        """Get revenue distribution across boost plans within date range"""
+        boosts_qs = Boost.objects.all()
+        if start_date and end_date:
+            boosts_qs = boosts_qs.filter(
+                created_at__range=[start_date, end_date]
+            )
+        
+        # Calculate revenue per plan in the date range
+        plan_revenue = boosts_qs.values('boost_plan__name').annotate(
+            revenue=Sum('boost_plan__price')
+        ).filter(revenue__gt=0)
+        
+        total_revenue = sum(item['revenue'] or 0 for item in plan_revenue)
+        
+        plan_revenue_data = []
+        for item in plan_revenue:
+            plan_revenue_value = float(item['revenue'] or 0)
+            percentage = (plan_revenue_value / total_revenue * 100) if total_revenue > 0 else 0
+            
+            plan_revenue_data.append({
+                'name': item['boost_plan__name'],
+                'value': plan_revenue_value,
+                'percentage': round(percentage, 1)
+            })
+        
+        return plan_revenue_data
+    
+    @action(detail=False, methods=['post'])
+    def create_boost_plan(self, request):
+        """
+        Create a new boost plan
+        """
+        try:
+            required_fields = ['name', 'price', 'duration', 'time_unit']
+            for field in required_fields:
+                if field not in request.data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Validate time_unit
+            valid_time_units = ['hours', 'days', 'weeks', 'months']
+            if request.data['time_unit'] not in valid_time_units:
+                return Response(
+                    {'success': False, 'error': f'Invalid time_unit. Must be one of: {valid_time_units}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            boost_plan = BoostPlan.objects.create(
+                name=request.data['name'],
+                price=request.data['price'],
+                duration=request.data['duration'],
+                time_unit=request.data['time_unit'],
+                status=request.data.get('status', 'active'),
+                user=request.user if request.user.is_authenticated else None
+            )
+            
+            response_data = {
+                'success': True,
+                'boost_plan': {
+                    'boost_plan_id': str(boost_plan.id),
+                    'name': boost_plan.name,
+                    'price': float(boost_plan.price),
+                    'duration': boost_plan.duration,
+                    'time_unit': boost_plan.time_unit,
+                    'status': boost_plan.status,
+                    'created_at': boost_plan.created_at.isoformat(),
+                },
+                'message': 'Boost plan created successfully'
+            }
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error creating boost plan: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['put'])
+    def update_boost_plan(self, request):
+        """
+        Update an existing boost plan
+        """
+        try:
+            boost_plan_id = request.data.get('boost_plan_id')
+            if not boost_plan_id:
+                return Response(
+                    {'success': False, 'error': 'boost_plan_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                boost_plan = BoostPlan.objects.get(id=boost_plan_id)
+            except BoostPlan.DoesNotExist:
+                return Response(
+                    {'success': False, 'error': 'Boost plan not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Update fields
+            updatable_fields = ['name', 'price', 'duration', 'time_unit', 'status']
+            for field in updatable_fields:
+                if field in request.data:
+                    setattr(boost_plan, field, request.data[field])
+            
+            boost_plan.save()
+            
+            response_data = {
+                'success': True,
+                'boost_plan': {
+                    'boost_plan_id': str(boost_plan.id),
+                    'name': boost_plan.name,
+                    'price': float(boost_plan.price),
+                    'duration': boost_plan.duration,
+                    'time_unit': boost_plan.time_unit,
+                    'status': boost_plan.status,
+                    'updated_at': boost_plan.updated_at.isoformat(),
+                },
+                'message': 'Boost plan updated successfully'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error updating boost plan: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['delete'])
+    def delete_boost_plan(self, request):
+        """
+        Delete a boost plan (soft delete by setting status to archived)
+        """
+        try:
+            boost_plan_id = request.data.get('boost_plan_id')
+            if not boost_plan_id:
+                return Response(
+                    {'success': False, 'error': 'boost_plan_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                boost_plan = BoostPlan.objects.get(id=boost_plan_id)
+            except BoostPlan.DoesNotExist:
+                return Response(
+                    {'success': False, 'error': 'Boost plan not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if plan is being used
+            active_boosts = Boost.objects.filter(boost_plan=boost_plan, status='active').count()
+            if active_boosts > 0:
+                return Response(
+                    {'success': False, 'error': f'Cannot delete plan with {active_boosts} active boosts'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Soft delete by archiving
+            boost_plan.status = 'archived'
+            boost_plan.save()
+            
+            response_data = {
+                'success': True,
+                'message': 'Boost plan archived successfully'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error deleting boost plan: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+  
+class ModeratorOrders(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2025-12-07)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """Get order metrics and analytics data for admin dashboard with date range support"""
+        try:
+            # FIX: Accept both parameter names for compatibility
+            start_date_str = request.GET.get('start_date') or request.GET.get('start')
+            end_date_str = request.GET.get('end_date') or request.GET.get('end')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # DEBUG: Print date range for troubleshooting
+            print(f"Order metrics date range filter: {start_date} to {end_date}")
+            
+            # Base queryset with date filter applied
+            date_filtered_orders_qs = Order.objects.all()
+            if start_date and end_date:
+                date_filtered_orders_qs = date_filtered_orders_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # All metrics should be calculated within the date range for consistency
+            total_orders_in_period = date_filtered_orders_qs.count()
+            completed_orders_in_period = date_filtered_orders_qs.filter(status='completed').count()
+            pending_orders_in_period = date_filtered_orders_qs.filter(status='pending').count()
+            cancelled_orders_in_period = date_filtered_orders_qs.filter(status='cancelled').count()
+            
+            # Calculate revenue from orders in the date range
+            revenue_data_in_period = date_filtered_orders_qs.filter(status='completed').aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            total_revenue_in_period = revenue_data_in_period['total_revenue'] or Decimal('0')
+            
+            # Today's orders within the date range (not necessarily actual today)
+            today_in_range = False
+            today_orders_in_period = 0
+            
+            # Check if "today" is within the date range
+            today = timezone.now().date()
+            start_date_date = start_date.date() if start_date else None
+            end_date_date = end_date.date() if end_date else None
+            
+            if start_date_date and end_date_date and start_date_date <= today <= end_date_date:
+                # Today is within the date range, calculate today's orders
+                today_orders_in_period = Order.objects.filter(
+                    created_at__date=today,
+                    created_at__gte=start_date,
+                    created_at__lte=end_date
+                ).count()
+            
+            # Monthly orders within the date range
+            # Calculate the start and end of the current month within the date range
+            current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            monthly_orders_in_period = 0
+            
+            if start_date and end_date:
+                # Determine the overlapping period between the date range and current month
+                month_range_start = max(start_date, current_month_start)
+                month_range_end = min(end_date, timezone.now())
+                
+                if month_range_start <= month_range_end:
+                    monthly_orders_in_period = Order.objects.filter(
+                        created_at__range=[month_range_start, month_range_end]
+                    ).count()
+            
+            # Average order value for the period
+            avg_order_value_in_period = Decimal('0')
+            if completed_orders_in_period > 0:
+                avg_order_value_in_period = total_revenue_in_period / completed_orders_in_period
+            
+            # Success rate for the period
+            success_rate_in_period = Decimal('0')
+            if total_orders_in_period > 0:
+                success_rate_in_period = (completed_orders_in_period / total_orders_in_period) * 100
+            
+            # For frontend compatibility, also include all-time total orders
+            all_time_total_orders = Order.objects.all().count()
+            all_time_revenue_data = Order.objects.filter(status='completed').aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            all_time_revenue = all_time_revenue_data['total_revenue'] or Decimal('0')
+            
+            # Compile metrics - use date-filtered values for consistency
+            order_metrics = {
+                'total_orders': total_orders_in_period,  # Use date-filtered total
+                'pending_orders': pending_orders_in_period,
+                'completed_orders': completed_orders_in_period,
+                'cancelled_orders': cancelled_orders_in_period,
+                'total_revenue': float(total_revenue_in_period),
+                'today_orders': today_orders_in_period,  # Today's orders within date range
+                'monthly_orders': monthly_orders_in_period,  # Monthly orders within date range
+                'avg_order_value': float(avg_order_value_in_period),
+                'success_rate': float(success_rate_in_period),
+                # Include all-time stats for reference if needed
+                'all_time_total_orders': all_time_total_orders,
+                'all_time_revenue': float(all_time_revenue)
+            }
+            
+            # Get analytics data with date range
+            analytics_data = self._get_analytics_data(start_date, end_date)
+            
+            # Get recent orders with related data within date range
+            recent_orders = self._get_recent_orders(start_date, end_date)
+            
+            response_data = {
+                'success': True,
+                'metrics': order_metrics,
+                'analytics': analytics_data,
+                'orders': recent_orders,
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_analytics_data(self, start_date=None, end_date=None):
+        """Generate analytics data for charts with date range support"""
+        # If no date range provided, use last 7 days
+        if not start_date or not end_date:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=7)
+        
+        # Calculate number of days in the range
+        days_diff = (end_date - start_date).days
+        if days_diff > 365:  # For large ranges, use monthly data
+            return self._get_monthly_analytics_data(start_date, end_date)
+        else:
+            return self._get_daily_analytics_data(start_date, end_date)
+    
+    def _get_daily_analytics_data(self, start_date, end_date):
+        """Generate daily analytics data"""
+        daily_orders = []
+        current_date = start_date.date()
+        end_date_date = end_date.date()
+        
+        while current_date <= end_date_date:
+            day_data = Order.objects.filter(
+                created_at__date=current_date
+            ).aggregate(
+                count=Count('order'),
+                revenue=Sum('total_amount')
+            )
+            
+            daily_orders.append({
+                'date': current_date.strftime('%b %d'),
+                'count': day_data['count'] or 0,
+                'revenue': float(day_data['revenue'] or 0)
+            })
+            
+            current_date += timedelta(days=1)
+        
+        # Status distribution within date range
+        status_distribution = []
+        status_counts = Order.objects.filter(
+            created_at__range=[start_date, end_date]
+        ).values('status').annotate(count=Count('order'))
+        
+        for status_data in status_counts:
+            status_distribution.append({
+                'name': status_data['status'].capitalize(),
+                'value': status_data['count']
+            })
+        
+        # Payment method distribution within date range
+        payment_method_distribution = []
+        payment_counts = Order.objects.filter(
+            created_at__range=[start_date, end_date]
+        ).values('payment_method').annotate(count=Count('order'))
+        
+        for payment_data in payment_counts:
+            if payment_data['payment_method']:
+                payment_method_distribution.append({
+                    'name': payment_data['payment_method'],
+                    'value': payment_data['count']
+                })
+        
+        return {
+            'daily_orders': daily_orders,
+            'status_distribution': status_distribution,
+            'payment_method_distribution': payment_method_distribution,
+            'period_type': 'daily'
+        }
+    
+    def _get_monthly_analytics_data(self, start_date, end_date):
+        """Generate monthly analytics data for large date ranges"""
+        monthly_orders = []
+        
+        # Get all months in the range
+        current_month = start_date.replace(day=1)
+        while current_month <= end_date:
+            next_month = current_month + relativedelta(months=1)
+            
+            month_data = Order.objects.filter(
+                created_at__gte=current_month,
+                created_at__lt=next_month
+            ).aggregate(
+                count=Count('order'),
+                revenue=Sum('total_amount')
+            )
+            
+            monthly_orders.append({
+                'date': current_month.strftime('%b %Y'),
+                'count': month_data['count'] or 0,
+                'revenue': float(month_data['revenue'] or 0)
+            })
+            
+            current_month = next_month
+        
+        return {
+            'daily_orders': monthly_orders,
+            'period_type': 'monthly'
+        }
+    
+    def _get_recent_orders(self, start_date=None, end_date=None):
+        """Get recent orders with all related data with date range support"""
+        orders_qs = Order.objects.select_related(
+            'user'
+        ).prefetch_related(
+            'checkout_set',
+            'checkout_set__cart_item',
+            'checkout_set__cart_item__product',
+            'checkout_set__cart_item__product__shop',
+            'checkout_set__voucher'
+        ).order_by('-created_at')
+        
+        # Apply date filter if provided
+        if start_date and end_date:
+            orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+        
+        orders = orders_qs[:]
+        
+        order_list = []
+        
+        for order in orders:
+            # Get all checkouts for this order
+            order_checkouts = order.checkout_set.select_related(
+                'cart_item',
+                'cart_item__product',
+                'cart_item__product__shop',
+                'cart_item__user',
+                'voucher'
+            ).all()
+            
+            # Process items in the order
+            items = []
+            for checkout in order_checkouts:
+                cart_item = checkout.cart_item
+                product = cart_item.product if cart_item else None
+                shop = product.shop if product else None
+                user = cart_item.user if cart_item else None
+                
+                item_data = {
+                    'id': str(checkout.id),
+                    'cart_item': {
+                        'id': str(cart_item.id) if cart_item else None,
+                        'product': {
+                            'id': str(product.id) if product else None,
+                            'name': product.name if product else 'Unknown Product',
+                            'price': float(product.price) if product else 0,
+                            'shop': {
+                                'id': str(shop.id) if shop else None,
+                                'name': shop.name if shop else 'Unknown Shop'
+                            }
+                        },
+                        'quantity': cart_item.quantity if cart_item else 0,
+                        'user': {
+                            'id': str(user.id) if user else None,
+                            'username': user.username if user else 'Unknown User',
+                            'email': user.email if user else '',
+                            'first_name': user.first_name if user else '',
+                            'last_name': user.last_name if user else ''
+                        }
+                    },
+                    'quantity': checkout.quantity,
+                    'total_amount': float(checkout.total_amount),
+                    'status': checkout.status,
+                    'remarks': checkout.remarks or '',
+                }
+                
+                # Add voucher data if exists
+                if checkout.voucher:
+                    item_data['voucher'] = {
+                        'id': str(checkout.voucher.id),
+                        'name': checkout.voucher.name,
+                        'code': checkout.voucher.code,
+                        'value': float(checkout.voucher.value)
+                    }
+                
+                items.append(item_data)
+            
+            # FIX: Use delivery_address_text instead of delivery_address
+            # Also include shipping address info if available
+            delivery_address = order.delivery_address_text or ''
+            shipping_address_info = {}
+            
+            if order.shipping_address:
+                shipping_address_info = {
+                    'id': str(order.shipping_address.id),
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type
+                }
+            
+            order_data = {
+                'order_id': str(order.order),
+                'user': {
+                    'id': str(order.user.id),
+                    'username': order.user.username,
+                    'email': order.user.email,
+                    'first_name': order.user.first_name,
+                    'last_name': order.user.last_name
+                },
+                'status': order.status,
+                'total_amount': float(order.total_amount),
+                'payment_method': order.payment_method,
+                'delivery_address': delivery_address,  # Use the correct field name
+                'shipping_address': shipping_address_info,  # Add structured shipping address data
+                'created_at': order.created_at.isoformat() if order.created_at else None,
+                'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                'items': items
+            }
+            
+            order_list.append(order_data)
+        
+        return order_list
+
+    @action(detail=False, methods=['get'])
+    def get_order_details(self, request):
+        """Get detailed order information"""
+        order_id = request.query_params.get('order_id')
+        
+        if not order_id:
+            return Response({
+                'success': False,
+                'error': 'Order ID is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            order = Order.objects.select_related(
+                'user'
+            ).prefetch_related(
+                'checkout_set',
+                'checkout_set__cart_item',
+                'checkout_set__cart_item__product',
+                'checkout_set__cart_item__product__shop',
+                'checkout_set__voucher'
+            ).get(order=order_id)
+            
+            # Process order items
+            items = []
+            for checkout in order.checkout_set.all():
+                cart_item = checkout.cart_item
+                product = cart_item.product if cart_item else None
+                shop = product.shop if product else None
+                user = cart_item.user if cart_item else None
+                
+                item_data = {
+                    'id': str(checkout.id),
+                    'cart_item': {
+                        'id': str(cart_item.id) if cart_item else None,
+                        'product': {
+                            'id': str(product.id) if product else None,
+                            'name': product.name if product else 'Unknown Product',
+                            'description': product.description if product else '',
+                            'price': float(product.price) if product else 0,
+                            'quantity': product.quantity if product else 0,
+                            'condition': product.condition if product else '',
+                            'shop': {
+                                'id': str(shop.id) if shop else None,
+                                'name': shop.name if shop else 'Unknown Shop',
+                                'contact_number': shop.contact_number if shop else ''
+                            }
+                        },
+                        'quantity': cart_item.quantity if cart_item else 0,
+                        'user': {
+                            'id': str(user.id) if user else None,
+                            'username': user.username if user else 'Unknown User',
+                            'email': user.email if user else '',
+                            'first_name': user.first_name if user else '',
+                            'last_name': user.last_name if user else '',
+                            'contact_number': user.contact_number if user else ''
+                        }
+                    },
+                    'quantity': checkout.quantity,
+                    'total_amount': float(checkout.total_amount),
+                    'status': checkout.status,
+                    'remarks': checkout.remarks or '',
+                }
+                
+                if checkout.voucher:
+                    item_data['voucher'] = {
+                        'id': str(checkout.voucher.id),
+                        'name': checkout.voucher.name,
+                        'code': checkout.voucher.code,
+                        'value': float(checkout.voucher.value),
+                        'discount_type': checkout.voucher.discount_type
+                    }
+                
+                items.append(item_data)
+            
+            # FIX: Use delivery_address_text instead of delivery_address
+            delivery_address = order.delivery_address_text or ''
+            
+            # Include shipping address info if available
+            shipping_address_info = {}
+            if order.shipping_address:
+                shipping_address_info = {
+                    'id': str(order.shipping_address.id),
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'street': order.shipping_address.street,
+                    'barangay': order.shipping_address.barangay,
+                    'city': order.shipping_address.city,
+                    'province': order.shipping_address.province,
+                    'zip_code': order.shipping_address.zip_code,
+                    'country': order.shipping_address.country,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type,
+                    'building_name': order.shipping_address.building_name,
+                    'floor_number': order.shipping_address.floor_number,
+                    'unit_number': order.shipping_address.unit_number,
+                    'landmark': order.shipping_address.landmark,
+                    'instructions': order.shipping_address.instructions
+                }
+            
+            order_data = {
+                'order_id': str(order.order),
+                'user': {
+                    'id': str(order.user.id),
+                    'username': order.user.username,
+                    'email': order.user.email,
+                    'first_name': order.user.first_name,
+                    'last_name': order.user.last_name,
+                    'contact_number': order.user.contact_number
+                },
+                'status': order.status,
+                'total_amount': float(order.total_amount),
+                'payment_method': order.payment_method,
+                'delivery_address': delivery_address,  # Use the correct field name
+                'shipping_address': shipping_address_info,  # Add structured shipping address
+                'created_at': order.created_at.isoformat(),
+                'updated_at': order.updated_at.isoformat(),
+                'items': items
+            }
+            
+            return Response({
+                'success': True,
+                'order': order_data
+            })
+            
+        except Order.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Order not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        
+    @action(detail=False, methods=['post'])
+    def update_order_status(self, request):
+        """Update order status"""
+        order_id = request.data.get('order_id')
+        new_status = request.data.get('status')
+        
+        if not order_id or not new_status:
+            return Response({
+                'success': False,
+                'error': 'Order ID and status are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            order = Order.objects.get(order=order_id)
+            order.status = new_status
+            order.save()
+            
+            return Response({
+                'success': True,
+                'message': f'Order status updated to {new_status}'
+            })
+            
+        except Order.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Order not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def get_order_stats(self, request):
+        """Get additional order statistics with date range support"""
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset with date filter
+            orders_qs = Order.objects.filter(status='completed')
+            if start_date and end_date:
+                orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+            
+            # Revenue statistics for the period
+            revenue_data = orders_qs.aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            period_revenue = revenue_data['total_revenue'] or Decimal('0')
+            
+            # Daily revenue for today (still actual today)
+            today = timezone.now().date()
+            daily_revenue = Order.objects.filter(
+                status='completed',
+                created_at__date=today
+            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
+            
+            # Top customers by order count in the period
+            top_customers = orders_qs.values(
+                'user__username',
+                'user__first_name',
+                'user__last_name'
+            ).annotate(
+                order_count=Count('order'),
+                total_spent=Sum('total_amount')
+            ).order_by('-total_spent')[:10]
+            
+            # Top products by order count in the period (through checkouts)
+            checkouts_qs = Checkout.objects.filter(order__isnull=False, cart_item__product__isnull=False)
+            if start_date and end_date:
+                checkouts_qs = checkouts_qs.filter(created_at__range=[start_date, end_date])
+            
+            top_products = checkouts_qs.values(
+                'cart_item__product__name'
+            ).annotate(
+                order_count=Count('order', distinct=True)
+            ).order_by('-order_count')[:10]
+            
+            # Top shops by revenue in the period
+            top_shops = checkouts_qs.values(
+                'cart_item__product__shop__name'
+            ).annotate(
+                total_revenue=Sum('total_amount'),
+                order_count=Count('order', distinct=True)
+            ).order_by('-total_revenue')[:10]
+            
+            stats = {
+                'period_revenue': float(period_revenue),
+                'revenue_today': float(daily_revenue),
+                'top_customers': list(top_customers),
+                'top_products': list(top_products),
+                'top_shops': list(top_shops),
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response({
+                'success': True,
+                'stats': stats
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ModeratorRiders(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2026-01-04T06:11:55.816Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2026-01-04)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """Get rider metrics and analytics data for admin dashboard with date range support"""
+        try:
+            # Accept both parameter names for compatibility
+            start_date_str = request.GET.get('start_date') or request.GET.get('start')
+            end_date_str = request.GET.get('end_date') or request.GET.get('end')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # DEBUG: Print date range for troubleshooting
+            print(f"Rider metrics date range filter: {start_date} to {end_date}")
+            
+            # Base queryset with date filter applied for rider registrations
+            rider_registrations_qs = Rider.objects.all()
+            if start_date and end_date:
+                rider_registrations_qs = rider_registrations_qs.filter(
+                    rider__created_at__range=[start_date, end_date]
+                )
+            
+            # Get rider counts within date range
+            total_riders_in_period = rider_registrations_qs.count()
+            pending_riders_in_period = rider_registrations_qs.filter(
+                verified=False, 
+                approval_date__isnull=True
+            ).count()
+            approved_riders_in_period = rider_registrations_qs.filter(
+                verified=True, 
+                approval_date__isnull=False
+            ).count()
+            
+            # Get active riders (those with deliveries in the date range)
+            active_rider_ids = Delivery.objects.filter(
+                created_at__range=[start_date, end_date]
+            ).values_list('rider_id', flat=True).distinct()
+            active_riders_in_period = rider_registrations_qs.filter(
+                rider_id__in=active_rider_ids
+            ).count()
+            
+            # Delivery statistics within date range
+            deliveries_in_period = Delivery.objects.filter(
+                created_at__range=[start_date, end_date]
+            )
+            total_deliveries_in_period = deliveries_in_period.count()
+            completed_deliveries_in_period = deliveries_in_period.filter(
+                status='delivered'
+            ).count()
+            
+            # Success rate for the period
+            success_rate_in_period = Decimal('0')
+            if total_deliveries_in_period > 0:
+                success_rate_in_period = (completed_deliveries_in_period / total_deliveries_in_period) * 100
+            
+            # Calculate average rating - using placeholder since we can't link reviews to riders directly
+            # If you have a way to link reviews to riders (through orders/deliveries), implement it here
+            average_rating_in_period = Decimal('4.5')  # Placeholder
+            
+            # Calculate total earnings - placeholder
+            total_earnings_in_period = Decimal('0')
+            
+            # For frontend compatibility, also include all-time counts
+            all_time_total_riders = Rider.objects.all().count()
+            all_time_total_deliveries = Delivery.objects.all().count()
+            all_time_completed_deliveries = Delivery.objects.filter(status='delivered').count()
+            
+            # Compile metrics - use date-filtered values for consistency
+            rider_metrics = {
+                'total_riders': total_riders_in_period,
+                'pending_riders': pending_riders_in_period,
+                'approved_riders': approved_riders_in_period,
+                'active_riders': active_riders_in_period,
+                'total_deliveries': total_deliveries_in_period,
+                'completed_deliveries': completed_deliveries_in_period,
+                'success_rate': float(success_rate_in_period),
+                'average_rating': float(average_rating_in_period),
+                'total_earnings': float(total_earnings_in_period),
+                # Include all-time stats for reference if needed
+                'all_time_total_riders': all_time_total_riders,
+                'all_time_total_deliveries': all_time_total_deliveries,
+                'all_time_completed_deliveries': all_time_completed_deliveries
+            }
+            
+            # Get analytics data with date range (simplified to avoid Review model issues)
+            analytics_data = self._get_analytics_data(start_date, end_date)
+            
+            # Get riders data within date range
+            riders_data = self._get_riders_data(start_date, end_date)
+            
+            response_data = {
+                'success': True,
+                'metrics': rider_metrics,
+                'analytics': analytics_data,
+                'riders': riders_data,
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_analytics_data(self, start_date=None, end_date=None):
+        """Generate analytics data for charts with date range support - SIMPLIFIED VERSION"""
+        # If no date range provided, use last 30 days
+        if not start_date or not end_date:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+        
+        # Rider registrations within date range
+        rider_registrations = []
+        current_date = start_date.date()
+        end_date_date = end_date.date()
+        
+        # Determine if we should show daily or monthly data
+        days_diff = (end_date_date - current_date).days
+        
+        if days_diff <= 90:  # For 3 months or less, show daily data
+            while current_date <= end_date_date:
+                count = Rider.objects.filter(
+                    rider__created_at__date=current_date
+                ).count()
+                
+                rider_registrations.append({
+                    'date': current_date.strftime('%b %d'),
+                    'count': count
+                })
+                
+                current_date += timedelta(days=1)
+        else:  # For longer periods, show monthly data
+            current_month = start_date.replace(day=1)
+            while current_month <= end_date:
+                next_month = current_month + relativedelta(months=1)
+                
+                count = Rider.objects.filter(
+                    rider__created_at__gte=current_month,
+                    rider__created_at__lt=next_month
+                ).count()
+                
+                rider_registrations.append({
+                    'date': current_month.strftime('%b %Y'),
+                    'count': count
+                })
+                
+                current_month = next_month
+        
+        # Status distribution within date range
+        riders_in_period = Rider.objects.filter(
+            rider__created_at__range=[start_date, end_date]
+        )
+        
+        status_distribution = [
+            {
+                'name': 'Approved',
+                'value': riders_in_period.filter(verified=True, approval_date__isnull=False).count()
+            },
+            {
+                'name': 'Pending',
+                'value': riders_in_period.filter(verified=False, approval_date__isnull=True).count()
+            },
+            {
+                'name': 'Rejected',
+                'value': riders_in_period.filter(verified=False, approval_date__isnull=False).count()
+            }
+        ]
+        
+        # Vehicle type distribution within date range
+        vehicle_type_distribution = []
+        vehicle_counts = riders_in_period.exclude(vehicle_type='').values('vehicle_type').annotate(
+            count=Count('rider')
+        )
+        
+        for vehicle_data in vehicle_counts:
+            vehicle_type_distribution.append({
+                'name': vehicle_data['vehicle_type'],
+                'value': vehicle_data['count']
+            })
+        
+        # Performance trends within date range (simplified - only deliveries)
+        performance_trends = []
+        
+        # Determine time intervals based on date range
+        range_days = (end_date - start_date).days
+        
+        if range_days <= 180:  # 6 months or less
+            # Show monthly trends
+            current_month = start_date.replace(day=1)
+            while current_month <= end_date:
+                next_month = current_month + relativedelta(months=1)
+                month_name = current_month.strftime('%b %Y')
+                
+                # Get deliveries in this month
+                monthly_deliveries = Delivery.objects.filter(
+                    created_at__gte=current_month,
+                    created_at__lt=next_month
+                ).count()
+                
+                performance_trends.append({
+                    'month': month_name,
+                    'deliveries': monthly_deliveries,
+                    'earnings': 0,  # Placeholder
+                    'rating': 4.5   # Placeholder
+                })
+                
+                current_month = next_month
+        else:
+            # For longer periods, show quarterly trends
+            current_quarter = start_date
+            while current_quarter <= end_date:
+                next_quarter = current_quarter + relativedelta(months=3)
+                quarter_name = f"Q{(current_quarter.month-1)//3 + 1} {current_quarter.year}"
+                
+                # Get deliveries in this quarter
+                quarterly_deliveries = Delivery.objects.filter(
+                    created_at__gte=current_quarter,
+                    created_at__lt=next_quarter
+                ).count()
+                
+                performance_trends.append({
+                    'month': quarter_name,
+                    'deliveries': quarterly_deliveries,
+                    'earnings': 0,  # Placeholder
+                    'rating': 4.5   # Placeholder
+                })
+                
+                current_quarter = next_quarter
+        
+        return {
+            'rider_registrations': rider_registrations,
+            'status_distribution': status_distribution,
+            'vehicle_type_distribution': vehicle_type_distribution,
+            'performance_trends': performance_trends,
+            'period_type': 'daily' if days_diff <= 90 else 'monthly'
+        }
+    
+    def _get_riders_data(self, start_date=None, end_date=None):
+        """Get riders with all related data with date range support"""
+        riders_qs = Rider.objects.select_related(
+            'rider',
+            'approved_by'
+        ).prefetch_related(
+            'delivery_set'
+        ).order_by('-rider__created_at')
+        
+        # Apply date filter if provided
+        if start_date and end_date:
+            riders_qs = riders_qs.filter(
+                rider__created_at__range=[start_date, end_date]
+            )
+        
+        riders = riders_qs[:]
+        
+        rider_list = []
+        
+        for rider in riders:
+            # Calculate performance metrics for this rider within date range
+            rider_deliveries = rider.delivery_set.all()
+            if start_date and end_date:
+                rider_deliveries = rider_deliveries.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            total_deliveries = rider_deliveries.count()
+            completed_deliveries = rider_deliveries.filter(status='delivered').count()
+            
+            # Compute rider status based on verification and approval
+            if rider.verified and rider.approval_date:
+                rider_status = 'approved'
+            elif not rider.verified and not rider.approval_date:
+                rider_status = 'pending'
+            elif not rider.verified and rider.approval_date:
+                rider_status = 'rejected'
+            else:
+                rider_status = 'pending'
+            
+            # Calculate average rating - placeholder since we can't link reviews to riders
+            average_rating = Decimal('4.5')
+            
+            # Calculate total earnings - placeholder
+            total_earnings = Decimal('0')
+            
+            rider_data = {
+                'rider': {
+                    'id': str(rider.rider.id),
+                    'username': rider.rider.username,
+                    'email': rider.rider.email,
+                    'first_name': rider.rider.first_name,
+                    'last_name': rider.rider.last_name,
+                    'contact_number': rider.rider.contact_number,
+                    'created_at': rider.rider.created_at.isoformat() if rider.rider.created_at else None,
+                    'is_rider': rider.rider.is_rider,
+                },
+                'vehicle_type': rider.vehicle_type,
+                'plate_number': rider.plate_number,
+                'vehicle_brand': rider.vehicle_brand,
+                'vehicle_model': rider.vehicle_model,
+                'vehicle_image': rider.vehicle_image.url if rider.vehicle_image else None,
+                'license_number': rider.license_number,
+                'license_image': rider.license_image.url if rider.license_image else None,
+                'verified': rider.verified,
+                'approved_by': {
+                    'id': str(rider.approved_by.id),
+                    'username': rider.approved_by.username,
+                } if rider.approved_by else None,
+                'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
+                # Computed fields for frontend
+                'total_deliveries': total_deliveries,
+                'completed_deliveries': completed_deliveries,
+                'average_rating': float(average_rating),
+                'total_earnings': float(total_earnings),
+                'rider_status': rider_status,
+            }
+            
+            rider_list.append(rider_data)
+        
+        return rider_list
+    
+    @action(detail=False, methods=['get'])
+    def get_rider_details(self, request):
+        """Get detailed rider information"""
+        rider_id = request.query_params.get('rider_id')
+        start_date_str = request.GET.get('start_date')
+        end_date_str = request.GET.get('end_date')
+        
+        if not rider_id:
+            return Response({
+                'success': False,
+                'error': 'Rider ID is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get date range if provided
+            start_date = None
+            end_date = None
+            if start_date_str and end_date_str:
+                try:
+                    start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+                except ValueError as e:
+                    return Response(
+                        {'success': False, 'error': str(e)}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            rider = Rider.objects.select_related(
+                'rider',
+                'approved_by'
+            ).prefetch_related(
+                'delivery_set',
+                'delivery_set__order'
+            ).get(rider_id=rider_id)
+            
+            # Get rider's delivery history with date range filter
+            deliveries_qs = rider.delivery_set.select_related('order').all()
+            if start_date and end_date:
+                deliveries_qs = deliveries_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            deliveries = deliveries_qs
+            delivery_history = []
+            
+            for delivery in deliveries:
+                delivery_data = {
+                    'id': str(delivery.id),
+                    'order_id': str(delivery.order.order),
+                    'status': delivery.status,
+                    'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
+                    'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                    'created_at': delivery.created_at.isoformat(),
+                }
+                delivery_history.append(delivery_data)
+            
+            # Calculate performance metrics with date range
+            total_deliveries = deliveries.count()
+            completed_deliveries = deliveries.filter(status='delivered').count()
+            success_rate = (completed_deliveries / total_deliveries * 100) if total_deliveries > 0 else 0
+            
+            # Calculate average rating - placeholder
+            average_rating = Decimal('4.5')
+            
+            # Calculate total earnings - placeholder
+            total_earnings = Decimal('0')
+            
+            rider_details = {
+                'rider': {
+                    'id': str(rider.rider.id),
+                    'username': rider.rider.username,
+                    'email': rider.rider.email,
+                    'first_name': rider.rider.first_name,
+                    'last_name': rider.rider.last_name,
+                    'contact_number': rider.rider.contact_number,
+                    'created_at': rider.rider.created_at.isoformat(),
+                    'is_rider': rider.rider.is_rider,
+                },
+                'vehicle_info': {
+                    'type': rider.vehicle_type,
+                    'plate_number': rider.plate_number,
+                    'brand': rider.vehicle_brand,
+                    'model': rider.vehicle_model,
+                    'vehicle_image': rider.vehicle_image.url if rider.vehicle_image else None,
+                },
+                'license_info': {
+                    'number': rider.license_number,
+                    'image': rider.license_image.url if rider.license_image else None,
+                },
+                'verification_info': {
+                    'verified': rider.verified,
+                    'approved_by': rider.approved_by.username if rider.approved_by else None,
+                    'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
+                },
+                'performance': {
+                    'total_deliveries': total_deliveries,
+                    'completed_deliveries': completed_deliveries,
+                    'success_rate': float(success_rate),
+                    'average_rating': float(average_rating),
+                    'total_earnings': float(total_earnings),
+                    'date_range_applied': bool(start_date and end_date),
+                },
+                'delivery_history': delivery_history,
+            }
+            
+            if start_date and end_date:
+                rider_details['date_range'] = {
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            
+            return Response({
+                'success': True,
+                'rider': rider_details
+            })
+            
+        except Rider.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Rider not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def update_rider_status(self, request):
+        """Approve or reject rider"""
+        rider_id = request.data.get('rider_id')
+        action_type = request.data.get('action')  # 'approve' or 'reject'
+        
+        if not rider_id or not action_type:
+            return Response({
+                'success': False,
+                'error': 'Rider ID and action are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            rider = Rider.objects.get(rider_id=rider_id)
+            
+            if action_type == 'approve':
+                rider.verified = True
+                rider.approval_date = timezone.now()
+                rider.approved_by = request.user
+                message = 'Rider approved successfully'
+            elif action_type == 'reject':
+                rider.verified = False
+                rider.approval_date = timezone.now()
+                rider.approved_by = request.user
+                message = 'Rider rejected successfully'
+            else:
+                return Response({
+                    'success': False,
+                    'error': 'Invalid action. Use "approve" or "reject"'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            rider.save()
+            
+            return Response({
+                'success': True,
+                'message': message
+            })
+            
+        except Rider.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Rider not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def get_rider_stats(self, request):
+        """Get additional rider statistics with date range support"""
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Delivery statistics within date range
+            weekly_start = end_date - timedelta(days=7)
+            weekly_deliveries = Delivery.objects.filter(
+                created_at__range=[weekly_start, end_date]
+            ).count()
+            
+            monthly_start = end_date - timedelta(days=30)
+            monthly_deliveries = Delivery.objects.filter(
+                created_at__range=[monthly_start, end_date]
+            ).count()
+            
+            # Top riders by delivery count within date range
+            top_riders = Rider.objects.annotate(
+                delivery_count=Count('delivery', filter=Q(
+                    delivery__created_at__range=[start_date, end_date]
+                )),
+                completed_deliveries=Count('delivery', filter=Q(
+                    delivery__created_at__range=[start_date, end_date],
+                    delivery__status='delivered'
+                ))
+            ).filter(delivery_count__gt=0).order_by('-delivery_count')[:10]
+            
+            top_riders_data = []
+            for rider in top_riders:
+                success_rate = (rider.completed_deliveries / rider.delivery_count * 100) if rider.delivery_count > 0 else 0
+                top_riders_data.append({
+                    'username': rider.rider.username,
+                    'first_name': rider.rider.first_name,
+                    'last_name': rider.rider.last_name,
+                    'delivery_count': rider.delivery_count,
+                    'completed_deliveries': rider.completed_deliveries,
+                    'success_rate': float(success_rate)
+                })
+            
+            # Vehicle type statistics within date range
+            vehicle_stats = Rider.objects.filter(
+                rider__created_at__range=[start_date, end_date]
+            ).exclude(vehicle_type='').values('vehicle_type').annotate(
+                count=Count('rider'),
+                active_count=Count('rider', filter=Q(
+                    delivery__created_at__range=[start_date, end_date]
+                ))
+            )
+            
+            stats = {
+                'weekly_deliveries': weekly_deliveries,
+                'monthly_deliveries': monthly_deliveries,
+                'top_riders': top_riders_data,
+                'vehicle_stats': list(vehicle_stats),
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response({
+                'success': True,
+                'stats': stats
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+             
 
 class CustomerProducts(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
