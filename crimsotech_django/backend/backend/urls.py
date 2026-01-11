@@ -28,6 +28,8 @@ router.register(r'moderator-product', ModeratorProduct, basename='moderator-prod
 router.register(r'moderator-shops', ModeratorShops, basename='moderator-shops')
 router.register(r'moderator-boosting', ModeratorBoosting, basename='moderator-boosting')
 router.register(r'moderator-orders', ModeratorOrders, basename='moderator-orders')
+router.register(r'moderator-riders', ModeratorRiders, basename='moderator-riders')
+
 
 router.register(r'rider-status', RiderStatus, basename='rider-status')
 router.register(r'seller-products', SellerProducts, basename='seller-products')
