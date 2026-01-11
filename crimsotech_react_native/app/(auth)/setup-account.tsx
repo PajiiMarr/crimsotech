@@ -1,199 +1,407 @@
-// app/(auth)/setup-account.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  ScrollView,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
+  Alert,
+  ActivityIndicator,
   Modal,
 } from 'react-native';
 import { router } from 'expo-router';
-import { useAuth } from '@/contexts/AuthContext';
-import DateTimePicker from '@react-native-community/datetimepicker'; // Add this package: npx expo install @react-native-community/datetimepicker
+import { MaterialIcons } from '@expo/vector-icons';
+import AxiosInstance from '../../contexts/axios';
+import * as SecureStore from 'expo-secure-store';
+import AddressDropdowns from '../components/address/AddressDropdowns';
+
+type Gender = 'male' | 'female' | 'prefer_not_to_say';
 
 export default function SetupAccountScreen() {
-  const { register, updateUserProfile } = useAuth();
-  const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    middleName: '',
-    gender: '',
-    dateOfBirth: '',
-    age: '',
+  const [loading, setLoading] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [isRider, setIsRider] = useState(false);
+  const [username, setUsername] = useState('');
+  
+  // Form fields
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [email, setEmail] = useState('');
+  const [gender, setGender] = useState<Gender | ''>('');
+  const [dateOfBirth, setDateOfBirth] = useState<Date | null>(null);
+  const [dateValue, setDateValue] = useState('');
+  
+  // Calendar state
+  const [showCalendarModal, setShowCalendarModal] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [showYearDropdown, setShowYearDropdown] = useState(false);
+  
+  // Address fields
+  const [address, setAddress] = useState({
     province: '',
     city: '',
     barangay: '',
+    street: '',
   });
+  
+  // Dropdown modals
+  const [showGenderModal, setShowGenderModal] = useState(false);
+  
+  // Errors
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [age, setAge] = useState<string>('');
 
-  const [errors, setErrors] = useState({
-    firstName: '',
-    lastName: '',
-    gender: '',
-    dateOfBirth: '',
-    province: '',
-    city: '',
-    barangay: '',
-  });
+  useEffect(() => {
+    checkUserStage();
+  }, []);
 
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showSexDropdown, setShowSexDropdown] = useState(false);
-  const [date, setDate] = useState(new Date());
-  const [mode] = useState<'date' | 'time'>('date');
+  useEffect(() => {
+    calculateAge();
+  }, [dateOfBirth]);
 
-  const updateFormData = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  // Function to format date for display (June 01, 2025)
+  const formatDate = (date: Date | null) => { 
+    if (!date) {
+      return "";
+    }
+    return date.toLocaleDateString("en-US", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+    });
+  };
 
-    // Handle the error field mapping - API returns different field names
-    const errorFieldMap: { [key: string]: string } = {
-      'sex': 'gender',  // Backend returns 'sex' but we use 'gender' in state
-    };
-    const errorField = errorFieldMap[field] || field;
+  const formatDateForAPI = (date: Date | null): string => {
+    if (!date) {
+      return "";
+    }
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
-    if (errors[errorField as keyof typeof errors]) {
-      setErrors(prev => ({ ...prev, [errorField]: '' }));
+  const isValidDate = (date: Date | null) => {
+    if (!date) {
+      return false;
+    }
+    return !isNaN(date.getTime());
+  };
+
+  const calculateAge = () => {
+    if (!dateOfBirth || !isValidDate(dateOfBirth)) {
+      setAge("");
+      return;
+    }
+    
+    const today = new Date();
+    const birthDate = new Date(dateOfBirth);
+    
+    let calculatedAge = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    
+    // Adjust age if birthday hasn't occurred this year yet
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      calculatedAge--;
+    }
+    
+    setAge(calculatedAge.toString());
+  };
+
+  const checkUserStage = async () => {
+    try {
+      const userJson = await SecureStore.getItemAsync('user');
+      if (userJson) {
+        const user = JSON.parse(userJson);
+        setUsername(user.username || '');
+        
+        const stage = user.registration_stage || 1;
+        const isUserRider = user.is_rider || false;
+        setIsRider(isUserRider);
+        
+        console.log('📊 User stage check:', { stage, isUserRider });
+        
+        // Stage logic with stage 3 as completed for customers
+        if (isUserRider) {
+          // Rider flow
+          if (stage === 1) {
+            router.replace('/(auth)/signup');
+            return;
+          } else if (stage === 2) {
+            // Good - stay on profiling
+            setUserId(user.user_id?.toString() || null);
+          } else if (stage === 3) {
+            router.replace('/(auth)/verify-phone');
+            return;
+          } else if (stage >= 4) {
+            router.replace('/rider/home');
+            return;
+          }
+        } else {
+          // Customer flow
+          if (stage === 1) {
+            // Good - stay on profiling
+            setUserId(user.user_id?.toString() || null);
+          } else if (stage === 2) {
+            router.replace('/(auth)/verify-phone');
+            return;
+          } else if (stage >= 3) {
+            // STAGE 3 IS COMPLETED FOR CUSTOMERS
+            router.replace('/customer/home');
+            return;
+          }
+        }
+        
+        // Load user profiling data if available
+        await loadUserProfilingData(user.user_id?.toString() || null);
+      } else {
+        // No user found, redirect to login
+        router.replace('/(auth)/login');
+      }
+    } catch (error) {
+      console.error('Error checking user stage:', error);
+      Alert.alert('Error', 'Failed to load user data');
     }
   };
 
-  const onDateChange = (event: any, selectedDate?: Date) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      setDate(selectedDate);
-      const day = selectedDate.getDate();
-      const month = selectedDate.toLocaleString('default', { month: 'long' });
-      const year = selectedDate.getFullYear();
-      const age = new Date().getFullYear() - year;
+  const loadUserProfilingData = async (userId: string | null) => {
+    if (!userId) return;
+    
+    try {
+      const response = await AxiosInstance.get('/api/profiling/', {
+        headers: { 'X-User-Id': userId }
+      });
       
-      const dateStr = `${month} ${day.toString().padStart(2, '0')}, ${year}`;
-      updateFormData('dateOfBirth', dateStr);
-      updateFormData('age', age.toString());
+      if (response.data) {
+        const data = response.data;
+        setFirstName(data.first_name || '');
+        setLastName(data.last_name || '');
+        setMiddleName(data.middle_name || '');
+        setEmail(data.email || '');
+        setGender(data.sex || '');
+        
+        if (data.date_of_birth) {
+          const dob = new Date(data.date_of_birth);
+          if (isValidDate(dob)) {
+            setDateOfBirth(dob);
+            setDateValue(formatDate(dob));
+            setSelectedDate(dob);
+            setSelectedMonth(dob.getMonth());
+            setSelectedYear(dob.getFullYear());
+          }
+        }
+        
+        setAddress({
+          province: data.province || '',
+          city: data.city || '',
+          barangay: data.barangay || '',
+          street: data.street || '',
+        });
+      }
+    } catch (error) {
+      console.error('Error loading profiling data:', error);
     }
-  };
-
-  const selectSex = (gender: string) => {
-    updateFormData('gender', gender);
-    setShowSexDropdown(false);
   };
 
   const validateForm = () => {
-    const newErrors = {
-      firstName: '',
-      lastName: '',
-      gender: '',
-      dateOfBirth: '',
-      province: '',
-      city: '',
-      barangay: '',
-    };
+    const newErrors: Record<string, string> = {};
 
-    let isValid = true;
+    if (!firstName.trim()) newErrors.first_name = 'First name is required';
+    if (!lastName.trim()) newErrors.last_name = 'Last name is required';
+    
+    if (!email.trim()) {
+      newErrors.email = 'Email is required';
+    } else {
+      const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailPattern.test(email)) {
+        newErrors.email = 'Invalid email format';
+      }
+    }
 
-    if (!formData.firstName.trim()) {
-      newErrors.firstName = 'First name is required';
-      isValid = false;
+    if (!gender) newErrors.sex = 'Sex is required';
+    
+    if (!dateOfBirth) {
+      newErrors.date_of_birth = 'Date of birth is required';
+    } else if (parseInt(age) < 15) {
+      newErrors.age = 'You must be at least 15 years old!';
     }
-    if (!formData.lastName.trim()) {
-      newErrors.lastName = 'Last name is required';
-      isValid = false;
-    }
-    if (!formData.gender.trim()) {
-      newErrors.gender = 'Gender is required';
-      isValid = false;
-    }
-    if (!formData.dateOfBirth.trim()) {
-      newErrors.dateOfBirth = 'Date of birth is required';
-      isValid = false;
-    }
-    if (!formData.province.trim()) {
-      newErrors.province = 'Province is required';
-      isValid = false;
-    }
-    if (!formData.city.trim()) {
-      newErrors.city = 'City/Municipality is required';
-      isValid = false;
-    }
-    if (!formData.barangay.trim()) {
-      newErrors.barangay = 'Barangay is required';
-      isValid = false;
-    }
+    
+    if (!address.province) newErrors.province = 'Province is required';
+    if (!address.city) newErrors.city = 'City is required';
+    if (!address.barangay) newErrors.barangay = 'Barangay is required';
 
     setErrors(newErrors);
-    return isValid;
+    return Object.keys(newErrors).length === 0;
   };
 
-const handleNext = async () => {
-  if (validateForm()) {
-    try {
-      // Format the date for the backend (Django expects YYYY-MM-DD format)
-      // formData.dateOfBirth is in format "Month Day, Year", need to convert to YYYY-MM-DD
-      let formattedDateOfBirth = null;
-      if (formData.dateOfBirth) {
-        // Parse the date string "December 15, 2025" to convert to YYYY-MM-DD
-        const dateObj = new Date(formData.dateOfBirth);
-        if (!isNaN(dateObj.getTime())) { // Check if date is valid
-          formattedDateOfBirth = dateObj.toISOString().split('T')[0]; // Convert to YYYY-MM-DD
-        }
-      }
+  const handleSubmit = async () => {
+    console.log('🎯 Submit button clicked');
+    
+    if (!validateForm()) {
+      console.log('❌ Form validation failed');
+      return;
+    }
+    
+    if (!userId) {
+      console.log('❌ No user ID found');
+      Alert.alert('Error', 'User session expired. Please login again.');
+      return;
+    }
 
-      // Update the user profile with the provided information
-      await updateUserProfile({
-        first_name: formData.firstName,
-        last_name: formData.lastName,
-        middle_name: formData.middleName,
-        sex: formData.gender, // Using 'gender' state variable but backend expects 'sex'
-        date_of_birth: formattedDateOfBirth,
-        age: parseInt(formData.age) || null,
-        province: formData.province,
-        city: formData.city,
-        barangay: formData.barangay,
-        street: formData.barangay, // Using barangay as street for now
+    setLoading(true);
+    
+    try {
+      const apiDateOfBirth = formatDateForAPI(dateOfBirth);
+      const registrationStage = isRider ? 3 : 2;
+      
+      const payload = {
+        first_name: firstName,
+        last_name: lastName,
+        middle_name: middleName,
+        email: email,
+        sex: gender,
+        date_of_birth: apiDateOfBirth,
+        age: age,
+        province: address.province,
+        city: address.city,
+        barangay: address.barangay,
+        street: address.street,
+        registration_stage: registrationStage,
+      };
+
+      console.log('📤 Sending to API:', {
+        endpoint: '/api/profiling/',
+        headers: { 'X-User-Id': userId },
+        payload,
+        isRider,
+        newStage: registrationStage
+      });
+      
+      const response = await AxiosInstance.put('/api/profiling/', payload, {
+        headers: { 'X-User-Id': userId }
       });
 
-      // Navigate to phone verification
-      router.replace('/(auth)/verify-phone');
-    } catch (error: any) {
-      // Handle profile update error with specific messages
-      if (error.response) {
-        // Handle field-specific validation errors
-        const errorResponse = error.response;
-        let errorMessage = '';
-
-        if (errorResponse.first_name) {
-          setErrors(prev => ({ ...prev, firstName: errorResponse.first_name[0] }));
-          errorMessage += 'First name: ' + errorResponse.first_name[0] + '\n';
-        }
-        if (errorResponse.last_name) {
-          setErrors(prev => ({ ...prev, lastName: errorResponse.last_name[0] }));
-          errorMessage += 'Last name: ' + errorResponse.last_name[0] + '\n';
-        }
-        if (errorResponse.sex) {
-          setErrors(prev => ({ ...prev, gender: errorResponse.sex[0] }));
-          errorMessage += 'Gender: ' + errorResponse.sex[0] + '\n';
-        }
-        if (errorResponse.date_of_birth) {
-          setErrors(prev => ({ ...prev, dateOfBirth: errorResponse.date_of_birth[0] }));
-          errorMessage += 'Date of birth: ' + errorResponse.date_of_birth[0] + '\n';
-        }
-        if (errorResponse.non_field_errors) {
-          errorMessage += errorResponse.non_field_errors.join('\n');
-        }
-
-        if (!errorMessage) {
-          errorMessage = 'Error setting up account. Please try again.';
-        }
-
-        alert(errorMessage);
-      } else {
-        // Handle network or other errors
-        console.error('Setup account error:', error);
-        alert('Error setting up account. Please try again.');
+      console.log('✅ API Response:', response.data);
+      
+      // Update user data with new registration stage
+      const userJson = await SecureStore.getItemAsync('user');
+      if (userJson) {
+        const user = JSON.parse(userJson);
+        user.registration_stage = registrationStage;
+        await SecureStore.setItemAsync('user', JSON.stringify(user));
       }
+      
+      // Save temp_user_id for next stage
+      await SecureStore.setItemAsync('temp_user_id', userId);
+      
+      // Navigate to phone verification
+      console.log('🚀 Navigating to verify-phone...');
+      router.replace('/(auth)/verify-phone');
+      
+    } catch (error: any) {
+      console.error('❌ ERROR DETAILS:', error.response?.data || error.message);
+      
+      let errorMessage = 'Failed to save profile. Please try again.';
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+      
+      Alert.alert('Error', errorMessage);
+    } finally {
+      console.log('🏁 Loading finished');
+      setLoading(false);
     }
-  }
-};
+  };
+
+  // Calendar Functions
+  const openCalendar = () => {
+    if (dateOfBirth) {
+      setSelectedDate(dateOfBirth);
+      setSelectedMonth(dateOfBirth.getMonth());
+      setSelectedYear(dateOfBirth.getFullYear());
+    } else {
+      const defaultDate = new Date(2000, 0, 1);
+      setSelectedDate(defaultDate);
+      setSelectedMonth(defaultDate.getMonth());
+      setSelectedYear(defaultDate.getFullYear());
+    }
+    setShowCalendarModal(true);
+  };
+
+  const handleDateSelect = (day: number) => {
+    const newDate = new Date(selectedYear, selectedMonth, day);
+    setSelectedDate(newDate);
+  };
+
+  const handleMonthChange = (change: number) => {
+    let newMonth = selectedMonth + change;
+    let newYear = selectedYear;
+    
+    if (newMonth < 0) {
+      newMonth = 11;
+      newYear--;
+    } else if (newMonth > 11) {
+      newMonth = 0;
+      newYear++;
+    }
+    
+    setSelectedMonth(newMonth);
+    setSelectedYear(newYear);
+  };
+
+  const handleYearSelect = (year: number) => {
+    setSelectedYear(year);
+    setShowYearDropdown(false);
+  };
+
+  const confirmDate = () => {
+    setDateOfBirth(selectedDate);
+    setDateValue(formatDate(selectedDate));
+    setShowCalendarModal(false);
+  };
+
+  const getDaysInMonth = (year: number, month: number) => {
+    return new Date(year, month + 1, 0).getDate();
+  };
+
+  const getFirstDayOfMonth = (year: number, month: number) => {
+    return new Date(year, month, 1).getDay();
+  };
+
+  const getGenderDisplay = () => {
+    switch (gender) {
+      case 'male': return 'Male';
+      case 'female': return 'Female';
+      case 'prefer_not_to_say': return 'Prefer not to say';
+      default: return 'Select';
+    }
+  };
+
+  // Generate years for dropdown (from current year to 1900)
+  const currentYear = new Date().getFullYear();
+  const years = Array.from(
+    { length: currentYear - 1900 + 1 }, 
+    (_, i) => currentYear - i
+  );
+
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  // Generate calendar days
+  const daysInMonth = getDaysInMonth(selectedYear, selectedMonth);
+  const firstDayOfMonth = getFirstDayOfMonth(selectedYear, selectedMonth);
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const emptyDays = Array.from({ length: firstDayOfMonth }, (_, i) => i);
 
   return (
     <KeyboardAvoidingView 
@@ -201,191 +409,389 @@ const handleNext = async () => {
       style={styles.container}
     >
       <ScrollView 
-        style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* Welcome Section */}
-        <View style={styles.welcomeSection}>
-          <Text style={styles.welcomeTitle}>Welcome User</Text>
-          <Text style={styles.welcomeSubtitle}>Setup your account first!</Text>
+        <View style={styles.header}>
+          <Text style={styles.brandTitle}>CrimsoTech</Text>
         </View>
 
-        {/* Account Profile Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account profile</Text>
-
-          {/* First Name */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>First Name</Text>
-            <TextInput
-              style={[styles.input, errors.firstName && styles.inputError]}
-              placeholder="Enter first name"
-              value={formData.firstName}
-              onChangeText={(value) => updateFormData('firstName', value)}
-            />
-            {errors.firstName ? <Text style={styles.errorText}>{errors.firstName}</Text> : null}
+        <View style={styles.content}>
+          {/* Welcome Header */}
+          <View style={styles.welcomeContainer}>
+            <Text style={styles.welcomeTitle}>Welcome {username}</Text>
+            <Text style={styles.welcomeSubtitle}>Setup your account first!</Text>
           </View>
 
-          {/* Last Name */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Last Name</Text>
-            <TextInput
-              style={[styles.input, errors.lastName && styles.inputError]}
-              placeholder="Enter last name"
-              value={formData.lastName}
-              onChangeText={(value) => updateFormData('lastName', value)}
-            />
-            {errors.lastName ? <Text style={styles.errorText}>{errors.lastName}</Text> : null}
-          </View>
-
-          {/* Middle Name (Optional) */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Middle Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter middle name (optional)"
-              value={formData.middleName}
-              onChangeText={(value) => updateFormData('middleName', value)}
-            />
-          </View>
-
-          {/* Gender */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Gender</Text>
-            <TouchableOpacity
-              style={[styles.input, styles.selectButton, errors.gender && styles.inputError]}
-              onPress={() => setShowSexDropdown(true)}
-            >
-              <Text style={formData.gender ? styles.selectButtonText : styles.placeholderText}>
-                {formData.gender || 'Select'}
-              </Text>
-            </TouchableOpacity>
-            {errors.gender ? <Text style={styles.errorText}>{errors.gender}</Text> : null}
-          </View>
-
-          {/* Date of Birth & Age */}
-          <View style={styles.row}>
-            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={styles.label}>Date of Birth</Text>
-              <TouchableOpacity
-                style={[styles.input, styles.dateButton, errors.dateOfBirth && styles.inputError]}
-                onPress={() => setShowDatePicker(true)}
-              >
-                <Text style={formData.dateOfBirth ? styles.dateText : styles.placeholderText}>
-                  {formData.dateOfBirth || 'Select date'}
-                </Text>
-              </TouchableOpacity>
-              {errors.dateOfBirth ? <Text style={styles.errorText}>{errors.dateOfBirth}</Text> : null}
+          {/* Personal Information */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Account Profile</Text>
+            
+            <View style={styles.row}>
+              <View style={styles.inputGroup}>
+                <View style={styles.labelContainer}>
+                  <Text style={styles.label}>First Name</Text>
+                  {errors.first_name && (
+                    <Text style={styles.fieldErrorText}>{errors.first_name}</Text>
+                  )}
+                </View>
+                <TextInput
+                  style={[styles.input, errors.first_name && styles.inputError]}
+                  placeholder="Enter first name"
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  editable={!loading}
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <View style={styles.labelContainer}>
+                  <Text style={styles.label}>Last Name</Text>
+                  {errors.last_name && (
+                    <Text style={styles.fieldErrorText}>{errors.last_name}</Text>
+                  )}
+                </View>
+                <TextInput
+                  style={[styles.input, errors.last_name && styles.inputError]}
+                  placeholder="Enter last name"
+                  value={lastName}
+                  onChangeText={setLastName}
+                  editable={!loading}
+                />
+              </View>
             </View>
-            <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
-              <Text style={styles.label}>Age</Text>
+
+            <View style={styles.inputGroup}>
+              <View style={styles.labelContainer}>
+                <Text style={styles.label}>Middle Name</Text>
+                {errors.middle_name && (
+                  <Text style={styles.fieldErrorText}>{errors.middle_name}</Text>
+                )}
+              </View>
               <TextInput
                 style={styles.input}
-                placeholder="0"
-                value={formData.age}
-                onChangeText={(value) => updateFormData('age', value)}
-                keyboardType="numeric"
-                editable={false}
+                placeholder="Enter middle name"
+                value={middleName}
+                onChangeText={setMiddleName}
+                editable={!loading}
               />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <View style={styles.labelContainer}>
+                <Text style={styles.label}>Email</Text>
+                {errors.email && (
+                  <Text style={styles.fieldErrorText}>{errors.email}</Text>
+                )}
+              </View>
+              <TextInput
+                style={[styles.input, errors.email && styles.inputError]}
+                placeholder="Enter email address"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                editable={!loading}
+              />
+            </View>
+
+            <View style={styles.row}>
+              <View style={[styles.inputGroup, { flex: 2 }]}>
+                <View style={styles.labelContainer}>
+                  <Text style={styles.label}>Sex</Text>
+                  {errors.sex && (
+                    <Text style={styles.fieldErrorText}>{errors.sex}</Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={[styles.dropdownTrigger, errors.sex && styles.inputError]}
+                  onPress={() => setShowGenderModal(true)}
+                  disabled={loading}
+                >
+                  <Text style={gender ? styles.dropdownText : styles.dropdownPlaceholder}>
+                    {getGenderDisplay()}
+                  </Text>
+                  <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={[styles.inputGroup, { flex: 1 }]}>
+                <View style={styles.labelContainer}>
+                  <Text style={styles.label}>Age</Text>
+                  {errors.age && (
+                    <Text style={styles.fieldErrorText}>{errors.age}</Text>
+                  )}
+                </View>
+                <TextInput
+                  style={[styles.input, { backgroundColor: '#f5f5f5' }]}
+                  value={age}
+                  editable={false}
+                  placeholder="Auto-calculated"
+                />
+              </View>
+            </View>
+
+            {/* Date of Birth Section */}
+            <View style={styles.dateOfBirthContainer}>
+              <View style={styles.labelContainer}>
+                <Text style={styles.label}>Date of Birth</Text>
+                {errors.date_of_birth && (
+                  <Text style={styles.fieldErrorText}>{errors.date_of_birth}</Text>
+                )}
+              </View>
+              <TouchableOpacity
+                style={[styles.dateInput, errors.date_of_birth && styles.inputError]}
+                onPress={openCalendar}
+                disabled={loading}
+              >
+                <Text style={dateOfBirth ? styles.dateText : styles.datePlaceholder}>
+                  {dateOfBirth ? formatDate(dateOfBirth) : 'Select date'}
+                </Text>
+                <MaterialIcons name="calendar-today" size={20} color="#666" />
+              </TouchableOpacity>
             </View>
           </View>
 
-          {/* Address Section */}
-          <Text style={styles.addressTitle}>Address</Text>
-
-          {/* Province */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Province</Text>
-            <TextInput
-              style={[styles.input, errors.province && styles.inputError]}
-              placeholder="Enter province"
-              value={formData.province}
-              onChangeText={(value) => updateFormData('province', value)}
+          {/* Address Information */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Address</Text>
+            
+            <AddressDropdowns
+              value={address}
+              onChange={(data) =>
+                setAddress((prev) => ({
+                  ...prev,
+                  ...data,
+                  street: data.street ?? prev.street,
+                }))
+              }
+              errors={{
+                province: errors.province,
+                city: errors.city,
+                barangay: errors.barangay,
+              }}
+              disabled={loading}
             />
-            {errors.province ? <Text style={styles.errorText}>{errors.province}</Text> : null}
           </View>
 
-          {/* City/Municipality */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>City / Municipality</Text>
-            <TextInput
-              style={[styles.input, errors.city && styles.inputError]}
-              placeholder="Enter city/municipality"
-              value={formData.city}
-              onChangeText={(value) => updateFormData('city', value)}
-            />
-            {errors.city ? <Text style={styles.errorText}>{errors.city}</Text> : null}
-          </View>
+          {/* Error display for backend errors */}
+          {errors.details && (
+            <View style={styles.backendErrorContainer}>
+              <Text style={styles.backendErrorText}>
+                {typeof errors.details === 'object' 
+                  ? Object.values(errors.details).map((errorMessage, index) => (
+                      <Text key={index}>{String(errorMessage)}</Text>
+                    ))
+                  : String(errors.details)
+                }
+              </Text>
+            </View>
+          )}
 
-          {/* Barangay */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Barangay</Text>
-            <TextInput
-              style={[styles.input, errors.barangay && styles.inputError]}
-              placeholder="Enter barangay"
-              value={formData.barangay}
-              onChangeText={(value) => updateFormData('barangay', value)}
-            />
-            {errors.barangay ? <Text style={styles.errorText}>{errors.barangay}</Text> : null}
-          </View>
+          {/* Submit Button */}
+          <TouchableOpacity 
+            style={[styles.submitButton, loading && styles.buttonDisabled]}
+            onPress={handleSubmit}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={styles.submitButtonText}>Next</Text>
+            )}
+          </TouchableOpacity>
         </View>
-
-        {/* Next Button */}
-        <TouchableOpacity 
-          style={styles.nextButton}
-          onPress={handleNext}
-        >
-          <Text style={styles.nextButtonText}>Next</Text>
-        </TouchableOpacity>
       </ScrollView>
 
-      {/* Sex Dropdown Modal */}
+      {/* Gender Modal */}
       <Modal
-        visible={showSexDropdown}
+        visible={showGenderModal}
+        animationType="slide"
         transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowSexDropdown(false)}
+        onRequestClose={() => setShowGenderModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowSexDropdown(false)}
-        >
-          <View style={styles.dropdownContainer}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Sex</Text>
+              <TouchableOpacity onPress={() => setShowGenderModal(false)}>
+                <MaterialIcons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => selectSex('Male')}
+              onPress={() => { setGender('male'); setShowGenderModal(false); }}
             >
               <Text style={styles.dropdownItemText}>Male</Text>
             </TouchableOpacity>
+            
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => selectSex('Female')}
+              onPress={() => { setGender('female'); setShowGenderModal(false); }}
             >
               <Text style={styles.dropdownItemText}>Female</Text>
             </TouchableOpacity>
+            
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => selectSex('Other')}
+              onPress={() => { setGender('prefer_not_to_say'); setShowGenderModal(false); }}
             >
-              <Text style={styles.dropdownItemText}>Other</Text>
+              <Text style={styles.dropdownItemText}>Prefer not to say</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
-      {/* Date Picker */}
-      {showDatePicker && (
-        <DateTimePicker
-          value={date}
-          mode={mode}
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={onDateChange}
-          maximumDate={new Date()}
-          themeVariant="light"
-        />
-      )}
+      {/* Calendar Modal */}
+      <Modal
+        visible={showCalendarModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCalendarModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.calendarModalContent}>
+            <View style={styles.calendarHeader}>
+              <Text style={styles.calendarTitle}>Select Date of Birth</Text>
+              <TouchableOpacity onPress={() => setShowCalendarModal(false)}>
+                <MaterialIcons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Month/Year Selector */}
+            <View style={styles.monthYearSelector}>
+              <TouchableOpacity 
+                style={styles.monthNavButton}
+                onPress={() => handleMonthChange(-1)}
+              >
+                <MaterialIcons name="chevron-left" size={24} color="#333" />
+              </TouchableOpacity>
+              
+              <View style={styles.monthYearDisplay}>
+                <Text style={styles.monthText}>{monthNames[selectedMonth]}</Text>
+                
+                {/* Year Dropdown */}
+                <View style={styles.yearSelectorContainer}>
+                  <TouchableOpacity 
+                    style={styles.yearButton}
+                    onPress={() => setShowYearDropdown(!showYearDropdown)}
+                  >
+                    <Text style={styles.yearText}>{selectedYear}</Text>
+                    <MaterialIcons 
+                      name={showYearDropdown ? "arrow-drop-up" : "arrow-drop-down"} 
+                      size={24} 
+                      color="#333" 
+                    />
+                  </TouchableOpacity>
+                  
+                  {showYearDropdown && (
+                    <View style={styles.yearDropdown}>
+                      <ScrollView style={styles.yearList} nestedScrollEnabled>
+                        {years.map((year) => (
+                          <TouchableOpacity
+                            key={year}
+                            style={[
+                              styles.yearItem,
+                              selectedYear === year && styles.yearItemSelected
+                            ]}
+                            onPress={() => handleYearSelect(year)}
+                          >
+                            <Text style={[
+                              styles.yearItemText,
+                              selectedYear === year && styles.yearItemTextSelected
+                            ]}>
+                              {year}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  )}
+                </View>
+              </View>
+              
+              <TouchableOpacity 
+                style={styles.monthNavButton}
+                onPress={() => handleMonthChange(1)}
+              >
+                <MaterialIcons name="chevron-right" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Day Headers */}
+            <View style={styles.dayHeaders}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                <Text key={day} style={styles.dayHeaderText}>{day}</Text>
+              ))}
+            </View>
+
+            {/* Calendar Grid */}
+            <View style={styles.calendarGrid}>
+              {/* Empty days for the first week */}
+              {emptyDays.map((_, index) => (
+                <View key={`empty-${index}`} style={styles.calendarDayEmpty} />
+              ))}
+              
+              {/* Days of the month */}
+              {days.map((day) => {
+                const isSelected = selectedDate.getDate() === day && 
+                                 selectedDate.getMonth() === selectedMonth && 
+                                 selectedDate.getFullYear() === selectedYear;
+                const isToday = day === new Date().getDate() && 
+                               selectedMonth === new Date().getMonth() && 
+                               selectedYear === new Date().getFullYear();
+                
+                return (
+                  <TouchableOpacity
+                    key={day}
+                    style={[
+                      styles.calendarDay,
+                      isSelected && styles.calendarDaySelected,
+                      isToday && styles.calendarDayToday
+                    ]}
+                    onPress={() => handleDateSelect(day)}
+                  >
+                    <Text style={[
+                      styles.calendarDayText,
+                      isSelected && styles.calendarDayTextSelected,
+                      isToday && !isSelected && styles.calendarDayTextToday
+                    ]}>
+                      {day}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Selected Date Display */}
+            <View style={styles.selectedDateContainer}>
+              <Text style={styles.selectedDateLabel}>Selected Date:</Text>
+              <Text style={styles.selectedDateText}>
+                {selectedDate.getDate()} {monthNames[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+              </Text>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.calendarActions}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={() => setShowCalendarModal(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.confirmButton}
+                onPress={confirmDate}
+              >
+                <Text style={styles.confirmButtonText}>Select Date</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -395,47 +801,73 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
   },
-  scrollView: {
-    flex: 1,
-  },
   scrollContent: {
-    paddingTop: 60,
+    flexGrow: 1,
     paddingBottom: 40,
   },
-  welcomeSection: {
+  header: {
+    paddingTop: 60,
+    paddingLeft: 40,
+    paddingBottom: 20,
+  },
+  brandTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#333',
+    letterSpacing: 0.5,
+  },
+  content: {
+    flex: 1,
     paddingHorizontal: 40,
+    paddingTop: 0,
+  },
+  welcomeContainer: {
+    alignItems: 'center',
     marginBottom: 30,
   },
   welcomeTitle: {
-    fontSize: 28,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: 'bold',
     color: '#333',
     marginBottom: 8,
   },
   welcomeSubtitle: {
     fontSize: 16,
     color: '#666',
+    textAlign: 'center',
   },
   section: {
-    paddingHorizontal: 40,
+    marginBottom: 30,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#ff6d0bff',
+    color: '#ff6d0b',
     marginBottom: 20,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    textAlign: 'center',
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 15,
   },
   inputGroup: {
-    marginBottom: 20,
+    marginBottom: 15,
+  },
+  labelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   label: {
     fontSize: 14,
-    marginBottom: 8,
     color: '#333',
     fontWeight: '500',
+  },
+  fieldErrorText: {
+    fontSize: 12,
+    color: '#ff6d0b',
+    marginLeft: 8,
   },
   input: {
     borderWidth: 1,
@@ -447,88 +879,307 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   inputError: {
-    borderColor: '#ff6d0bff',
+    borderColor: '#ff6d0b',
   },
-  errorText: {
-    color: '#ff6d0bff',
-    fontSize: 12,
-    marginTop: 4,
-    marginLeft: 4,
-  },
-  row: {
+  dropdownTrigger: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    padding: 12,
+    fontSize: 16,
+    color: '#333',
+    backgroundColor: '#fff',
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  selectButton: {
-    justifyContent: 'center',
-    backgroundColor: '#f8f8f8',
-  },
-  selectButtonText: {
-    color: '#333',
+  dropdownText: {
     fontSize: 16,
+    color: '#333',
   },
-  dateButton: {
-    justifyContent: 'center',
+  dropdownPlaceholder: {
+    fontSize: 16,
+    color: '#999',
+  },
+  dateOfBirthContainer: {
+    marginBottom: 15,
+  },
+  dateInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    padding: 12,
+    fontSize: 16,
+    color: '#333',
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   dateText: {
+    fontSize: 16,
     color: '#333',
-    fontSize: 16,
   },
-  placeholderText: {
+  datePlaceholder: {
+    fontSize: 16,
     color: '#999',
-    fontSize: 16,
   },
-  addressTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#ff6d0bff',
-    marginTop: 10,
-    marginBottom: 20,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  nextButton: {
-    backgroundColor: '#ff6d0bff',
-    padding: 16,
+  submitButton: {
+    backgroundColor: '#ff6d0b',
+    padding: 14,
     borderRadius: 6,
     alignItems: 'center',
-    marginHorizontal: 40,
-    marginTop: 30,
-    marginBottom: 40,
+    marginTop: 10,
   },
-  nextButtonText: {
+  buttonDisabled: {
+    backgroundColor: '#ccc',
+  },
+  submitButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
   },
-  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-  },
-  dropdownContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 10,
-    width: 200,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  dropdownItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  dropdownItem: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f5f5',
   },
   dropdownItemText: {
     fontSize: 16,
     color: '#333',
+  },
+  backendErrorContainer: {
+    marginBottom: 20,
+    padding: 15,
+    backgroundColor: '#ffebee',
+    borderWidth: 1,
+    borderColor: '#ffcdd2',
+    borderRadius: 6,
+  },
+  backendErrorText: {
+    color: '#d32f2f',
+    fontSize: 14,
+  },
+  // Calendar Modal Styles
+  calendarModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  calendarTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+  },
+  monthYearSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  monthNavButton: {
+    padding: 10,
+  },
+  monthYearDisplay: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  monthText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 5,
+  },
+  yearSelectorContainer: {
+    position: 'relative',
+    zIndex: 10,
+  },
+  yearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 6,
+    backgroundColor: '#f5f5f5',
+  },
+  yearText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginRight: 5,
+  },
+  yearDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
+    maxHeight: 200,
+    marginTop: 5,
+  },
+  yearList: {
+    maxHeight: 200,
+  },
+  yearItem: {
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f5f5',
+  },
+  yearItemSelected: {
+    backgroundColor: '#ff6d0b',
+  },
+  yearItemText: {
+    fontSize: 14,
+    color: '#333',
+  },
+  yearItemTextSelected: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  dayHeaders: {
+    flexDirection: 'row',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  dayHeaderText: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 10,
+  },
+  calendarDayEmpty: {
+    width: '14.28%',
+    aspectRatio: 1,
+    padding: 5,
+  },
+  calendarDay: {
+    width: '14.28%',
+    aspectRatio: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 5,
+  },
+  calendarDaySelected: {
+    backgroundColor: '#ff6d0b',
+    borderRadius: 20,
+  },
+  calendarDayToday: {
+    borderWidth: 1,
+    borderColor: '#ff6d0b',
+    borderRadius: 20,
+  },
+  calendarDayText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  calendarDayTextSelected: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  calendarDayTextToday: {
+    color: '#ff6d0b',
+    fontWeight: '600',
+  },
+  selectedDateContainer: {
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f9f9f9',
+    marginHorizontal: 20,
+    marginTop: 10,
+    borderRadius: 10,
+  },
+  selectedDateLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5,
+  },
+  selectedDateText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  calendarActions: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    gap: 10,
+  },
+  cancelButton: {
+    flex: 1,
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
+  },
+  confirmButton: {
+    flex: 1,
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: '#ff6d0b',
+  },
+  confirmButtonText: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '500',
   },
 });

@@ -1,77 +1,222 @@
 // app/(auth)/login.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
   TextInput,
   TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'expo-router';
+import { useAuth } from '../../contexts/AuthContext';
+import AxiosInstance from '../../contexts/axios';
+
+type LoginData = {
+  username: string;
+  password: string;
+};
 
 export default function LoginScreen() {
-  const { login } = useAuth();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [errors, setErrors] = useState({
+  const router = useRouter();
+  const { 
+    userId, 
+    shopId, 
+    userRole, 
+    loading: authLoading, 
+    setAuthData, 
+    updateShopId,
+    clearAuthData 
+  } = useAuth();
+  
+  const [formData, setFormData] = useState<LoginData>({
     username: '',
     password: '',
   });
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [errors, setErrors] = useState<Partial<LoginData>>({});
+  const [showPassword, setShowPassword] = useState(false);
 
-  const validateForm = () => {
-    const newErrors = {
-      username: '',
-      password: '',
-    };
+  // Check if user is already logged in
+  useEffect(() => {
+    console.log('🔄 Login screen - Auth state:', { 
+      userId, 
+      shopId,
+      userRole,
+      authLoading 
+    });
 
-    if (!username.trim()) {
+    if (userId && !authLoading) {
+      console.log('✅ User already logged in, checking role...');
+      if (userRole === 'customer') {
+        router.replace('/customer/home');
+      } else if (userRole === 'rider') {
+        router.replace('/rider/home');
+      }
+    }
+  }, [userId, userRole, authLoading]);
+
+  const validateForm = (): boolean => {
+    const newErrors: Partial<LoginData> = {};
+
+    if (!formData.username.trim()) {
       newErrors.username = 'Username is required';
     }
-    if (!password.trim()) {
+
+    if (!formData.password) {
       newErrors.password = 'Password is required';
     }
 
     setErrors(newErrors);
-    return !newErrors.username && !newErrors.password;
+    return Object.keys(newErrors).length === 0;
   };
 
   const handleLogin = async () => {
-    if (validateForm()) {
+    if (!validateForm()) return;
+    
+    setLoginLoading(true);
+    try {
+      const { username, password } = formData;
+      const response = await AxiosInstance.post(`/api/login/`,{ username, password },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000,
+        }
+      );
+
+      const data = response.data;
+      console.log('✅ Login response:', data);
+
+      // ✅ Determine user role based on response
+      const userRole = data.is_rider ? 'rider' : 'customer';
+      
+      // ✅ Get shop ID if available
+      const shopId = data.shop_id || data.profile?.shop?.id || null;
+
+      // ✅ Save auth data using new context
+      await setAuthData(
+        data.user_id || data.id, // user ID
+        userRole, // user role
+        data.username, // username
+        data.email, // email
+        shopId // shop ID (optional)
+      );
+
+      // Try to fetch full profile immediately to obtain shop information if server didn't include it in login response
       try {
-        // Call the backend API for login
-        await login(username, password);
-      } catch (error: any) {
-        // Handle login error with specific messages
-        if (error.response) {
-          // Handle specific error responses from backend
-          const errorResponse = error.response;
-          let errorMessage = '';
-
-          if (errorResponse.error) {
-            errorMessage = errorResponse.error;
-          } else if (errorResponse.message) {
-            errorMessage = errorResponse.message;
-          } else if (errorResponse.detail) {
-            errorMessage = errorResponse.detail;
-          } else {
-            errorMessage = 'Login failed. Please check your credentials and try again.';
+        const profileRes = await AxiosInstance.get('/api/profile/', {
+          headers: { 'X-User-Id': data.user_id || data.id, 'Content-Type': 'application/json' },
+        });
+        if (profileRes.data?.success && profileRes.data.profile?.shop) {
+          const foundShopId = profileRes.data.profile.shop.id;
+          if (foundShopId) {
+            await updateShopId(foundShopId);
+            console.log('🚀 Shop ID updated from profile after login:', foundShopId);
           }
+        }
+      } catch (profileErr) {
+        console.log('No shop info available immediately after login or failed to fetch profile:', profileErr?.message || profileErr);
+      }
 
-          alert(errorMessage);
-        } else {
-          // Handle network or other errors
-          console.error('Login failed:', error);
-          alert('Login failed. Please check your credentials and try again.');
+      console.log('📊 Registration stage:', data.registration_stage, 'Role:', userRole);
+
+      // Handle registration stages
+      const registrationStage = data.registration_stage || 1;
+      
+      if (userRole === 'rider') {
+        // Rider flow
+        if (registrationStage === 1) {
+          router.replace('/(auth)/signup');
+          return;
+        } else if (registrationStage === 2) {
+          router.replace('/(auth)/setup-account');
+          return;
+        } else if (registrationStage === 3) {
+          router.replace('/(auth)/verify-phone');
+          return;
+        } else if (registrationStage >= 4) {
+          router.replace('/rider/home');
+          return;
+        }
+      } else {
+        // Customer flow
+        if (registrationStage === 1) {
+          router.replace('/(auth)/setup-account');
+          return;
+        } else if (registrationStage === 2) {
+          router.replace('/(auth)/verify-phone');
+          return;
+        } else if (registrationStage >= 3) {
+          // ✅ STAGE 3 IS COMPLETED FOR CUSTOMERS
+          router.replace('/customer/home');
+          return;
         }
       }
+      
+    } catch (error: any) {
+      console.error('Login error:', error);
+      
+      let errorMessage = 'Please check your credentials and try again.';
+      
+      if (error.response) {
+        // Server responded with error
+        const status = error.response.status;
+        if (status === 401) {
+          errorMessage = 'Invalid username or password.';
+        } else if (status === 403) {
+          errorMessage = 'Account is suspended or inactive.';
+        } else if (status === 404) {
+          errorMessage = 'Account not found.';
+        } else if (status >= 500) {
+          errorMessage = 'Server error. Please try again later.';
+        }
+      } else if (error.request) {
+        // No response received
+        errorMessage = 'Network error. Please check your connection.';
+      }
+      
+      Alert.alert('Login failed', errorMessage);
+    } finally {
+      setLoginLoading(false);
     }
   };
+
+  const handleDebugAuth = async () => {
+    console.log('🔍 Current Auth Context:');
+    console.log('User ID:', userId);
+    console.log('Shop ID:', shopId);
+    console.log('User Role:', userRole);
+    
+    Alert.alert(
+      'Auth Debug',
+      `User ID: ${userId || 'null'}\nShop ID: ${shopId || 'null'}\nRole: ${userRole || 'null'}`
+    );
+  };
+
+  const handleClearAuth = async () => {
+    try {
+      await clearAuthData();
+      Alert.alert('Success', 'Auth data cleared!');
+    } catch (error) {
+      console.error('Clear error:', error);
+      Alert.alert('Error', 'Failed to clear auth data');
+    }
+  };
+
+  // Show loading while checking initial auth state
+  if (authLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#ff6d0b" />
+        <Text style={styles.loadingText}>Checking authentication...</Text>
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView 
@@ -97,15 +242,14 @@ export default function LoginScreen() {
             <Text style={styles.label}>Username</Text>
             <TextInput
               style={[styles.input, errors.username && styles.inputError]}
-              placeholder=""
-              value={username}
+              placeholder="Enter your username"
+              value={formData.username}
               onChangeText={(text) => {
-                setUsername(text);
-                if (text.trim() && errors.username) {
-                  setErrors(prev => ({ ...prev, username: '' }));
-                }
+                setFormData({ ...formData, username: text });
+                if (errors.username) setErrors({ ...errors, username: undefined });
               }}
               autoCapitalize="none"
+              autoCorrect={false}
             />
             {errors.username ? <Text style={styles.errorText}>{errors.username}</Text> : null}
           </View>
@@ -116,13 +260,11 @@ export default function LoginScreen() {
             <View style={styles.passwordContainer}>
               <TextInput
                 style={[styles.input, styles.passwordInput, errors.password && styles.inputError]}
-                placeholder=""
-                value={password}
+                placeholder="Enter your password"
+                value={formData.password}
                 onChangeText={(text) => {
-                  setPassword(text);
-                  if (text.trim() && errors.password) {
-                    setErrors(prev => ({ ...prev, password: '' }));
-                  }
+                  setFormData({ ...formData, password: text });
+                  if (errors.password) setErrors({ ...errors, password: undefined });
                 }}
                 secureTextEntry={!showPassword}
               />
@@ -141,16 +283,24 @@ export default function LoginScreen() {
           </View>
 
           {/* Forgot Password Link */}
-          <TouchableOpacity style={styles.forgotPassword}>
+          <TouchableOpacity 
+            style={styles.forgotPassword}
+            onPress={() => router.push('/(auth)/login')}
+          >
             <Text style={styles.forgotPasswordText}>Forgot your password?</Text>
           </TouchableOpacity>
 
           {/* Login Button */}
           <TouchableOpacity 
-            style={styles.loginButton}
+            style={[styles.loginButton, loginLoading && styles.loginButtonDisabled]}
             onPress={handleLogin}
+            disabled={loginLoading}
           >
-            <Text style={styles.loginButtonText}>Login</Text>
+            {loginLoading ? (
+              <ActivityIndicator color="#FFF" size="small" />
+            ) : (
+              <Text style={styles.loginButtonText}>Login</Text>
+            )}
           </TouchableOpacity>
 
           {/* Sign Up Link */}
@@ -161,6 +311,13 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* Divider */}
+          <View style={styles.dividerContainer}>
+            <View style={styles.divider} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.divider} />
+          </View>
+
           {/* Rider Sign Up Link */}
           <View style={styles.riderLinkContainer}>
             <MaterialIcons name="two-wheeler" size={20} color="#ff6d0b" />
@@ -169,6 +326,8 @@ export default function LoginScreen() {
               <Text style={styles.riderLink}>Apply as Rider</Text>
             </TouchableOpacity>
           </View>
+
+
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -179,6 +338,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+  },
+  loadingText: {
+    marginTop: 10,
+    color: '#666',
+    fontSize: 16,
   },
   scrollContent: {
     flexGrow: 1,
@@ -223,6 +393,7 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     color: '#333',
+    backgroundColor: '#fff',
   },
   passwordContainer: {
     flexDirection: 'row',
@@ -231,25 +402,18 @@ const styles = StyleSheet.create({
   },
   passwordInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 12,
-    paddingRight: 40, // Make space for the eye button
-    fontSize: 16,
-    color: '#333',
+    paddingRight: 40,
   },
   eyeButton: {
     position: 'absolute',
     right: 12,
     padding: 8,
-    zIndex: 1,
   },
   inputError: {
-    borderColor: '#ff6d0bff',
+    borderColor: '#ff6d0b',
   },
   errorText: {
-    color: '#ff6d0bff',
+    color: '#ff6d0b',
     fontSize: 12,
     marginTop: 4,
     marginLeft: 4,
@@ -264,11 +428,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   loginButton: {
-    backgroundColor: '#ff6d0bff',
+    backgroundColor: '#ff6d0b',
     padding: 14,
     borderRadius: 6,
     alignItems: 'center',
     marginBottom: 20,
+  },
+  loginButtonDisabled: {
+    backgroundColor: '#ff9d6b',
   },
   loginButtonText: {
     color: '#fff',
@@ -288,6 +455,21 @@ const styles = StyleSheet.create({
     color: '#333',
     fontWeight: '600',
   },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  divider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#eee',
+  },
+  dividerText: {
+    marginHorizontal: 16,
+    color: '#999',
+    fontSize: 14,
+  },
   riderLinkContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -306,5 +488,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#ff6d0b',
     fontWeight: '600',
+  },
+  debugContainer: {
+    marginTop: 20,
+    gap: 10,
+  },
+  debugButton: {
+    backgroundColor: '#5856D6',
+    borderRadius: 6,
+    padding: 12,
+    alignItems: 'center',
+  },
+  debugButtonText: {
+    color: '#FFF',
+    fontSize: 14,
+  },
+  clearButton: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 6,
+    padding: 12,
+    alignItems: 'center',
+  },
+  clearButtonText: {
+    color: '#FFF',
+    fontSize: 14,
   },
 });

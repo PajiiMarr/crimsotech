@@ -268,41 +268,36 @@ export const register = async (userData: RegisterData): Promise<RegisterResponse
   }
 };
 
+import AxiosInstance from '../contexts/axios';
+
 // Get user shops
 export const getUserShops = async (customerId: string): Promise<any> => {
   try {
-    console.log('Fetching shops for customer:', customerId);
-    const response = await fetch(`${BASE_URL}/api/customer-shops/?customer_id=${customerId}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+    console.log('Fetching shops for customer via Axios:', customerId);
+    const response = await AxiosInstance.get('/api/customer-shops/', {
+      params: { customer_id: customerId },
     });
 
-    let data;
-    try {
-      data = await response.json();
-    } catch (jsonError) {
-      console.error('Failed to parse JSON response:', jsonError);
-      throw new Error(`Server returned invalid response (Status: ${response.status})`);
+    console.log('Get shops response (axios):', response.data);
+
+    if (!response.data) {
+      throw new Error('Empty response from server');
     }
 
-    console.log('Get shops response:', data);
-    console.log('Get shops response status:', response.status);
-
-    if (!response.ok) {
-      console.error('Get shops API error:', data);
-      throw new Error(data.error || 'Failed to fetch shops');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
-    console.error('Get shops error:', error);
-    if (error.message === 'Network request failed' || 
-        error.message?.includes('Network') || 
-        error.message?.includes('Failed to fetch')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
+    console.error('Get shops error (axios):', error);
+    // Map axios network errors to the same message used elsewhere
+    if (error.message === 'Network Error' || error.message?.includes('Network') || !error.response) {
+      throw new Error('Cannot connect to server. Please check:\n1. Backend is running on port 8000\n2. Your IP address is correct in utils/config.ts or contexts/axios.ts\n3. Both devices are on the same network\n4. Firewall is not blocking port 8000');
     }
+
+    // If 400/404, return an empty shops list instead of throwing
+    const status = error.response?.status;
+    if (status === 400 || status === 404) {
+      return { success: false, shops: [] };
+    }
+
     throw error;
   }
 };

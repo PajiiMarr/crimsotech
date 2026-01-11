@@ -9,45 +9,50 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useAuth } from '@/contexts/AuthContext';
+import AxiosInstance from '../../contexts/axios';
+import * as SecureStore from 'expo-secure-store';
 
 export default function SignupScreen() {
-  const { register } = useAuth();
   const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState({
     username: '',
-    email: '',
     password: '',
     confirmPassword: '',
   });
+  const [loading, setLoading] = useState(false);
 
   const validateForm = () => {
     const newErrors = {
       username: '',
-      email: '',
       password: '',
       confirmPassword: '',
     };
 
     if (!username.trim()) {
       newErrors.username = 'Username is required';
+    } else if (username.length < 3) {
+      newErrors.username = 'Username should be at least 3 characters';
+    } else if (username.length > 100) {
+      newErrors.username = 'Username should be at most 100 characters';
     }
-    if (!email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(email)) {
-      newErrors.email = 'Please enter a valid email address';
-    }
+
     if (!password.trim()) {
       newErrors.password = 'Password is required';
+    } else if (password.length < 3) {
+      newErrors.password = 'Password should be at least 3 characters';
+    } else if (password.length > 100) {
+      newErrors.password = 'Password should be at most 100 characters';
     }
+
     if (!confirmPassword.trim()) {
       newErrors.confirmPassword = 'Please confirm your password';
     } else if (password !== confirmPassword) {
@@ -55,68 +60,67 @@ export default function SignupScreen() {
     }
 
     setErrors(newErrors);
-    return !newErrors.username && !newErrors.email && !newErrors.password && !newErrors.confirmPassword;
+    return !newErrors.username && !newErrors.password && !newErrors.confirmPassword;
   };
 
   const handleSignup = async () => {
-    if (validateForm()) {
-      try {
-        // Register the user with username, email and password
-        // Ensure we pass the email if provided, otherwise undefined
-        await register(username, password, email || undefined);
-        // After initial registration, go to setup account
-        router.replace('/(auth)/setup-account');
-      } catch (error: any) {
-        // Handle registration error with specific validation messages
-        console.error('Registration error details:', error);
-        console.error('Error message:', error?.message);
-        console.error('Error response:', error?.response);
+    if (!validateForm()) return;
+
+    setLoading(true);
+    try {
+      const payload = {
+        username,
+        password,
+        registration_stage: 1,
+        is_customer: true,
+      };
+
+      console.log('🚀 Sending signup request:', payload);
+      
+      const response = await AxiosInstance.post('/api/register/', payload);
+      
+      console.log('✅ Signup API Response:', response.data);
+
+      if (response.data && response.data.user_id) {
+        const userId = response.data.user_id;
         
-        // Check if it's a network error
-        if (error?.message?.includes('Cannot connect to server') || 
-            error?.message === 'Network request failed' ||
-            error?.message?.includes('Network') ||
-            error?.message?.includes('Failed to fetch')) {
-          alert(error.message || 'Cannot connect to server. Please check:\n1. Backend is running\n2. Your IP address is correct\n3. Both devices are on the same network');
-          return;
-        }
+        // Save user ID to SecureStore for next stages
+        await SecureStore.setItemAsync('temp_user_id', userId.toString());
         
-        // Handle backend validation errors
-        if (error?.response) {
-          // Handle field-specific validation errors
-          const errorResponse = error.response;
-          let errorMessage = '';
-
-          if (errorResponse.username) {
-            setErrors(prev => ({ ...prev, username: Array.isArray(errorResponse.username) ? errorResponse.username[0] : errorResponse.username }));
-            errorMessage += (Array.isArray(errorResponse.username) ? errorResponse.username[0] : errorResponse.username) + '\n';
-          }
-          if (errorResponse.email) {
-            setErrors(prev => ({ ...prev, email: Array.isArray(errorResponse.email) ? errorResponse.email[0] : errorResponse.email }));
-            errorMessage += (Array.isArray(errorResponse.email) ? errorResponse.email[0] : errorResponse.email) + '\n';
-          }
-          if (errorResponse.password) {
-            setErrors(prev => ({ ...prev, password: Array.isArray(errorResponse.password) ? errorResponse.password[0] : errorResponse.password }));
-            errorMessage += (Array.isArray(errorResponse.password) ? errorResponse.password[0] : errorResponse.password) + '\n';
-          }
-          if (errorResponse.non_field_errors) {
-            const nonFieldErrors = Array.isArray(errorResponse.non_field_errors) 
-              ? errorResponse.non_field_errors.join('\n')
-              : errorResponse.non_field_errors;
-            errorMessage += nonFieldErrors;
-          }
-
-          if (!errorMessage) {
-            errorMessage = 'Registration failed. Please check your information.';
-          }
-
-          alert(errorMessage);
-        } else {
-          // Handle other errors
-          const errorMessage = error?.message || 'Registration failed. Please check your connection and try again.';
-          alert(errorMessage);
-        }
+        // Navigate to profiling stage (Stage 1 for customers, Stage 2 for riders)
+        Alert.alert(
+          'Success',
+          'Account created successfully! Please complete your profile.',
+          [
+            {
+              text: 'Continue',
+              onPress: () => {
+                router.replace('/(auth)/setup-account');
+              }
+            }
+          ]
+        );
       }
+    } catch (error: any) {
+      console.error('❌ Signup error:', error.response?.data || error.message);
+      
+      if (error.response?.status === 400) {
+        const errorData = error.response.data;
+        
+        if (errorData.username) {
+          Alert.alert('Username Taken', 'This username is already taken. Please choose another.');
+        } else if (errorData.error) {
+          Alert.alert('Error', errorData.error);
+        } else {
+          Alert.alert('Validation Error', 'Please check your input');
+        }
+      } else if (error.request) {
+        Alert.alert('Network Error', 'Cannot connect to server');
+      } else {
+        Alert.alert('Error', 'Registration failed. Please try again.');
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -130,13 +134,11 @@ export default function SignupScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Header with CrimsoTech */}
         <View style={styles.header}>
           <Text style={styles.brandTitle}>CrimsoTech</Text>
         </View>
 
         <View style={styles.content}>
-          {/* Signup Title */}
           <Text style={styles.title}>Create your account</Text>
 
           {/* Username Field */}
@@ -144,7 +146,7 @@ export default function SignupScreen() {
             <Text style={styles.label}>Username</Text>
             <TextInput
               style={[styles.input, errors.username && styles.inputError]}
-              placeholder=""
+              placeholder="Choose a username"
               value={username}
               onChangeText={(text) => {
                 setUsername(text);
@@ -153,27 +155,9 @@ export default function SignupScreen() {
                 }
               }}
               autoCapitalize="none"
+              editable={!loading}
             />
             {errors.username ? <Text style={styles.errorText}>{errors.username}</Text> : null}
-          </View>
-
-          {/* Email Field */}
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={[styles.input, errors.email && styles.inputError]}
-              placeholder=""
-              value={email}
-              onChangeText={(text) => {
-                setEmail(text);
-                if (text.trim() && errors.email) {
-                  setErrors(prev => ({ ...prev, email: '' }));
-                }
-              }}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-            {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
           </View>
 
           {/* Password Field */}
@@ -182,22 +166,21 @@ export default function SignupScreen() {
             <View style={styles.passwordContainer}>
               <TextInput
                 style={[styles.input, styles.passwordInput, errors.password && styles.inputError]}
-                placeholder=""
+                placeholder="Create a password"
                 value={password}
                 onChangeText={(text) => {
                   setPassword(text);
                   if (text.trim() && errors.password) {
                     setErrors(prev => ({ ...prev, password: '' }));
                   }
-                  if (confirmPassword && text !== confirmPassword && errors.confirmPassword === 'Passwords do not match') {
-                    setErrors(prev => ({ ...prev, confirmPassword: '' }));
-                  }
                 }}
                 secureTextEntry={!showPassword}
+                editable={!loading}
               />
               <TouchableOpacity
                 style={styles.eyeButton}
                 onPress={() => setShowPassword(!showPassword)}
+                disabled={loading}
               >
                 <MaterialIcons
                   name={showPassword ? "visibility" : "visibility-off"}
@@ -215,23 +198,21 @@ export default function SignupScreen() {
             <View style={styles.passwordContainer}>
               <TextInput
                 style={[styles.input, styles.passwordInput, errors.confirmPassword && styles.inputError]}
-                placeholder=""
+                placeholder="Confirm your password"
                 value={confirmPassword}
                 onChangeText={(text) => {
                   setConfirmPassword(text);
                   if (text.trim() && errors.confirmPassword) {
-                    if (password && text !== password) {
-                      setErrors(prev => ({ ...prev, confirmPassword: 'Passwords do not match' }));
-                    } else {
-                      setErrors(prev => ({ ...prev, confirmPassword: '' }));
-                    }
+                    setErrors(prev => ({ ...prev, confirmPassword: '' }));
                   }
                 }}
                 secureTextEntry={!showConfirmPassword}
+                editable={!loading}
               />
               <TouchableOpacity
                 style={styles.eyeButton}
                 onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                disabled={loading}
               >
                 <MaterialIcons
                   name={showConfirmPassword ? "visibility" : "visibility-off"}
@@ -245,17 +226,38 @@ export default function SignupScreen() {
 
           {/* Sign Up Button */}
           <TouchableOpacity 
-            style={styles.signupButton}
+            style={[styles.signupButton, loading && styles.buttonDisabled]}
             onPress={handleSignup}
+            disabled={loading}
           >
-            <Text style={styles.signupButtonText}>Sign up</Text>
+            {loading ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={styles.signupButtonText}>Sign Up</Text>
+            )}
           </TouchableOpacity>
 
           {/* Login Link */}
           <View style={styles.loginContainer}>
             <Text style={styles.loginText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
+            <TouchableOpacity onPress={() => router.push('/(auth)/login')} disabled={loading}>
               <Text style={styles.loginLink}>Login</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Divider */}
+          <View style={styles.dividerContainer}>
+            <View style={styles.divider} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.divider} />
+          </View>
+
+          {/* Rider Sign Up Link */}
+          <View style={styles.riderLinkContainer}>
+            <MaterialIcons name="two-wheeler" size={20} color="#ff6d0b" />
+            <Text style={styles.riderText}>Want to deliver? </Text>
+            <TouchableOpacity onPress={() => router.push('/(auth)/rider-apply')} disabled={loading}>
+              <Text style={styles.riderLink}>Apply as Rider</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -297,7 +299,7 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   inputContainer: {
-    marginBottom: 10,
+    marginBottom: 16,
   },
   label: {
     fontSize: 14,
@@ -312,6 +314,7 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     color: '#333',
+    backgroundColor: '#fff',
   },
   passwordContainer: {
     flexDirection: 'row',
@@ -320,36 +323,32 @@ const styles = StyleSheet.create({
   },
   passwordInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 12,
-    paddingRight: 40, // Make space for the eye button
-    fontSize: 16,
-    color: '#333',
+    paddingRight: 40,
   },
   eyeButton: {
     position: 'absolute',
     right: 12,
     padding: 8,
-    zIndex: 1,
   },
   inputError: {
-    borderColor: '#ff6d0bff',
+    borderColor: '#ff6d0b',
   },
   errorText: {
-    color: '#ff6d0bff',
+    color: '#ff6d0b',
     fontSize: 12,
     marginTop: 4,
     marginLeft: 4,
   },
   signupButton: {
-    backgroundColor: '#ff6d0bff',
+    backgroundColor: '#ff6d0b',
     padding: 14,
     borderRadius: 6,
     alignItems: 'center',
     marginTop: 10,
     marginBottom: 20,
+  },
+  buttonDisabled: {
+    backgroundColor: '#ccc',
   },
   signupButtonText: {
     color: '#fff',
@@ -359,6 +358,7 @@ const styles = StyleSheet.create({
   loginContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
+    marginBottom: 20,
   },
   loginText: {
     fontSize: 14,
@@ -366,7 +366,40 @@ const styles = StyleSheet.create({
   },
   loginLink: {
     fontSize: 14,
-    color: '#333333ff',
+    color: '#333',
+    fontWeight: '600',
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  divider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#eee',
+  },
+  dividerText: {
+    marginHorizontal: 16,
+    color: '#999',
+    fontSize: 14,
+  },
+  riderLinkContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  riderText: {
+    fontSize: 14,
+    color: '#666',
+    marginLeft: 4,
+  },
+  riderLink: {
+    fontSize: 14,
+    color: '#ff6d0b',
     fontWeight: '600',
   },
 });

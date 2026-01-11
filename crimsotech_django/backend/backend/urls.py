@@ -68,6 +68,8 @@ urlpatterns = [
     path('api/customer-favorites/', CustomerFavoritesView.as_view(), name='customer-favorites'),
     path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
     path('api/shops/<uuid:shop_id>/', ViewShopAPIView.as_view(), name='view-shop'),
+    path('api/profile/', ProfileView.as_view(), name='profile'),
+
     
   
 

@@ -1,6 +1,6 @@
-import { API_CONFIG } from '@/utils/config';
+import { API_CONFIG } from '../../utils/config';
 import { MaterialIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
@@ -17,6 +17,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import AxiosInstance from '../../contexts/axios';
 
 const VEHICLE_TYPES = [
   { id: 'car', name: 'Car', icon: '🚗' },
@@ -46,10 +47,8 @@ export default function RiderApplyScreen() {
         return;
       }
 
-      const mediaTypes = (ImagePicker as any).MediaType?.Images || ImagePicker.MediaTypeOptions?.Images || ImagePicker.MediaType?.All;
-
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
@@ -112,79 +111,141 @@ export default function RiderApplyScreen() {
 
     setLoading(true);
     try {
+      // Create FormData
       const formData = new FormData();
+      
+      // Append text fields
       formData.append('vehicle_type', vehicleType);
       formData.append('plate_number', plateNumber.trim());
       formData.append('vehicle_brand', vehicleBrand.trim());
       formData.append('vehicle_model', vehicleModel.trim());
       formData.append('license_number', licenseNumber.trim());
 
-      // Append vehicle image
+      // Handle vehicle image
       if (vehicleImage) {
-        const vehicleExt = vehicleImage.uri.split('.').pop() || 'jpg';
-        const vehicleUri = vehicleImage.uri.startsWith('file://')
-          ? vehicleImage.uri
-          : `file://${vehicleImage.uri}`;
-        const vehicleImageFile: any = {
-          uri: vehicleUri,
-          type: 'image/jpeg',
-          name: vehicleImage.fileName || `vehicle_${Date.now()}.${vehicleExt}`,
+        // Get file extension
+        const uriParts = vehicleImage.uri.split('.');
+        const fileExtension = uriParts[uriParts.length - 1];
+        
+        // Create file object
+        const vehicleFile = {
+          uri: vehicleImage.uri,
+          type: `image/${fileExtension === 'jpg' || fileExtension === 'jpeg' ? 'jpeg' : 'png'}`,
+          name: `vehicle_${Date.now()}.${fileExtension}`,
         };
-        formData.append('vehicle_image', vehicleImageFile);
+
+        // Append as blob
+        formData.append('vehicle_image', vehicleFile as any);
       }
 
-      // Append license image
+      // Handle license image
       if (licenseImage) {
-        const licenseExt = licenseImage.uri.split('.').pop() || 'jpg';
-        const licenseUri = licenseImage.uri.startsWith('file://')
-          ? licenseImage.uri
-          : `file://${licenseImage.uri}`;
-        const licenseImageFile: any = {
-          uri: licenseUri,
-          type: 'image/jpeg',
-          name: licenseImage.fileName || `license_${Date.now()}.${licenseExt}`,
+        const uriParts = licenseImage.uri.split('.');
+        const fileExtension = uriParts[uriParts.length - 1];
+        
+        const licenseFile = {
+          uri: licenseImage.uri,
+          type: `image/${fileExtension === 'jpg' || fileExtension === 'jpeg' ? 'jpeg' : 'png'}`,
+          name: `license_${Date.now()}.${fileExtension}`,
         };
-        formData.append('license_image', licenseImageFile);
+
+        formData.append('license_image', licenseFile as any);
       }
 
-      const response = await fetch(`${API_CONFIG.BASE_URL}/api/rider/register/`, {
-        method: 'POST',
-        body: formData,
+      console.log('📤 Sending rider registration (complete user+rider creation)...');
+      
+      // Use AxiosInstance for the API call - backend will create both user and rider
+      const response = await AxiosInstance.post('/api/rider/register/', formData, {
         headers: {
-          Accept: 'application/json',
+          'Content-Type': 'multipart/form-data',
         },
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        console.log('Rider apply response status:', response.status, data);
-      }
+      console.log('📥 Response status:', response.status);
+      console.log('📥 Response data:', response.data);
 
-      if (response.ok && data.user_id) {
-        // Store rider info in AsyncStorage for signup step
-        await AsyncStorage.setItem('riderId', data.rider_id);
-        await AsyncStorage.setItem('userId', data.user_id);
-        await AsyncStorage.setItem('registration_stage', '1');
-        await AsyncStorage.setItem('is_rider', 'true');
+      if (response.status === 200 || response.status === 201) {
+        const userId = response.data.user_id;
+        const riderId = response.data.rider_id;
 
-        Alert.alert(
-          'Success',
-          'Vehicle information submitted! Please create your account.',
-          [{ text: 'Continue', onPress: () => router.replace('/(auth)/rider-signup') }]
-        );
-      } else {
-        // Handle validation errors
-        if (data.errors) {
-          setErrors(data.errors);
-          const errorMessages = Object.values(data.errors).join('\n');
-          Alert.alert('Validation Error', errorMessages);
+        if (userId && riderId) {
+          // Store user and rider info in SecureStore
+          await SecureStore.setItemAsync('riderId', riderId.toString());
+          await SecureStore.setItemAsync('temp_user_id', userId.toString());
+          await SecureStore.setItemAsync('registration_stage', '1');
+          await SecureStore.setItemAsync('is_rider', 'true');
+
+          // Also create a user object for auth context
+          const userData = {
+            user_id: userId,
+            is_rider: true,
+            registration_stage: 1,
+          };
+          await SecureStore.setItemAsync('user', JSON.stringify(userData));
+
+          Alert.alert(
+            'Success',
+            'Rider registration completed! You can now sign in with your account.',
+            [{ 
+              text: 'Continue to Login', 
+              onPress: () => router.replace('/(auth)/login') 
+            }]
+          );
         } else {
-          Alert.alert('Error', data.error || 'Registration failed');
+          Alert.alert('Error', 'Invalid response from server');
         }
+      } else {
+        Alert.alert('Error', 'Registration failed with unexpected status');
       }
     } catch (error: any) {
-      console.error('Rider registration error:', error);
-      Alert.alert('Error', 'Failed to submit application. Please try again.');
+      console.error('❌ Rider registration error:', error);
+      
+      // Handle Axios error
+      if (error.response) {
+        // Server responded with error status
+        console.log('❌ Server validation errors:', error.response.data);
+        
+        const responseData = error.response.data;
+        const fieldErrors: Record<string, string> = {};
+        
+        // Handle Django validation errors
+        if (responseData && typeof responseData === 'object') {
+          // Check for nested errors object
+          if (responseData.errors) {
+            Object.keys(responseData.errors).forEach(field => {
+              if (Array.isArray(responseData.errors[field])) {
+                fieldErrors[field] = responseData.errors[field][0];
+              } else {
+                fieldErrors[field] = responseData.errors[field];
+              }
+            });
+          } else {
+            // Direct field errors
+            Object.keys(responseData).forEach(field => {
+              if (Array.isArray(responseData[field])) {
+                fieldErrors[field] = responseData[field][0];
+              } else {
+                fieldErrors[field] = responseData[field];
+              }
+            });
+          }
+          
+          setErrors(fieldErrors);
+          
+          const errorMessages = Object.values(fieldErrors).join('\n');
+          Alert.alert('Validation Error', errorMessages || 'Registration failed');
+        } else {
+          Alert.alert('Error', responseData?.error || responseData?.detail || 'Registration failed');
+        }
+      } else if (error.request) {
+        // Request was made but no response
+        console.log('❌ No response received:', error.request);
+        Alert.alert('Network Error', 'No response from server. Please check your connection.');
+      } else {
+        // Something else happened
+        console.log('❌ Error setting up request:', error.message);
+        Alert.alert('Error', error.message || 'Failed to submit application. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -211,7 +272,7 @@ export default function RiderApplyScreen() {
         <View style={styles.content}>
           <Text style={styles.title}>Become a Courier Partner</Text>
           <Text style={styles.subtitle}>
-            Enter your vehicle and license details to apply as a rider
+            Complete rider registration with your vehicle and license details
           </Text>
 
           {/* Vehicle Type Selector */}
@@ -245,10 +306,14 @@ export default function RiderApplyScreen() {
             <TextInput
               style={[styles.input, errors.plate_number && styles.inputError]}
               value={plateNumber}
-              onChangeText={setPlateNumber}
+              onChangeText={(text) => {
+                setPlateNumber(text);
+                if (errors.plate_number) setErrors(prev => ({ ...prev, plate_number: '' }));
+              }}
               placeholder="Enter plate number"
               maxLength={20}
               autoCapitalize="characters"
+              editable={!loading}
             />
             {errors.plate_number && <Text style={styles.errorText}>{errors.plate_number}</Text>}
           </View>
@@ -261,9 +326,13 @@ export default function RiderApplyScreen() {
             <TextInput
               style={[styles.input, errors.vehicle_brand && styles.inputError]}
               value={vehicleBrand}
-              onChangeText={setVehicleBrand}
+              onChangeText={(text) => {
+                setVehicleBrand(text);
+                if (errors.vehicle_brand) setErrors(prev => ({ ...prev, vehicle_brand: '' }));
+              }}
               placeholder="e.g., Honda, Toyota"
               maxLength={50}
+              editable={!loading}
             />
             {errors.vehicle_brand && <Text style={styles.errorText}>{errors.vehicle_brand}</Text>}
           </View>
@@ -276,9 +345,13 @@ export default function RiderApplyScreen() {
             <TextInput
               style={[styles.input, errors.vehicle_model && styles.inputError]}
               value={vehicleModel}
-              onChangeText={setVehicleModel}
+              onChangeText={(text) => {
+                setVehicleModel(text);
+                if (errors.vehicle_model) setErrors(prev => ({ ...prev, vehicle_model: '' }));
+              }}
               placeholder="e.g., Civic, Vios"
               maxLength={50}
+              editable={!loading}
             />
             {errors.vehicle_model && <Text style={styles.errorText}>{errors.vehicle_model}</Text>}
           </View>
@@ -291,10 +364,14 @@ export default function RiderApplyScreen() {
             <TextInput
               style={[styles.input, errors.license_number && styles.inputError]}
               value={licenseNumber}
-              onChangeText={setLicenseNumber}
+              onChangeText={(text) => {
+                setLicenseNumber(text);
+                if (errors.license_number) setErrors(prev => ({ ...prev, license_number: '' }));
+              }}
               placeholder="Enter driver's license number"
               maxLength={20}
               autoCapitalize="characters"
+              editable={!loading}
             />
             {errors.license_number && <Text style={styles.errorText}>{errors.license_number}</Text>}
           </View>
@@ -307,6 +384,7 @@ export default function RiderApplyScreen() {
             <TouchableOpacity
               style={[styles.imageUpload, errors.vehicle_image && styles.inputError]}
               onPress={() => pickImage('vehicle')}
+              disabled={loading}
             >
               {vehicleImage ? (
                 <Image source={{ uri: vehicleImage.uri }} style={styles.imagePreview} />
@@ -314,6 +392,7 @@ export default function RiderApplyScreen() {
                 <View style={styles.imagePlaceholder}>
                   <MaterialIcons name="add-a-photo" size={32} color="#999" />
                   <Text style={styles.imagePlaceholderText}>Upload Vehicle Photo</Text>
+                  <Text style={styles.imageHintText}>Maximum 5MB</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -328,6 +407,7 @@ export default function RiderApplyScreen() {
             <TouchableOpacity
               style={[styles.imageUpload, errors.license_image && styles.inputError]}
               onPress={() => pickImage('license')}
+              disabled={loading}
             >
               {licenseImage ? (
                 <Image source={{ uri: licenseImage.uri }} style={styles.imagePreview} />
@@ -335,11 +415,19 @@ export default function RiderApplyScreen() {
                 <View style={styles.imagePlaceholder}>
                   <MaterialIcons name="add-a-photo" size={32} color="#999" />
                   <Text style={styles.imagePlaceholderText}>Upload License Photo</Text>
+                  <Text style={styles.imageHintText}>Maximum 5MB</Text>
                 </View>
               )}
             </TouchableOpacity>
             {errors.license_image && <Text style={styles.errorText}>{errors.license_image}</Text>}
           </View>
+
+          {/* General errors */}
+          {errors.general && (
+            <View style={styles.generalErrorContainer}>
+              <Text style={styles.generalErrorText}>{errors.general}</Text>
+            </View>
+          )}
 
           {/* Submit Button */}
           <TouchableOpacity
@@ -350,11 +438,12 @@ export default function RiderApplyScreen() {
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.submitButtonText}>Continue to Sign Up</Text>
+              <Text style={styles.submitButtonText}>Complete Rider Registration</Text>
             )}
           </TouchableOpacity>
 
           <Text style={styles.infoText}>
+            Note: A temporary account has been created. You can now log in with your credentials.
             Your application will be reviewed by our team. You'll be notified once approved.
           </Text>
         </View>
@@ -487,6 +576,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
   },
+  imageHintText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#999',
+  },
   submitButton: {
     backgroundColor: '#ff6d0b',
     padding: 16,
@@ -508,5 +602,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 16,
     lineHeight: 18,
+  },
+  generalErrorContainer: {
+    marginBottom: 20,
+    padding: 12,
+    backgroundColor: '#ffebee',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ffcdd2',
+  },
+  generalErrorText: {
+    color: '#d32f2f',
+    fontSize: 14,
+    textAlign: 'center',
   },
 });
