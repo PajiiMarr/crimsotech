@@ -304,7 +304,7 @@ export default function Favorites() {
               product={item}
               isFavorite={favoriteIds.includes(item.id)}
               onToggle={toggleFavorite}
-              onPress={() => router.push({ pathname: '/customer/product-detail', params: { productId: item.id } })}
+              onPress={() => router.push({ pathname: '/customer/view-product', params: { productId: item.id } })}
             />
           )}
           keyExtractor={i => i.id}

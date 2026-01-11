@@ -19,7 +19,7 @@ export default function CustomerHeader() {
 
           {/* ================= ICONS ================= */}
           <View style={styles.iconsContainer}>
-            <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/customer/comgift')}>
+            <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/customer/notification')}>
               <Ionicons name="notifications-outline" size={24} color="#111" />
             </TouchableOpacity>
            
