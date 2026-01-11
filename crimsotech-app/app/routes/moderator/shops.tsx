@@ -149,8 +149,8 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
 
       // Fetch all data in parallel
       const [metricsResponse, shopsResponse] = await Promise.all([
-        AxiosInstance.get('/admin-shops/get_metrics/', { params }),
-        AxiosInstance.get('/admin-shops/get_shops_list/', { params })
+        AxiosInstance.get('/moderator-shops/get_metrics/', { params }),
+        AxiosInstance.get('/moderator-shops/get_shops_list/', { params })
       ]);
 
       if (metricsResponse.data.success) {

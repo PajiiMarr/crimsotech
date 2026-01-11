@@ -9714,7 +9714,831 @@ class ModeratorProduct(viewsets.ViewSet):
             )
 
 
+class ModeratorShops(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """
+        Get comprehensive shop metrics for admin dashboard with date range support
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # DEBUG: Print date range for troubleshooting
+            print(f"Date range filter: {start_date} to {end_date}")
+            
+            # Base queryset for ALL shops (not filtered by date for total counts)
+            all_shops_qs = Shop.objects.all()
+            total_shops = all_shops_qs.count()
+            
+            # Get shop IDs for the date range (shops created in that period)
+            date_filtered_shops_qs = Shop.objects.all()
+            if start_date and end_date:
+                date_filtered_shops_qs = date_filtered_shops_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            date_filtered_shop_ids = list(date_filtered_shops_qs.values_list('id', flat=True))
+            
+            # Calculate total followers from ShopFollow (for all shops, not just date-filtered)
+            total_followers = ShopFollow.objects.count()
+            
+            # Calculate average rating from Reviews (for all shops)
+            rating_agg = Review.objects.aggregate(
+                avg_rating=Avg('rating'),
+                total_reviews=Count('id')
+            )
+            avg_rating = rating_agg['avg_rating'] or 0.0
+            
+            # Get verified shops count (for all shops)
+            verified_shops = all_shops_qs.filter(verified=True).count()
+            
+            # Get top shop by rating (for all shops)
+            top_shop = all_shops_qs.annotate(
+                avg_rating=Avg('reviews__rating'),
+                followers_count=Count('followers')
+            ).filter(avg_rating__isnull=False).order_by('-avg_rating').first()
+            
+            top_shop_name = top_shop.name if top_shop else "No shops"
+            
+            # Additional metrics for date range
+            new_shops_in_period = date_filtered_shops_qs.count()
+            verified_shops_in_period = date_filtered_shops_qs.filter(verified=True).count()
+            
+            response_data = {
+                'success': True,
+                'metrics': {
+                    'total_shops': total_shops,
+                    'total_followers': total_followers,
+                    'avg_rating': round(float(avg_rating), 1),
+                    'verified_shops': verified_shops,
+                    'top_shop_name': top_shop_name,
+                    'new_shops_in_period': new_shops_in_period,
+                    'verified_shops_in_period': verified_shops_in_period,
+                },
+                'message': 'Metrics retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving metrics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_shops_list(self, request):
+        """
+        Get list of all shops with computed metrics with optional date range filtering
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset - filter by date range if provided
+            shops_qs = Shop.objects.all().select_related('customer__customer')
+            
+            if start_date and end_date:
+                shops_qs = shops_qs.filter(created_at__range=[start_date, end_date])
+            
+            # DEBUG: Print query info
+            print(f"Found {shops_qs.count()} shops in date range")
+            
+            # Get shop IDs for related data queries
+            shop_ids = list(shops_qs.values_list('id', flat=True))
+            
+            # Compute followers count for each shop
+            followers_data = ShopFollow.objects.filter(
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                followers_count=Count('id')
+            )
+            followers_map = {fd['shop']: fd['followers_count'] for fd in followers_data}
+            
+            # Compute products count for each shop
+            products_data = Product.objects.filter(
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                products_count=Count('id')
+            )
+            products_map = {pd['shop']: pd['products_count'] for pd in products_data}
+            
+            # Compute ratings for each shop
+            ratings_data = Review.objects.filter(
+                shop__in=shop_ids
+            ).values('shop').annotate(
+                avg_rating=Avg('rating'),
+                total_ratings=Count('id')
+            )
+            ratings_map = {rd['shop']: rd for rd in ratings_data}
+            
+            # Compute active boosts for each shop
+            boosts_data = Boost.objects.filter(
+                shop__in=shop_ids,
+                status='active'
+            ).values('shop').annotate(
+                active_boosts=Count('id')
+            )
+            boosts_map = {bd['shop']: bd['active_boosts'] for bd in boosts_data}
+            
+            # Build shops data
+            shops_data = []
+            for shop in shops_qs:
+                shop_id = shop.id
+                
+                # Get owner name
+                customer = shop.customer
+                if customer and customer.customer:
+                    user = customer.customer
+                    owner_name = f"{user.first_name} {user.last_name}".strip()
+                    if not owner_name:
+                        owner_name = user.username or "Unknown"
+                else:
+                    owner_name = "Unknown Owner"
+                
+                # Get computed metrics
+                followers = followers_map.get(shop_id, 0)
+                products_count = products_map.get(shop_id, 0)
+                rating_info = ratings_map.get(shop_id, {'avg_rating': 0.0, 'total_ratings': 0})
+                active_boosts = boosts_map.get(shop_id, 0)
+                
+                shop_data = {
+                    'id': str(shop_id),
+                    'name': shop.name,
+                    'owner': owner_name,
+                    'location': f"{shop.city}, {shop.province}" if shop.city and shop.province else shop.city or shop.province or 'Unknown',
+                    'followers': followers,
+                    'products': products_count,
+                    'rating': round(float(rating_info['avg_rating']), 1),
+                    'totalRatings': rating_info['total_ratings'],
+                    'status': shop.status,
+                    'joinedDate': shop.created_at.isoformat() if shop.created_at else None,
+                    'totalSales': float(shop.total_sales),
+                    'activeBoosts': active_boosts,
+                    'verified': shop.verified
+                }
+                shops_data.append(shop_data)
+            
+            response_data = {
+                'success': True,
+                'shops': shops_data,
+                'total_count': len(shops_data),
+                'message': 'Shops retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving shops: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
+class ModeratorBoosting(viewsets.ViewSet):
+    """
+    ViewSet for admin boost management and analytics
+    """
+    
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2025-12-07)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """
+        Get comprehensive boost metrics for admin dashboard with date range support
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # DEBUG: Print date range for troubleshooting
+            print(f"Boost metrics date range filter: {start_date} to {end_date}")
+            
+            # Base queryset for all boosts (not filtered by date for total counts)
+            all_boosts_qs = Boost.objects.all()
+            total_boosts = all_boosts_qs.count()
+            
+            # Calculate date-filtered metrics
+            date_filtered_boosts_qs = Boost.objects.all()
+            if start_date and end_date:
+                date_filtered_boosts_qs = date_filtered_boosts_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # Active boosts in the date range
+            active_boosts_in_period = date_filtered_boosts_qs.filter(status='active').count()
+            
+            # Calculate revenue from boosts in the date range
+            # Note: Since Boost model doesn't store price, we need to get it from BoostPlan
+            boosts_in_period = date_filtered_boosts_qs.select_related('boost_plan')
+            total_revenue_in_period = sum(
+                float(boost.boost_plan.price) if boost.boost_plan else 0
+                for boost in boosts_in_period
+            )
+            
+            # Get all boost plans for metrics
+            total_boost_plans = BoostPlan.objects.count()
+            active_boost_plans = BoostPlan.objects.filter(status='active').count()
+            
+            # Calculate expiring soon (within 7 days) from ALL boosts (not date-filtered)
+            seven_days_later = timezone.now() + timedelta(days=7)
+            expiring_soon = Boost.objects.filter(
+                status='active',
+                end_date__lte=seven_days_later,
+                end_date__gte=timezone.now()
+            ).count()
+            
+            # Get most popular boost plan in the period (based on usage)
+            popular_plan_data = boosts_in_period.values('boost_plan__name').annotate(
+                usage_count=Count('id')
+            ).order_by('-usage_count').first()
+            
+            most_popular_boost = popular_plan_data['boost_plan__name'] if popular_plan_data else "No boosts"
+            
+            # Additional metrics for the date range
+            new_boosts_in_period = date_filtered_boosts_qs.count()
+            
+            # Get pending boosts in the date range
+            pending_boosts_in_period = date_filtered_boosts_qs.filter(status='pending').count()
+            
+            # Get cancelled boosts in the date range
+            cancelled_boosts_in_period = date_filtered_boosts_qs.filter(status='cancelled').count()
+            
+            # Calculate total revenue from all boosts (not date-filtered)
+            all_boosts_revenue = sum(
+                float(boost.boost_plan.price) if boost.boost_plan else 0
+                for boost in all_boosts_qs.select_related('boost_plan')
+            )
+            
+            response_data = {
+                'success': True,
+                'metrics': {
+                    'total_boosts': total_boosts,
+                    'active_boosts': active_boosts_in_period,
+                    'total_boost_plans': total_boost_plans,
+                    'active_boost_plans': active_boost_plans,
+                    'total_revenue': float(total_revenue_in_period),
+                    'expiring_soon': expiring_soon,
+                    'most_popular_boost': most_popular_boost,
+                    'new_boosts_in_period': new_boosts_in_period,
+                    'pending_boosts': pending_boosts_in_period,
+                    'cancelled_boosts': cancelled_boosts_in_period,
+                    'all_time_revenue': float(all_boosts_revenue)
+                },
+                'message': 'Metrics retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving metrics: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_boost_plans(self, request):
+        """
+        Get all boost plans with features and additional data with date range support
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset for boost plans with features
+            boost_plans = BoostPlan.objects.all().select_related('user').prefetch_related(
+                Prefetch(
+                    'features',
+                    queryset=BoostPlanFeature.objects.select_related('feature'),
+                    to_attr='plan_features'
+                )
+            )
+            
+            # Get boosts for usage calculation within date range
+            boosts_qs = Boost.objects.all()
+            if start_date and end_date:
+                boosts_qs = boosts_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # Calculate usage count for each plan within date range
+            plan_usage = boosts_qs.values('boost_plan').annotate(
+                usage_count=Count('id')
+            )
+            usage_map = {item['boost_plan']: item['usage_count'] for item in plan_usage}
+            
+            # Calculate revenue for each plan within date range
+            plan_revenue = boosts_qs.values('boost_plan').annotate(
+                revenue=Sum('boost_plan__price')
+            )
+            revenue_map = {item['boost_plan']: float(item['revenue'] or 0) for item in plan_revenue}
+            
+            plans_data = []
+            for plan in boost_plans:
+                # Get features for this plan
+                features_data = []
+                for plan_feature in getattr(plan, 'plan_features', []):
+                    features_data.append({
+                        'name': plan_feature.feature.name,
+                        'description': plan_feature.feature.description,
+                        'value': plan_feature.value
+                    })
+                
+                plan_data = {
+                    'boost_plan_id': str(plan.id),
+                    'name': plan.name,
+                    'price': float(plan.price),
+                    'duration': plan.duration,
+                    'time_unit': plan.time_unit,
+                    'status': plan.status,
+                    'user_id': str(plan.user.id) if plan.user else None,
+                    'user_name': plan.user.username if plan.user else 'System',
+                    'user_email': plan.user.email if plan.user else None,
+                    'features': features_data,
+                    'usage_count': usage_map.get(plan.id, 0),
+                    'revenue': revenue_map.get(plan.id, 0),
+                    'created_at': plan.created_at.isoformat(),
+                    'updated_at': plan.updated_at.isoformat(),
+                }
+                plans_data.append(plan_data)
+            
+            response_data = {
+                'success': True,
+                'boost_plans': plans_data,
+                'message': 'Boost plans retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving boost plans: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_active_boosts(self, request):
+        """
+        Get all boosts with related data with date range support
+        """
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset - filter by date range if provided
+            boosts_qs = Boost.objects.all().order_by('-created_at').select_related(
+                'product',
+                'boost_plan',
+                'shop',
+                'customer',
+                'customer__customer'
+            )
+            
+            if start_date and end_date:
+                boosts_qs = boosts_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # DEBUG: Print query info
+            print(f"Found {boosts_qs.count()} boosts in date range")
+            
+            boosts_data = []
+            for boost in boosts_qs:
+                # Get customer info
+                customer_name = "Unknown"
+                customer_email = "No email"
+                if boost.customer and boost.customer.customer:
+                    user = boost.customer.customer
+                    customer_name = f"{user.first_name} {user.last_name}".strip()
+                    if not customer_name:
+                        customer_name = user.username
+                    customer_email = user.email or "No email"
+                
+                # Get shop info
+                shop_name = boost.shop.name if boost.shop else "No shop"
+                shop_id = str(boost.shop.id) if boost.shop else None
+                
+                # Get product info
+                product_name = boost.product.name if boost.product else "No product"
+                product_id = str(boost.product.id) if boost.product else None
+                
+                # Get boost plan info
+                boost_plan_name = boost.boost_plan.name if boost.boost_plan else "No plan"
+                boost_plan_price = float(boost.boost_plan.price) if boost.boost_plan else 0.0
+                
+                # Calculate duration in days for display
+                duration_days = 0
+                if boost.start_date and boost.end_date:
+                    duration_days = (boost.end_date - boost.start_date).days
+                
+                boost_data = {
+                    'boost_id': str(boost.id),
+                    'product_id': product_id,
+                    'product_name': product_name,
+                    'boost_plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
+                    'boost_plan_name': boost_plan_name,
+                    'shop_id': shop_id,
+                    'shop_name': shop_name,
+                    'customer_id': str(boost.customer.customer) if boost.customer else None,
+                    'customer_name': customer_name,
+                    'customer_email': customer_email,
+                    'status': boost.status,
+                    'amount': boost_plan_price,
+                    'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                    'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                    'duration_days': duration_days,
+                    'created_at': boost.created_at.isoformat(),
+                    'updated_at': boost.updated_at.isoformat(),
+                }
+                boosts_data.append(boost_data)
+            
+            response_data = {
+                'success': True,
+                'boosts': boosts_data,
+                'total_count': len(boosts_data),
+                'message': 'Boosts retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving boosts: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_plan_revenue_data(self, start_date=None, end_date=None):
+        """Get revenue distribution across boost plans within date range"""
+        boosts_qs = Boost.objects.all()
+        if start_date and end_date:
+            boosts_qs = boosts_qs.filter(
+                created_at__range=[start_date, end_date]
+            )
+        
+        # Calculate revenue per plan in the date range
+        plan_revenue = boosts_qs.values('boost_plan__name').annotate(
+            revenue=Sum('boost_plan__price')
+        ).filter(revenue__gt=0)
+        
+        total_revenue = sum(item['revenue'] or 0 for item in plan_revenue)
+        
+        plan_revenue_data = []
+        for item in plan_revenue:
+            plan_revenue_value = float(item['revenue'] or 0)
+            percentage = (plan_revenue_value / total_revenue * 100) if total_revenue > 0 else 0
+            
+            plan_revenue_data.append({
+                'name': item['boost_plan__name'],
+                'value': plan_revenue_value,
+                'percentage': round(percentage, 1)
+            })
+        
+        return plan_revenue_data
+    
+    @action(detail=False, methods=['post'])
+    def create_boost_plan(self, request):
+        """
+        Create a new boost plan
+        """
+        try:
+            required_fields = ['name', 'price', 'duration', 'time_unit']
+            for field in required_fields:
+                if field not in request.data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Validate time_unit
+            valid_time_units = ['hours', 'days', 'weeks', 'months']
+            if request.data['time_unit'] not in valid_time_units:
+                return Response(
+                    {'success': False, 'error': f'Invalid time_unit. Must be one of: {valid_time_units}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            boost_plan = BoostPlan.objects.create(
+                name=request.data['name'],
+                price=request.data['price'],
+                duration=request.data['duration'],
+                time_unit=request.data['time_unit'],
+                status=request.data.get('status', 'active'),
+                user=request.user if request.user.is_authenticated else None
+            )
+            
+            response_data = {
+                'success': True,
+                'boost_plan': {
+                    'boost_plan_id': str(boost_plan.id),
+                    'name': boost_plan.name,
+                    'price': float(boost_plan.price),
+                    'duration': boost_plan.duration,
+                    'time_unit': boost_plan.time_unit,
+                    'status': boost_plan.status,
+                    'created_at': boost_plan.created_at.isoformat(),
+                },
+                'message': 'Boost plan created successfully'
+            }
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error creating boost plan: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['put'])
+    def update_boost_plan(self, request):
+        """
+        Update an existing boost plan
+        """
+        try:
+            boost_plan_id = request.data.get('boost_plan_id')
+            if not boost_plan_id:
+                return Response(
+                    {'success': False, 'error': 'boost_plan_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                boost_plan = BoostPlan.objects.get(id=boost_plan_id)
+            except BoostPlan.DoesNotExist:
+                return Response(
+                    {'success': False, 'error': 'Boost plan not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Update fields
+            updatable_fields = ['name', 'price', 'duration', 'time_unit', 'status']
+            for field in updatable_fields:
+                if field in request.data:
+                    setattr(boost_plan, field, request.data[field])
+            
+            boost_plan.save()
+            
+            response_data = {
+                'success': True,
+                'boost_plan': {
+                    'boost_plan_id': str(boost_plan.id),
+                    'name': boost_plan.name,
+                    'price': float(boost_plan.price),
+                    'duration': boost_plan.duration,
+                    'time_unit': boost_plan.time_unit,
+                    'status': boost_plan.status,
+                    'updated_at': boost_plan.updated_at.isoformat(),
+                },
+                'message': 'Boost plan updated successfully'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error updating boost plan: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['delete'])
+    def delete_boost_plan(self, request):
+        """
+        Delete a boost plan (soft delete by setting status to archived)
+        """
+        try:
+            boost_plan_id = request.data.get('boost_plan_id')
+            if not boost_plan_id:
+                return Response(
+                    {'success': False, 'error': 'boost_plan_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                boost_plan = BoostPlan.objects.get(id=boost_plan_id)
+            except BoostPlan.DoesNotExist:
+                return Response(
+                    {'success': False, 'error': 'Boost plan not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if plan is being used
+            active_boosts = Boost.objects.filter(boost_plan=boost_plan, status='active').count()
+            if active_boosts > 0:
+                return Response(
+                    {'success': False, 'error': f'Cannot delete plan with {active_boosts} active boosts'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Soft delete by archiving
+            boost_plan.status = 'archived'
+            boost_plan.save()
+            
+            response_data = {
+                'success': True,
+                'message': 'Boost plan archived successfully'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error deleting boost plan: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+  
 
 class CustomerProducts(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

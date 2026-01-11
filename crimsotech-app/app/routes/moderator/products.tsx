@@ -1,4 +1,3 @@
-// app/routes/admin/products.tsx
 import type { Route } from './+types/products'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -41,7 +40,7 @@ import DateRangeFilter from '~/components/ui/date-range-filter';
 export function meta(): Route.MetaDescriptors {
   return [
     {
-      title: "Products | Admin",
+      title: "Products | Moderator",
     },
   ];
 }
@@ -109,7 +108,6 @@ interface LoaderData {
   };
 }
 
-// app/routes/admin/products.tsx
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
   await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
@@ -684,7 +682,7 @@ const columns: ColumnDef<Product>[] = [
       return (
         <div className="flex items-center gap-2">
           <Link 
-            to={`/admin/products/${product.id}`}
+            to={`/moderator/products/${product.id}`}
             className="text-primary hover:underline"
           >
             View
