@@ -208,7 +208,7 @@ export default function SearchPage() {
             <FlatList
               data={filteredProducts}
               renderItem={({ item }) => (
-                <CompactProductCard product={item} onPress={() => router.push({ pathname: '/customer/product-detail', params: { productId: item.id } })} />
+                <CompactProductCard product={item} onPress={() => router.push({ pathname: '/customer/view-product', params: { productId: item.id } })} />
               )}
               keyExtractor={(item) => item.id}
               numColumns={2}
