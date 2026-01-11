@@ -16,7 +16,7 @@ export default function RoleGuard({
   children, 
   redirectTo = '/(auth)/login' 
 }: Props) {
-  const { userId, userRole, loading } = useAuth();
+  const { userId, userRole, loading, registrationStage } = useAuth();
 
   useEffect(() => {
     if (!loading) {
@@ -32,13 +32,19 @@ export default function RoleGuard({
         return;
       }
 
+      // Check registration stage: must be 4 to access guarded routes
+      if (registrationStage !== 4) {
+        router.replace(`${redirectTo}?reason=registration_incomplete&stage=${registrationStage ?? 'unknown'}` as RouteTo);
+        return;
+      }
+
       // Check if user role is allowed
       const isAllowed = allowedRoles.includes(userRole);
       if (!isAllowed) {
         router.replace(`${redirectTo}?reason=unauthorized&role=${userRole}` as RouteTo);
       }
     }
-  }, [userId, userRole, loading, allowedRoles, redirectTo]);
+  }, [userId, userRole, loading, registrationStage, allowedRoles, redirectTo]);
 
   // Show nothing while loading
   if (loading) return null;

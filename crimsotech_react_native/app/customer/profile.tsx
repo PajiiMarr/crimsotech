@@ -347,7 +347,8 @@ export default function ProfileScreen() {
           onPress: async () => {
             try {
               await clearAuthData();
-              // Navigation is handled inside clearAuthData
+              // Ensure navigation to login (double-safe)
+              router.replace('/(auth)/login');
             } catch (error) {
               console.error('Logout error:', error);
               Alert.alert('Error', 'Failed to logout');

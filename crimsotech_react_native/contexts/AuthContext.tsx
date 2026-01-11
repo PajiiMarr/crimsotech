@@ -10,6 +10,7 @@ type AuthContextType = {
   shopId: string | null;
   userRole: UserRole;
   loading: boolean;
+  registrationStage: number | null;
   
   // User info (for convenience)
   username: string | null;
@@ -25,10 +26,12 @@ type AuthContextType = {
     userRole: UserRole, 
     username?: string, 
     email?: string, 
-    shopId?: string
+    shopId?: string,
+    registrationStage?: number
   ) => Promise<void>;
   updateUserRole: (newRole: UserRole) => Promise<void>;
   updateShopId: (newShopId: string) => Promise<void>;
+  updateRegistrationStage: (newStage: number) => Promise<void>;
   removeShop: () => Promise<void>;
   clearAuthData: () => Promise<void>;
 };
@@ -41,6 +44,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [userRole, setUserRole] = useState<UserRole>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
+  const [registrationStage, setRegistrationStage] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -58,6 +62,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (storedUserRole) setUserRole(storedUserRole as UserRole);
         if (storedUsername) setUsername(storedUsername);
         if (storedEmail) setEmail(storedEmail);
+        const storedStage = await SecureStore.getItemAsync('registration_stage');
+        if (storedStage) setRegistrationStage(parseInt(storedStage, 10));
       } catch (err) {
         console.error('Failed to load auth data', err);
       } finally {
@@ -74,7 +80,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     newUserRole: UserRole,
     newUsername?: string,
     newEmail?: string,
-    newShopId?: string
+    newShopId?: string,
+    newRegistrationStage?: number
   ) => {
     try {
       // Save to state
@@ -83,6 +90,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (newUsername) setUsername(newUsername);
       if (newEmail) setEmail(newEmail);
       if (newShopId) setShopId(newShopId);
+      if (typeof newRegistrationStage === 'number') setRegistrationStage(newRegistrationStage);
       
       // Save to SecureStore
       await SecureStore.setItemAsync('user_id', newUserId);
@@ -90,6 +98,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (newUsername) await SecureStore.setItemAsync('username', newUsername);
       if (newEmail) await SecureStore.setItemAsync('email', newEmail);
       if (newShopId) await SecureStore.setItemAsync('shop_id', newShopId);
+      if (typeof newRegistrationStage === 'number') await SecureStore.setItemAsync('registration_stage', String(newRegistrationStage));
     } catch (err) {
       console.error('Failed to save auth data', err);
       throw err;
@@ -103,6 +112,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       await SecureStore.setItemAsync('user_role', newRole || '');
     } catch (err) {
       console.error('Failed to update user role', err);
+      throw err;
+    }
+  };
+
+  // Update registration stage
+  const updateRegistrationStage = async (newStage: number) => {
+    try {
+      setRegistrationStage(newStage);
+      await SecureStore.setItemAsync('registration_stage', String(newStage));
+    } catch (err) {
+      console.error('Failed to update registration stage', err);
       throw err;
     }
   };
@@ -167,6 +187,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     userId,
     shopId,
     userRole,
+    registrationStage,
     username,
     email,
     user,
@@ -174,11 +195,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setAuthData,
     updateUserRole,
     updateShopId,
+    updateRegistrationStage,
     removeShop,
     clearAuthData,
     logout,
   };
-
   return (
     <AuthContext.Provider value={value}>
       {children}

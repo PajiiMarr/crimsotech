@@ -111,7 +111,7 @@ const CompactProductCard = ({
 };
 
 export default function CustomerHome() {
-  const { user } = useAuth();
+  const { user, registrationStage, loading: authLoading } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
@@ -178,6 +178,14 @@ export default function CustomerHome() {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  // Prevent access to home unless registration stage is 4
+  useEffect(() => {
+    if (!authLoading && registrationStage !== 4) {
+      console.log('Access denied: registrationStage !== 4', { registrationStage });
+      router.replace('/(auth)/login');
+    }
+  }, [authLoading, registrationStage]);
   const onRefresh = () => { setRefreshing(true); fetchData(); };
 
   const filteredProducts = selectedCategory === ''

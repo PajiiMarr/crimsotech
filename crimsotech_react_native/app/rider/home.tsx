@@ -1,15 +1,25 @@
+import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import RoleGuard from '../guards/RoleGuard';
 import { MaterialIcons } from '@expo/vector-icons';
 
 export default function RiderHome() {
-  const { logout } = useAuth();
+  const { logout, registrationStage, loading: authLoading } = useAuth();
 
   const handleLogout = async () => {
     await logout();
     // Navigation will be handled by the auth context/logout function
   };
+
+  // Prevent access to rider home unless registration stage is 4
+  useEffect(() => {
+    if (!authLoading && registrationStage !== 4) {
+      console.log('Access denied: rider registrationStage !== 4', { registrationStage });
+      router.replace('/(auth)/login');
+    }
+  }, [authLoading, registrationStage]);
 
   return (
     <RoleGuard allowedRoles={['rider']}>

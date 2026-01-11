@@ -28,6 +28,7 @@ export default function LoginScreen() {
     userId, 
     shopId, 
     userRole, 
+    registrationStage,
     loading: authLoading, 
     setAuthData, 
     updateShopId,
@@ -48,18 +49,20 @@ export default function LoginScreen() {
       userId, 
       shopId,
       userRole,
+      registrationStage,
       authLoading 
     });
 
-    if (userId && !authLoading) {
-      console.log('✅ User already logged in, checking role...');
+    // Only auto-redirect to home if registration is fully complete (stage === 4)
+    if (userId && !authLoading && registrationStage === 4) {
+      console.log('✅ User already logged in and fully registered, redirecting to home...');
       if (userRole === 'customer') {
         router.replace('/customer/home');
       } else if (userRole === 'rider') {
         router.replace('/rider/home');
       }
     }
-  }, [userId, userRole, authLoading]);
+  }, [userId, userRole, registrationStage, authLoading]);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<LoginData> = {};
@@ -104,7 +107,8 @@ export default function LoginScreen() {
         userRole, // user role
         data.username, // username
         data.email, // email
-        shopId // shop ID (optional)
+        shopId, // shop ID (optional)
+        data.registration_stage // registration stage (optional)
       );
 
       // Try to fetch full profile immediately to obtain shop information if server didn't include it in login response
@@ -139,7 +143,7 @@ export default function LoginScreen() {
         } else if (registrationStage === 3) {
           router.replace('/(auth)/verify-phone');
           return;
-        } else if (registrationStage >= 4) {
+        } else if (registrationStage === 4) {
           router.replace('/rider/home');
           return;
         }
@@ -151,8 +155,8 @@ export default function LoginScreen() {
         } else if (registrationStage === 2) {
           router.replace('/(auth)/verify-phone');
           return;
-        } else if (registrationStage >= 3) {
-          // ✅ STAGE 3 IS COMPLETED FOR CUSTOMERS
+        } else if (registrationStage === 4) {
+          // Only navigate to home when fully completed (stage 4)
           router.replace('/customer/home');
           return;
         }

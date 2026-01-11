@@ -151,8 +151,8 @@ export default function SetupAccountScreen() {
           } else if (stage === 2) {
             router.replace('/(auth)/verify-phone');
             return;
-          } else if (stage >= 3) {
-            // STAGE 3 IS COMPLETED FOR CUSTOMERS
+          } else if (stage === 4) {
+            // Only allow navigation to home when registration is fully complete (stage 4)
             router.replace('/customer/home');
             return;
           }

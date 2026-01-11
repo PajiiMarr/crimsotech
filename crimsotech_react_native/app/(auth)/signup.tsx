@@ -85,8 +85,14 @@ export default function SignupScreen() {
         const userId = response.data.user_id;
         
         // Save user ID to SecureStore for next stages
-        await SecureStore.setItemAsync('temp_user_id', userId.toString());
-        
+        await SecureStore.setItemAsync('temp_user_id', userId.toString());        // Also save a minimal user object so setup-account can detect the session
+        const userObj = {
+          user_id: userId,
+          registration_stage: 1,
+          is_rider: false,
+          username: username,
+        };
+        await SecureStore.setItemAsync('user', JSON.stringify(userObj));        
         // Navigate to profiling stage (Stage 1 for customers, Stage 2 for riders)
         Alert.alert(
           'Success',

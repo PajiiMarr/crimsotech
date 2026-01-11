@@ -15,11 +15,13 @@ import { router } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import AxiosInstance from '../../contexts/axios';
 import * as SecureStore from 'expo-secure-store';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function VerifyPhoneScreen() {
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [isRider, setIsRider] = useState(false);
+  const { updateRegistrationStage } = useAuth();
   
   // Phone verification state
   const [step, setStep] = useState<'enter-phone' | 'enter-otp'>('enter-phone');
@@ -200,6 +202,13 @@ const handleVerifyOTP = async () => {
       await SecureStore.setItemAsync('user', JSON.stringify(user));
     }
 
+    // Update context registration stage
+    try {
+      updateRegistrationStage(newRegistrationStage);
+    } catch (e) {
+      console.warn('Failed to update registration stage in context', e);
+    }
+
     // Clear temporary storage
     await SecureStore.deleteItemAsync('temp_user_id');
     
@@ -210,13 +219,21 @@ const handleVerifyOTP = async () => {
         {
           text: 'Continue',
           onPress: () => {
-            // Navigate based on user role and stage
+            // Navigate based on user role and stage; only go to home when stage === 4
             if (isRider) {
-              // Rider completed all stages (stage 4)
-              router.replace('/rider/home');
+              if (newRegistrationStage === 4) {
+                router.replace('/rider/home');
+              } else {
+                // Stay on flow or redirect to login to continue later
+                router.replace('/(auth)/login');
+              }
             } else {
-              // Customer completed all stages (stage 3)
-              router.replace('/customer/home');
+              if (newRegistrationStage === 4) {
+                router.replace('/customer/home');
+              } else {
+                // For customers, stage 3 is still not final; redirect to login for now
+                router.replace('/(auth)/login');
+              }
             }
           }
         }
