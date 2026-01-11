@@ -10790,6 +10790,673 @@ class ModeratorBoosting(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
   
+class ModeratorOrders(viewsets.ViewSet):
+    def parse_date(self, date_str):
+        """Parse date string in multiple formats"""
+        if not date_str:
+            return None
+            
+        try:
+            # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
+            if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
+                if date_str.endswith('Z'):
+                    return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return datetime.fromisoformat(date_str)
+            
+            # Try simple date format (2025-12-07)
+            elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # Try other common formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+                    
+            return None
+            
+        except (ValueError, TypeError) as e:
+            print(f"Date parsing error for '{date_str}': {e}")
+            return None
+    
+    def get_date_range_filter(self, start_date_str, end_date_str):
+        """Get date range filter or return default (last 30 days)"""
+        # Default to last 30 days if no date range provided
+        if not start_date_str and not end_date_str:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=30)
+            return start_date, end_date
+        
+        # Parse provided dates
+        start_date = self.parse_date(start_date_str) if start_date_str else None
+        end_date = self.parse_date(end_date_str) if end_date_str else None
+        
+        # Validate dates
+        if start_date_str and not start_date:
+            raise ValueError(f"Invalid start_date format: {start_date_str}")
+        
+        if end_date_str and not end_date:
+            raise ValueError(f"Invalid end_date format: {end_date_str}")
+        
+        # Make dates timezone aware if needed
+        if start_date and not timezone.is_aware(start_date):
+            start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+        
+        if end_date and not timezone.is_aware(end_date):
+            end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+        
+        # If only start date provided, end date defaults to now
+        if start_date and not end_date:
+            end_date = timezone.now()
+        
+        # If only end date provided, start date defaults to 30 days before end date
+        if end_date and not start_date:
+            start_date = end_date - timedelta(days=30)
+        
+        return start_date, end_date
+    
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """Get order metrics and analytics data for admin dashboard with date range support"""
+        try:
+            # FIX: Accept both parameter names for compatibility
+            start_date_str = request.GET.get('start_date') or request.GET.get('start')
+            end_date_str = request.GET.get('end_date') or request.GET.get('end')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # DEBUG: Print date range for troubleshooting
+            print(f"Order metrics date range filter: {start_date} to {end_date}")
+            
+            # Base queryset with date filter applied
+            date_filtered_orders_qs = Order.objects.all()
+            if start_date and end_date:
+                date_filtered_orders_qs = date_filtered_orders_qs.filter(
+                    created_at__range=[start_date, end_date]
+                )
+            
+            # All metrics should be calculated within the date range for consistency
+            total_orders_in_period = date_filtered_orders_qs.count()
+            completed_orders_in_period = date_filtered_orders_qs.filter(status='completed').count()
+            pending_orders_in_period = date_filtered_orders_qs.filter(status='pending').count()
+            cancelled_orders_in_period = date_filtered_orders_qs.filter(status='cancelled').count()
+            
+            # Calculate revenue from orders in the date range
+            revenue_data_in_period = date_filtered_orders_qs.filter(status='completed').aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            total_revenue_in_period = revenue_data_in_period['total_revenue'] or Decimal('0')
+            
+            # Today's orders within the date range (not necessarily actual today)
+            today_in_range = False
+            today_orders_in_period = 0
+            
+            # Check if "today" is within the date range
+            today = timezone.now().date()
+            start_date_date = start_date.date() if start_date else None
+            end_date_date = end_date.date() if end_date else None
+            
+            if start_date_date and end_date_date and start_date_date <= today <= end_date_date:
+                # Today is within the date range, calculate today's orders
+                today_orders_in_period = Order.objects.filter(
+                    created_at__date=today,
+                    created_at__gte=start_date,
+                    created_at__lte=end_date
+                ).count()
+            
+            # Monthly orders within the date range
+            # Calculate the start and end of the current month within the date range
+            current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            monthly_orders_in_period = 0
+            
+            if start_date and end_date:
+                # Determine the overlapping period between the date range and current month
+                month_range_start = max(start_date, current_month_start)
+                month_range_end = min(end_date, timezone.now())
+                
+                if month_range_start <= month_range_end:
+                    monthly_orders_in_period = Order.objects.filter(
+                        created_at__range=[month_range_start, month_range_end]
+                    ).count()
+            
+            # Average order value for the period
+            avg_order_value_in_period = Decimal('0')
+            if completed_orders_in_period > 0:
+                avg_order_value_in_period = total_revenue_in_period / completed_orders_in_period
+            
+            # Success rate for the period
+            success_rate_in_period = Decimal('0')
+            if total_orders_in_period > 0:
+                success_rate_in_period = (completed_orders_in_period / total_orders_in_period) * 100
+            
+            # For frontend compatibility, also include all-time total orders
+            all_time_total_orders = Order.objects.all().count()
+            all_time_revenue_data = Order.objects.filter(status='completed').aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            all_time_revenue = all_time_revenue_data['total_revenue'] or Decimal('0')
+            
+            # Compile metrics - use date-filtered values for consistency
+            order_metrics = {
+                'total_orders': total_orders_in_period,  # Use date-filtered total
+                'pending_orders': pending_orders_in_period,
+                'completed_orders': completed_orders_in_period,
+                'cancelled_orders': cancelled_orders_in_period,
+                'total_revenue': float(total_revenue_in_period),
+                'today_orders': today_orders_in_period,  # Today's orders within date range
+                'monthly_orders': monthly_orders_in_period,  # Monthly orders within date range
+                'avg_order_value': float(avg_order_value_in_period),
+                'success_rate': float(success_rate_in_period),
+                # Include all-time stats for reference if needed
+                'all_time_total_orders': all_time_total_orders,
+                'all_time_revenue': float(all_time_revenue)
+            }
+            
+            # Get analytics data with date range
+            analytics_data = self._get_analytics_data(start_date, end_date)
+            
+            # Get recent orders with related data within date range
+            recent_orders = self._get_recent_orders(start_date, end_date)
+            
+            response_data = {
+                'success': True,
+                'metrics': order_metrics,
+                'analytics': analytics_data,
+                'orders': recent_orders,
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_analytics_data(self, start_date=None, end_date=None):
+        """Generate analytics data for charts with date range support"""
+        # If no date range provided, use last 7 days
+        if not start_date or not end_date:
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=7)
+        
+        # Calculate number of days in the range
+        days_diff = (end_date - start_date).days
+        if days_diff > 365:  # For large ranges, use monthly data
+            return self._get_monthly_analytics_data(start_date, end_date)
+        else:
+            return self._get_daily_analytics_data(start_date, end_date)
+    
+    def _get_daily_analytics_data(self, start_date, end_date):
+        """Generate daily analytics data"""
+        daily_orders = []
+        current_date = start_date.date()
+        end_date_date = end_date.date()
+        
+        while current_date <= end_date_date:
+            day_data = Order.objects.filter(
+                created_at__date=current_date
+            ).aggregate(
+                count=Count('order'),
+                revenue=Sum('total_amount')
+            )
+            
+            daily_orders.append({
+                'date': current_date.strftime('%b %d'),
+                'count': day_data['count'] or 0,
+                'revenue': float(day_data['revenue'] or 0)
+            })
+            
+            current_date += timedelta(days=1)
+        
+        # Status distribution within date range
+        status_distribution = []
+        status_counts = Order.objects.filter(
+            created_at__range=[start_date, end_date]
+        ).values('status').annotate(count=Count('order'))
+        
+        for status_data in status_counts:
+            status_distribution.append({
+                'name': status_data['status'].capitalize(),
+                'value': status_data['count']
+            })
+        
+        # Payment method distribution within date range
+        payment_method_distribution = []
+        payment_counts = Order.objects.filter(
+            created_at__range=[start_date, end_date]
+        ).values('payment_method').annotate(count=Count('order'))
+        
+        for payment_data in payment_counts:
+            if payment_data['payment_method']:
+                payment_method_distribution.append({
+                    'name': payment_data['payment_method'],
+                    'value': payment_data['count']
+                })
+        
+        return {
+            'daily_orders': daily_orders,
+            'status_distribution': status_distribution,
+            'payment_method_distribution': payment_method_distribution,
+            'period_type': 'daily'
+        }
+    
+    def _get_monthly_analytics_data(self, start_date, end_date):
+        """Generate monthly analytics data for large date ranges"""
+        monthly_orders = []
+        
+        # Get all months in the range
+        current_month = start_date.replace(day=1)
+        while current_month <= end_date:
+            next_month = current_month + relativedelta(months=1)
+            
+            month_data = Order.objects.filter(
+                created_at__gte=current_month,
+                created_at__lt=next_month
+            ).aggregate(
+                count=Count('order'),
+                revenue=Sum('total_amount')
+            )
+            
+            monthly_orders.append({
+                'date': current_month.strftime('%b %Y'),
+                'count': month_data['count'] or 0,
+                'revenue': float(month_data['revenue'] or 0)
+            })
+            
+            current_month = next_month
+        
+        return {
+            'daily_orders': monthly_orders,
+            'period_type': 'monthly'
+        }
+    
+    def _get_recent_orders(self, start_date=None, end_date=None):
+        """Get recent orders with all related data with date range support"""
+        orders_qs = Order.objects.select_related(
+            'user'
+        ).prefetch_related(
+            'checkout_set',
+            'checkout_set__cart_item',
+            'checkout_set__cart_item__product',
+            'checkout_set__cart_item__product__shop',
+            'checkout_set__voucher'
+        ).order_by('-created_at')
+        
+        # Apply date filter if provided
+        if start_date and end_date:
+            orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+        
+        orders = orders_qs[:]
+        
+        order_list = []
+        
+        for order in orders:
+            # Get all checkouts for this order
+            order_checkouts = order.checkout_set.select_related(
+                'cart_item',
+                'cart_item__product',
+                'cart_item__product__shop',
+                'cart_item__user',
+                'voucher'
+            ).all()
+            
+            # Process items in the order
+            items = []
+            for checkout in order_checkouts:
+                cart_item = checkout.cart_item
+                product = cart_item.product if cart_item else None
+                shop = product.shop if product else None
+                user = cart_item.user if cart_item else None
+                
+                item_data = {
+                    'id': str(checkout.id),
+                    'cart_item': {
+                        'id': str(cart_item.id) if cart_item else None,
+                        'product': {
+                            'id': str(product.id) if product else None,
+                            'name': product.name if product else 'Unknown Product',
+                            'price': float(product.price) if product else 0,
+                            'shop': {
+                                'id': str(shop.id) if shop else None,
+                                'name': shop.name if shop else 'Unknown Shop'
+                            }
+                        },
+                        'quantity': cart_item.quantity if cart_item else 0,
+                        'user': {
+                            'id': str(user.id) if user else None,
+                            'username': user.username if user else 'Unknown User',
+                            'email': user.email if user else '',
+                            'first_name': user.first_name if user else '',
+                            'last_name': user.last_name if user else ''
+                        }
+                    },
+                    'quantity': checkout.quantity,
+                    'total_amount': float(checkout.total_amount),
+                    'status': checkout.status,
+                    'remarks': checkout.remarks or '',
+                }
+                
+                # Add voucher data if exists
+                if checkout.voucher:
+                    item_data['voucher'] = {
+                        'id': str(checkout.voucher.id),
+                        'name': checkout.voucher.name,
+                        'code': checkout.voucher.code,
+                        'value': float(checkout.voucher.value)
+                    }
+                
+                items.append(item_data)
+            
+            # FIX: Use delivery_address_text instead of delivery_address
+            # Also include shipping address info if available
+            delivery_address = order.delivery_address_text or ''
+            shipping_address_info = {}
+            
+            if order.shipping_address:
+                shipping_address_info = {
+                    'id': str(order.shipping_address.id),
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type
+                }
+            
+            order_data = {
+                'order_id': str(order.order),
+                'user': {
+                    'id': str(order.user.id),
+                    'username': order.user.username,
+                    'email': order.user.email,
+                    'first_name': order.user.first_name,
+                    'last_name': order.user.last_name
+                },
+                'status': order.status,
+                'total_amount': float(order.total_amount),
+                'payment_method': order.payment_method,
+                'delivery_address': delivery_address,  # Use the correct field name
+                'shipping_address': shipping_address_info,  # Add structured shipping address data
+                'created_at': order.created_at.isoformat() if order.created_at else None,
+                'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                'items': items
+            }
+            
+            order_list.append(order_data)
+        
+        return order_list
+
+    @action(detail=False, methods=['get'])
+    def get_order_details(self, request):
+        """Get detailed order information"""
+        order_id = request.query_params.get('order_id')
+        
+        if not order_id:
+            return Response({
+                'success': False,
+                'error': 'Order ID is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            order = Order.objects.select_related(
+                'user'
+            ).prefetch_related(
+                'checkout_set',
+                'checkout_set__cart_item',
+                'checkout_set__cart_item__product',
+                'checkout_set__cart_item__product__shop',
+                'checkout_set__voucher'
+            ).get(order=order_id)
+            
+            # Process order items
+            items = []
+            for checkout in order.checkout_set.all():
+                cart_item = checkout.cart_item
+                product = cart_item.product if cart_item else None
+                shop = product.shop if product else None
+                user = cart_item.user if cart_item else None
+                
+                item_data = {
+                    'id': str(checkout.id),
+                    'cart_item': {
+                        'id': str(cart_item.id) if cart_item else None,
+                        'product': {
+                            'id': str(product.id) if product else None,
+                            'name': product.name if product else 'Unknown Product',
+                            'description': product.description if product else '',
+                            'price': float(product.price) if product else 0,
+                            'quantity': product.quantity if product else 0,
+                            'condition': product.condition if product else '',
+                            'shop': {
+                                'id': str(shop.id) if shop else None,
+                                'name': shop.name if shop else 'Unknown Shop',
+                                'contact_number': shop.contact_number if shop else ''
+                            }
+                        },
+                        'quantity': cart_item.quantity if cart_item else 0,
+                        'user': {
+                            'id': str(user.id) if user else None,
+                            'username': user.username if user else 'Unknown User',
+                            'email': user.email if user else '',
+                            'first_name': user.first_name if user else '',
+                            'last_name': user.last_name if user else '',
+                            'contact_number': user.contact_number if user else ''
+                        }
+                    },
+                    'quantity': checkout.quantity,
+                    'total_amount': float(checkout.total_amount),
+                    'status': checkout.status,
+                    'remarks': checkout.remarks or '',
+                }
+                
+                if checkout.voucher:
+                    item_data['voucher'] = {
+                        'id': str(checkout.voucher.id),
+                        'name': checkout.voucher.name,
+                        'code': checkout.voucher.code,
+                        'value': float(checkout.voucher.value),
+                        'discount_type': checkout.voucher.discount_type
+                    }
+                
+                items.append(item_data)
+            
+            # FIX: Use delivery_address_text instead of delivery_address
+            delivery_address = order.delivery_address_text or ''
+            
+            # Include shipping address info if available
+            shipping_address_info = {}
+            if order.shipping_address:
+                shipping_address_info = {
+                    'id': str(order.shipping_address.id),
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'street': order.shipping_address.street,
+                    'barangay': order.shipping_address.barangay,
+                    'city': order.shipping_address.city,
+                    'province': order.shipping_address.province,
+                    'zip_code': order.shipping_address.zip_code,
+                    'country': order.shipping_address.country,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type,
+                    'building_name': order.shipping_address.building_name,
+                    'floor_number': order.shipping_address.floor_number,
+                    'unit_number': order.shipping_address.unit_number,
+                    'landmark': order.shipping_address.landmark,
+                    'instructions': order.shipping_address.instructions
+                }
+            
+            order_data = {
+                'order_id': str(order.order),
+                'user': {
+                    'id': str(order.user.id),
+                    'username': order.user.username,
+                    'email': order.user.email,
+                    'first_name': order.user.first_name,
+                    'last_name': order.user.last_name,
+                    'contact_number': order.user.contact_number
+                },
+                'status': order.status,
+                'total_amount': float(order.total_amount),
+                'payment_method': order.payment_method,
+                'delivery_address': delivery_address,  # Use the correct field name
+                'shipping_address': shipping_address_info,  # Add structured shipping address
+                'created_at': order.created_at.isoformat(),
+                'updated_at': order.updated_at.isoformat(),
+                'items': items
+            }
+            
+            return Response({
+                'success': True,
+                'order': order_data
+            })
+            
+        except Order.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Order not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        
+    @action(detail=False, methods=['post'])
+    def update_order_status(self, request):
+        """Update order status"""
+        order_id = request.data.get('order_id')
+        new_status = request.data.get('status')
+        
+        if not order_id or not new_status:
+            return Response({
+                'success': False,
+                'error': 'Order ID and status are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            order = Order.objects.get(order=order_id)
+            order.status = new_status
+            order.save()
+            
+            return Response({
+                'success': True,
+                'message': f'Order status updated to {new_status}'
+            })
+            
+        except Order.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Order not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def get_order_stats(self, request):
+        """Get additional order statistics with date range support"""
+        try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            # Get date range
+            try:
+                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+            except ValueError as e:
+                return Response(
+                    {'success': False, 'error': str(e)}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Base queryset with date filter
+            orders_qs = Order.objects.filter(status='completed')
+            if start_date and end_date:
+                orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+            
+            # Revenue statistics for the period
+            revenue_data = orders_qs.aggregate(
+                total_revenue=Sum('total_amount')
+            )
+            period_revenue = revenue_data['total_revenue'] or Decimal('0')
+            
+            # Daily revenue for today (still actual today)
+            today = timezone.now().date()
+            daily_revenue = Order.objects.filter(
+                status='completed',
+                created_at__date=today
+            ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
+            
+            # Top customers by order count in the period
+            top_customers = orders_qs.values(
+                'user__username',
+                'user__first_name',
+                'user__last_name'
+            ).annotate(
+                order_count=Count('order'),
+                total_spent=Sum('total_amount')
+            ).order_by('-total_spent')[:10]
+            
+            # Top products by order count in the period (through checkouts)
+            checkouts_qs = Checkout.objects.filter(order__isnull=False, cart_item__product__isnull=False)
+            if start_date and end_date:
+                checkouts_qs = checkouts_qs.filter(created_at__range=[start_date, end_date])
+            
+            top_products = checkouts_qs.values(
+                'cart_item__product__name'
+            ).annotate(
+                order_count=Count('order', distinct=True)
+            ).order_by('-order_count')[:10]
+            
+            # Top shops by revenue in the period
+            top_shops = checkouts_qs.values(
+                'cart_item__product__shop__name'
+            ).annotate(
+                total_revenue=Sum('total_amount'),
+                order_count=Count('order', distinct=True)
+            ).order_by('-total_revenue')[:10]
+            
+            stats = {
+                'period_revenue': float(period_revenue),
+                'revenue_today': float(daily_revenue),
+                'top_customers': list(top_customers),
+                'top_products': list(top_products),
+                'top_shops': list(top_shops),
+                'date_range': {
+                    'start_date': start_date_str or start_date.isoformat(),
+                    'end_date': end_date_str or end_date.isoformat(),
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None
+                }
+            }
+            
+            return Response({
+                'success': True,
+                'stats': stats
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
 class CustomerProducts(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

@@ -117,6 +117,7 @@ export default [
         route("shops", "routes/moderator/shops.tsx"),
         route("shops/:shop_id", "routes/moderator/view_shops/view_shops.tsx"),
         route("boosting", "routes/moderator/boosting.tsx"),
+        route('orders', 'routes/moderator/orders.tsx'),
     ]),
     ...prefix("rider", [
         index("routes/rider/home.tsx"),
