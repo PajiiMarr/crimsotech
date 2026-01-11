@@ -49,12 +49,11 @@ import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
 export function meta(): Route.MetaDescriptors {
   return [
     {
-      title: "Orders | Admin",
+      title: "Orders | Moderator",
     },
   ];
 }
 
-// Interface that matches Django AdminOrders response
 interface OrderItem {
   id: string;
   cart_item: {
@@ -141,7 +140,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user = await fetchUserRole({ request, context });
   }
 
-  await requireRole(request, context, ["isAdmin"]);
+  await requireRole(request, context, ["isModerator"]);
 
   // Get session for authentication
   const { getSession } = await import('~/sessions.server');
@@ -182,7 +181,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
   try {
     // Fetch real data from API with date range parameters
-    const response = await AxiosInstance.get('/admin-orders/get_metrics/', {
+    const response = await AxiosInstance.get('/moderator-orders/get_metrics/', {
       params: {
         start_date: validStart.toISOString(),
         end_date: validEnd.toISOString()
