@@ -1,6 +1,7 @@
 import { useAuth } from '../../contexts/AuthContext';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import CustomerLayout from './CustomerLayout';
 import React, { useEffect, useState } from 'react';
 import {
     Alert,
@@ -13,7 +14,8 @@ import {
     View,
     ActivityIndicator,
     RefreshControl,
-    Image
+    Image,
+    SafeAreaView
 } from 'react-native';
 import AxiosInstance from '../../contexts/axios';
 import { getUserShops } from '../../utils/api';
@@ -300,38 +302,12 @@ export default function ProfileScreen() {
   }, [profile]);
 
   const handleSwitchToShop = () => {
-    if (!userId) {
-      Alert.alert('Error', 'Please login first');
-      return;
-    }
-
-    if (loadingProfile || loadingShop) {
-      Alert.alert('Please wait', 'Loading profile/shop data...');
-      return;
-    }
-
-    // Prefer explicit hasShop state when available; fallback to profile.shop
-    const effectiveHasShop = !!profile?.shop;
-
-    if (!effectiveHasShop) {
-      // If unknown and not loading, attempt to check shops first
-      if (hasShop === null && !loadingShop) {
-        checkUserShops();
-        Alert.alert('Please wait', 'Checking shop status...');
-        return;
-      }
-
-      // Navigate to create shop screen
-      pushRoute('/main/create-shop');
+    // Navigate to the public shops list. If user has a shop, pass its ID so the page can load its details.
+    const shopIdToOpen = profile?.shop?.id;
+    if (shopIdToOpen) {
+      pushRoute(`/customer/shops?shopId=${shopIdToOpen}`);
     } else {
-      // Navigate to seller/home.tsx
-      // Optionally pass shopId as param
-      const shopIdToPass = profile?.shop?.id;
-      if (shopIdToPass) {
-        pushRoute(`/seller/home?shopId=${shopIdToPass}`);
-      } else {
-        pushRoute('/seller/home');
-      }
+      pushRoute('/customer/shops');
     }
   };
 
@@ -439,6 +415,7 @@ export default function ProfileScreen() {
   if (!userId) {
     return (
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+
         <View style={styles.notLoggedInContainer}>
           <MaterialIcons name="person-off" size={80} color="#9CA3AF" />
           <Text style={styles.notLoggedInTitle}>Not Logged In</Text>
@@ -455,7 +432,10 @@ export default function ProfileScreen() {
   }
 
   return (
+    <SafeAreaView style={styles.container}>
+    <CustomerLayout disableScroll>
     <ScrollView 
+    
       style={styles.container} 
       showsVerticalScrollIndicator={false}
       refreshControl={
@@ -469,9 +449,9 @@ export default function ProfileScreen() {
     >
       {/* Profile Header */}
       <View style={styles.profileHeader}>
-        <View style={styles.avatarContainer}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
+        <View style={styles.headerRow}>
+          <View style={styles.avatarSmall}>
+            <Text style={styles.avatarTextSmall}>
               {getInitials(
                 profile?.user?.full_name, 
                 profile?.user?.email, 
@@ -479,116 +459,30 @@ export default function ProfileScreen() {
               )}
             </Text>
           </View>
-          <TouchableOpacity 
-            style={styles.editAvatar}
-            onPress={() => pushRoute('/pages/edit-profile')}
-          >
-            <MaterialIcons name="photo-camera" size={isSmallDevice ? 14 : 16} color="#FFF" />
-          </TouchableOpacity>
-        </View>
 
-        <Text style={styles.userName}>{getUserDisplayName()}</Text>
-        <Text style={styles.userEmail}>{getUserEmail()}</Text>
-        
-        {/* User Role Badge */}
-        <View style={styles.roleBadge}>
-          <Text style={styles.roleText}>
-            {profile?.user?.is_rider ? 'Rider' : 
-             profile?.user?.is_admin ? 'Admin' : 
-             profile?.user?.is_moderator ? 'Moderator' : 
-             profile?.user?.is_customer ? 'Customer' : 'User'}
-          </Text>
-        </View>
-
-        {/* Stats from API */}
-        <View style={styles.statsContainer}>
-          {profile?.customer?.is_customer && (
-            <>
-              <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{profile.customer.current_product_count}</Text>
-                <Text style={styles.statLabel}>Products</Text>
-              </TouchableOpacity>
-              <View style={styles.statDivider} />
-            </>
-          )}
-          
-          {profile?.shop && (
-            <>
-              <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{formatCurrency(profile.shop.total_sales)}</Text>
-                <Text style={styles.statLabel}>Sales</Text>
-              </TouchableOpacity>
-              <View style={styles.statDivider} />
-              
-              <TouchableOpacity style={styles.statItem}>
-                <Text style={styles.statNumber}>{profile.shop.follower_count}</Text>
-                <Text style={styles.statLabel}>Followers</Text>
-              </TouchableOpacity>
-              <View style={styles.statDivider} />
-            </>
-          )}
-          
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{userId.substring(0, 6)}...</Text>
-            <Text style={styles.statLabel}>User ID</Text>
-          </View>
-        </View>
-
-        {/* Shop Management Card */}
-        {profile?.customer?.is_customer && (
-          <TouchableOpacity
-            style={styles.shopCard}
-            onPress={handleSwitchToShop}
-            disabled={loadingProfile}
-          >
-            <View style={styles.shopCardLeft}>
-              <View style={[styles.shopCardIcon, { backgroundColor: profile?.shop ? '#D1FAE5' : '#FFF3E0' }]}>
-                <MaterialIcons
-                  name="store"
-                  size={24}
-                  color={profile?.shop ? '#059669' : '#FF9800'}
-                />
-              </View>
-              <View style={styles.shopCardTextContainer}>
-                <Text style={styles.shopCardTitle}>
-                  { effectiveHasShop ? 'Manage Your Shop' : 'Create Your Shop' }
-                </Text>
-                <Text style={styles.shopCardSubtitle}>
-                  {loadingShop ? 'Checking shop status...' : (
-                    effectiveHasShop
-                    ? `Manage ${profile?.shop?.name || 'your shop'}`
-                    : 'Create your first shop to start selling'
-
-                  )}
-                </Text>
-
-                {/* Show shop status if exists */}
-                {profile?.shop && (
-                  <View style={styles.shopStatusRow}>
-                    <View style={[
-                      styles.shopStatusBadge,
-                      profile.shop.is_active ? styles.activeBadge : styles.inactiveBadge
-                    ]}>
-                      <Text style={styles.shopStatusText}>
-                        {profile.shop.is_active ? 'Active' : 'Inactive'}
-                      </Text>
-                    </View>
-                    {profile.shop.verified && (
-                      <View style={[styles.shopStatusBadge, styles.verifiedBadge]}>
-                        <MaterialIcons name="verified" size={10} color="#fff" />
-                        <Text style={styles.shopStatusText}>Verified</Text>
-                      </View>
-                    )}
-                  </View>
-                )}
+          <View style={styles.headerText}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={styles.userNameCompact}>{getUserDisplayName()}</Text>
+              <View style={styles.shopBadge}>
+                <Text style={styles.shopBadgeText}>{profile?.shop ? `S1` : `S0`}</Text>
               </View>
             </View>
-            <MaterialIcons name="chevron-right" size={24} color="#B0BEC5" />
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+              <MaterialIcons name="perm-identity" size={12} color="#6C757D" />
+              <Text style={styles.userSubtitle}>My Profile</Text>
+            </View>
+          </View>
+
+          <TouchableOpacity style={styles.editButton} onPress={() => pushRoute('/pages/edit-profile')}>
+            <MaterialIcons name="edit" size={18} color="#374151" />
           </TouchableOpacity>
-        )}
-        
+        </View>
+
+
+
         {/* Product Limit Info */}
-        {profile?.customer?.is_customer && (
+        {/* {profile?.customer?.is_customer && (
           <View style={styles.productLimitCard}>
             <View style={styles.productLimitHeader}>
               <MaterialIcons name="inventory" size={20} color="#6366F1" />
@@ -617,11 +511,141 @@ export default function ProfileScreen() {
               )}
             </View>
           </View>
-        )}
+        )} */}
+      </View>
+
+      {/* Shop Management Card */}
+      {profile?.customer?.is_customer && (
+        <TouchableOpacity
+          style={styles.shopCard}
+          onPress={handleSwitchToShop}
+          disabled={loadingProfile}
+        >
+          <View style={styles.shopCardLeft}>
+            <View style={[styles.shopCardIcon, { backgroundColor: profile?.shop ? '#D1FAE5' : '#FFF3E0' }]}>
+              <MaterialIcons
+                name="store"
+                size={24}
+                color={profile?.shop ? '#059669' : '#FF9800'}
+              />
+            </View>
+            <View style={styles.shopCardTextContainer}>
+              <Text style={styles.shopCardTitle}>Manage your shop(s)</Text>
+              <Text style={styles.shopCardSubtitle}>
+                {loadingShop ? 'Checking shop status...' : (
+                  effectiveHasShop
+                  ? 'Manage your shop(s)'
+                  : 'Create your first shop to start selling'
+                )}
+              </Text>
+            </View>
+          </View>
+          <MaterialIcons name="chevron-right" size={24} color="#B0BEC5" />
+        </TouchableOpacity>
+      )}
+
+      {/* My Orders Card */}
+      <View style={styles.ordersCard}>
+        <View style={styles.ordersHeader}>
+          <Text style={styles.ordersTitle}>My Orders</Text>
+          <TouchableOpacity style={styles.viewAllBtn} onPress={() => pushRoute('/pages/purchases')}>
+            <View style={styles.viewAllRow}>
+              <Text style={styles.viewAll}>View all</Text>
+              <MaterialIcons name="chevron-right" size={16} color="#9CA3AF" />
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.ordersRow}>
+          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=processing')}>
+            <View style={styles.orderIconBox}>
+              <MaterialIcons name="hourglass-empty" size={20} color="#111" />
+            </View>
+            <Text style={styles.orderLabel}>Processing</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=shipped')}>
+            <View style={styles.orderIconBox}>
+              <MaterialIcons name="local-shipping" size={20} color="#111" />
+            </View>
+            <Text style={styles.orderLabel}>Shipped</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=delivered')}>
+            <View style={styles.orderIconBox}>
+              <MaterialIcons name="check-circle" size={20} color="#111" />
+            </View>
+            <Text style={styles.orderLabel}>Delivered</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=reviews')}>
+            <View style={styles.orderIconBox}>
+              <MaterialIcons name="rate-review" size={20} color="#111" />
+            </View>
+            <Text style={styles.orderLabel}>Reviews</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=returns')}>
+            <View style={styles.orderIconBox}>
+              <MaterialIcons name="undo" size={20} color="#111" />
+            </View>
+            <Text style={styles.orderLabel}>Returns</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* My Account Card */}
+      <View style={styles.accountCard}>
+        <View style={styles.accountHeader}>
+          <Text style={styles.accountTitle}>My Account</Text>
+          <TouchableOpacity style={styles.viewAllBtn} onPress={() => pushRoute('/pages/edit-profile')}>
+            <View style={styles.viewAllRow}>
+              <Text style={styles.viewAll}>View all</Text>
+              <MaterialIcons name="chevron-right" size={16} color="#9CA3AF" />
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.accountRow}>
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/edit-profile')}>
+            <View style={styles.accountIconBox}>
+              <MaterialIcons name="person" size={20} color="#111" />
+            </View>
+            <Text style={styles.accountLabel}>Profile</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/favorites')}>
+            <View style={styles.accountIconBox}>
+              <MaterialIcons name="favorite" size={20} color="#111" />
+            </View>
+            <Text style={styles.accountLabel}>Favorites</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/addresses')}>
+            <View style={styles.accountIconBox}>
+              <MaterialIcons name="location-on" size={20} color="#111" />
+            </View>
+            <Text style={styles.accountLabel}>Addresses</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/my-vouchers')}>
+            <View style={styles.accountIconBox}>
+              <MaterialIcons name="local-offer" size={20} color="#111" />
+            </View>
+            <Text style={styles.accountLabel}>Vouchers</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/notifications')}>
+            <View style={styles.accountIconBox}>
+              <MaterialIcons name="settings" size={20} color="#111" />
+            </View>
+            <Text style={styles.accountLabel}>Settings</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Account Section */}
-      <View style={styles.menuSection}>
+      {/* <View style={styles.menuSection}>
         <Text style={styles.sectionTitle}>Account</Text>
 
         <TouchableOpacity
@@ -687,10 +711,10 @@ export default function ProfileScreen() {
           </View>
           <MaterialIcons name="chevron-right" size={24} color="#B0BEC5" />
         </TouchableOpacity>
-      </View>
+      </View> */}
 
       {/* Personal Information Section */}
-      <View style={styles.menuSection}>
+      {/* <View style={styles.menuSection}>
         <Text style={styles.sectionTitle}>Personal Information</Text>
 
         <TouchableOpacity
@@ -738,83 +762,12 @@ export default function ProfileScreen() {
               .join(', ') || 'Not provided'}
           </Text>
         </View>
-      </View>
+      </View> */}
 
-      {/* Shop Information Section (if shop exists) */}
-      {profile?.shop && (
-        <View style={styles.menuSection}>
-          <Text style={styles.sectionTitle}>Shop Information</Text>
-          
-          {profile.shop.shop_picture && (
-            <Image 
-              source={{ uri: profile.shop.shop_picture }} 
-              style={styles.shopImage}
-              resizeMode="cover"
-            />
-          )}
-          
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Shop Name</Text>
-            <Text style={styles.infoValue}>{profile.shop.name}</Text>
-          </View>
-          
-          {profile.shop.description && (
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Description</Text>
-              <Text style={styles.infoValue}>{profile.shop.description}</Text>
-            </View>
-          )}
-          
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Location</Text>
-            <Text style={styles.infoValue}>{profile.shop.location}</Text>
-          </View>
-          
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Contact</Text>
-            <Text style={styles.infoValue}>{profile.shop.contact_number}</Text>
-          </View>
-          
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Status</Text>
-            <Text style={[
-              styles.infoValue,
-              { color: profile.shop.is_active ? '#059669' : '#DC2626' }
-            ]}>
-              {profile.shop.is_active ? 'Active' : 'Inactive'}
-              {profile.shop.verified && ' • Verified'}
-            </Text>
-          </View>
-          
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Created</Text>
-            <Text style={styles.infoValue}>{formatDate(profile.shop.created_at)}</Text>
-          </View>
-          
-          {/* Shop Stats */}
-          {profile.shop.products_count !== undefined && (
-            <View style={styles.shopStats}>
-              <View style={styles.shopStatItem}>
-                <Text style={styles.shopStatNumber}>{profile.shop.products_count}</Text>
-                <Text style={styles.shopStatLabel}>Products</Text>
-              </View>
-              <View style={styles.shopStatDivider} />
-              <View style={styles.shopStatItem}>
-                <Text style={styles.shopStatNumber}>{profile.shop.orders_count || 0}</Text>
-                <Text style={styles.shopStatLabel}>Orders</Text>
-              </View>
-              <View style={styles.shopStatDivider} />
-              <View style={styles.shopStatItem}>
-                <Text style={styles.shopStatNumber}>{profile.shop.customer_count || 0}</Text>
-                <Text style={styles.shopStatLabel}>Customers</Text>
-              </View>
-            </View>
-          )}
-        </View>
-      )}
+
 
       {/* Settings Section */}
-      <View style={styles.menuSection}>
+      {/* <View style={styles.menuSection}>
         <Text style={styles.sectionTitle}>Settings</Text>
 
         <TouchableOpacity
@@ -864,7 +817,7 @@ export default function ProfileScreen() {
           </View>
           <MaterialIcons name="chevron-right" size={24} color="#B0BEC5" />
         </TouchableOpacity>
-      </View>
+      </View> */}
 
       {/* Logout Button */}
       <TouchableOpacity
@@ -890,6 +843,8 @@ export default function ProfileScreen() {
         )}
       </View>
     </ScrollView>
+    </CustomerLayout>
+    </SafeAreaView>
   );
 }
 
@@ -942,23 +897,71 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   profileHeader: {
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    paddingVertical: isSmallDevice ? 24 : 32,
-    paddingHorizontal: 20,
+    backgroundColor: '#E8F9FF', // light blue header
+    alignItems: 'flex-start',
+    paddingVertical: isSmallDevice ? 12 : 16,
+    paddingHorizontal: 16,
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
+        shadowOpacity: 0.06,
         shadowRadius: 4,
       },
       android: {
-        elevation: 3,
+        elevation: 2,
       },
     }),
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+  },
+  avatarSmall: {
+    width: isSmallDevice ? 44 : 48,
+    height: isSmallDevice ? 44 : 48,
+    borderRadius: isSmallDevice ? 22 : 24,
+    backgroundColor: '#6366F1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarTextSmall: {
+    fontSize: isSmallDevice ? 16 : 18,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  headerText: {
+    flex: 1,
+  },
+  userNameCompact: {
+    fontSize: isSmallDevice ? 14 : 16,
+    fontWeight: '700',
+    color: '#212529',
+    marginRight: 8,
+  },
+  userSubtitle: {
+    fontSize: 12,
+    color: '#6C757D',
+    marginLeft: 6,
+  },
+  editButton: {
+    padding: 8,
+  },
+  shopBadge: {
+    backgroundColor: '#111827',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 6,
+  },
+  shopBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
   },
   avatarContainer: {
     position: 'relative',
@@ -1307,6 +1310,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     marginHorizontal: isSmallDevice ? 12 : isLargeDevice ? 20 : 16,
     marginTop: isSmallDevice ? 20 : 24,
+    marginBottom: isSmallDevice ? 12 : 16,
     padding: isSmallDevice ? 14 : 16,
     borderRadius: 12,
     ...Platform.select({
@@ -1349,4 +1353,87 @@ const styles = StyleSheet.create({
     fontFamily: 'System',
     marginTop: 2,
   },
+
+  /* My Orders styles */
+  ordersCard: {
+    backgroundColor: '#FFFFFF',
+    marginTop: isSmallDevice ? 12 : 16,
+    marginHorizontal: isSmallDevice ? 12 : isLargeDevice ? 20 : 16,
+    borderRadius: 12,
+    padding: isSmallDevice ? 12 : 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  ordersHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  ordersTitle: {
+    fontSize: isSmallDevice ? 16 : 17,
+    fontWeight: '600',
+    color: '#212529',
+  },
+  viewAllBtn: { padding: 4 },
+  viewAllRow: { flexDirection: 'row', alignItems: 'center' },
+  viewAll: { fontSize: 13, color: '#9CA3AF', marginRight: 6 },
+  ordersRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  orderItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  orderIconBox: {
+    width: isSmallDevice ? 44 : 48,
+    height: isSmallDevice ? 44 : 48,
+    borderRadius: 8,
+    backgroundColor: '#F8F9FA',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  orderLabel: { fontSize: 12, color: '#6B7280', textAlign: 'center' },
+
+  /* My Account styles */
+  accountCard: {
+    backgroundColor: '#FFFFFF',
+    marginTop: isSmallDevice ? 12 : 16,
+    marginHorizontal: isSmallDevice ? 12 : isLargeDevice ? 20 : 16,
+    borderRadius: 12,
+    padding: isSmallDevice ? 12 : 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  accountHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  accountTitle: {
+    fontSize: isSmallDevice ? 16 : 17,
+    fontWeight: '600',
+    color: '#212529',
+  },
+  accountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  accountItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  accountIconBox: {
+    width: isSmallDevice ? 44 : 48,
+    height: isSmallDevice ? 44 : 48,
+    borderRadius: 8,
+    backgroundColor: '#F8F9FA',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  accountLabel: { fontSize: 12, color: '#6B7280', textAlign: 'center' },
 });

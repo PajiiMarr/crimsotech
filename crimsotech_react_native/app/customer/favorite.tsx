@@ -79,7 +79,14 @@ const CompactFavoriteCard = ({ product, isFavorite, onToggle, onPress }: { produ
 
       <View style={styles.productInfo}>
         <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
-        {categoryName ? <Text style={styles.categoryText}>{categoryName}</Text> : null}
+        {categoryName ? (
+          <View style={styles.categoryBadge}>
+            <View style={styles.categoryIcon}>
+              <Text style={styles.categoryInitial}>{categoryName.charAt(0)}</Text>
+            </View>
+            <Text style={styles.categoryText}>{categoryName}</Text>
+          </View>
+        ) : null}
         {product.shop?.name ? <Text style={styles.shopText}>{product.shop.name}</Text> : null}
         <View style={styles.priceContainer}>
           {isGift ? (
@@ -381,6 +388,10 @@ const styles = StyleSheet.create({
   productInfo: { padding: 10 },
   productName: { fontSize: 12, fontWeight: '600', color: '#111827', marginBottom: 3, lineHeight: 15, height: 28 },
   categoryText: { fontSize: 11, color: '#3B82F6', fontWeight: '500', marginBottom: 2 },
+  /* Category badge */
+  categoryBadge: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  categoryIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#F1F3F5', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+  categoryInitial: { fontSize: 12, fontWeight: '700', color: '#666' },
   shopText: { fontSize: 10, color: '#6B7280', marginBottom: 8 },
   priceContainer: { marginTop: 'auto' },
   freePrice: { fontSize: 12, fontWeight: '700', color: '#059669' },

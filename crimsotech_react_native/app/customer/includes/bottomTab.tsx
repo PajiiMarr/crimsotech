@@ -39,11 +39,11 @@ const styles = StyleSheet.create({
   tabContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent', // match page background to avoid visible white bar
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
-    paddingVertical: Platform.OS === 'ios' ? 16 : 8,
-    paddingBottom: Platform.OS === 'ios' ? 32 : 20, // extra bottom padding for safe area
+    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16, // slightly reduced bottom padding
   },
   tabButton: { alignItems: 'center' },
   tabLabel: { fontSize: 10, color: '#666', marginTop: 2 },

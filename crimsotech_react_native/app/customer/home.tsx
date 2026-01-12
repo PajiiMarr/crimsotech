@@ -11,7 +11,8 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
-  Platform
+  Platform,
+  Alert
 } from 'react-native';
 import RoleGuard from '../guards/RoleGuard';
 import AxiosInstance from '../../contexts/axios';
@@ -35,6 +36,7 @@ interface Product {
   category_admin?: any;
   open_for_swap?: boolean;
   original_price?: number;
+  isFavorite?: boolean;
 }
 
 interface Category {
@@ -45,10 +47,12 @@ interface Category {
 // Product Card Component
 const CompactProductCard = ({
   product,
-  onPress
+  onPress,
+  onFavoritePress // ADD THIS
 }: {
   product: Product;
   onPress: () => void;
+  onFavoritePress: () => void; // ADD THIS
 }) => {
   const priceNumber = typeof product.price === 'number' ? product.price : Number(product.price);
   const hasValidPrice = !isNaN(priceNumber) && priceNumber !== null;
@@ -79,8 +83,12 @@ const CompactProductCard = ({
       ) : null}
 
       <View style={styles.favoriteButton}>
-        <TouchableOpacity>
-          <MaterialIcons name="favorite-border" size={16} color="#666" />
+        <TouchableOpacity onPress={onFavoritePress}>
+          <MaterialIcons 
+            name={product.isFavorite ? 'favorite' : 'favorite-border'} // UPDATE THIS
+            size={16} 
+            color={product.isFavorite ? '#EF4444' : '#666'} // UPDATE THIS
+          />
         </TouchableOpacity>
       </View>
 
@@ -120,34 +128,31 @@ export default function CustomerHome() {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
 
   const fetchData = async () => {
-    try {
-      setLoading(true);
-      await Promise.all([fetchProducts(), fetchCategories(), fetchFavorites()]);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+  try {
+    setLoading(true);
+    await fetchFavorites();     // sets favoriteIds
+    const products = await fetchProducts(); // JUST fetch
+    setProducts(products);
+    await fetchCategories();
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+};
 
-  const fetchProducts = async () => {
-    try {
-      const response = await AxiosInstance.get('/api/public-products/', {
-        headers: { 'X-User-Id': String(user?.id || '') }
-      });
-      if (response.status === 200) {
-        let productsData = response.data;
-        if (Array.isArray(productsData)) setProducts(productsData);
-        else if (productsData.products && Array.isArray(productsData.products)) setProducts(productsData.products);
-        else if (productsData.results && Array.isArray(productsData.results)) setProducts(productsData.results);
-        else setProducts([]);
-      }
-    } catch (error) {
-      console.error('Error fetching products:', error);
-      setProducts([]);
-    }
-  };
+
+ const fetchProducts = async () => {
+  const response = await AxiosInstance.get('/api/public-products/', {
+    headers: { 'X-User-Id': String(user?.id || '') },
+  });
+
+  let productsData = response.data;
+  if (Array.isArray(productsData)) return productsData;
+  if (productsData.results) return productsData.results;
+  if (productsData.products) return productsData.products;
+  return [];
+};
+
 
   const fetchCategories = async () => {
     try {
@@ -163,21 +168,84 @@ export default function CustomerHome() {
   };
 
   const fetchFavorites = async () => {
-    if (!user?.id) return;
-    try {
-      const response = await AxiosInstance.get('/api/customer-favorites/', { headers: { 'X-User-Id': String(user.id) } });
-      if (response.data.favorites) {
-        const favIds = response.data.favorites
-          .map((f: any) => typeof f.product === 'string' ? f.product : f.product?.id)
-          .filter(Boolean);
-        setFavoriteIds(favIds);
-      }
-    } catch (error) {
-      console.error('Error fetching favorites:', error);
+  if (!user?.id) return;
+  try {
+    const response = await AxiosInstance.get('/api/customer-favorites/', { headers: { 'X-User-Id': String(user.id) } });
+    if (response.data.favorites) {
+      const favIds = response.data.favorites
+        .map((f: any) => typeof f.product === 'string' ? f.product : f.product?.id)
+        .filter(Boolean);
+      setFavoriteIds(favIds);
+      
+      // Update products with favorite status
+      setProducts(prev => prev.map(product => ({
+        ...product,
+        isFavorite: favIds.includes(product.id)
+      })));
     }
-  };
+  } catch (error) {
+    console.error('Error fetching favorites:', error);
+  }
+};
+
+  const toggleFavorite = async (productId: string, currentFavoriteStatus: boolean) => {
+  if (!user?.id) return;
+  
+  try {
+    if (currentFavoriteStatus) {
+      // Remove from favorites (backend expects payload, not URL pk)
+      await AxiosInstance.delete('/api/customer-favorites/', {
+        data: { product: productId, customer: user.id },
+        headers: { 'X-User-Id': String(user.id) },
+      });
+    } else {
+      // Add to favorites
+      await AxiosInstance.post('/api/customer-favorites/', 
+        { product: productId, customer: user.id }, 
+        { headers: { 'X-User-Id': String(user.id) } }
+      );
+    }
+    
+    // Update local state
+    setProducts(prev => prev.map(product => {
+      if (product.id === productId) {
+        return { ...product, isFavorite: !currentFavoriteStatus };
+      }
+      return product;
+    }));
+    
+    // Update favoriteIds state
+    setFavoriteIds(prev => {
+      if (currentFavoriteStatus) {
+        return prev.filter(id => id !== productId);
+      } else {
+        return [...prev, productId];
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('Error toggling favorite:', error);
+    const status = error?.response?.status;
+    const data = error?.response?.data || {};
+    const message = data?.message || data?.error || (status === 404 ? 'Product not found' : 'Failed to toggle favorite');
+    Alert.alert('Error', message);
+  }
+};
 
   useEffect(() => { fetchData(); }, []);
+
+  // Add this effect after the existing effects
+useEffect(() => {
+  if (!products.length) return;
+
+  setProducts(prev =>
+    prev.map(product => ({
+      ...product,
+      isFavorite: favoriteIds.includes(product.id),
+    }))
+  );
+}, [favoriteIds]);
+
 
   // Prevent access to home unless registration stage is 4
   useEffect(() => {
@@ -254,8 +322,12 @@ export default function CustomerHome() {
                 <CompactProductCard
                   product={item}
                   onPress={() => router.push({ pathname: '/customer/view-product', params: { productId: item.id } })}
+                  onFavoritePress={() =>toggleFavorite(item.id, favoriteIds.includes(item.id))
+}
+
                 />
               )}
+              
               keyExtractor={item => item.id}
               numColumns={2}
               columnWrapperStyle={styles.productGrid}

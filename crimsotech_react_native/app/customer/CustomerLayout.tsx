@@ -18,14 +18,14 @@ export default function CustomerLayout({ children, disableScroll = false }: Cust
         {disableScroll ? (
           <View style={styles.content}>
             {children}
-            {/* Bottom padding to prevent overlap with tab */}
-            <View style={{ height: Platform.OS === 'ios' ? 100 : 80 }} />
+            {/* Bottom padding to prevent overlap with tab - reduced and colored to match page */}
+            <View style={{ height: Platform.OS === 'ios' ? 40 : 24, backgroundColor: '#F8F9FA' }} />
           </View>
         ) : (
           <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
             {children}
-            {/* Bottom padding to prevent overlap with tab */}
-            <View style={{ height: Platform.OS === 'ios' ? 100 : 80 }} />
+            {/* Bottom padding to prevent overlap with tab - reduced and colored to match page */}
+            <View style={{ height: Platform.OS === 'ios' ? 40 : 24, backgroundColor: '#F8F9FA' }} />
           </ScrollView>
         )}
         <BottomTab />

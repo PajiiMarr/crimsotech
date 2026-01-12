@@ -12723,12 +12723,12 @@ class CustomerShops(APIView):
                 
                 # Check if customer already has a shop (optional, based on business logic)
                 # Remove this if customers can have multiple shops
-                existing_shop = Shop.objects.filter(customer=customer).first()
-                if existing_shop:
-                    return Response(
-                        {'error': 'Customer already has a shop'}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+                # existing_shop = Shop.objects.filter(customer=customer).first()
+                # if existing_shop:
+                #     return Response(
+                #         {'error': 'Customer already has a shop'}, 
+                #         status=status.HTTP_400_BAD_REQUEST
+                #     )
                 
                 # Use atomic transaction for data integrity
                 with transaction.atomic():
