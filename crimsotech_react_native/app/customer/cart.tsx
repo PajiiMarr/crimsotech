@@ -12,6 +12,7 @@ import {
   RefreshControl
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons'; 
+import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import CustomerLayout from './CustomerLayout';
 import AxiosInstance from '../../contexts/axios';
@@ -347,46 +348,46 @@ export default function CartPage() {
   const itemCount = selectedCartItems.reduce((sum, item) => sum + item.quantity, 0);
 
   // Handle checkout
-  const handleCheckout = () => {
-    if (selectedCartItems.length === 0) {
-      Alert.alert('No Items Selected', 'Please select items to checkout');
-      return;
-    }
+  // In cart.tsx, update the handleCheckout function:
+const handleCheckout = () => {
+  if (selectedCartItems.length === 0) {
+    Alert.alert('No Items Selected', 'Please select items to checkout');
+    return;
+  }
 
-    // Prepare checkout data
-    const checkoutData = {
-      items: selectedCartItems.map(item => ({
-        id: item.id,
-        product_id: item.product,
-        name: item.item_name,
-        price: parseFloat(item.item_price),
-        quantity: item.quantity,
-        shop_id: item.product_details?.shop,
-        shop_name: item.product_details?.shop_name || 'Unknown Store'
-      })),
-      total: totalPrice,
-      itemCount: selectedCartItems.length,
-      shopCount: new Set(selectedCartItems.map(item => item.product_details?.shop)).size
-    };
-
-    // Navigate to checkout page
-    Alert.alert(
-      'Proceed to Checkout',
-      `Total: ₱${totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}\nItems: ${itemCount}\n\nProceed to checkout?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Checkout', 
-          onPress: () => {
-            // In a real app, you would navigate to checkout page
-            console.log('Checkout data:', checkoutData);
-            Alert.alert('Checkout', `Checkout initiated for ${itemCount} items. Total: ₱${totalPrice.toLocaleString()}`);
-            // Example: router.push(`/checkout?items=${selectedItems.join(',')}`);
-          }
-        }
-      ]
-    );
+  // Prepare checkout data
+  const checkoutData = {
+    items: selectedCartItems.map(item => ({
+      id: item.id,
+      product_id: item.product,
+      name: item.item_name,
+      price: parseFloat(item.item_price),
+      quantity: item.quantity,
+      shop_id: item.product_details?.shop,
+      shop_name: item.product_details?.shop_name || 'Unknown Store'
+    })),
+    total: totalPrice,
+    itemCount: selectedCartItems.length,
+    shopCount: new Set(selectedCartItems.map(item => item.product_details?.shop)).size
   };
+
+  // Navigate to checkout page
+  Alert.alert(
+    'Proceed to Checkout',
+    `Total: ₱${totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}\nItems: ${itemCount}\n\nProceed to checkout?`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { 
+        text: 'Checkout', 
+        onPress: () => {
+          console.log('Checkout data:', checkoutData);
+          // Use simpler navigation
+          router.push(`/customer/checkout?selected=${selectedItems.join(',')}`);
+        }
+      }
+    ]
+  );
+};
 
   // Loading state
   if (authLoading || loading) {
