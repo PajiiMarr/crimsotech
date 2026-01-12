@@ -11,6 +11,8 @@ import {
   Alert,
   ActivityIndicator,
   Modal,
+  FlatList,
+  Pressable,
 } from 'react-native';
 import { router } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -392,6 +394,11 @@ export default function SetupAccountScreen() {
     (_, i) => currentYear - i
   );
 
+  const selectedYearIndex = Math.max(
+    0,
+    Math.min(years.length - 1, currentYear - selectedYear)
+  );
+
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
@@ -685,30 +692,6 @@ export default function SetupAccountScreen() {
                       color="#333" 
                     />
                   </TouchableOpacity>
-                  
-                  {showYearDropdown && (
-                    <View style={styles.yearDropdown}>
-                      <ScrollView style={styles.yearList} nestedScrollEnabled>
-                        {years.map((year) => (
-                          <TouchableOpacity
-                            key={year}
-                            style={[
-                              styles.yearItem,
-                              selectedYear === year && styles.yearItemSelected
-                            ]}
-                            onPress={() => handleYearSelect(year)}
-                          >
-                            <Text style={[
-                              styles.yearItemText,
-                              selectedYear === year && styles.yearItemTextSelected
-                            ]}>
-                              {year}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    </View>
-                  )}
                 </View>
               </View>
               
@@ -792,6 +775,48 @@ export default function SetupAccountScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Year Picker Modal (inside Calendar) */}
+      <Modal
+        visible={showYearDropdown}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowYearDropdown(false)}
+      >
+        <Pressable
+          style={styles.yearPickerOverlay}
+          onPress={() => setShowYearDropdown(false)}
+        >
+          <Pressable style={styles.yearPickerCard} onPress={() => {}}>
+            <Text style={styles.yearPickerTitle}>Select Year</Text>
+            <FlatList
+              data={years}
+              keyExtractor={(year) => String(year)}
+              initialScrollIndex={selectedYearIndex}
+              getItemLayout={(_, index) => ({ length: 44, offset: 44 * index, index })}
+              showsVerticalScrollIndicator={true}
+              renderItem={({ item: year }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.yearItem,
+                    selectedYear === year && styles.yearItemSelected,
+                  ]}
+                  onPress={() => handleYearSelect(year)}
+                >
+                  <Text
+                    style={[
+                      styles.yearItemText,
+                      selectedYear === year && styles.yearItemTextSelected,
+                    ]}
+                  >
+                    {year}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -848,10 +873,12 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    columnGap: 12,
     marginBottom: 15,
   },
   inputGroup: {
+    flex: 1,
     marginBottom: 15,
   },
   labelContainer: {
@@ -1044,29 +1071,36 @@ const styles = StyleSheet.create({
     color: '#333',
     marginRight: 5,
   },
-  yearDropdown: {
-    position: 'absolute',
-    top: '100%',
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 5,
-    maxHeight: 200,
-    marginTop: 5,
+  yearPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
   },
-  yearList: {
-    maxHeight: 200,
+  yearPickerCard: {
+    width: '100%',
+    maxWidth: 320,
+    maxHeight: 420,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#eee',
+    overflow: 'hidden',
+  },
+  yearPickerTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
   },
   yearItem: {
     paddingHorizontal: 15,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    minHeight: 44,
     borderBottomWidth: 1,
     borderBottomColor: '#f5f5f5',
   },
