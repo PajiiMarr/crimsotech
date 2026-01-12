@@ -1,325 +1,416 @@
-// app/(auth)/verify-phone.tsx
-import { useAuth } from '@/contexts/AuthContext';
-import { API_CONFIG } from '@/utils/config';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from "expo-router";
-import * as SecureStore from 'expo-secure-store';
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState, useEffect } from 'react';
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-} from "react-native";
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
+import { router } from 'expo-router';
+import { MaterialIcons } from '@expo/vector-icons';
+import AxiosInstance from '../../contexts/axios';
+import * as SecureStore from 'expo-secure-store';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function VerifyPhoneScreen() {
-  const { register } = useAuth();
-  const [phone, setPhone] = useState("");
-  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
-  const [step, setStep] = useState<"phone" | "otp">("phone");
-  const [timer, setTimer] = useState(60);
-  const [canResend, setCanResend] = useState(false);
-  const inputRefs = useRef<(TextInput | null)[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [isRider, setIsRider] = useState(false);
+  const { updateRegistrationStage } = useAuth();
+  
+  // Phone verification state
+  const [step, setStep] = useState<'enter-phone' | 'enter-otp'>('enter-phone');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [cooldown, setCooldown] = useState(0);
+  const [errors, setErrors] = useState<{
+    phoneNumber?: string;
+    otp?: string;
+    general?: string;
+  }>({});
 
   useEffect(() => {
-    if (step === "otp") {
-      const interval = setInterval(() => {
-        setTimer((prev) => {
-          if (prev <= 1) {
-            clearInterval(interval);
-            setCanResend(true);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+    loadUserData();
+  }, []);
 
-      return () => clearInterval(interval);
+  useEffect(() => {
+    if (cooldown > 0) {
+      const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
+      return () => clearTimeout(timer);
     }
-  }, [step]);
+  }, [cooldown]);
 
-  // Resolve current user id from SecureStore or AsyncStorage
-  const getUserId = async (): Promise<string | null> => {
+  const loadUserData = async () => {
     try {
-      const storedUser = await SecureStore.getItemAsync('user');
-      if (storedUser) {
-        const parsed = JSON.parse(storedUser);
-        return parsed.user_id || parsed.id || null;
+      const storedUserId = await SecureStore.getItemAsync('temp_user_id');
+      if (storedUserId) {
+        setUserId(storedUserId);
+        
+        // Check if user is a rider
+        const response = await AxiosInstance.get('/api/get-registration/', {
+          headers: { 'X-User-Id': storedUserId }
+        });
+        
+        if (response.data.is_rider) {
+          setIsRider(true);
+        }
       }
-    } catch {}
-    const asyncId = await AsyncStorage.getItem('userId');
-    return asyncId;
+    } catch (error) {
+      console.error('Error loading user data:', error);
+    }
   };
 
-  const handleSendOtp = () => {
-    if (!phone.trim()) {
-      Alert.alert("Error", "Please enter your phone number");
-      return;
+  const formatPhoneNumber = (text: string) => {
+    // Remove all non-digits
+    const digits = text.replace(/\D/g, '');
+    
+    // If starts with 63, remove it (we'll add +63 manually)
+    let cleanDigits = digits;
+    if (digits.startsWith('63')) {
+      cleanDigits = digits.slice(2);
     }
-
-    if (!/^[0-9+\-\s()]{10,}$/.test(phone)) {
-      Alert.alert("Error", "Please enter a valid phone number");
-      return;
-    }
-
-    Alert.alert("OTP Sent", `SMS code sent to ${phone}`);
-    setStep("otp");
-    setTimer(60);
-    setCanResend(false);
+    
+    // Keep only first 10 digits
+    return cleanDigits.slice(0, 10);
   };
 
-  const handleOtpChange = (text: string, index: number) => {
-    const numericText = text.replace(/[^0-9]/g, "");
+  const handlePhoneNumberChange = (text: string) => {
+    const formatted = formatPhoneNumber(text);
+    setPhoneNumber(formatted);
+    if (errors.phoneNumber) {
+      setErrors(prev => ({ ...prev, phoneNumber: undefined }));
+    }
+  };
 
+  const handleOtpChange = (value: string, index: number) => {
     const newOtp = [...otp];
-    newOtp[index] = numericText;
+    newOtp[index] = value;
     setOtp(newOtp);
-
-    if (numericText && index < 5) {
-      inputRefs.current[index + 1]?.focus();
+    
+    // Auto-focus next input
+    if (value && index < 5) {
+      // You can implement refs for auto-focus if needed
     }
-
-    if (index === 5 && numericText) {
-      const otpString = newOtp.join("");
-      if (otpString.length === 6) {
-        verifyOtp();
-      }
+    
+    if (errors.otp) {
+      setErrors(prev => ({ ...prev, otp: undefined }));
     }
   };
 
-  const handleKeyPress = (e: any, index: number) => {
-    if (e.nativeEvent.key === "Backspace" && !otp[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus();
+  const validatePhoneNumber = () => {
+    if (!phoneNumber.trim()) {
+      setErrors(prev => ({ ...prev, phoneNumber: 'Phone number is required' }));
+      return false;
+    }
+    
+    if (!phoneNumber.startsWith('9')) {
+      setErrors(prev => ({ ...prev, phoneNumber: 'Philippine number must start with 9' }));
+      return false;
+    }
+    
+    if (phoneNumber.length !== 10) {
+      setErrors(prev => ({ ...prev, phoneNumber: 'Phone number must be 10 digits' }));
+      return false;
+    }
+    
+    return true;
+  };
+
+  const validateOtp = () => {
+    const otpString = otp.join('');
+    if (otpString.length !== 6) {
+      setErrors(prev => ({ ...prev, otp: 'Please enter complete 6-digit OTP' }));
+      return false;
+    }
+    return true;
+  };
+
+  const handleSendOTP = async () => {
+    if (!validatePhoneNumber() || !userId) return;
+
+    setLoading(true);
+    setErrors({});
+    
+    try {
+      const payload = {
+        action_type: 'send_otp',
+        contact_number: phoneNumber,
+      };
+
+      const response = await AxiosInstance.post('/api/verify-number/verify_number/', payload, {
+        headers: { 'X-User-Id': userId }
+      });
+
+      console.log('✅ OTP sent:', response.data);
+      
+      Alert.alert('OTP Sent', `OTP has been sent to +63${phoneNumber}`);
+      setStep('enter-otp');
+      setCooldown(60); // 60 seconds cooldown
+    } catch (error: any) {
+      console.error('❌ OTP error:', error.response?.data || error.message);
+      
+      const errorMessage = error.response?.data?.error || 'Failed to send OTP. Please try again.';
+      setErrors(prev => ({ ...prev, general: errorMessage }));
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const verifyOtp = async () => {
-    const otpString = otp.join("");
+ // In verify-phone.tsx, update the handleVerifyOTP function:
 
-    if (otpString === "123456") {
-      // In a real app, you would verify the OTP with the backend
-      // For now, we'll proceed to complete registration with the backend
-      try {
-        // Promote registration to stage 4 (complete) to match web flow
-        const userId = await getUserId();
-        if (userId) {
-          try {
-            const promoteRes = await fetch(`${API_CONFIG.BASE_URL}/api/register/`, {
-              method: 'PUT',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-User-Id': userId,
-              },
-              body: JSON.stringify({ registration_stage: 4 }),
-            });
-            const promoteData = await promoteRes.json().catch(() => null);
-            if (promoteRes.ok) {
-              // Re-fetch fresh user data to capture correct role flags
-              try {
-                const userRes = await fetch(`${API_CONFIG.BASE_URL}/api/login/`, {
-                  method: 'GET',
-                  headers: { 'X-User-Id': userId },
-                });
-                const userData = await userRes.json().catch(() => null);
-                if (userRes.ok && userData) {
-                  await SecureStore.setItemAsync('user', JSON.stringify(userData));
-                } else {
-                  // Fallback: update just the stage if GET failed
-                  const stored = await SecureStore.getItemAsync('user');
-                  if (stored) {
-                    const parsed = JSON.parse(stored);
-                    await SecureStore.setItemAsync('user', JSON.stringify({ ...parsed, registration_stage: 4 }));
-                  }
-                }
-              } catch {}
+const handleVerifyOTP = async () => {
+  if (!validateOtp() || !userId) return;
+
+  setLoading(true);
+  setErrors({});
+  
+  try {
+    const payload = {
+      action_type: 'verify_otp',
+      contact_number: phoneNumber,
+      otp_code: otp.join(''),
+    };
+
+    const response = await AxiosInstance.post('/api/verify-number/verify_number/', payload, {
+      headers: { 'X-User-Id': userId }
+    });
+
+    console.log('✅ OTP verified:', response.data);
+    
+    // ✅ UPDATED: Set registration_stage to 3 for customers (completed)
+    // For riders: stage 3 → stage 4 (completed)
+    // For customers: stage 2 → stage 3 (completed)
+    const newRegistrationStage = isRider ? 4 : 3;
+    
+    await AxiosInstance.put('/api/profiling/', {
+      registration_stage: newRegistrationStage
+    }, {
+      headers: { 'X-User-Id': userId }
+    });
+
+    // Update user data in storage
+    const userJson = await SecureStore.getItemAsync('user');
+    if (userJson) {
+      const user = JSON.parse(userJson);
+      user.registration_stage = newRegistrationStage;
+      await SecureStore.setItemAsync('user', JSON.stringify(user));
+    }
+
+    // Update context registration stage
+    try {
+      updateRegistrationStage(newRegistrationStage);
+    } catch (e) {
+      console.warn('Failed to update registration stage in context', e);
+    }
+
+    // Clear temporary storage
+    await SecureStore.deleteItemAsync('temp_user_id');
+    
+    Alert.alert(
+      'Success',
+      'Phone number verified successfully!',
+      [
+        {
+          text: 'Continue',
+          onPress: () => {
+            // Navigate based on user role and stage; only go to home when stage === 4
+            if (isRider) {
+              if (newRegistrationStage === 4) {
+                router.replace('/rider/home');
+              } else {
+                // Stay on flow or redirect to login to continue later
+                router.replace('/(auth)/login');
+              }
             } else {
-              console.warn('Failed to set registration_stage to 4:', promoteData);
+              if (newRegistrationStage === 4) {
+                router.replace('/customer/home');
+              } else {
+                // For customers, stage 3 is still not final; redirect to login for now
+                router.replace('/(auth)/login');
+              }
             }
-          } catch (e) {
-            console.warn('Error promoting registration_stage to 4:', e);
           }
         }
+      ]
+    );
+  } catch (error: any) {
+    console.error('❌ Verification error:', error.response?.data || error.message);
+    
+    const errorMessage = error.response?.data?.error || 'Invalid OTP. Please try again.';
+    setErrors(prev => ({ ...prev, general: errorMessage }));
+    Alert.alert('Error', errorMessage);
+  } finally {
+    setLoading(false);
+  }
+};
 
-        Alert.alert("Success", "Phone number verified successfully!");
+  const handleResendOTP = async () => {
+    if (cooldown > 0) return;
+    
+    setLoading(true);
+    try {
+      const payload = {
+        action_type: 'send_otp',
+        contact_number: phoneNumber,
+      };
 
-        // Route based on role: riders go to Rider Dashboard, others to main home
-        try {
-          const storedIsRider = await AsyncStorage.getItem('is_rider');
-          if (storedIsRider === 'true') {
-            router.replace('/rider');
-          } else {
-            router.replace('/main/home');
-          }
-        } catch {
-          router.replace('/main/home');
-        }
-      } catch (error: any) {
-        // Handle verification error with specific messages
-        if (error.response) {
-          // Handle specific error responses from backend
-          const errorResponse = error.response;
-          let errorMessage = '';
-          if (errorResponse.error) {
-            errorMessage = errorResponse.error;
-          } else if (errorResponse.message) {
-            errorMessage = errorResponse.message;
-          } else if (errorResponse.detail) {
-            errorMessage = errorResponse.detail;
-          } else {
-            errorMessage = 'Verification failed. Please try again.';
-          }
+      const response = await AxiosInstance.post('/api/verify-number/verify_number/', payload, {
+        headers: { 'X-User-Id': userId }
+      });
 
-          Alert.alert("Error", errorMessage);
-        } else {
-          // Handle network or other errors
-          console.error('Verification error:', error);
-          Alert.alert("Error", "Verification failed. Please try again.");
-        }
-      }
-    } else {
-      Alert.alert("Error", "Invalid OTP. Please try again.");
+      console.log('✅ OTP resent:', response.data);
+      Alert.alert('OTP Resent', `New OTP has been sent to +63${phoneNumber}`);
+      setCooldown(60);
+    } catch (error: any) {
+      console.error('❌ Resend error:', error.response?.data || error.message);
+      Alert.alert('Error', 'Failed to resend OTP. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const resendOtp = () => {
-    if (canResend) {
-      setTimer(60);
-      setCanResend(false);
-      setOtp(["", "", "", "", "", ""]);
-      inputRefs.current[0]?.focus();
-
-      Alert.alert("OTP Resent", `New SMS code sent to ${phone}`);
-    }
-  };
-
-  const changePhoneNumber = () => {
-    setStep("phone");
-    setOtp(["", "", "", "", "", ""]);
+  const getOtpInputs = () => {
+    return (
+      <View style={styles.otpContainer}>
+        {[0, 1, 2, 3, 4, 5].map((index) => (
+          <TextInput
+            key={index}
+            style={[styles.otpInput, errors.otp && styles.inputError]}
+            value={otp[index]}
+            onChangeText={(value) => handleOtpChange(value, index)}
+            keyboardType="number-pad"
+            maxLength={1}
+            editable={!loading}
+            selectTextOnFocus
+          />
+        ))}
+      </View>
+    );
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <ScrollView
+      <ScrollView 
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.brandTitle}>CrimsoTech</Text>
         </View>
 
         <View style={styles.content}>
-          {/* Step 1: Phone Number Input */}
-          {step === "phone" ? (
-            <>
-              <Text style={styles.title}>Verify Your Phone</Text>
-              <Text style={styles.subtitle}>
-                Enter your phone number to receive a verification code
-              </Text>
+          <Text style={styles.title}>Verify Your Phone Number</Text>
+          <Text style={styles.subtitle}>
+            {isRider ? 'Step 3: Phone Verification' : 'Step 2: Phone Verification'}
+          </Text>
 
-              {/* Phone Input */}
-              <View style={styles.inputContainer}>
-                <Text style={styles.label}>Phone Number</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="+63 912 345 6789"
-                  value={phone}
-                  onChangeText={setPhone}
-                  keyboardType="phone-pad"
-                  autoFocus
-                />
-                <Text style={styles.hintText}>
-                  We&apos;ll send a 6-digit SMS code to this number
+          {step === 'enter-phone' ? (
+            <>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Mobile Number *</Text>
+                <View style={styles.phoneInputContainer}>
+                  <Text style={styles.countryCode}>+63</Text>
+                  <TextInput
+                    style={[styles.phoneInput, errors.phoneNumber && styles.inputError]}
+                    placeholder="9XXXXXXXXX"
+                    value={phoneNumber}
+                    onChangeText={handlePhoneNumberChange}
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    editable={!loading}
+                  />
+                </View>
+                {errors.phoneNumber && (
+                  <Text style={styles.errorText}>{errors.phoneNumber}</Text>
+                )}
+                <Text style={styles.helperText}>
+                  Enter your 10-digit Philippine mobile number starting with 9
                 </Text>
               </View>
 
-              {/* Send OTP Button */}
-              <TouchableOpacity
-                style={styles.sendButton}
-                onPress={handleSendOtp}
+              <TouchableOpacity 
+                style={[styles.submitButton, loading && styles.buttonDisabled]}
+                onPress={handleSendOTP}
+                disabled={loading}
               >
-                <Text style={styles.sendButtonText}>
-                  Send Verification Code
-                </Text>
+                {loading ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <Text style={styles.submitButtonText}>Send OTP</Text>
+                )}
               </TouchableOpacity>
             </>
           ) : (
             <>
-              {/* Step 2: OTP Input */}
-              <Text style={styles.title}>Enter Verification Code</Text>
-              <Text style={styles.subtitle}>
-                Enter the 6-digit code sent to
-              </Text>
-              <Text style={styles.phoneNumber}>{phone}</Text>
-
-              {/* Change Phone Link */}
-              <TouchableOpacity
-                onPress={changePhoneNumber}
-                style={styles.changePhone}
-              >
-                <Text style={styles.changePhoneText}>Change phone number</Text>
-              </TouchableOpacity>
-
-              {/* OTP Inputs */}
-              <View style={styles.otpContainer}>
-                {otp.map((digit, index) => (
-                  <TextInput
-                    key={index}
-                    ref={(ref) => {
-                      if (ref) inputRefs.current[index] = ref;
-                    }}
-                    style={[styles.otpInput, digit && styles.otpInputFilled]}
-                    value={digit}
-                    onChangeText={(text) => handleOtpChange(text, index)}
-                    onKeyPress={(e) => handleKeyPress(e, index)}
-                    keyboardType="number-pad"
-                    maxLength={1}
-                    textAlign="center"
-                    autoFocus={index === 0}
-                  />
-                ))}
-              </View>
-
-              {/* Timer */}
-              <View style={styles.timerContainer}>
-                <Text style={styles.timerText}>
-                  {canResend ? "Code expired" : `Resend code in ${timer}s`}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Enter OTP</Text>
+                <Text style={styles.otpInstruction}>
+                  Enter the 6-digit OTP sent to +63{phoneNumber}
                 </Text>
+                
+                {getOtpInputs()}
+                
+                {errors.otp && (
+                  <Text style={styles.errorText}>{errors.otp}</Text>
+                )}
+
+                <View style={styles.resendContainer}>
+                  <Text style={styles.resendText}>
+                    Didn't receive OTP?{' '}
+                  </Text>
+                  <TouchableOpacity 
+                    onPress={handleResendOTP}
+                    disabled={loading || cooldown > 0}
+                  >
+                    <Text style={[
+                      styles.resendButtonText,
+                      (loading || cooldown > 0) && styles.resendDisabled
+                    ]}>
+                      {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend OTP'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              {/* Verify Button */}
-              <TouchableOpacity style={styles.verifyButton} onPress={verifyOtp}>
-                <Text style={styles.verifyButtonText}>Verify & Continue</Text>
-              </TouchableOpacity>
-
-              {/* Resend OTP */}
-              <TouchableOpacity
-                style={[
-                  styles.resendButton,
-                  !canResend && styles.resendButtonDisabled,
-                ]}
-                onPress={resendOtp}
-                disabled={!canResend}
-              >
-                <Text
-                  style={[
-                    styles.resendButtonText,
-                    !canResend && styles.resendButtonTextDisabled,
-                  ]}
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity 
+                  style={[styles.secondaryButton, loading && styles.buttonDisabled]}
+                  onPress={() => setStep('enter-phone')}
+                  disabled={loading}
                 >
-                  Resend SMS Code
-                </Text>
-              </TouchableOpacity>
+                  <Text style={styles.secondaryButtonText}>Change Number</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.submitButton, loading && styles.buttonDisabled]}
+                  onPress={handleVerifyOTP}
+                  disabled={loading || otp.join('').length !== 6}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <Text style={styles.submitButtonText}>Verify OTP</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </>
+          )}
+
+          {errors.general && (
+            <View style={styles.errorContainer}>
+              <MaterialIcons name="error-outline" size={20} color="#ff6d0b" />
+              <Text style={styles.generalErrorText}>{errors.general}</Text>
+            </View>
           )}
         </View>
       </ScrollView>
@@ -330,7 +421,7 @@ export default function VerifyPhoneScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: '#fff',
   },
   scrollContent: {
     flexGrow: 1,
@@ -342,138 +433,159 @@ const styles = StyleSheet.create({
   },
   brandTitle: {
     fontSize: 20,
-    fontWeight: "700",
-    color: "#333",
+    fontWeight: '700',
+    color: '#333',
     letterSpacing: 0.5,
   },
   content: {
     flex: 1,
-    padding: 40,
+    paddingHorizontal: 40,
     paddingTop: 0,
-    justifyContent: "center",
   },
   title: {
     fontSize: 24,
-    fontWeight: "600",
-    textAlign: "center",
-    marginBottom: 12,
-    color: "#333",
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 10,
+    color: '#333',
   },
   subtitle: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 8,
-    lineHeight: 20,
-  },
-  phoneNumber: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-    textAlign: "center",
-    marginBottom: 20,
+    textAlign: 'center',
+    marginBottom: 30,
+    color: '#666',
   },
-  inputContainer: {
+  inputGroup: {
     marginBottom: 30,
   },
   label: {
-    fontSize: 14,
-    marginBottom: 8,
-    color: "#333",
-    fontWeight: "500",
+    fontSize: 16,
+    marginBottom: 10,
+    color: '#333',
+    fontWeight: '500',
   },
-  input: {
+  phoneInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: '#ddd',
     borderRadius: 6,
+    backgroundColor: '#fff',
+  },
+  countryCode: {
+    paddingHorizontal: 12,
+    fontSize: 16,
+    color: '#666',
+    borderRightWidth: 1,
+    borderRightColor: '#ddd',
+    lineHeight: 48,
+  },
+  phoneInput: {
+    flex: 1,
     padding: 12,
     fontSize: 16,
-    color: "#333",
-    marginBottom: 8,
+    color: '#333',
+    marginLeft: 8,
   },
-  hintText: {
+  helperText: {
     fontSize: 12,
-    color: "#666",
+    color: '#666',
+    marginTop: 6,
     marginLeft: 4,
   },
-  sendButton: {
-    backgroundColor: "#ff6d0bff",
-    padding: 16,
-    borderRadius: 6,
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  sendButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  changePhone: {
-    alignSelf: "center",
-    marginBottom: 30,
-  },
-  changePhoneText: {
+  otpInstruction: {
     fontSize: 14,
-    color: "#ff6d0bff",
-    fontWeight: "500",
+    color: '#666',
+    marginBottom: 20,
+    textAlign: 'center',
   },
   otpContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginBottom: 20,
   },
   otpInput: {
     width: 45,
-    height: 60,
+    height: 50,
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    fontSize: 24,
-    color: "#333",
-    backgroundColor: "#fff",
+    borderColor: '#ddd',
+    borderRadius: 6,
+    fontSize: 20,
+    textAlign: 'center',
+    color: '#333',
+    backgroundColor: '#fff',
   },
-  otpInputFilled: {
-    borderColor: "#ff6d0bff",
-    backgroundColor: "#fffaf5",
+  inputError: {
+    borderColor: '#ff6d0b',
   },
-  timerContainer: {
-    marginBottom: 20,
+  errorText: {
+    color: '#ff6d0b',
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 4,
   },
-  timerText: {
+  resendContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  resendText: {
     fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-  },
-  verifyButton: {
-    backgroundColor: "#ff6d0bff",
-    padding: 16,
-    borderRadius: 6,
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  verifyButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  resendButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#ff6d0bff",
-    alignSelf: "center",
-  },
-  resendButtonDisabled: {
-    borderColor: "#ddd",
-    opacity: 0.5,
+    color: '#666',
   },
   resendButtonText: {
-    color: "#ff6d0bff",
     fontSize: 14,
-    fontWeight: "500",
+    color: '#ff6d0b',
+    fontWeight: '500',
   },
-  resendButtonTextDisabled: {
-    color: "#999",
+  resendDisabled: {
+    color: '#ccc',
+  },
+  buttonContainer: {
+    gap: 10,
+  },
+  submitButton: {
+    backgroundColor: '#ff6d0b',
+    padding: 14,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  secondaryButton: {
+    padding: 14,
+    borderRadius: 6,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ff6d0b',
+  },
+  buttonDisabled: {
+    backgroundColor: '#ccc',
+    borderColor: '#ccc',
+  },
+  submitButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  secondaryButtonText: {
+    color: '#ff6d0b',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    padding: 12,
+    backgroundColor: '#fff0e6',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#ff6d0b',
+  },
+  generalErrorText: {
+    color: '#ff6d0b',
+    fontSize: 14,
+    marginLeft: 8,
   },
 });
