@@ -142,6 +142,8 @@ export default function ProfileScreen() {
   const [headers, setHeaders] = useState<ProfileResponse['headers'] | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [orderCounts, setOrderCounts] = useState({ processing: 0, shipped: 0, rate: 0, returns: 0 });
+  const [loadingCounts, setLoadingCounts] = useState(false);
 
   // Shop fallback states
   const [hasShop, setHasShop] = useState<boolean | null>(null);
@@ -238,6 +240,36 @@ export default function ProfileScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     fetchProfile();
+    fetchOrderCounts();
+  };
+
+  // Fetch order counts per status to show badges
+  const fetchOrderCounts = async () => {
+    if (!userId) return;
+
+    try {
+      setLoadingCounts(true);
+      const response = await AxiosInstance.get('/api/purchases-buyer/status-counts/', {
+        headers: { 'X-User-Id': userId },
+      });
+
+      // Expecting response.data to be an object like { processing: 1, shipped: 2, rate: 0, returns: 1 }
+      if (response?.data) {
+        const data = response.data;
+        // normalize keys
+        setOrderCounts({
+          processing: Number(data.processing || data.pending || 0),
+          shipped: Number(data.shipped || 0),
+          rate: Number(data.rate || data.completed || 0),
+          returns: Number(data.returns || data.cancelled || 0),
+        });
+      }
+    } catch (err: any) {
+      console.error('Error fetching order counts:', err);
+      // Do not fallback to /user_purchases_summary/ (server may return 500). Keep counts unchanged on error.
+    } finally {
+      setLoadingCounts(false);
+    }
   };
 
   // Check user shops fallback (if profile does not contain shop but user is a customer)
@@ -288,6 +320,7 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (!authLoading && userId) {
       fetchProfile();
+      fetchOrderCounts();
     }
   }, [authLoading, userId]);
 
@@ -548,7 +581,7 @@ export default function ProfileScreen() {
       <View style={styles.ordersCard}>
         <View style={styles.ordersHeader}>
           <Text style={styles.ordersTitle}>My Orders</Text>
-          <TouchableOpacity style={styles.viewAllBtn} onPress={() => pushRoute('/pages/purchases')}>
+          <TouchableOpacity style={styles.viewAllBtn} onPress={() => pushRoute('/customer/purchases')}>
             <View style={styles.viewAllRow}>
               <Text style={styles.viewAll}>View all</Text>
               <MaterialIcons name="chevron-right" size={16} color="#9CA3AF" />
@@ -556,42 +589,51 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.ordersRow}>
-          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=processing')}>
-            <View style={styles.orderIconBox}>
-              <MaterialIcons name="hourglass-empty" size={20} color="#111" />
-            </View>
-            <Text style={styles.orderLabel}>Processing</Text>
-          </TouchableOpacity>
+      <View style={styles.ordersRow}>
+  {/* To Process */}
+  <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/customer/purchases?tab=Processing')}>
+    <View style={styles.orderIconBox}>
+      <MaterialIcons name="assignment" size={26} color="#111827" />
+      {orderCounts.processing > 0 ? (
+        <View style={styles.badge}><Text style={styles.badgeText}>{orderCounts.processing}</Text></View>
+      ) : null}
+    </View>
+    <Text style={styles.orderLabel}>To Process</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=shipped')}>
-            <View style={styles.orderIconBox}>
-              <MaterialIcons name="local-shipping" size={20} color="#111" />
-            </View>
-            <Text style={styles.orderLabel}>Shipped</Text>
-          </TouchableOpacity>
+  {/* Shipped */}
+  <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/customer/purchases?tab=Shipped')}>
+    <View style={styles.orderIconBox}>
+      <MaterialIcons name="local-shipping" size={26} color="#111827" />
+      {orderCounts.shipped > 0 ? (
+        <View style={styles.badge}><Text style={styles.badgeText}>{orderCounts.shipped}</Text></View>
+      ) : null}
+    </View>
+    <Text style={styles.orderLabel}>Shipped</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=delivered')}>
-            <View style={styles.orderIconBox}>
-              <MaterialIcons name="check-circle" size={20} color="#111" />
-            </View>
-            <Text style={styles.orderLabel}>Delivered</Text>
-          </TouchableOpacity>
+  {/* Rate */}
+  <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/customer/purchases?tab=Rate')}>
+    <View style={styles.orderIconBox}>
+      <MaterialIcons name="rate-review" size={26} color="#111827" />
+      {orderCounts.rate > 0 ? (
+        <View style={styles.badge}><Text style={styles.badgeText}>{orderCounts.rate}</Text></View>
+      ) : null}
+    </View>
+    <Text style={styles.orderLabel}>Rate</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=reviews')}>
-            <View style={styles.orderIconBox}>
-              <MaterialIcons name="rate-review" size={20} color="#111" />
-            </View>
-            <Text style={styles.orderLabel}>Reviews</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/pages/purchases?status=returns')}>
-            <View style={styles.orderIconBox}>
-              <MaterialIcons name="undo" size={20} color="#111" />
-            </View>
-            <Text style={styles.orderLabel}>Returns</Text>
-          </TouchableOpacity>
-        </View>
+  {/* Returns/Cancelled */}
+  <TouchableOpacity style={styles.orderItem} onPress={() => pushRoute('/customer/purchases?tab=Returns')}>
+    <View style={styles.orderIconBox}>
+      <MaterialIcons name="undo" size={26} color="#111827" />
+      {orderCounts.returns > 0 ? (
+        <View style={styles.badge}><Text style={styles.badgeText}>{orderCounts.returns}</Text></View>
+      ) : null}
+    </View>
+    <Text style={styles.orderLabel}>Returns/Cancelled</Text>
+  </TouchableOpacity>
+</View>
       </View>
 
       {/* My Account Card */}
@@ -1395,7 +1437,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#EF4444',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
   orderLabel: { fontSize: 12, color: '#6B7280', textAlign: 'center' },
+  dot: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+  },
 
   /* My Account styles */
   accountCard: {

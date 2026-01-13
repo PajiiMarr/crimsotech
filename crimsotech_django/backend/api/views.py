@@ -16642,7 +16642,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'name': checkout.voucher.name,
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
-                            'can_review': not has_reviewed and order.status == 'completed'  # Using order.status here
+                            'can_review': not has_reviewed and order.status == 'delivered'  # Using order.status here
                         }
                         order_data['items'].append(item_data)
                     else:
@@ -16689,7 +16689,35 @@ class PurchasesBuyer(viewsets.ViewSet):
                 {'error': 'Internal server error', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+    @action(detail=False, methods=['get'], url_path='status-counts')
+    def status_counts(self, request):
+        """Return counts per order status for the session user."""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            processing = Order.objects.filter(user=user, status__in=['pending', 'processing']).count()
+            shipped = Order.objects.filter(user=user, status='shipped').count()
+            rate = Order.objects.filter(user=user, status='completed').count()
+            returns = Order.objects.filter(user=user, status__in=['cancelled', 'refunded']).count()
+
+            return Response({
+                'processing': processing,
+                'shipped': shipped,
+                'rate': rate,
+                'returns': returns
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception('Error computing status counts: %s', e)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def retrieve(self, request, pk=None):
         """
         Get a single order by ID
