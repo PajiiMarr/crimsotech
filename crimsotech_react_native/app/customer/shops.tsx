@@ -348,7 +348,7 @@ export default function ShopsPage() {
               </Text>
               <TouchableOpacity 
                 style={styles.emptyButton}
-                onPress={() => router.push('/customer/home')}
+                onPress={() => router.push('/customer/create/create-shop')}
               >
                 <MaterialIcons name="add" size={20} color="#FFFFFF" />
                 <Text style={styles.emptyButtonText}>Create Your First Shop</Text>

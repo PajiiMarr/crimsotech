@@ -16502,6 +16502,10 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
                 {"error": "Failed to update shipping address", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             ) 
+
+    
+
+    
         
 
 class PurchasesBuyer(viewsets.ViewSet):
@@ -16718,6 +16722,37 @@ class PurchasesBuyer(viewsets.ViewSet):
             logger.exception('Error computing status counts: %s', e)
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None):
+        """Allow buyer to cancel an order if it's still cancellable."""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            order = Order.objects.get(order=pk, user=user)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Do not allow cancelling if already shipped/delivered/completed or already cancelled/refunded
+        if order.status in ['shipped', 'delivered', 'completed', 'cancelled', 'refunded']:
+            return Response({'error': 'Order cannot be cancelled at this stage'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order.status = 'cancelled'
+            order.save()
+
+            # Optionally: create a log entry or send notification here
+            return Response({'success': True, 'message': 'Order cancelled successfully'}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception('Error cancelling order: %s', e)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def retrieve(self, request, pk=None):
         """
         Get a single order by ID
@@ -16865,6 +16900,477 @@ class PurchasesBuyer(viewsets.ViewSet):
         }
         
         return Response(order_data)
+
+    @action(detail=True, methods=['get'], url_path='view-order')
+    def view_order_detail(self, request, pk=None):
+        """
+        Get detailed information for a specific order (for view-order page)
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            order = Order.objects.get(order=pk, user=user)
+        except Order.DoesNotExist:
+            return Response(
+                {'error': 'Order not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get payment and delivery details
+        payment = Payment.objects.filter(order_id=order.order).first()
+        delivery = Delivery.objects.filter(order_id=order.order).first()
+        
+        # Get shipping/delivery address
+        delivery_address = None
+        if order.shipping_address:
+            delivery_address = order.shipping_address.get_full_address()
+        elif order.delivery_address_text:
+            delivery_address = order.delivery_address_text
+        
+        # Prefer a full_name field if available, else compose from first/last name, else fallback to username
+        full_name = None
+        if hasattr(user, 'full_name') and user.full_name:
+            full_name = user.full_name
+        else:
+            first = getattr(user, 'first_name', '') or ''
+            last = getattr(user, 'last_name', '') or ''
+            full_name = (f"{first} {last}".strip() if (first or last) else getattr(user, 'username', None))
+
+        # Prepare shipping information
+        shipping_info = {
+            'logistics_carrier': order.delivery_method if order.delivery_method else 'Standard Delivery',
+            # Order.order is a UUID — convert to string before slicing to avoid TypeError
+            'tracking_number': f"PH{order.created_at.strftime('%y%m%d')}{str(order.order)[:6].upper()}" if order.order else None,
+            'delivery_method': order.delivery_method,
+            'estimated_delivery': (order.created_at + timedelta(days=3)).strftime('%m/%d/%Y') if order.created_at else None,
+        }
+        
+        # Prepare delivery address details
+        delivery_address_info = {
+            'recipient_name': full_name or getattr(user, 'username', ''),
+            'phone_number': user.phone_number if hasattr(user, 'phone_number') else '(+63) 912 345 6789',
+            'address': delivery_address,
+            'address_details': {
+                'street': order.shipping_address.street if order.shipping_address and hasattr(order.shipping_address, 'street') else '',
+                'barangay': order.shipping_address.barangay if order.shipping_address and hasattr(order.shipping_address, 'barangay') else '',
+                'city': order.shipping_address.city if order.shipping_address and hasattr(order.shipping_address, 'city') else '',
+                'province': order.shipping_address.province if order.shipping_address and hasattr(order.shipping_address, 'province') else '',
+                'postal_code': order.shipping_address.postal_code if order.shipping_address and hasattr(order.shipping_address, 'postal_code') else '',
+            }
+        }
+        
+        # Get all items in this order
+        items_data = []
+        total_items = 0
+        subtotal = 0
+        
+        for checkout in order.checkout_set.all():
+            if checkout.cart_item and checkout.cart_item.product:
+                product = checkout.cart_item.product
+                total_items += checkout.quantity
+                subtotal += float(checkout.total_amount)
+                
+                # Get product media (images)
+                product_images = []
+                for media in product.productmedia_set.all():
+                    if media.file_data:
+                        try:
+                            url = media.file_data.url
+                            if request:
+                                url = request.build_absolute_uri(url)
+                            product_images.append({
+                                'id': str(media.id),
+                                'url': url,
+                                'file_type': media.file_type
+                            })
+                        except ValueError:
+                            continue
+                
+                primary_image = product_images[0] if product_images else None
+                
+                # Get shop information
+                shop_info = {}
+                if product.shop:
+                    shop_info = {
+                        'id': str(product.shop.id),
+                        'name': product.shop.name,
+                        'picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop.shop_picture else None,
+                        'description': product.shop.description if hasattr(product.shop, 'description') else '',
+                        # Use related_name 'products' on Shop model
+                        'items_count': product.shop.products.count() if product.shop else 0,
+                        'followers_count': 178000,  # Placeholder - you should add this field to Shop model
+                        'is_choices': True,  # Placeholder logic
+                        'is_new': True,  # Placeholder logic
+                    }
+                
+                # Check if user has reviewed this product
+                has_reviewed = False
+                try:
+                    customer_profile = Customer.objects.get(customer=user)
+                    has_reviewed = Review.objects.filter(
+                        customer=customer_profile,
+                        product=product
+                    ).exists()
+                except Customer.DoesNotExist:
+                    has_reviewed = False
+                
+                item_data = {
+                    'checkout_id': str(checkout.id),
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'product_description': product.description,
+                    'product_variant': checkout.variant if hasattr(checkout, 'variant') else 'Default',
+                    'quantity': checkout.quantity,
+                    'price': str(product.price),
+                    'original_price': str(float(product.price) * 1.1),  # 10% markup for original price
+                    'subtotal': str(checkout.total_amount),
+                    'status': order.status,
+                    'purchased_at': checkout.created_at.isoformat(),
+                    'product_images': product_images,
+                    'primary_image': primary_image,
+                    'shop_info': shop_info,
+                    'can_review': not has_reviewed and order.status == 'delivered',
+                    'can_return': order.status == 'delivered' and not has_reviewed,  # Only if delivered and not reviewed
+                    'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
+                }
+                items_data.append(item_data)
+        
+        # Calculate order summary
+        order_summary = {
+            'subtotal': str(subtotal),
+            'shipping_fee': '0.00',  # You should add shipping_fee field to Order model
+            'tax': str(float(subtotal) * 0.12),  # 12% VAT - adjust as needed
+            'discount': '0.00',  # You should add discount field to Order model
+            'total': order.total_amount,
+            'payment_fee': '0.00',  # Add payment fee if applicable
+        }
+        
+        # Prepare response
+        response_data = {
+            'order': {
+                'id': str(order.order),
+                'status': order.status,
+                'status_display': self._get_status_display(order.status),
+                'status_color': self._get_status_color(order.status),
+                'created_at': order.created_at.isoformat(),
+                'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                'payment_method': order.payment_method,
+                'payment_status': payment.status if payment else None,
+                'delivery_status': delivery.status if delivery else None,
+                'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+                'delivery_notes': delivery.notes if delivery else None,
+                'delivery_date': delivery.delivery_date.isoformat() if delivery and delivery.delivery_date else None,
+            },
+            'shipping_info': shipping_info,
+            'delivery_address': delivery_address_info,
+            'items': items_data,
+            'order_summary': order_summary,
+            'summary_counts': {
+                'total_items': total_items,
+                'total_unique_items': len(items_data),
+            },
+            'timeline': self._get_order_timeline(order, delivery, payment),
+            'actions': {
+                'can_cancel': order.status in ['pending', 'processing'],
+                'can_track': order.status in ['shipped', 'delivered', 'completed'],
+                'can_review': order.status == 'delivered' and any(item['can_review'] for item in items_data),
+                'can_return': order.status == 'delivered' and any(item['can_return'] for item in items_data),
+                'can_contact_seller': True,
+                'can_buy_again': True,
+            }
+        }
+        
+        return Response(response_data)
+    
+    def _get_status_display(self, status):
+        status_map = {
+            'pending': 'Pending',
+            'processing': 'Processing',
+            'shipped': 'Shipped',
+            'delivered': 'Delivered',
+            'completed': 'Completed',
+            'cancelled': 'Cancelled',
+            'refunded': 'Refunded',
+        }
+        return status_map.get(status, status)
+    
+    def _get_status_color(self, status):
+        color_map = {
+            'pending': '#F59E0B',  # Amber
+            'processing': '#F59E0B',  # Amber
+            'shipped': '#3B82F6',  # Blue
+            'delivered': '#10B981',  # Green
+            'completed': '#10B981',  # Green
+            'cancelled': '#EF4444',  # Red
+            'refunded': '#EF4444',  # Red
+        }
+        return color_map.get(status, '#6B7280')
+    
+    def _get_order_timeline(self, order, delivery, payment):
+        """Generate timeline events for the order"""
+        timeline = []
+        
+        # Order placed
+        timeline.append({
+            'event': 'Order Placed',
+            'date': order.created_at.isoformat(),
+            'description': 'Your order has been received',
+            'icon': 'checkmark-circle',
+            'color': '#10B981',
+            'completed': True,
+        })
+        
+        # Payment confirmed
+        if payment and payment.status == 'completed':
+            timeline.append({
+                'event': 'Payment Confirmed',
+                'date': payment.updated_at.isoformat() if payment.updated_at else payment.created_at.isoformat(),
+                'description': 'Payment has been confirmed',
+                'icon': 'card',
+                'color': '#10B981',
+                'completed': True,
+            })
+        
+        # Order processed
+        if order.status in ['processing', 'shipped', 'delivered', 'completed']:
+            timeline.append({
+                'event': 'Order Processed',
+                'date': order.updated_at.isoformat() if order.updated_at else order.created_at.isoformat(),
+                'description': 'Seller is preparing your order',
+                'icon': 'package',
+                'color': '#10B981',
+                'completed': True,
+            })
+        
+        # Shipped
+        if order.status in ['shipped', 'delivered', 'completed']:
+            shipped_date = delivery.created_at if delivery else order.updated_at
+            timeline.append({
+                'event': 'Shipped',
+                'date': shipped_date.isoformat() if shipped_date else None,
+                'description': 'Order has been shipped',
+                'icon': 'truck',
+                'color': '#10B981',
+                'completed': True,
+            })
+        
+        # Delivered
+        if order.status in ['delivered', 'completed']:
+            delivered_date = delivery.delivery_date if delivery and delivery.delivery_date else order.updated_at
+            timeline.append({
+                'event': 'Delivered',
+                'date': delivered_date.isoformat() if delivered_date else None,
+                'description': 'Order has been delivered',
+                'icon': 'checkmark-done',
+                'color': '#10B981',
+                'completed': True,
+            })
+        
+        # Completed
+        if order.status == 'completed':
+            timeline.append({
+                'event': 'Completed',
+                'date': order.updated_at.isoformat() if order.updated_at else None,
+                'description': 'Order completed successfully',
+                'icon': 'trophy',
+                'color': '#10B981',
+                'completed': True,
+            })
+        
+        # Future/pending events
+        if order.status == 'pending':
+            timeline.append({
+                'event': 'Processing',
+                'date': None,
+                'description': 'Waiting for seller to process',
+                'icon': 'time',
+                'color': '#F59E0B',
+                'completed': False,
+            })
+        
+        return timeline
+
+    @action(detail=True, methods=['get'], url_path='shipping-timeline')
+    def shipping_timeline(self, request, pk=None):
+        """Return shipping timeline data shaped for the frontend ShippingTimelinePage"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            order = Order.objects.get(order=pk, user=user)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        payment = Payment.objects.filter(order_id=order.order).first()
+        delivery = Delivery.objects.filter(order_id=order.order).first()
+
+        # Basic order info
+        order_info = {
+            'id': str(order.order),
+            'status': order.status,
+            'status_display': self._get_status_display(order.status),
+            'status_color': self._get_status_color(order.status),
+            'created_at': order.created_at.isoformat(),
+        }
+
+        # Tracking info
+        tracking_status = delivery.status if delivery else order.status
+        tracking_last = delivery.updated_at.isoformat() if delivery and getattr(delivery, 'updated_at', None) else order.updated_at.isoformat() if order.updated_at else None
+
+        # Simple progress map
+        status_to_progress = {
+            'pending': 5,
+            'processing': 30,
+            'ready_for_pickup': 50,
+            'shipped': 70,
+            'out_for_delivery': 90,
+            'delivered': 100,
+            'completed': 100,
+            'cancelled': 0,
+            'refunded': 0,
+        }
+
+        progress = status_to_progress.get(tracking_status, 0)
+
+        tracking = {
+            'tracking_number': f"PH{order.created_at.strftime('%y%m%d')}{str(order.order)[:6].upper()}" if order.order else None,
+            'status': tracking_status,
+            'last_update': tracking_last,
+            'progress_percentage': progress,
+            'estimated_delivery': (order.created_at + timedelta(days=3)).strftime('%m/%d/%Y') if order.created_at else None,
+            'delivery_date': delivery.delivery_date.isoformat() if delivery and getattr(delivery, 'delivery_date', None) else None,
+        }
+
+        # Shipping info (carrier/from/to)
+        from_address = None
+        # try to get shop info from first item
+        first_item = order.checkout_set.filter(cart_item__product__shop__isnull=False).select_related('cart_item__product__shop').first()
+        if first_item and first_item.cart_item and first_item.cart_item.product and first_item.cart_item.product.shop:
+            shop = first_item.cart_item.product.shop
+            from_address = {
+                'shop_name': shop.name,
+                'address': shop.street + ', ' + shop.city if shop else '',
+                'contact': shop.contact_number if shop else '',
+            }
+
+        to_address = {
+            'recipient': None,
+            'phone': None,
+            'address': None,
+        }
+        if order.shipping_address:
+            to_address = {
+                'recipient': order.shipping_address.recipient_name,
+                'phone': order.shipping_address.recipient_phone,
+                'address': order.shipping_address.get_full_address(),
+            }
+        elif order.delivery_address_text:
+            to_address['address'] = order.delivery_address_text
+
+        shipping_info = {
+            'carrier': {
+                'name': order.delivery_method or 'Standard Delivery',
+                'logo': None,
+                'contact': {
+                    'phone': None,
+                    'website': None,
+                    'email': None,
+                },
+                'estimated_delivery': (order.created_at + timedelta(days=3)).strftime('%m/%d/%Y') if order.created_at else None,
+                'service_type': order.delivery_method,
+            },
+            'from_address': from_address,
+            'to_address': to_address,
+            'package': {
+                'weight': None,
+                'dimensions': None,
+                'package_type': None,
+                'insurance_value': None,
+                'reference_number': tracking['tracking_number'],
+            }
+        }
+
+        # Package contents
+        package_items = []
+        total_value = 0
+        total_items = 0
+        for checkout in order.checkout_set.all():
+            if checkout.cart_item and checkout.cart_item.product:
+                prod = checkout.cart_item.product
+                qty = checkout.quantity
+                val = float(prod.price) * qty
+                package_items.append({'name': prod.name, 'quantity': qty, 'value': str(val)})
+                total_value += val
+                total_items += qty
+
+        package_contents = {
+            'total_items': total_items,
+            'items': package_items,
+            'total_value': str(total_value)
+        }
+
+        # Rider info
+        rider_info = None
+        if delivery and delivery.rider and getattr(delivery.rider, 'rider', None):
+            r = delivery.rider.rider
+            rider_info = {
+                'name': f"{r.first_name} {r.last_name}".strip(),
+                'phone': getattr(r, 'contact_number', None),
+                'vehicle': getattr(r, 'vehicle_type', None),
+                'last_seen': getattr(r, 'last_status_update', None).isoformat() if getattr(r, 'last_status_update', None) else None,
+                'eta': tracking['estimated_delivery']
+            }
+
+        # Timeline - map backend timeline to frontend expected keys
+        raw_timeline = self._get_order_timeline(order, delivery, payment)
+        mapped_timeline = []
+        for ev in raw_timeline:
+            mapped_timeline.append({
+                'event': ev.get('event'),
+                'description': ev.get('description'),
+                'date': ev.get('date'),
+                'location': ev.get('location', ''),
+                'status': 'completed' if ev.get('completed') else 'pending',
+                'icon': ev.get('icon')
+            })
+
+        data = {
+            'order': order_info,
+            'tracking': tracking,
+            'shipping_info': shipping_info,
+            'timeline': mapped_timeline,
+            'package_contents': package_contents,
+            'rider_info': rider_info,
+            'actions': {
+                'can_contact_rider': delivery is not None and getattr(delivery, 'rider', None) is not None,
+                'can_change_address': False,
+                'can_reschedule': False,
+                'can_view_proof': False,
+            }
+        }
+
+        return Response(data, status=status.HTTP_200_OK)
+
+    
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])

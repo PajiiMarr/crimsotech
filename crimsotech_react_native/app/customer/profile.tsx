@@ -344,29 +344,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleLogout = async () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Logout', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await clearAuthData();
-              // Ensure navigation to login (double-safe)
-              router.replace('/(auth)/login');
-            } catch (error) {
-              console.error('Logout error:', error);
-              Alert.alert('Error', 'Failed to logout');
-            }
-          }
-        }
-      ]
-    );
-  };
+
 
   const formatCurrency = (amount: string) => {
     const num = parseFloat(amount);
@@ -507,7 +485,7 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          <TouchableOpacity style={styles.editButton} onPress={() => pushRoute('/pages/edit-profile')}>
+          <TouchableOpacity style={styles.editButton} onPress={() => pushRoute('/customer/account-profile')}>
             <MaterialIcons name="edit" size={18} color="#374151" />
           </TouchableOpacity>
         </View>
@@ -640,30 +618,18 @@ export default function ProfileScreen() {
       <View style={styles.accountCard}>
         <View style={styles.accountHeader}>
           <Text style={styles.accountTitle}>My Account</Text>
-          <TouchableOpacity style={styles.viewAllBtn} onPress={() => pushRoute('/pages/edit-profile')}>
-            <View style={styles.viewAllRow}>
-              <Text style={styles.viewAll}>View all</Text>
-              <MaterialIcons name="chevron-right" size={16} color="#9CA3AF" />
-            </View>
-          </TouchableOpacity>
         </View>
 
         <View style={styles.accountRow}>
-          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/edit-profile')}>
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/customer/account-profile')}>
             <View style={styles.accountIconBox}>
               <MaterialIcons name="person" size={20} color="#111" />
             </View>
             <Text style={styles.accountLabel}>Profile</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/favorites')}>
-            <View style={styles.accountIconBox}>
-              <MaterialIcons name="favorite" size={20} color="#111" />
-            </View>
-            <Text style={styles.accountLabel}>Favorites</Text>
-          </TouchableOpacity>
 
-          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/addresses')}>
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/customer/components/shipping-address')}>
             <View style={styles.accountIconBox}>
               <MaterialIcons name="location-on" size={20} color="#111" />
             </View>
@@ -677,7 +643,7 @@ export default function ProfileScreen() {
             <Text style={styles.accountLabel}>Vouchers</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/notifications')}>
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/customer/settings')}>
             <View style={styles.accountIconBox}>
               <MaterialIcons name="settings" size={20} color="#111" />
             </View>
@@ -860,15 +826,6 @@ export default function ProfileScreen() {
           <MaterialIcons name="chevron-right" size={24} color="#B0BEC5" />
         </TouchableOpacity>
       </View> */}
-
-      {/* Logout Button */}
-      <TouchableOpacity
-        style={styles.logoutButton}
-        onPress={handleLogout}
-      >
-        <MaterialIcons name="logout" size={isSmallDevice ? 20 : 22} color="#F44336" />
-        <Text style={styles.logoutText}>Log Out</Text>
-      </TouchableOpacity>
 
       {/* App Version & Info */}
       <View style={styles.versionContainer}>

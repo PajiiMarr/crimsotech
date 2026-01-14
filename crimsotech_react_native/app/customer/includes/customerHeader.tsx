@@ -22,7 +22,10 @@ export default function CustomerHeader() {
             <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/customer/notification')}>
               <Ionicons name="notifications-outline" size={24} color="#111" />
             </TouchableOpacity>
-           
+
+            <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/customer/settings')}>
+              <Ionicons name="settings-outline" size={22} color="#111" />
+            </TouchableOpacity>
           </View>
         </View>
       </View>

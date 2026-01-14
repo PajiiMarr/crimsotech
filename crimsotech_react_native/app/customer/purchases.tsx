@@ -11,6 +11,7 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { ClipboardList, Truck, MessageSquare, Undo2, Clock, Star, Package, CheckCircle, XCircle } from 'lucide-react-native';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -67,6 +68,8 @@ export default function PurchasesPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [purchases, setPurchases] = useState<PurchasesResponse | null>(null);
   const [filteredOrders, setFilteredOrders] = useState<PurchaseOrder[]>([]);
+  const [orderCounts, setOrderCounts] = useState({ processing: 0, shipped: 0, rate: 0, returns: 0, all: 0 });
+  const [loadingCounts, setLoadingCounts] = useState(false);
 
   // Sync active tab with navigation params if they exist
   useEffect(() => {
@@ -79,6 +82,7 @@ export default function PurchasesPage() {
   useEffect(() => {
     if (user?.id) {
       fetchPurchases();
+      fetchOrderCounts();
     }
   }, [user?.id]);
 
@@ -142,6 +146,8 @@ export default function PurchasesPage() {
       
       if (response.data) {
         setPurchases(response.data);
+        // Update the 'all' count
+        setOrderCounts(prev => ({ ...prev, all: Number(response.data.total_purchases || (response.data.purchases || []).length || 0) }));
       }
     } catch (error) {
       console.error('Error fetching purchases:', error);
@@ -155,6 +161,7 @@ export default function PurchasesPage() {
   const onRefresh = () => {
     setRefreshing(true);
     fetchPurchases();
+    fetchOrderCounts();
   };
 
   const handleReviewPress = (productId: string) => {
@@ -162,11 +169,13 @@ export default function PurchasesPage() {
   };
 
   const handleTrackOrder = (orderId: string) => {
-    // router.push(`/track-order/${orderId}`);
+    // Navigate to the view-track-order page
+    router.push(`/customer/view-order?orderId=${orderId}`);
   };
 
   const handleViewOrderDetails = (orderId: string) => {
-    // router.push(`/order/${orderId}`);
+    // Navigate to view-track-order page with orderId as query param
+    router.push(`/customer/view-order?orderId=${orderId}`);
   };
 
   const handleRepurchase = (orderId: string) => {
@@ -179,8 +188,40 @@ export default function PurchasesPage() {
   };
 
   const handleCancelOrder = (orderId: string) => {
-    // stub: call cancel API or navigate to cancel flow
-    // router.push(`/cancel/${orderId}`);
+    Alert.alert(
+      'Cancel Order',
+      'Are you sure you want to cancel this order?',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              const resp = await AxiosInstance.post(`/api/purchases-buyer/${orderId}/cancel/`, null, {
+                headers: {
+                  'X-User-Id': user?.id,
+                },
+              });
+
+              if (resp?.data?.success || resp.status === 200) {
+                Alert.alert('Success', resp.data?.message || 'Order cancelled');
+                // Refresh list
+                fetchPurchases();
+              } else {
+                Alert.alert('Error', resp.data?.error || 'Failed to cancel order');
+              }
+            } catch (err: any) {
+              console.error('Cancel order error:', err);
+              const errMsg = err?.response?.data?.error || err?.message || 'Failed to cancel order';
+              Alert.alert('Error', errMsg);
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleRateOrder = (orderId: string) => {
@@ -196,6 +237,33 @@ export default function PurchasesPage() {
   const handleBuyAgain = (orderId: string) => {
     // stub: navigate to buy again flow
     // router.push(`/repurchase/${orderId}`);
+  };
+
+  // Fetch order counts per status to show tab badges
+  const fetchOrderCounts = async () => {
+    if (!user?.id) return;
+
+    try {
+      setLoadingCounts(true);
+      const response = await AxiosInstance.get('/api/purchases-buyer/status-counts/', {
+        headers: { 'X-User-Id': user.id },
+      });
+
+      if (response?.data) {
+        const data = response.data;
+        setOrderCounts({
+          processing: Number(data.processing || data.pending || 0),
+          shipped: Number(data.shipped || 0),
+          rate: Number(data.rate || data.completed || 0),
+          returns: Number(data.returns || data.cancelled || 0),
+          all: Number(data.total || purchases?.total_purchases || (purchases?.purchases || []).length || 0),
+        });
+      }
+    } catch (err: any) {
+      console.error('Error fetching order counts:', err);
+    } finally {
+      setLoadingCounts(false);
+    }
   };
 
   const handleRefund = (orderId: string) => {
@@ -333,11 +401,7 @@ export default function PurchasesPage() {
     const canReviewAny = item.items.some(it => it.can_review);
 
     return (
-      <View style={styles.orderCard}>
-        <TouchableOpacity 
-          onPress={() => handleViewOrderDetails(item.order_id)}
-          activeOpacity={0.7}
-        >
+      <TouchableOpacity style={styles.orderCard} onPress={() => handleViewOrderDetails(item.order_id)} activeOpacity={0.85}>
           <View style={styles.orderHeader}>
             <View style={{ flex: 1 }}>
               <View style={styles.statusRow}>
@@ -353,7 +417,6 @@ export default function PurchasesPage() {
             <Text style={styles.orderDate}>{formatDate(item.created_at)}</Text>
           </View>
 
-        </TouchableOpacity>
 
         <FlatList
           data={item.items}
@@ -423,7 +486,7 @@ export default function PurchasesPage() {
 
           {/* Returns: no buttons */}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -470,23 +533,52 @@ export default function PurchasesPage() {
             showsHorizontalScrollIndicator={false} 
             contentContainerStyle={styles.tabBar}
           >
-            {tabs.map((t) => (
-              <TouchableOpacity 
-                key={t.label} 
-                onPress={() => setActiveTab(t.label)}
-                style={[
-                  styles.tabItem, 
-                  activeTab === t.label && styles.activeTabItem
-                ]}
-              >
-                <Text style={[
-                  styles.tabLabel, 
-                  activeTab === t.label && styles.activeTabLabel
-                ]}>
-                  {t.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {/* Show a small activity indicator while counts are loading */}
+            {loadingCounts && (
+              <View style={{ marginRight: 8 }}>
+                <ActivityIndicator size="small" color="#F97316" />
+              </View>
+            )}
+
+            {tabs.map((t) => {
+              const badgeCount = (() => {
+                switch (t.label) {
+                  case 'All': return orderCounts.all;
+                  case 'Processing': return orderCounts.processing;
+                  case 'Shipped': return orderCounts.shipped;
+                  case 'Rate': return orderCounts.rate;
+                  case 'Returns': return orderCounts.returns;
+                  default: return 0;
+                }
+              })();
+
+              return (
+                <TouchableOpacity 
+                  key={t.label} 
+                  onPress={() => setActiveTab(t.label)}
+                  style={[
+                    styles.tabItem, 
+                    activeTab === t.label && styles.activeTabItem
+                  ]}
+                >
+                  <View style={styles.tabLabelRow}>
+                    <Text style={[
+                      styles.tabLabel, 
+                      activeTab === t.label && styles.activeTabLabel
+                    ]}>
+                      {t.label}
+                    </Text>
+
+                    {badgeCount > 0 && (
+                      <Text style={[
+                        styles.tabBadgeText,
+                        activeTab === t.label && styles.tabBadgeTextActive
+                      ]}>{badgeCount}</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
 
@@ -606,6 +698,22 @@ const styles = StyleSheet.create({
   activeTabLabel: {
     color: '#111827',
     fontWeight: '700',
+  },
+  tabLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  tabBadge: {
+    marginLeft: 6,
+  },
+  tabBadgeText: {
+    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  tabBadgeTextActive: {
+    color: '#111827',
   },
 
   // Empty State

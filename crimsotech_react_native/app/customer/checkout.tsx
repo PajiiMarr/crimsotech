@@ -16,7 +16,6 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams, Link } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
-import CustomerLayout from './CustomerLayout';
 import AxiosInstance from '../../contexts/axios';
 import { 
   MaterialIcons,
@@ -260,7 +259,17 @@ export default function CheckoutPage() {
       console.log('Checkout API Response:', response.data);
 
       if (response.data.success) {
-        const hasOrderedItems = response.data.checkout_items?.some((item: any) => item.is_ordered === true);
+        // Normalize response to avoid null arrays/objects that cause runtime errors
+        const normalized = {
+          ...response.data,
+          checkout_items: response.data.checkout_items ?? [],
+          available_vouchers: response.data.available_vouchers ?? [],
+          shipping_addresses: response.data.shipping_addresses ?? [],
+          default_shipping_address: response.data.default_shipping_address ?? null,
+          summary: response.data.summary ?? { subtotal: 0, delivery: 0, total: 0, item_count: 0, shop_count: 0 }
+        };
+
+        const hasOrderedItems = normalized.checkout_items.some((item: any) => item.is_ordered === true);
         
         if (hasOrderedItems) {
           setError('Some items in your cart have already been ordered. Please refresh your cart.');
@@ -268,18 +277,18 @@ export default function CheckoutPage() {
           return;
         }
         
-        setCheckoutData(response.data);
+        setCheckoutData(normalized);
         
         // Set default shipping address if available
-        if (response.data.default_shipping_address) {
+        if (normalized.default_shipping_address) {
           setFormData(prev => ({
             ...prev,
-            selectedAddressId: response.data.default_shipping_address.id
+            selectedAddressId: normalized.default_shipping_address.id
           }));
-        } else if (response.data.shipping_addresses && response.data.shipping_addresses.length > 0) {
+        } else if (normalized.shipping_addresses && normalized.shipping_addresses.length > 0) {
           setFormData(prev => ({
             ...prev,
-            selectedAddressId: response.data.shipping_addresses[0].id
+            selectedAddressId: normalized.shipping_addresses[0].id
           }));
         }
       } else {
@@ -496,11 +505,29 @@ export default function CheckoutPage() {
     return { subtotal, delivery: deliveryCost, discount, total };
   };
 
-  // Get selected address
+  // Get selected address (prefer explicit user selection, otherwise fallback to default)
   const getSelectedAddress = () => {
-    if (!checkoutData?.shipping_addresses) return null;
-    return checkoutData.shipping_addresses.find(addr => addr.id === formData.selectedAddressId);
+    if (!checkoutData) return null;
+
+    // If user explicitly selected an address, use it when available
+    if (formData.selectedAddressId) {
+      const selected = checkoutData.shipping_addresses?.find(addr => addr.id === formData.selectedAddressId);
+      if (selected) return selected;
+    }
+
+    // fallback to default_shipping_address if present
+    if (checkoutData.default_shipping_address) return checkoutData.default_shipping_address;
+
+    // final fallback: first available address
+    return (checkoutData.shipping_addresses && checkoutData.shipping_addresses.length > 0) ? checkoutData.shipping_addresses[0] : null;
   };
+
+  // Initialize selectedAddressId from default_shipping_address only if none selected yet
+  useEffect(() => {
+    if (checkoutData?.default_shipping_address && !formData.selectedAddressId) {
+      setFormData(prev => ({ ...prev, selectedAddressId: checkoutData.default_shipping_address.id }));
+    }
+  }, [checkoutData?.default_shipping_address, formData.selectedAddressId]);
 
   // Get shop addresses for products
   const getShopAddressesForProducts = () => {
@@ -590,12 +617,10 @@ export default function CheckoutPage() {
   if (authLoading || loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
           <View style={styles.center}>
             <ActivityIndicator size="large" color="#EA580C" />
             <Text style={styles.loadingText}>Loading checkout...</Text>
           </View>
-        </CustomerLayout>
       </SafeAreaView>
     );
   }
@@ -604,22 +629,19 @@ export default function CheckoutPage() {
   if (userRole && userRole !== 'customer') {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
           <View style={styles.center}>
             <MaterialIcons name="warning" size={64} color="#F59E0B" />
             <Text style={styles.message}>Not authorized to view this page</Text>
             <Text style={styles.subMessage}>This page is for customers only</Text>
           </View>
-        </CustomerLayout>
       </SafeAreaView>
     );
   }
 
   // Error or no data state
-  if (error || !checkoutData || checkoutData.checkout_items.length === 0) {
+  if (error || !checkoutData || !Array.isArray(checkoutData.checkout_items) || checkoutData.checkout_items.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
           <View style={styles.center}>
             <MaterialIcons name="error-outline" size={80} color="#E5E5E5" />
             <Text style={styles.emptyTitle}>
@@ -635,7 +657,6 @@ export default function CheckoutPage() {
               <Text style={styles.shopButtonText}>Go to Cart</Text>
             </TouchableOpacity>
           </View>
-        </CustomerLayout>
       </SafeAreaView>
     );
   }
@@ -649,16 +670,15 @@ export default function CheckoutPage() {
         ? currentPaymentMethod.name(formData.shippingMethod)
         : currentPaymentMethod.name)
     : '';
-  const allVouchers = checkoutData.available_vouchers.flatMap(category => category.vouchers);
+  const allVouchers = (checkoutData.available_vouchers ?? []).flatMap(category => (category?.vouchers ?? []));
   const filteredVouchers = activeVoucherCategory === 'all' 
     ? allVouchers
-    : (checkoutData.available_vouchers.find(cat => 
-        cat.category.includes(activeVoucherCategory.replace('_', ' '))
-      )?.vouchers || []);
+    : ((checkoutData.available_vouchers ?? []).find(cat => 
+        cat.category?.includes(activeVoucherCategory.replace('_', ' '))
+      )?.vouchers ?? []);
 
   return (
     <SafeAreaView style={styles.container}>
-      <CustomerLayout disableScroll>
         <ScrollView
           style={styles.scrollView}
           showsVerticalScrollIndicator={false}
@@ -672,19 +692,21 @@ export default function CheckoutPage() {
           }
         >
           {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => router.back()}
-            >
-              <MaterialIcons name="arrow-back" size={24} color="#374151" />
-            </TouchableOpacity>
-            <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitle}>Checkout</Text>
-              <Text style={styles.headerSubtitle}>Complete your purchase</Text>
+          <SafeAreaView style={styles.headerSafeArea}>
+            <View style={styles.header}>
+              <TouchableOpacity 
+                style={styles.backButton}
+                onPress={() => router.back()}
+              >
+                <MaterialIcons name="arrow-back" size={24} color="#374151" />
+              </TouchableOpacity>
+              <View style={styles.headerTitleContainer}>
+                <Text style={styles.headerTitle}>Checkout</Text>
+                <Text style={styles.headerSubtitle}>Complete your purchase</Text>
+              </View>
+              <View style={{ width: 40 }} />
             </View>
-            <View style={{ width: 40 }} />
-          </View>
+          </SafeAreaView>
 
           {error && (
             <View style={styles.errorCard}>
@@ -813,63 +835,44 @@ export default function CheckoutPage() {
                   <Text style={styles.sectionTitle}>Delivery Address</Text>
                   <Text style={styles.sectionSubtitle}>Select where to deliver your order</Text>
                 </View>
-                <TouchableOpacity 
-                  style={styles.manageButton}
-                  onPress={() => setIsAddressModalVisible(true)}
-                >
-                  <MaterialIcons name="edit" size={16} color="#374151" />
-                  <Text style={styles.manageButtonText}>Manage</Text>
-                </TouchableOpacity>
               </View>
 
-              {checkoutData.shipping_addresses && checkoutData.shipping_addresses.length > 0 ? (
-                <ScrollView 
-                  horizontal 
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.addressesScroll}
-                >
-                  {checkoutData.shipping_addresses.map((address) => {
-                    const isSelected = formData.selectedAddressId === address.id;
-                    return (
-                      <TouchableOpacity
-                        key={address.id}
-                        style={[
-                          styles.addressCard,
-                          isSelected && styles.addressCardSelected
-                        ]}
-                        onPress={() => handleInputChange('selectedAddressId', address.id)}
-                      >
-                        <View style={styles.addressCardHeader}>
-                          <View style={{ flex: 1 }}>
-                            <View style={styles.addressNameRow}>
-                              <Text style={styles.addressName}>{address.recipient_name}</Text>
-                              {address.is_default && (
-                                <View style={styles.defaultBadge}>
-                                  <Text style={styles.defaultBadgeText}>Default</Text>
-                                </View>
-                              )}
+              {selectedAddress ? (
+                <View>
+                  <TouchableOpacity
+                    style={[styles.addressCard, styles.addressCardSelected]}
+                    onPress={() => handleInputChange('selectedAddressId', selectedAddress.id)}
+                  >
+                    <View style={styles.addressCardHeader}>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.addressNameRow}>
+                          <Text style={styles.addressName}>{selectedAddress.recipient_name}</Text>
+                          {selectedAddress.is_default && (
+                            <View style={styles.defaultBadge}>
+                              <Text style={styles.defaultBadgeText}>Default</Text>
                             </View>
-                            <Text style={styles.addressPhone}>{address.recipient_phone}</Text>
-                          </View>
-                          <View style={[
-                            styles.addressRadio,
-                            isSelected && styles.addressRadioSelected
-                          ]} />
+                          )}
                         </View>
-                        
-                        <Text style={styles.addressFull} numberOfLines={2}>
-                          {address.full_address}
-                        </Text>
-                        
-                        {address.instructions && (
-                          <Text style={styles.addressInstructions} numberOfLines={1}>
-                            📝 {address.instructions}
-                          </Text>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                        <Text style={styles.addressPhone}>{selectedAddress.recipient_phone}</Text>
+                      </View>
+                      <View style={[styles.addressRadio, styles.addressRadioSelected]} />
+                    </View>
+
+                    <Text style={styles.addressFull} numberOfLines={2}>
+                      {selectedAddress.full_address}
+                    </Text>
+
+                    {selectedAddress.instructions && (
+                      <Text style={styles.addressInstructions} numberOfLines={1}>
+                        📝 {selectedAddress.instructions}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity onPress={() => setIsAddressModalVisible(true)} style={{ marginTop: 8 }}>
+                    <Text style={styles.changeLink}>Change</Text>
+                  </TouchableOpacity>
+                </View>
               ) : (
                 <View style={styles.noAddressContainer}>
                   <MaterialIcons name="location-off" size={48} color="#D1D5DB" />
@@ -879,7 +882,7 @@ export default function CheckoutPage() {
                   </Text>
                   <TouchableOpacity 
                     style={styles.addAddressButton}
-                    onPress={() => router.push('/customer/cart')}
+                    onPress={() => router.push('/customer/create/add-address')}
                   >
                     <MaterialIcons name="add" size={20} color="#FFFFFF" />
                     <Text style={styles.addAddressText}>Add Shipping Address</Text>
@@ -1231,76 +1234,6 @@ export default function CheckoutPage() {
               </Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
-
-        {/* Footer with Order Summary and Checkout Button */}
-        <View style={styles.footer}>
-          <View style={styles.orderSummary}>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Subtotal ({checkoutData.summary.item_count} items)</Text>
-              <Text style={styles.summaryValue}>₱{subtotal.toFixed(2)}</Text>
-            </View>
-            
-            {appliedVoucher && (
-              <View style={styles.discountRow}>
-                <Text style={styles.discountLabel}>
-                  Discount ({appliedVoucher.code})
-                </Text>
-                <Text style={styles.discountValue}>-₱{discount.toFixed(2)}</Text>
-              </View>
-            )}
-            
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Shipping</Text>
-              <Text style={styles.summaryValue}>
-                {delivery === 0 ? 'FREE' : `₱${delivery.toFixed(2)}`}
-              </Text>
-            </View>
-            
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total</Text>
-              <View style={styles.totalRight}>
-                <Text style={styles.totalValue}>₱{total.toFixed(2)}</Text>
-                <Text style={styles.totalVat}>Including VAT</Text>
-              </View>
-            </View>
-            
-            {appliedVoucher && (
-              <Text style={styles.savingsText}>
-                You saved ₱{discount.toFixed(2)} with {appliedVoucher.code}
-              </Text>
-            )}
-          </View>
-
-          <TouchableOpacity 
-            style={[
-              styles.checkoutButton,
-              (!formData.agreeTerms || !formData.selectedAddressId || !isEwalletFieldsValid() || processingOrder) && 
-              styles.checkoutButtonDisabled
-            ]}
-            onPress={handlePlaceOrder}
-            disabled={!formData.agreeTerms || !formData.selectedAddressId || !isEwalletFieldsValid() || processingOrder}
-          >
-            {processingOrder ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <MaterialIcons name="lock" size={20} color="#FFFFFF" />
-                <Text style={styles.checkoutButtonText}>
-                  {['Cash on Pickup', 'Cash on Delivery'].includes(formData.paymentMethod)
-                    ? `Place Order • ₱${total.toFixed(2)}`
-                    : `Pay with ${formData.paymentMethod} • ₱${total.toFixed(2)}`}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <View style={styles.footerNotes}>
-            <MaterialIcons name="verified" size={16} color="#059669" />
-            <Text style={styles.footerNoteText}>
-              Secure checkout • Your payment information is encrypted
-            </Text>
-          </View>
 
           {/* Validation messages */}
           {!formData.agreeTerms && (
@@ -1329,6 +1262,35 @@ export default function CheckoutPage() {
               </Text>
             </View>
           )}
+
+          {/* Compact total summary */}
+          <View style={styles.compactSummaryContainer}>
+            <View style={styles.compactSummaryRow}>
+              <Text style={styles.compactSummaryLabel}>Total</Text>
+              <Text style={styles.compactSummaryAmount}>₱{total.toFixed(2)}</Text>
+            </View>
+            <Text style={styles.compactSummaryVat}>Including VAT</Text>
+          </View>
+
+        </ScrollView>
+
+        {/* Footer with compact Place Order button */}
+        <View style={styles.footer}>
+          <TouchableOpacity
+            style={[
+              styles.placeOrderButton,
+              (!formData.agreeTerms || !formData.selectedAddressId || !isEwalletFieldsValid() || processingOrder) &&
+                styles.placeOrderButtonDisabled
+            ]}
+            onPress={handlePlaceOrder}
+            disabled={!formData.agreeTerms || !formData.selectedAddressId || !isEwalletFieldsValid() || processingOrder}
+          >
+            {processingOrder ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.placeOrderButtonText}>Place Order</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
         {/* Address Selection Modal */}
@@ -1398,7 +1360,7 @@ export default function CheckoutPage() {
                   style={styles.addNewAddressButton}
                   onPress={() => {
                     setIsAddressModalVisible(false);
-                    router.push('/customer/home');
+                    router.push('/customer/create/add-address');
                   }}
                 >
                   <MaterialIcons name="add" size={24} color="#EA580C" />
@@ -1575,7 +1537,6 @@ export default function CheckoutPage() {
             </View>
           </View>
         </Modal>
-      </CustomerLayout>
     </SafeAreaView>
   );
 }
@@ -1646,6 +1607,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
+  headerSafeArea: { backgroundColor: '#FFF', paddingTop: Platform.OS === 'android' ? 40 : 0 } ,
   backButton: {
     padding: 8,
   },
@@ -2341,7 +2303,8 @@ const styles = StyleSheet.create({
   },
   footer: {
     backgroundColor: '#FFFFFF',
-    padding: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 0,
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
     ...Platform.select({
@@ -2579,6 +2542,11 @@ const styles = StyleSheet.create({
     color: '#EA580C',
     fontWeight: '600',
   },
+  changeLink: {
+    color: '#3B82F6',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   voucherCategoryScroll: {
     marginHorizontal: -20,
     paddingHorizontal: 20,
@@ -2741,5 +2709,63 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     paddingHorizontal: 20,
+  },
+
+  compactSummaryContainer: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    alignItems: 'flex-start',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.03,
+        shadowRadius: 2,
+      },
+      android: {
+        elevation: 1,
+      },
+    }),
+  },
+  compactSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    alignItems: 'center',
+  },
+  compactSummaryLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  compactSummaryAmount: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  compactSummaryVat: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  placeOrderButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111827',
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginHorizontal: 16,
+  },
+  placeOrderButtonDisabled: {
+    backgroundColor: '#9CA3AF',
+  },
+  placeOrderButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
