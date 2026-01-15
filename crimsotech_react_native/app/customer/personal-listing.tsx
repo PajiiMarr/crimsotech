@@ -87,7 +87,7 @@ export default function PersonalListingPage() {
                 <Text style={styles.productText}>Selling Products</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.productBox}>
+              <TouchableOpacity style={styles.productBox} onPress={() => router.push('/customer/gifting-products')}>
                 <View style={styles.productIconCircle}><Gift size={20} color="#374151" /></View>
                 <Text style={styles.productText}>Gifting Products</Text>
               </TouchableOpacity>
