@@ -19621,26 +19621,39 @@ class CustomerProductsList(viewsets.ViewSet):
     
     def _prepare_product_data(self, product):
         """Helper method to prepare individual product data"""
-        # Get first media file for thumbnail
+        # Get first media file for thumbnail (ensure absolute URLs)
         main_image = None
         media_files = list(product.productmedia_set.all())
+        request_obj = getattr(self, 'request', None)
         if media_files:
             main_media = media_files[0]
+            main_url = None
+            if main_media.file_data:
+                try:
+                    main_url = request_obj.build_absolute_uri(main_media.file_data.url) if request_obj else main_media.file_data.url
+                except Exception:
+                    main_url = main_media.file_data.url
             main_image = {
                 "id": str(main_media.id),
-                "url": main_media.file_data.url if main_media.file_data else None,
-                "type": main_media.file_type
+                "url": main_url,
+                "file_type": main_media.file_type
             }
-        
-        # Get all media files
-        all_media = [
-            {
+
+        # Get all media files (absolute URLs)
+        all_media = []
+        for media in media_files:
+            file_url = None
+            if media.file_data:
+                try:
+                    file_url = request_obj.build_absolute_uri(media.file_data.url) if request_obj else media.file_data.url
+                except Exception:
+                    file_url = media.file_data.url
+            all_media.append({
                 "id": str(media.id),
-                "url": media.file_data.url if media.file_data else None,
-                "type": media.file_type
-            }
-            for media in media_files
-        ]
+                "file_url": file_url,
+                "file_type": media.file_type,
+                "raw_url": media.file_data.url if media.file_data else None
+            })
         
         # Get SKU information
         skus = list(product.skus.all())
@@ -19723,6 +19736,8 @@ class CustomerProductsList(viewsets.ViewSet):
             
             # Media
             "main_image": main_image,
+            "primary_image": main_image,
+            "media_files": all_media,
             "media_count": len(all_media),
             "all_media": all_media,
             

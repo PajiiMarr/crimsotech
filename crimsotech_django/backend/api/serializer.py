@@ -131,7 +131,14 @@ class ProductMediaSerializer(serializers.ModelSerializer):
         
     def get_file_url(self, obj):
         if obj.file_data:
-            return obj.file_data.url
+            request = self.context.get('request')
+            url = obj.file_data.url
+            if request:
+                try:
+                    return request.build_absolute_uri(url)
+                except Exception:
+                    return url
+            return url
         return None
     
 class VariantOptionsSerializer(serializers.ModelSerializer):

@@ -393,7 +393,9 @@ export default function Comgift({ loaderData }: Route.ComponentProps) {
           rating: 0,
           location: ''
         },
-        image: p.primary_image || (p.media_files && p.media_files[0] && p.media_files[0].file) || p.image || '/api/placeholder/300/300',
+        image: (
+          p.primary_image && (typeof p.primary_image === 'string' ? p.primary_image : (p.primary_image.url || p.primary_image.file_url))
+        ) || (p.media_files && p.media_files[0] && (p.media_files[0].file_url || p.media_files[0].file)) || p.image || '/api/placeholder/300/300',
         claimed: !!p.claimed || false,
         pickupLocation: p.pickup_location || (p.shop && (p.shop.city || p.shop.address)) || '',
         postedTime: timeAgo(p.created_at || p.created_at_iso || p.created_date),
@@ -506,7 +508,9 @@ export default function Comgift({ loaderData }: Route.ComponentProps) {
               rating: 0,
               location: ''
             },
-            image: p.primary_image || (p.media_files && p.media_files[0] && p.media_files[0].file) || p.image || '/api/placeholder/300/300',
+            image: (
+              p.primary_image && (typeof p.primary_image === 'string' ? p.primary_image : (p.primary_image.url || p.primary_image.file_url))
+            ) || (p.media_files && p.media_files[0] && (p.media_files[0].file_url || p.media_files[0].file)) || p.image || '/api/placeholder/300/300',
             claimed: !!p.claimed || false,
             pickupLocation: p.pickup_location || (p.shop && (p.shop.city || p.shop.address)) || '',
             postedTime: timeAgo(p.created_at || p.created_at_iso || p.created_date),
