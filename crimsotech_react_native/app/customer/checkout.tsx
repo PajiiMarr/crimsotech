@@ -147,11 +147,6 @@ const paymentMethods = [
     iconSet: 'FontAwesome5' as const,
     iconColor: '#EA580C',
     requiresDetails: true,
-    placeholder: {
-      name: 'GCash Account Name',
-      number: 'GCash Mobile Number',
-      email: 'GCash Registered Email'
-    }
   },
   {
     id: 'paymaya',
@@ -161,11 +156,6 @@ const paymentMethods = [
     iconSet: 'FontAwesome' as const,
     iconColor: '#EA580C',
     requiresDetails: true,
-    placeholder: {
-      name: 'PayMaya Account Name',
-      number: 'PayMaya Mobile Number',
-      email: 'PayMaya Registered Email'
-    }
   }
 ];
 

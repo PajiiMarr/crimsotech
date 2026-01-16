@@ -60,6 +60,7 @@ export default [
 
     //shipping addresses add
     route('shipping-address', 'routes/customer/shipping-address.tsx'),
+    route('payment', 'routes/customer/pay-order.tsx'),
     route('order-successful/:orderId', 'components/customer/order-successful.tsx'),
     
     
@@ -119,7 +120,7 @@ export default [
         route("boosting", "routes/moderator/boosting.tsx"),
         route('orders', 'routes/moderator/orders.tsx'),
         route('riders', 'routes/moderator/riders.tsx'),
-        // route('vouchers', 'routes/moderator/vouchers.tsx'),
+        route('vouchers', 'routes/moderator/vouchers.tsx'),
     ]),
     ...prefix("rider", [
         index("routes/rider/home.tsx"),

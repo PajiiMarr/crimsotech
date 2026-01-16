@@ -67,6 +67,7 @@ router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedul
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/checkout-order/get_order_details/<uuid:order_id>/', CheckoutOrder.as_view({'get': 'get_order_details'}), name='get_order_details'),
     path('api/', include(router.urls)),
     path('', UserView.as_view(), name='user-list'),
     path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),

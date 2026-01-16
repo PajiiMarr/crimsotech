@@ -109,12 +109,6 @@ interface PaymentMethod {
   description: string | ((shippingMethod: string) => string);
   icon: React.ComponentType<any>;
   iconColor: string;
-  requiresDetails: boolean;
-  placeholder?: {
-    name: string;
-    number: string;
-    email: string;
-  };
 }
 
 const CheckoutPage = () => {
@@ -125,9 +119,6 @@ const CheckoutPage = () => {
     agreeTerms: false,
     shippingMethod: "Pickup from Store" as typeof DELIVERY_METHOD_CHOICES[number],
     paymentMethod: "Cash on Pickup",
-    ewalletName: "",
-    ewalletNumber: "",
-    ewalletEmail: "",
     remarks: "",
     selectedAddressId: null as string | null,
   });
@@ -183,7 +174,6 @@ const CheckoutPage = () => {
         : "Pay when you receive your order",
       icon: Wallet,
       iconColor: "text-orange-600",
-      requiresDetails: false,
     },
     {
       id: "gcash",
@@ -191,38 +181,13 @@ const CheckoutPage = () => {
       description: "Pay instantly via GCash",
       icon: Smartphone,
       iconColor: "text-orange-600",
-      requiresDetails: true,
-      placeholder: {
-        name: "GCash Account Name",
-        number: "GCash Mobile Number",
-        email: "GCash Registered Email",
-      }
     },
     {
-      id: "paymaya",
-      name: "PayMaya",
-      description: "Pay using PayMaya wallet",
+      id: "maya",
+      name: "Maya",
+      description: "Pay using Maya wallet",
       icon: CreditCard,
       iconColor: "text-orange-600",
-      requiresDetails: true,
-      placeholder: {
-        name: "PayMaya Account Name",
-        number: "PayMaya Mobile Number",
-        email: "PayMaya Registered Email",
-      }
-    },
-    {
-      id: "paypal",
-      name: "PayPal",
-      description: "Pay securely via PayPal",
-      icon: Globe,
-      iconColor: "text-orange-600",
-      requiresDetails: true,
-      placeholder: {
-        name: "PayPal Account Name",
-        number: "PayPal Phone Number",
-        email: "PayPal Email Address",
-      }
     },
   ];
 
@@ -355,15 +320,6 @@ const CheckoutPage = () => {
     if (method) {
       const methodName = getPaymentMethodName(method);
       handleInputChange("paymentMethod", methodName);
-      
-      if (methodId === "cod") {
-        setFormData(prev => ({
-          ...prev,
-          ewalletName: "",
-          ewalletNumber: "",
-          ewalletEmail: ""
-        }));
-      }
     }
   };
 
@@ -429,8 +385,9 @@ const CheckoutPage = () => {
     setLoading(true);
     setError(null);
 
-    if (!formData.selectedAddressId) {
-      setError("Please select a shipping address");
+    // Only require shipping address for Standard Delivery
+    if (formData.shippingMethod === "Standard Delivery" && !formData.selectedAddressId) {
+      setError("Please select a shipping address for delivery");
       setLoading(false);
       return;
     }
@@ -444,19 +401,21 @@ const CheckoutPage = () => {
         shipping_method: formData.shippingMethod,
         voucher_id: appliedVoucher?.id || null,
         remarks: formData.remarks.substring(0, 500) || null,
-        ...(formData.paymentMethod !== "Cash on Delivery" && formData.paymentMethod !== "Cash on Pickup" && {
-          ewallet_details: {
-            name: formData.ewalletName,
-            number: formData.ewalletNumber,
-            email: formData.ewalletEmail,
-          }
-        })
       };
 
       const response = await AxiosInstance.post('/checkout-order/create_order/', requestBody);
 
       if (response.data.success) {
-        window.location.href = `/order-successful/${response.data.order_id}`;
+        // Check payment method to determine redirect
+        const isEWalletPayment = ["GCash", "Maya"].includes(formData.paymentMethod);
+        
+        if (isEWalletPayment) {
+          // For e-wallet payments, redirect to payment page with order ID
+          window.location.href = `/payment?order_id=${response.data.order_id}`;
+        } else {
+          // For Cash on Pickup/Delivery, go directly to order success
+          window.location.href = `/order-successful/${response.data.order_id}`;
+        }
       } else {
         throw new Error(response.data.error || 'Failed to create order');
       }
@@ -478,17 +437,12 @@ const CheckoutPage = () => {
   const selectedPaymentMethod = paymentMethods.find(method => 
     getPaymentMethodName(method) === formData.paymentMethod
   );
-  const showEwalletFields = selectedPaymentMethod?.requiresDetails;
-
-  const isEwalletFieldsValid = !showEwalletFields || (
-    formData.ewalletName.trim() !== "" &&
-    (selectedPaymentMethod?.id === "paypal" 
-      ? formData.ewalletEmail.trim() !== "" 
-      : formData.ewalletNumber.trim() !== "")
-  );
 
   const hasValidProducts = products.length > 0;
-  const canPlaceOrder = formData.agreeTerms && isEwalletFieldsValid && hasValidProducts && !loading && formData.selectedAddressId;
+  const canPlaceOrder = formData.agreeTerms && 
+    hasValidProducts && 
+    !loading && 
+    (formData.shippingMethod === "Pickup from Store" || formData.selectedAddressId);
 
   const getTierBadge = (tier: string) => {
     const tierConfig = {
@@ -1242,78 +1196,6 @@ const CheckoutPage = () => {
                   );
                 })}
               </div>
-
-              {showEwalletFields && selectedPaymentMethod && (
-                <div className="mt-6 p-4 border border-orange-200 rounded-lg bg-orange-50">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="p-1.5 bg-white rounded-md">
-                      <Smartphone className="h-4 w-4 text-orange-600" />
-                    </div>
-                    <h3 className="font-semibold text-orange-900">{getPaymentMethodName(selectedPaymentMethod)} Details</h3>
-                  </div>
-                  
-                  <p className="text-sm text-orange-700 mb-4">
-                    Please provide your  {getPaymentMethodName(selectedPaymentMethod)} account information for payment verification.
-                  </p>
-
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="ewalletName" className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                        <User className="h-3.5 w-3.5" />
-                        {selectedPaymentMethod.placeholder?.name}
-                      </Label>
-                      <Input
-                        id="ewalletName"
-                        type="text"
-                        placeholder={selectedPaymentMethod.placeholder?.name}
-                        value={formData.ewalletName}
-                        onChange={(e) => handleInputChange("ewalletName", e.target.value)}
-                        className="mt-1"
-                        required
-                      />
-                    </div>
-
-                    {selectedPaymentMethod.id !== "paypal" && (
-                      <div>
-                        <Label htmlFor="ewalletNumber" className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                          <Smartphone className="h-3.5 w-3.5" />
-                          {selectedPaymentMethod.placeholder?.number}
-                        </Label>
-                        <Input
-                          id="ewalletNumber"
-                          type="tel"
-                          placeholder={selectedPaymentMethod.placeholder?.number}
-                          value={formData.ewalletNumber}
-                          onChange={(e) => handleInputChange("ewalletNumber", e.target.value)}
-                          className="mt-1"
-                          required
-                        />
-                      </div>
-                    )}
-
-                    <div>
-                      <Label htmlFor="ewalletEmail" className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                        {selectedPaymentMethod.placeholder?.email}
-                      </Label>
-                      <Input
-                        id="ewalletEmail"
-                        type="email"
-                        placeholder={selectedPaymentMethod.placeholder?.email}
-                        value={formData.ewalletEmail}
-                        onChange={(e) => handleInputChange("ewalletEmail", e.target.value)}
-                        className="mt-1"
-                        required={selectedPaymentMethod.id === "paypal"}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 p-3 bg-orange-100 rounded-md">
-                    <p className="text-xs text-orange-800">
-                      Your payment information is secure and encrypted.
-                    </p>
-                  </div>
-                </div>
-              )}
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border p-6">
@@ -1413,14 +1295,6 @@ const CheckoutPage = () => {
                 <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
                   <p className="text-xs text-amber-700">
                     Please agree to the Terms of Service and Privacy Policy to continue.
-                  </p>
-                </div>
-              )}
-
-              {showEwalletFields && !isEwalletFieldsValid && (
-                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
-                  <p className="text-xs text-amber-700">
-                    Please fill in all required  {getPaymentMethodName(selectedPaymentMethod)} details to proceed.
                   </p>
                 </div>
               )}

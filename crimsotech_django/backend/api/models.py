@@ -718,6 +718,7 @@ class Order(models.Model):
     delivery_address_text = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    receipt = models.FileField(upload_to="receipt/", null=True, blank=True)
 
     def __str__(self):
         return f"Order {self.order} by {self.user.username}"

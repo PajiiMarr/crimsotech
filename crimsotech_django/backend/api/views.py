@@ -15974,7 +15974,7 @@ class CheckoutOrder(viewsets.ViewSet):
         Expected data: {
             "user_id": "user_uuid",
             "selected_ids": ["cart_item_id1", "cart_item_id2"],
-            "shipping_address_id": "address_uuid",  # Use address ID instead of object
+            "shipping_address_id": "address_uuid",  # Optional for pickup
             "payment_method": "cod",
             "shipping_method": "pickup",
             "voucher_id": "voucher_uuid" (optional),
@@ -15983,9 +15983,9 @@ class CheckoutOrder(viewsets.ViewSet):
         """
         user_id = request.data.get("user_id")
         selected_ids = request.data.get("selected_ids", [])
-        shipping_address_id = request.data.get("shipping_address_id")
         payment_method = request.data.get("payment_method", "cod")
         shipping_method = request.data.get("shipping_method", "pickup")
+        shipping_address_id = request.data.get("shipping_address_id")
         voucher_id = request.data.get("voucher_id")
         remarks = request.data.get("remarks")
         
@@ -15995,21 +15995,27 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if not shipping_address_id:
-            return Response(
-                {"error": "shipping_address_id is required"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
         try:
             user = get_object_or_404(User, id=user_id)
             
-            # Get shipping address
-            shipping_address = get_object_or_404(
-                ShippingAddress, 
-                id=shipping_address_id, 
-                user=user
-            )
+            # Handle shipping address based on shipping method
+            shipping_address = None
+            delivery_address_text = "Pickup from Store"
+            
+            if shipping_method == "Standard Delivery":
+                # For delivery, shipping address is required
+                if not shipping_address_id:
+                    return Response(
+                        {"error": "Shipping address is required for delivery"}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                shipping_address = get_object_or_404(
+                    ShippingAddress, 
+                    id=shipping_address_id,
+                    user=user
+                )
+                delivery_address_text = shipping_address.get_full_address()
             
             # Get cart items
             cart_items = CartItem.objects.filter(
@@ -16052,15 +16058,15 @@ class CheckoutOrder(viewsets.ViewSet):
             delivery_fee = Decimal('0') if shipping_method == "Pickup from Store" else Decimal('50.00')
             total_amount = subtotal + delivery_fee - discount_amount
             
-            # Create Order with shipping address
+            # Create Order - shipping_address can be null for pickup
             order = Order.objects.create(
                 user=user,
-                shipping_address=shipping_address,
+                shipping_address=shipping_address,  # Can be None for pickup
                 status='pending',
                 total_amount=total_amount,
                 payment_method=payment_method,
                 delivery_method=shipping_method,
-                delivery_address_text=shipping_address.get_full_address()
+                delivery_address_text=delivery_address_text
             )
             
             # Store cart item IDs and product information
@@ -16083,7 +16089,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 checkout = Checkout.objects.create(
                     order=order,
-                cart_item=cart_item,  # ForeignKey to cart item
+                    cart_item=cart_item,
                     voucher=voucher,
                     quantity=cart_item.quantity,
                     total_amount=checkout_total,
@@ -16094,22 +16100,14 @@ class CheckoutOrder(viewsets.ViewSet):
                 # Store cart item ID for response
                 cart_item.is_ordered = True
                 cart_item_ids.append(str(cart_item.id))
-
                 cart_item.save()
-            
-            # IMPORTANT: Don't delete cart items immediately
-            # Instead, mark them as purchased or keep them for reference
-            # Or store the cart_item_id in the checkout like we're doing above
-            
-            # If you really need to delete them, do it later with a cleanup task
-            # cart_items.delete()  # Don't delete here!
             
             return Response({
                 "success": True,
                 "message": "Order created successfully",
                 "order_id": str(order.order),
-                "cart_item_ids": cart_item_ids,  # Include cart item IDs in response
-                "total_amount": float(total_amount),  # Convert to float for JSON response
+                "cart_item_ids": cart_item_ids,
+                "total_amount": float(total_amount),
                 "discount_applied": float(discount_amount),
                 "voucher_used": voucher.code if voucher else None
             })
@@ -16121,8 +16119,140 @@ class CheckoutOrder(viewsets.ViewSet):
             return Response(
                 {"error": "Failed to create order", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )        
+            )
 
+    @action(detail=False, methods=['Get'])
+    def get_order_details(self, request):
+        pass
+
+    @action(detail=False, methods=['GET'])
+    def get_order_details(self, request, order_id=None):
+        """
+        Get order details for payment page
+        """
+        try:
+            if not order_id:
+                order_id = request.query_params.get('order_id')
+            
+            if not order_id:
+                return Response({
+                    'success': False,
+                    'error': 'Order ID is required'
+                }, status=400)
+            
+            order = get_object_or_404(
+                Order.objects.select_related(
+                    'user',
+                    'shipping_address'
+                ).prefetch_related(
+                    'payment_set'
+                ),
+                order=order_id
+            )
+            
+            payment = order.payment_set.first()
+            payment_status = 'paid' if payment and payment.status == 'success' else 'pending'
+            
+            order_details = {
+                'order_id': str(order.order),
+                'total_amount': float(order.total_amount),
+                'payment_method': order.payment_method,
+                'status': payment_status,
+                'created_at': order.created_at.isoformat(),
+                'order_status': order.status,
+                'delivery_method': order.delivery_method,
+                'shipping_address': order.delivery_address_text if order.delivery_address_text else None
+            }
+            
+            return Response({
+                'success': True,
+                'order': order_details
+            })
+            
+        except (ValueError, uuid.UUID) as e:
+            return Response({
+                'success': False,
+                'error': 'Invalid Order ID format'
+            }, status=400)
+            
+        except Order.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Order not found'
+            }, status=404)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+        
+    @action(detail=False, methods=['POST'])
+    def add_receipt(self, request):
+        try:
+            order_id = request.data.get('order_id')
+            receipt_file = request.FILES.get('receipt')
+            
+            if not all([order_id, receipt_file]):
+                return Response({
+                    'success': False,
+                    'error': 'order_id and receipt file are required'
+                }, status=400)
+            
+            order = get_object_or_404(Order, order=order_id)
+            
+            order.receipt = receipt_file
+            order.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Receipt uploaded successfully',
+                'order_id': str(order.order)
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    @action(detail=False, methods=['POST'])
+    def confirm_payment(self, request):
+        try:
+            order_id = request.data.get('order_id')
+            
+            order = get_object_or_404(Order, order=order_id)
+            
+            # Check if receipt exists
+            if not order.receipt:
+                return Response({
+                    'success': False,
+                    'error': 'No receipt uploaded yet'
+                }, status=400)
+            
+            payment, created = Payment.objects.update_or_create(
+                order=order,
+                defaults={
+                    'amount': order.total_amount,
+                    'method': order.payment_method,
+                    'status': 'success'  # Admin will verify later
+                }
+            )
+            
+            # Order status remains 'pending' until admin verifies
+            # Don't change order.status here
+            
+            return Response({
+                'success': True,
+                'message': 'Payment confirmation submitted. Awaiting admin verification.',
+                'order_id': str(order.order)
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
