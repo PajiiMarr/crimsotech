@@ -346,13 +346,13 @@ export default function SellingProductPage() {
         `You have ${customerInfo.remaining_products} listing slots remaining.`,
         [
           { text: 'Cancel', style: 'cancel' }, 
-        //   { text: 'Continue', onPress: () => router.push('/customer/create/add-product') }
+          { text: 'Continue', onPress: () => router.push('./add-selling-product-form') }
         ]
       );
       return;
     }
     
-    // router.push('/customer/create/add-product');
+    router.push('./add-selling-product-form');
   };
 
   const handleViewProduct = (productId: string) => {
