@@ -1,4 +1,4 @@
-// selling-products.tsx
+// selling-product.tsx
 import React, { useState, useEffect } from 'react';
 import { 
   SafeAreaView, 
@@ -18,16 +18,14 @@ import {
   TouchableWithoutFeedback
 } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { router } from 'expo-router';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import IonIcon from 'react-native-vector-icons/Ionicons';
-import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AxiosInstance from '../../contexts/axios';
 
 const { width } = Dimensions.get('window');
 
-// Interfaces
+// Interfaces (same as before)
 interface ProductMedia {
   id: string;
   url: string | null;
@@ -111,16 +109,8 @@ interface APIResponse {
   message: string;
 }
 
-export type CustomerStackParamList = {
-  Login: undefined;
-  CreateProduct: undefined;
-  ProductDetail: { productId: string };
-  EditProduct: { productId: string };
-};
-
 export default function SellingProductPage() {
-  const { userRole, userId } = useAuth();
-  const navigation = useNavigation<NativeStackNavigationProp<CustomerStackParamList>>();
+  const { user, userRole } = useAuth();
   
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -141,52 +131,119 @@ export default function SellingProductPage() {
   const [showLimitAlert, setShowLimitAlert] = useState(false);
   const [showProductMenu, setShowProductMenu] = useState<string | null>(null);
 
-  // Simple role guard: only users with role 'customer' may view this page
-  if (userRole && userRole !== 'customer') {
-    return (
-      <SafeAreaView style={styles.center}>
-        <Text style={styles.message}>Not authorized to view this page</Text>
-      </SafeAreaView>
-    );
-  }
+  // Normalize image URLs
+  const normalizeImageUrl = (raw?: string | null) => {
+    const placeholder = 'https://via.placeholder.com/150';
+    if (!raw) return placeholder;
+    
+    const trimmed = String(raw).trim();
+    if (!trimmed) return placeholder;
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (trimmed.startsWith('//')) return `https:${trimmed}`;
+    if (trimmed.startsWith('/')) return `${AxiosInstance.defaults.baseURL}${trimmed}`;
+    return `${AxiosInstance.defaults.baseURL}/${trimmed}`;
+  };
+
+  // Helper to extract image from product data
+  const extractImageFromProduct = (product: any): string | null => {
+    if (!product) return null;
+
+    if (product.main_image?.url) return product.main_image.url;
+
+    if (product.all_media && product.all_media.length > 0) {
+      for (const media of product.all_media) {
+        if (media.url) return media.url;
+      }
+    }
+
+    const imageCandidates = [
+      product.primary_image,
+      product.primary_image_url,
+      product.image_url,
+      product.image,
+      product.thumbnail,
+      product.media_files?.[0]?.url,
+      product.media_files?.[0]?.file_url,
+    ];
+
+    for (const candidate of imageCandidates) {
+      if (candidate && typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (trimmed) return trimmed;
+      }
+      if (candidate && typeof candidate === 'object') {
+        const url = candidate.url || candidate.file_url || candidate.raw_url;
+        if (url && typeof url === 'string') return url.trim();
+      }
+    }
+
+    return null;
+  };
+
+  useEffect(() => {
+    if (user?.id) {
+      fetchProducts();
+    }
+  }, [user?.id]);
 
   const fetchProducts = async () => {
     try {
-      const token = await AsyncStorage.getItem('token');
-      const user = await AsyncStorage.getItem('user');
-      
-      if (!token || !user) {
-        Alert.alert('Error', 'Please login first');
-        navigation.navigate('Login');
-        return;
-      }
-
-      const userData = JSON.parse(user);
-      const customerId = userData.user_id || userId;
-
-      const response = await axios.get<APIResponse>(
-        'http://192.168.1.1:8000/api/customer-product-list/products_list/', // Replace with your actual API URL
-        {
-          headers: {
-            'X-User-Id': customerId,
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      setLoading(true);
+      const response = await AxiosInstance.get<APIResponse>('/api/customer-product-list/products_list/', {
+        headers: {
+          'X-User-Id': user?.id,
+        },
+      });
 
       if (response.data.success) {
-        setProducts(response.data.products || []);
-        setCustomerInfo(response.data.customer_info);
+        const productsData = response.data.products || [];
+
+        // Transform products with normalized image URLs
+        const transformedProducts = productsData.map((product: any) => {
+          const rawImage = extractImageFromProduct(product);
+          
+          if (!rawImage) {
+            console.warn('No image found for product:', product.id, product.name);
+          }
+
+          return {
+            ...product,
+            id: String(product.id),
+            main_image: product.main_image ? {
+              ...product.main_image,
+              url: normalizeImageUrl(rawImage)
+            } : null,
+            all_media: product.all_media?.map((media: any) => ({
+              ...media,
+              url: normalizeImageUrl(media.url)
+            })) || [],
+          };
+        });
+
+        // Limit listings shown to 20 items
+        const limitedProducts = transformedProducts.slice(0, 20);
+        if (transformedProducts.length > 20) {
+          console.log('Showing first 20 products of', transformedProducts.length);
+        }
+
+        setProducts(limitedProducts);
+        setCustomerInfo(response.data.customer_info || {
+          customer_id: user?.id || '',
+          product_limit: 20,
+          current_product_count: transformedProducts.length,
+          remaining_products: Math.max(0, 20 - transformedProducts.length)
+        });
+        
         setStats({
-          total: response.data.summary.total_products,
-          published: response.data.summary.by_upload_status.published,
-          draft: response.data.summary.by_upload_status.draft,
-          remaining: response.data.customer_info.remaining_products
+          total: response.data.summary?.total_products || transformedProducts.length,
+          published: response.data.summary?.by_upload_status?.published || 0,
+          draft: response.data.summary?.by_upload_status?.draft || 0,
+          remaining: response.data.customer_info?.remaining_products || Math.max(0, 20 - transformedProducts.length)
         });
 
         // Check if user has reached the limit
-        if (response.data.customer_info.remaining_products <= 0) {
+        if (response.data.customer_info?.remaining_products <= 0) {
           setShowLimitAlert(true);
         }
       }
@@ -207,18 +264,12 @@ export default function SellingProductPage() {
     fetchProducts();
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      fetchProducts();
-    }, [])
-  );
-
   const formatPrice = (price: string) => {
     try {
       const priceNumber = parseFloat(price);
-      return `₱${priceNumber.toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,')}`;
+      return `₱${priceNumber.toFixed(0)}`;
     } catch {
-      return '₱0.00';
+      return '₱0';
     }
   };
 
@@ -228,7 +279,6 @@ export default function SellingProductPage() {
       return date.toLocaleDateString('en-PH', {
         month: 'short',
         day: 'numeric',
-        year: 'numeric'
       });
     } catch {
       return 'Invalid date';
@@ -243,14 +293,14 @@ export default function SellingProductPage() {
     switch (status.toLowerCase()) {
       case 'active':
       case 'published':
-        return '#10B981'; // green
+        return '#10B981';
       case 'draft':
-        return '#F59E0B'; // amber
+        return '#F59E0B';
       case 'inactive':
       case 'archived':
-        return '#6B7280'; // gray
+        return '#9CA3AF';
       default:
-        return '#6B7280';
+        return '#9CA3AF';
     }
   };
 
@@ -263,7 +313,7 @@ export default function SellingProductPage() {
       case 'out_of_stock':
         return '#EF4444';
       default:
-        return '#6B7280';
+        return '#9CA3AF';
     }
   };
 
@@ -290,27 +340,27 @@ export default function SellingProductPage() {
       return;
     }
     
-      if (customerInfo.remaining_products <= 3) {
+    if (customerInfo.remaining_products <= 3) {
       Alert.alert(
         'Almost Full',
         `You have ${customerInfo.remaining_products} listing slots remaining.`,
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Continue', onPress: () => navigation.navigate('CreateProduct') }
+          { text: 'Cancel', style: 'cancel' }, 
+        //   { text: 'Continue', onPress: () => router.push('/customer/create/add-product') }
         ]
       );
       return;
     }
     
-    navigation.navigate('CreateProduct');
+    // router.push('/customer/create/add-product');
   };
 
   const handleViewProduct = (productId: string) => {
-    navigation.navigate('ProductDetail', { productId });
+    // router.push(`/customer/products/${productId}`);
   };
 
   const handleEditProduct = (productId: string) => {
-    navigation.navigate('EditProduct', { productId });
+    // router.push(`/customer/products/edit/${productId}`);
   };
 
   const handleDeleteProduct = async (productId: string) => {
@@ -324,15 +374,11 @@ export default function SellingProductPage() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const token = await AsyncStorage.getItem('token');
-              await axios.delete(
-                `http://192.168.1.1:8000/api/customer-products/${productId}/`, // Replace with your actual API URL
-                {
-                  headers: {
-                    'Authorization': `Bearer ${token}`
-                  }
-                }
-              );
+              await AxiosInstance.delete(`/api/customer-products/${productId}/`, {
+                headers: {
+                  'X-User-Id': user?.id,
+                },
+              });
               
               // Remove from local state
               setProducts(prev => prev.filter(p => p.id !== productId));
@@ -350,14 +396,13 @@ export default function SellingProductPage() {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
     
     try {
-      const token = await AsyncStorage.getItem('token');
-      await axios.patch(
-        `http://192.168.1.1:8000/api/customer-products/${productId}/`, // Replace with your actual API URL
+      await AxiosInstance.patch(
+        `/api/customer-products/${productId}/`,
         { status: newStatus },
         {
           headers: {
-            'Authorization': `Bearer ${token}`
-          }
+            'X-User-Id': user?.id,
+          },
         }
       );
       
@@ -380,189 +425,89 @@ export default function SellingProductPage() {
   );
 
   const renderProductItem = ({ item }: { item: Product }) => (
-    <TouchableOpacity 
-      style={styles.productCard}
-      onPress={() => handleViewProduct(item.id)}
-      activeOpacity={0.9}
-    >
-      <View style={styles.productHeader}>
+    <View style={styles.productCard}>
+      <TouchableOpacity 
+        style={styles.productContent}
+        onPress={() => handleViewProduct(item.id)}
+        activeOpacity={0.7}
+      >
+        {/* Product Image */}
         <View style={styles.productImageContainer}>
           {item.main_image?.url ? (
             <Image 
               source={{ uri: item.main_image.url }} 
               style={styles.productImage}
               resizeMode="cover"
+              onError={(e: any) => console.warn('Image load failed:', item.main_image?.url)}
             />
           ) : (
             <View style={styles.placeholderImage}>
-              <Icon name="image" size={24} color="#9CA3AF" />
+              <Icon name="image" size={20} color="#9CA3AF" />
             </View>
           )}
           {item.media_count > 0 && (
             <View style={styles.imageCountBadge}>
-              <Text style={styles.imageCountText}>{item.media_count}</Text>
+              <Text style={styles.imageCountText}>+{item.media_count}</Text>
             </View>
           )}
         </View>
         
+        {/* Product Info */}
         <View style={styles.productInfo}>
-          <Text style={styles.productName} numberOfLines={2}>
-            {item.name}
-          </Text>
-          <Text style={styles.productDescription} numberOfLines={2}>
-            {item.short_description}
-          </Text>
-          
-          <View style={styles.categoryContainer}>
-            <Text style={styles.categoryText}>
-              {getCategoryName(item)}
+          <View style={styles.productHeaderRow}>
+            <Text style={styles.productName} numberOfLines={1}>
+              {item.name}
             </Text>
+            <TouchableOpacity 
+              style={styles.menuButton}
+              onPress={() => setShowProductMenu(item.id)}
+            >
+              <Icon name="more-vert" size={18} color="#6B7280" />
+            </TouchableOpacity>
           </View>
           
-          <View style={styles.priceContainer}>
+          <View style={styles.categoryPriceRow}>
+            <View style={styles.categoryBadge}>
+              <Text style={styles.categoryText}>
+                {getCategoryName(item)}
+              </Text>
+            </View>
             <Text style={styles.productPrice}>
               {formatPrice(item.price)}
             </Text>
-            {item.compare_price && (
-              <Text style={styles.comparePrice}>
-                {formatPrice(item.compare_price)}
+          </View>
+          
+          <View style={styles.statusStockRow}>
+            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+              <Text style={styles.statusText}>
+                {item.status === 'active' ? 'Active' : item.status}
               </Text>
-            )}
-          </View>
-        </View>
-        
-        <TouchableOpacity 
-          style={styles.menuButton}
-          onPress={() => setShowProductMenu(item.id)}
-        >
-          <Icon name="more-vert" size={24} color="#6B7280" />
-        </TouchableOpacity>
-      </View>
-      
-      <View style={styles.productFooter}>
-        <View style={styles.statusContainer}>
-          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
-            <Text style={styles.statusText}>{item.status}</Text>
-          </View>
-          {item.is_draft && (
-            <View style={[styles.statusBadge, styles.draftBadge]}>
-              <Text style={styles.statusText}>Draft</Text>
             </View>
-          )}
-        </View>
-        
-        <View style={styles.stockContainer}>
-          <View style={[
-            styles.stockBadge, 
-            { backgroundColor: getStockStatusColor(item.stock_status) }
-          ]}>
-            <Text style={styles.stockText}>
-              {getStockStatusText(item.stock_status)}
-            </Text>
+            
+            <View style={styles.stockInfo}>
+              <View style={[styles.stockDot, { backgroundColor: getStockStatusColor(item.stock_status) }]} />
+              <Text style={styles.stockText}>
+                {item.total_sku_quantity} in stock
+              </Text>
+            </View>
           </View>
-          <Text style={styles.stockCount}>
-            Stock: {item.total_sku_quantity}
+          
+          <Text style={styles.dateText}>
+            Added {formatDate(item.created_at)}
           </Text>
         </View>
-        
-        <View style={styles.swapContainer}>
-          {item.has_swap ? (
-            <View style={styles.swapBadge}>
-              <Icon name="swap-horiz" size={14} color="#FFFFFF" />
-              <Text style={styles.swapText}>Swap Available</Text>
-            </View>
-          ) : (
-            <Text style={styles.noSwapText}>No Swap</Text>
-          )}
-        </View>
-      </View>
-      
-      <View style={styles.productMeta}>
-        <Text style={styles.dateText}>
-          Added: {formatDate(item.created_at)}
-        </Text>
-        {item.has_variants && (
-          <View style={styles.variantBadge}>
-            <Icon name="layers" size={12} color="#FFFFFF" />
-            <Text style={styles.variantText}>
-              {item.sku_count} variant{item.sku_count !== 1 ? 's' : ''}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* Product Action Menu Modal */}
-      <Modal
-        visible={showProductMenu === item.id}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowProductMenu(null)}
-      >
-        <TouchableWithoutFeedback onPress={() => setShowProductMenu(null)}>
-          <View style={styles.menuOverlay}>
-            <View style={styles.actionMenu}>
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => {
-                  setShowProductMenu(null);
-                  handleViewProduct(item.id);
-                }}
-              >
-                <IonIcon name="eye-outline" size={20} color="#374151" />
-                <Text style={styles.menuItemText}>View Listing</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => {
-                  setShowProductMenu(null);
-                  handleEditProduct(item.id);
-                }}
-              >
-                <Icon name="edit" size={20} color="#374151" />
-                <Text style={styles.menuItemText}>Edit Listing</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => {
-                  setShowProductMenu(null);
-                  handleToggleStatus(item.id, item.status);
-                }}
-              >
-                <Icon name={item.status === 'active' ? 'pause' : 'play-arrow'} size={20} color="#374151" />
-                <Text style={styles.menuItemText}>
-                  {item.status === 'active' ? 'Deactivate' : 'Activate'}
-                </Text>
-              </TouchableOpacity>
-              
-              <View style={styles.menuDivider} />
-              
-              <TouchableOpacity 
-                style={[styles.menuItem, styles.deleteMenuItem]}
-                onPress={() => {
-                  setShowProductMenu(null);
-                  handleDeleteProduct(item.id);
-                }}
-              >
-                <Icon name="delete" size={20} color="#EF4444" />
-                <Text style={styles.deleteMenuText}>Delete Listing</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
-    </TouchableOpacity>
+      </TouchableOpacity>
+    </View>
   );
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
       <View style={styles.emptyIcon}>
-        <Icon name="inventory" size={64} color="#D1D5DB" />
+        <Icon name="inventory" size={48} color="#D1D5DB" />
       </View>
       <Text style={styles.emptyTitle}>No listings yet</Text>
       <Text style={styles.emptyDescription}>
-        Create your first personal listing to start selling items.
+        Create your first personal listing to start selling items
       </Text>
       <TouchableOpacity 
         style={[
@@ -572,53 +517,59 @@ export default function SellingProductPage() {
         onPress={handleCreateProduct}
         disabled={customerInfo.remaining_products <= 0}
       >
-        <Icon name="add" size={24} color="#FFFFFF" />
+        <Icon name="add" size={20} color="#FFFFFF" />
         <Text style={styles.createButtonText}>
-          Create Your First Listing
+          Create Listing
         </Text>
       </TouchableOpacity>
       {customerInfo.remaining_products <= 0 && (
         <Text style={styles.limitWarning}>
-          You've reached the limit of {customerInfo.product_limit} listings
+          Limit reached ({customerInfo.product_limit} listings)
         </Text>
       )}
     </View>
   );
 
   const renderStatsCard = () => (
-    <ScrollView 
-      horizontal 
-      showsHorizontalScrollIndicator={false}
-      style={styles.statsScroll}
-      contentContainerStyle={styles.statsContainer}
-    >
-      <View style={styles.statCard}>
-        <Text style={styles.statNumber}>{stats.total}</Text>
-        <Text style={styles.statLabel}>Total</Text>
+    <View style={styles.statsContainer}>
+      <View style={styles.statRow}>
+        <View style={[styles.statItem, styles.totalStat]}>
+          <Text style={styles.statNumber}>{stats.total}</Text>
+          <Text style={styles.statLabel}>Total</Text>
+        </View>
+        
+        <View style={[styles.statItem, styles.publishedStat]}>
+          <Text style={styles.statNumber}>{stats.published}</Text>
+          <Text style={styles.statLabel}>Published</Text>
+        </View>
+        
+        <View style={[styles.statItem, styles.draftStat]}>
+          <Text style={styles.statNumber}>{stats.draft}</Text>
+          <Text style={styles.statLabel}>Drafts</Text>
+        </View>
+        
+        <View style={[styles.statItem, styles.limitStat]}>
+          <Text style={styles.statNumber}>{stats.remaining}</Text>
+          <Text style={styles.statLabel}>Remaining</Text>
+        </View>
       </View>
-      
-      <View style={[styles.statCard, styles.publishedCard]}>
-        <Text style={styles.statNumber}>{stats.published}</Text>
-        <Text style={styles.statLabel}>Published</Text>
-      </View>
-      
-      <View style={[styles.statCard, styles.draftCard]}>
-        <Text style={styles.statNumber}>{stats.draft}</Text>
-        <Text style={styles.statLabel}>Drafts</Text>
-      </View>
-      
-      <View style={[styles.statCard, styles.limitCard]}>
-        <Text style={styles.statNumber}>{stats.remaining}</Text>
-        <Text style={styles.statLabel}>Remaining</Text>
-      </View>
-    </ScrollView>
+    </View>
   );
 
-  if (loading) {
+  // Role guard
+  if (userRole && userRole !== 'customer') {
+    return (
+      <SafeAreaView style={styles.center}>
+        <Text style={styles.message}>Not authorized to view this page</Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (loading && !refreshing) {
     return (
       <SafeAreaView style={styles.center}>
         <ActivityIndicator size="large" color="#4F46E5" />
-        <Text style={styles.loadingText}>Loading your listings...</Text>
+        <Text style={styles.loadingText}>Loading listings...</Text>
       </SafeAreaView>
     );
   }
@@ -628,8 +579,8 @@ export default function SellingProductPage() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Personal Listings</Text>
-          <Text style={styles.headerSubtitle}>Manage your personal item listings</Text>
+          <Text style={styles.headerTitle}>My Listings</Text>
+          <Text style={styles.headerSubtitle}>{customerInfo.current_product_count} items listed</Text>
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity 
@@ -639,7 +590,7 @@ export default function SellingProductPage() {
           >
             <Icon 
               name="refresh" 
-              size={24} 
+              size={20} 
               color="#4F46E5" 
               style={refreshing && styles.refreshingIcon}
             />
@@ -652,7 +603,7 @@ export default function SellingProductPage() {
             onPress={handleCreateProduct}
             disabled={customerInfo.remaining_products <= 0}
           >
-            <Icon name="add" size={24} color="#FFFFFF" />
+            <Icon name="add" size={20} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       </View>
@@ -667,18 +618,18 @@ export default function SellingProductPage() {
         <View style={styles.alertOverlay}>
           <View style={styles.alertContent}>
             <View style={styles.alertIcon}>
-              <Icon name="warning" size={48} color="#EF4444" />
+              <Icon name="warning" size={40} color="#EF4444" />
             </View>
             <Text style={styles.alertTitle}>Limit Reached</Text>
             <Text style={styles.alertMessage}>
-              You have reached your limit of {customerInfo.product_limit} personal listings.
-              You cannot create more listings until you delete some existing ones.
+              You have reached your limit of {customerInfo.product_limit} listings.
+              Delete some listings to create new ones.
             </Text>
             <TouchableOpacity 
               style={styles.alertButton}
               onPress={() => setShowLimitAlert(false)}
             >
-              <Text style={styles.alertButtonText}>OK, I Understand</Text>
+              <Text style={styles.alertButtonText}>OK</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -698,10 +649,10 @@ export default function SellingProductPage() {
         </View>
         <View style={styles.limitTextContainer}>
           <Text style={styles.limitText}>
-            {customerInfo.current_product_count}/{customerInfo.product_limit} listings used
+            {customerInfo.current_product_count}/{customerInfo.product_limit}
           </Text>
           <Text style={styles.remainingText}>
-            {customerInfo.remaining_products} remaining
+            {customerInfo.remaining_products} left
           </Text>
         </View>
       </View>
@@ -717,6 +668,7 @@ export default function SellingProductPage() {
           />
         }
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
       >
         {/* Stats */}
         {renderStatsCard()}
@@ -724,7 +676,7 @@ export default function SellingProductPage() {
         {/* Search */}
         <View style={styles.searchContainer}>
           <View style={styles.searchInputContainer}>
-            <Icon name="search" size={20} color="#9CA3AF" style={styles.searchIcon} />
+            <Icon name="search" size={18} color="#9CA3AF" style={styles.searchIcon} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search listings..."
@@ -734,7 +686,7 @@ export default function SellingProductPage() {
             />
             {searchTerm.length > 0 && (
               <TouchableOpacity onPress={() => setSearchTerm('')}>
-                <Icon name="close" size={20} color="#9CA3AF" />
+                <Icon name="close" size={18} color="#9CA3AF" />
               </TouchableOpacity>
             )}
           </View>
@@ -747,7 +699,7 @@ export default function SellingProductPage() {
           <View style={styles.productsContainer}>
             <View style={styles.listHeader}>
               <Text style={styles.listTitle}>
-                Your Listings ({filteredProducts.length})
+                Listings ({filteredProducts.length})
               </Text>
               {customerInfo.remaining_products > 0 && (
                 <Text style={styles.listSubtitle}>
@@ -767,23 +719,93 @@ export default function SellingProductPage() {
         )}
       </ScrollView>
 
-      {/* Floating Create Button (for when list is long) */}
-      {filteredProducts.length > 0 && customerInfo.remaining_products > 0 && (
+      {/* Product Action Menu Modal */}
+      <Modal
+        visible={showProductMenu !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowProductMenu(null)}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowProductMenu(null)}>
+          <View style={styles.menuOverlay}>
+            <View style={styles.actionMenu}>
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => {
+                  const productId = showProductMenu;
+                  setShowProductMenu(null);
+                  handleViewProduct(productId!);
+                }}
+              >
+                <IonIcon name="eye-outline" size={18} color="#374151" />
+                <Text style={styles.menuItemText}>View</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => {
+                  const productId = showProductMenu;
+                  setShowProductMenu(null);
+                  handleEditProduct(productId!);
+                }}
+              >
+                <Icon name="edit" size={18} color="#374151" />
+                <Text style={styles.menuItemText}>Edit</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.menuItem}
+                onPress={() => {
+                  const productId = showProductMenu;
+                  const product = products.find(p => p.id === productId);
+                  setShowProductMenu(null);
+                  if (product) {
+                    handleToggleStatus(productId!, product.status);
+                  }
+                }}
+              >
+                <Icon name="power-settings-new" size={18} color="#374151" />
+                <Text style={styles.menuItemText}>
+                  {products.find(p => p.id === showProductMenu)?.status === 'active' ? 'Deactivate' : 'Activate'}
+                </Text>
+              </TouchableOpacity>
+              
+              <View style={styles.menuDivider} />
+              
+              <TouchableOpacity 
+                style={[styles.menuItem, styles.deleteMenuItem]}
+                onPress={() => {
+                  const productId = showProductMenu;
+                  setShowProductMenu(null);
+                  handleDeleteProduct(productId!);
+                }}
+              >
+                <Icon name="delete" size={18} color="#EF4444" />
+                <Text style={styles.deleteMenuText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* Floating Create Button */}
+      {customerInfo.remaining_products > 0 && (
         <TouchableOpacity 
           style={styles.floatingButton}
           onPress={handleCreateProduct}
         >
-          <Icon name="add" size={28} color="#FFFFFF" />
+          <Icon name="add" size={24} color="#FFFFFF" />
         </TouchableOpacity>
       )}
     </SafeAreaView>
   );
 }
 
+// Minimalist Styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#FFFFFF',
   },
   center: {
     flex: 1,
@@ -800,62 +822,70 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: '#F1F5F9',
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '600',
     color: '#111827',
   },
   headerSubtitle: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#6B7280',
     marginTop: 2,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   refreshButton: {
-    padding: 8,
+    padding: 6,
   },
   refreshingIcon: {
     transform: [{ rotate: '360deg' }],
   },
   addButton: {
     backgroundColor: '#4F46E5',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#4F46E5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   disabledAddButton: {
-    backgroundColor: '#9CA3AF',
+    backgroundColor: '#CBD5E1',
   },
   message: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#6B7280',
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 14,
+    fontSize: 13,
     color: '#6B7280',
   },
   scrollView: {
     flex: 1,
   },
+  scrollContent: {
+    paddingBottom: 20,
+  },
   limitInfo: {
-    backgroundColor: '#FFFFFF',
-    padding: 16,
+    backgroundColor: '#F8FAFC',
+    padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: '#F1F5F9',
   },
   limitProgress: {
-    height: 8,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 4,
+    height: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 3,
     overflow: 'hidden',
     marginBottom: 8,
   },
@@ -869,422 +899,360 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   limitText: {
-    fontSize: 14,
-    color: '#374151',
+    fontSize: 13,
+    color: '#475569',
     fontWeight: '500',
   },
   remainingText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#10B981',
     fontWeight: '500',
   },
-  statsScroll: {
-    marginTop: 8,
-  },
   statsContainer: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    gap: 12,
-  },
-  statCard: {
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    minWidth: 100,
+  },
+  statRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  statItem: {
+    flex: 1,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginHorizontal: 4,
   },
-  publishedCard: {
-    borderLeftWidth: 3,
-    borderLeftColor: '#10B981',
+  totalStat: {
+    backgroundColor: '#F1F5F9',
   },
-  draftCard: {
-    borderLeftWidth: 3,
-    borderLeftColor: '#F59E0B',
+  publishedStat: {
+    backgroundColor: '#F0FDF4',
   },
-  limitCard: {
-    borderLeftWidth: 3,
-    borderLeftColor: '#4F46E5',
+  draftStat: {
+    backgroundColor: '#FFFBEB',
+  },
+  limitStat: {
+    backgroundColor: '#EEF2FF',
   },
   statNumber: {
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: '700',
     color: '#111827',
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#6B7280',
-    marginTop: 4,
+    marginTop: 2,
   },
   searchContainer: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     backgroundColor: '#FFFFFF',
-    marginTop: 8,
   },
   searchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
+    height: 40,
   },
   searchIcon: {
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    height: 44,
-    fontSize: 16,
+    fontSize: 14,
     color: '#111827',
+    padding: 0,
   },
   productsContainer: {
-    padding: 16,
+    paddingHorizontal: 16,
   },
   listHeader: {
-    marginBottom: 16,
+    marginBottom: 12,
   },
   listTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#111827',
   },
   listSubtitle: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#6B7280',
     marginTop: 2,
   },
   listContent: {
-    gap: 12,
+    gap: 8,
   },
   productCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#F1F5F9',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.04,
     shadowRadius: 2,
-    elevation: 2,
+    elevation: 1,
   },
-  productHeader: {
+  productContent: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
+    padding: 8,
   },
   productImageContainer: {
     position: 'relative',
+    marginRight: 10,
   },
   productImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
+    width: 60,
+    height: 60,
+    borderRadius: 6,
   },
   placeholderImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
+    width: 60,
+    height: 60,
+    borderRadius: 6,
+    backgroundColor: '#F8FAFC',
     justifyContent: 'center',
     alignItems: 'center',
   },
   imageCountBadge: {
     position: 'absolute',
-    top: -6,
-    right: -6,
+    top: -3,
+    right: -3,
     backgroundColor: '#4F46E5',
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderRadius: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
   },
   imageCountText: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#FFFFFF',
     fontWeight: '600',
   },
   productInfo: {
     flex: 1,
-    gap: 4,
+  },
+  productHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4,
   },
   productName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#111827',
+    flex: 1,
+    marginRight: 8,
   },
-  productDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-    lineHeight: 18,
+  menuButton: {
+    padding: 2,
   },
-  categoryContainer: {
-    marginTop: 4,
+  categoryPriceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  categoryBadge: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
   categoryText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#4F46E5',
-    backgroundColor: '#EEF2FF',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-  },
-  priceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
+    fontWeight: '500',
   },
   productPrice: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: '#111827',
   },
-  comparePrice: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    textDecorationLine: 'line-through',
-  },
-  menuButton: {
-    padding: 4,
-  },
-  productFooter: {
+  statusStockRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  statusContainer: {
-    flexDirection: 'row',
-    gap: 6,
+    marginBottom: 4,
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  draftBadge: {
-    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 8,
   },
   statusText: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#FFFFFF',
-    fontWeight: '500',
+    fontWeight: '600',
   },
-  stockContainer: {
+  stockInfo: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
   },
-  stockBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+  stockDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 4,
   },
   stockText: {
-    fontSize: 12,
-    color: '#FFFFFF',
-    fontWeight: '500',
-  },
-  stockCount: {
     fontSize: 11,
     color: '#6B7280',
-  },
-  swapContainer: {
-    alignItems: 'flex-end',
-  },
-  swapBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#10B981',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  swapText: {
-    fontSize: 12,
-    color: '#FFFFFF',
-    fontWeight: '500',
-  },
-  noSwapText: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  productMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
   },
   dateText: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  variantBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#8B5CF6',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  variantText: {
     fontSize: 11,
-    color: '#FFFFFF',
-    fontWeight: '500',
+    color: '#94A3B8',
   },
   emptyContainer: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 48,
-    minHeight: 400,
+    minHeight: 300,
   },
   emptyIcon: {
-    marginBottom: 24,
+    marginBottom: 16,
+    opacity: 0.5,
   },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#111827',
+    color: '#475569',
     marginBottom: 8,
+    textAlign: 'center',
   },
   emptyDescription: {
-    fontSize: 14,
-    color: '#6B7280',
+    fontSize: 13,
+    color: '#94A3B8',
     textAlign: 'center',
-    marginBottom: 32,
-    lineHeight: 20,
+    marginBottom: 20,
+    lineHeight: 18,
   },
   createButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     backgroundColor: '#4F46E5',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    shadowColor: '#4F46E5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   disabledButton: {
-    backgroundColor: '#9CA3AF',
+    backgroundColor: '#CBD5E1',
+    shadowOpacity: 0,
   },
   createButtonText: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#FFFFFF',
     fontWeight: '600',
   },
   limitWarning: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#EF4444',
     marginTop: 12,
   },
   floatingButton: {
     position: 'absolute',
-    bottom: 24,
-    right: 24,
+    bottom: 20,
+    right: 20,
     backgroundColor: '#4F46E5',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
-    elevation: 8,
+    elevation: 6,
   },
   menuOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     justifyContent: 'flex-end',
   },
   actionMenu: {
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
     paddingVertical: 8,
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
   menuItemText: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#374151',
   },
   menuDivider: {
     height: 1,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#F1F5F9',
     marginVertical: 4,
   },
   deleteMenuItem: {
     marginTop: 4,
   },
   deleteMenuText: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#EF4444',
   },
   alertOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   alertContent: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: 12,
+    padding: 20,
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 320,
     alignItems: 'center',
   },
   alertIcon: {
-    marginBottom: 16,
+    marginBottom: 12,
   },
   alertTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '600',
     color: '#111827',
-    marginBottom: 12,
+    marginBottom: 8,
     textAlign: 'center',
   },
   alertMessage: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#6B7280',
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
+    lineHeight: 18,
+    marginBottom: 20,
   },
   alertButton: {
     backgroundColor: '#4F46E5',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
     borderRadius: 8,
     width: '100%',
   },
   alertButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#FFFFFF',
     fontWeight: '600',
     textAlign: 'center',

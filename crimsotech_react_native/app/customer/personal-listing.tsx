@@ -82,7 +82,7 @@ export default function PersonalListingPage() {
           <View style={styles.card}>
             <Text style={[styles.cardTitle, { marginBottom: 16 }]}>My Products</Text>
             <View style={styles.productRow}>
-              <TouchableOpacity style={styles.productBox}>
+              <TouchableOpacity style={styles.productBox} onPress={() => router.push('/customer/selling-product')}>
                 <View style={styles.productIconCircle}><Tag size={20} color="#374151" /></View>
                 <Text style={styles.productText}>Selling Products</Text>
               </TouchableOpacity>
