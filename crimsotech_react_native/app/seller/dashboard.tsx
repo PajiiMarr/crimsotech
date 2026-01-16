@@ -1,78 +1,190 @@
 // app/seller/dashboard.tsx
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
-import { MaterialIcons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
+import { 
+  Package, 
+  Gift, 
+  ShoppingCart, 
+  MapPin, 
+  Store, 
+  Tag 
+} from 'lucide-react-native';
 import { router } from 'expo-router';
 
+interface DashboardItem {
+  title: string;
+  Icon: React.ComponentType<any>;
+  badge?: number | null;
+  route?: string;
+}
+
 export default function Dashboard() {
-  const menuItems = [
-    { title: 'My Products', icon: 'package-variant-closed', provider: 'MaterialCommunityIcons', color: '#EE4D2D', bgColor: '#FFF' },
-    { title: 'My Finance', icon: 'wallet-outline', provider: 'MaterialCommunityIcons', color: '#FFB100', bgColor: '#FFF' },
-    { title: 'Shop Performance', icon: 'bar-chart', provider: 'MaterialIcons', color: '#EE4D2D', bgColor: '#FFF' },
-    { title: 'Marketing Centre', icon: 'home-percent', provider: 'MaterialCommunityIcons', color: '#0046AB', bgColor: '#FFF' },
-    { title: 'Seller Programme', icon: 'shopping-bag', provider: 'FontAwesome5', color: '#FFB100', bgColor: '#FFF' },
-    { title: 'Learn and Help', icon: 'help-circle-outline', provider: 'MaterialCommunityIcons', color: '#26AA99', bgColor: '#FFF' },
+  const dashboardItems: DashboardItem[] = [
+    { 
+      title: 'Products', 
+      Icon: Package,
+      route: '/seller/product-list'
+    },
+    { 
+      title: 'Gift', 
+      Icon: Gift,
+      route: '/seller/gifts'
+    },
+    { 
+      title: 'Orders', 
+      Icon: ShoppingCart,
+      route: '/seller/orders'
+    },
+    { 
+      title: 'Address', 
+      Icon: MapPin,
+      route: '/seller/address'
+    },
+    { 
+      title: 'Shop Voucher', 
+      Icon: Store,
+      route: '/seller/shop-vouchers'
+    },
+    { 
+      title: 'Product Voucher', 
+      Icon: Tag,
+      route: '/seller/product-vouchers'
+    },
   ];
 
-  const renderIcon = (item: any) => {
-    const iconProps = { name: item.icon, size: 28, color: '#FFF' };
-    return (
-        <View style={[styles.iconBox, { backgroundColor: item.color }]}>
-            {item.provider === 'MaterialCommunityIcons' && <MaterialCommunityIcons {...iconProps as any} />}
-            {item.provider === 'MaterialIcons' && <MaterialIcons {...iconProps as any} />}
-            {item.provider === 'FontAwesome5' && <FontAwesome5 {...iconProps as any} />}
-        </View>
-    );
+  const handlePress = (item: DashboardItem) => {
+    // Explicit routing for Products to ensure it goes to the product list page
+    if (item.title === 'Products') {
+      console.log('Navigating to seller product list');
+      router.push('/seller/product-list');
+      return;
+    }
+
+    if (item.route) {
+      router.push(item.route as any);
+    }
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.grid}>
-        {menuItems.map((item, index) => (
-          <TouchableOpacity key={index} style={styles.menuItem}>
-            {renderIcon(item)}
-            <Text style={styles.menuTitle}>{item.title}</Text>
-          </TouchableOpacity>
-        ))}
+    <View style={styles.container}>
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Seller Dashboard</Text>
+        </View>
+        
+        <View style={styles.iconRow}>
+          {dashboardItems.map((item, index) => (
+            <IconButton 
+              key={index}
+              Icon={item.Icon}
+              label={item.title}
+              badge={item.badge}
+              onPress={() => handlePress(item)}
+            />
+          ))}
+        </View>
       </View>
-    </ScrollView>
+    </View>
   );
 }
+
+type IconButtonProps = {
+  Icon: React.ComponentType<any>;
+  label: string;
+  badge?: number | null;
+  onPress?: () => void;
+};
+
+const IconButton: React.FC<IconButtonProps> = ({ Icon, label, badge = null, onPress }) => (
+  <TouchableOpacity 
+    style={styles.iconItem} 
+    onPress={onPress} 
+    activeOpacity={0.6}
+  >
+    <View style={styles.iconWrapper}>
+      <Icon size={20} color="#111827" strokeWidth={1.2} />
+      {badge !== null && (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{badge}</Text>
+        </View>
+      )}
+    </View>
+    <Text style={styles.iconLabel}>{label}</Text>
+  </TouchableOpacity>
+);
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFF',
+    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingVertical: 20,
-  },
-  menuItem: {
-    width: '33.33%',
-    alignItems: 'center',
-    marginBottom: 25,
-    paddingHorizontal: 5,
-  },
-  iconBox: {
-    width: 50,
-    height: 50,
-    borderRadius: 15,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 10,
-    // Soft shadow for the icons
-    elevation: 2,
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    marginHorizontal: -16, // make full width relative to container padding
+    elevation: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
   },
-  menuTitle: {
-    fontSize: 12,
-    color: '#333',
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  iconRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  iconItem: {
+    alignItems: 'center',
+    width: '25%', // more compact grid
+    marginBottom: 12,
+  },
+  iconWrapper: {
+    position: 'relative',
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  iconLabel: {
+    fontSize: 9,
+    color: '#6B7280',
+    marginTop: 6,
     textAlign: 'center',
-    lineHeight: 16,
+    fontWeight: '500',
+  },
+  badge: {
+    position: 'absolute',
+    right: -6,
+    top: -4,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#111827',
+    borderWidth: 1,
+    borderRadius: 8,
+    width: 16,
+    height: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeText: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#111827',
   },
 });
