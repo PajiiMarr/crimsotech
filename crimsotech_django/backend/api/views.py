@@ -4920,7 +4920,6 @@ class AdminOrders(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-        
     @action(detail=False, methods=['post'])
     def update_order_status(self, request):
         """Update order status"""
@@ -5041,6 +5040,128 @@ class AdminOrders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'])
+    def get_order(self, request):
+        """Get detailed order information for admin view"""
+        order_id = request.GET.get('order_id')
+        
+        if not order_id:
+            return JsonResponse({
+                'success': False,
+                'error': 'Order ID is required'
+            }, status=400)
+        
+        try:
+            with transaction.atomic():
+                # Get the order with related data
+                order = get_object_or_404(
+                    Order.objects.select_related(
+                        'user',
+                        'shipping_address'
+                    ).prefetch_related(
+                        'checkout_set__cart_item__product__shop',
+                        'checkout_set__cart_item__product__category',
+                        'checkout_set__cart_item__user',
+                        'checkout_set__voucher'
+                    ),
+                    order=order_id
+                )
+                
+                # Serialize order data
+                order_data = {
+                    'order_id': str(order.order),
+                    'user': {
+                        'id': str(order.user.id),
+                        'username': order.user.username,
+                        'email': order.user.email,
+                        'first_name': order.user.first_name,
+                        'last_name': order.user.last_name,
+                    },
+                    'approval': order.approval, 
+                    'status': order.status,
+                    'total_amount': str(order.total_amount),
+                    'payment_method': order.payment_method,
+                    'delivery_address': order.delivery_address_text or 
+                                       (order.shipping_address.get_full_address() 
+                                        if order.shipping_address else ''),
+                    'receipt': order.receipt.url if order.receipt else None,
+                    'created_at': order.created_at.isoformat(),
+                    'updated_at': order.updated_at.isoformat(),
+                    'items': []
+                }
+                
+                # Get all checkout items for this order
+                checkouts = order.checkout_set.select_related(
+                    'cart_item__product__shop',
+                    'cart_item__product__category',
+                    'cart_item__user',
+                    'voucher'
+                ).all()
+                
+                for checkout in checkouts:
+                    cart_item = checkout.cart_item
+                    product = cart_item.product
+                    
+                    item_data = {
+                        'id': str(checkout.id),
+                        'cart_item': {
+                            'id': str(cart_item.id),
+                            'product': {
+                                'id': str(product.id),
+                                'name': product.name,
+                                'price': str(product.price),
+                                'shop': {
+                                    'id': str(product.shop.id) if product.shop else None,
+                                    'name': product.shop.name if product.shop else None,
+                                } if product.shop else None,
+                                'category': {
+                                    'id': str(product.category.id) if product.category else None,
+                                    'name': product.category.name if product.category else None,
+                                } if product.category else None,
+                            },
+                            'user': {
+                                'id': str(cart_item.user.id) if cart_item.user else None,
+                                'username': cart_item.user.username if cart_item.user else None,
+                                'email': cart_item.user.email if cart_item.user else None,
+                                'first_name': cart_item.user.first_name if cart_item.user else None,
+                                'last_name': cart_item.user.last_name if cart_item.user else None,
+                            } if cart_item.user else None,
+                        },
+                        'voucher': {
+                            'id': str(checkout.voucher.id),
+                            'name': checkout.voucher.name,
+                            'code': checkout.voucher.code,
+                            'value': str(checkout.voucher.value),
+                        } if checkout.voucher else None,
+                        'total_amount': str(checkout.total_amount),
+                        'status': checkout.status,
+                        'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
+                    }
+                    order_data['items'].append(item_data)
+                
+                return JsonResponse({
+                    'success': True,
+                    'order': order_data
+                })
+                
+        except Order.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Order not found'
+            }, status=404)
+            
+        except Exception as e:
+            # Log the error for debugging
+            import traceback
+            print(f"Error fetching order: {str(e)}")
+            print(traceback.format_exc())
+            
+            return JsonResponse({
+                'success': False,
+                'error': 'Internal server error'
+            }, status=500)
+
 
 
 class AdminRiders(viewsets.ViewSet):

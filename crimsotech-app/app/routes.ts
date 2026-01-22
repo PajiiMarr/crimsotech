@@ -100,6 +100,8 @@ export default [
         route('shops/:shop_id', 'routes/admin/view_shops/view_shops.tsx'),
         route('boosting', 'routes/admin/boosting.tsx'),
         route('orders', 'routes/admin/orders.tsx'),
+        route('orders/:order_id', 'routes/admin/view_orders/view_orders.tsx'),
+
         route('riders', 'routes/admin/riders.tsx'),
         route('vouchers', 'routes/admin/vouchers.tsx'),
         route('refunds', 'routes/admin/refunds.tsx'),
