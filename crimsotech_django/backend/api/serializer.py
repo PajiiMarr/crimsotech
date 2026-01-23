@@ -39,8 +39,16 @@ class UserSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        validated_data['password'] = make_password(validated_data['password'])
+        # Ensure password is hashed on creation (handle missing/blank safely)
+        validated_data['password'] = make_password(validated_data.get('password', ''))
         return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # If password is provided on update, hash it before saving
+        password = validated_data.pop('password', None)
+        if password is not None:
+            validated_data['password'] = make_password(password)
+        return super().update(instance, validated_data)
 
 class CustomerSerializer(serializers.ModelSerializer):
     class Meta:

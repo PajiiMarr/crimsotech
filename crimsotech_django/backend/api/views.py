@@ -6662,7 +6662,7 @@ class AdminUsers(viewsets.ViewSet):
                     'id': str(user.id),
                     'username': user.username,
                     'email': user.email,
-                    'password': user.password,  # Included but should be handled securely in production
+                    'password': None,  # Do not expose password hashes or raw passwords
                     'first_name': user.first_name,
                     'last_name': user.last_name,
                     'middle_name': user.middle_name,
@@ -7008,7 +7008,7 @@ class AdminTeam(viewsets.ViewSet):
                     'id': str(user.id),
                     'username': user.username,
                     'email': user.email,
-                    'password': user.password,
+                    'password': None,
                     'first_name': user.first_name,
                     'last_name': user.last_name,
                     'middle_name': user.middle_name,
