@@ -10,4 +10,6 @@ jobs:
       - name: build image
         run: docker build ./crimsotech_django/ -t pajiimarr/crimsotech_django:latest
       - name: push to docker hub
-        run: docker push pajiimarr/crimsotech_django:latest
+        run: |
+          docker login -u pajiimarr -p ${{ secrets.DOCKER_HUB_TOKEN }}
+          docker push pajiimarr/crimsotech_django:latest
