@@ -18302,7 +18302,6 @@ class ArrangeShipment(viewsets.ViewSet):
 
             # Import models
             from .models import Order, Shop, User, Rider, Delivery
-            from django.utils import timezone
 
             # Verify order exists and belongs to shop - O(1)
             try:
@@ -24033,7 +24032,6 @@ class SellerGifts(viewsets.ModelViewSet):
 
                     # Create AppliedGift using provided times (if any)
                     from django.utils.dateparse import parse_datetime
-                    from django.utils import timezone
                     start_time = None
                     end_time = None
                     if 'start_time' in request.data:
