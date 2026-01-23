@@ -12,18 +12,13 @@ import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
 import { Skeleton } from '~/components/ui/skeleton';
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-  CartesianGrid,
-} from 'recharts';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '~/components/ui/dropdown-menu';
 import { 
   ShoppingCart,
   TrendingUp,
@@ -32,12 +27,17 @@ import {
   User,
   Package,
   Calendar,
-  DollarSign,
   CreditCard,
   CheckCircle,
   XCircle,
   AlertCircle,
   Store,
+  PhilippinePeso,
+  Check,
+  X,
+  Eye,
+  MoreHorizontal,
+  ExternalLink,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
@@ -45,6 +45,7 @@ import AxiosInstance from '~/components/axios/Axios';
 import DateRangeFilter from '~/components/ui/date-range-filter';
 import { useState, useEffect } from 'react';
 import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
+import { Link } from 'react-router';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -68,7 +69,6 @@ interface OrderItem {
         name: string;
       };
     };
-    quantity: number;
     user: {
       id: string;
       username: string;
@@ -83,7 +83,6 @@ interface OrderItem {
     code: string;
     value: number;
   };
-  quantity: number;
   total_amount: number;
   status: string;
   created_at: string;
@@ -401,7 +400,7 @@ export default function Checkouts() {
                         <p className="text-xs text-muted-foreground mt-2">From all orders</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                        <DollarSign className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
+                        <PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
                       </div>
                     </div>
                   </CardContent>
@@ -625,15 +624,7 @@ const columns: ColumnDef<any>[] = [
       );
     },
   },
-  {
-    accessorKey: "quantity",
-    header: "Qty",
-    cell: ({ row }: { row: any}) => (
-      <div className="text-xs sm:text-sm text-center">
-        {row.original.cart_item?.quantity || 0}
-      </div>
-    ),
-  },
+
   {
     accessorKey: "total_amount",
     header: ({ column }) => {
@@ -650,7 +641,7 @@ const columns: ColumnDef<any>[] = [
     },
     cell: ({ row }: { row: any}) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
-        <DollarSign className="w-3 h-3 text-muted-foreground" />
+        <PhilippinePeso className="w-3 h-3 text-muted-foreground" />
         ₱{row.getValue("total_amount")}
         {row.original.voucher && (
           <Badge variant="outline" className="ml-1 text-xs">
@@ -678,7 +669,7 @@ const columns: ColumnDef<any>[] = [
       const getIcon = (status: string) => {
         switch(status?.toLowerCase()) {
           case 'completed': return <CheckCircle className="w-3 h-3" />;
-          case 'paid': return <DollarSign className="w-3 h-3" />;
+          case 'paid': return <PhilippinePeso className="w-3 h-3" />;
           case 'pending': return <Clock className="w-3 h-3" />;
           case 'cancelled': return <XCircle className="w-3 h-3" />;
           case 'failed': return <AlertCircle className="w-3 h-3" />;
@@ -718,7 +709,7 @@ const columns: ColumnDef<any>[] = [
       const getIcon = (status: string) => {
         switch(status?.toLowerCase()) {
           case 'completed': return <CheckCircle className="w-3 h-3" />;
-          case 'paid': return <DollarSign className="w-3 h-3" />;
+          case 'paid': return <PhilippinePeso className="w-3 h-3" />;
           case 'pending': return <Clock className="w-3 h-3" />;
           case 'cancelled': return <XCircle className="w-3 h-3" />;
           case 'failed': return <AlertCircle className="w-3 h-3" />;
@@ -768,6 +759,87 @@ const columns: ColumnDef<any>[] = [
         <div className="flex items-center gap-1 text-xs sm:text-sm">
           <Calendar className="w-3 h-3 text-muted-foreground" />
           {formattedDate}
+        </div>
+      );
+    },
+  },
+
+    {
+    id: "actions",
+    header: "Actions",
+    cell: ({ row }: { row: any }) => {
+      const order = row.original;
+      const itemId = order.id;
+      const orderId = order.order_id;
+      const itemStatus = order.status;
+      
+      // Handler functions for actions
+      const handleAccept = () => {
+        // Add your accept logic here
+        console.log('Accepting order item:', itemId);
+        
+        // Example API call:
+        // AxiosInstance.patch(`/admin-orders/${itemId}/accept/`)
+        //   .then(response => {
+        //     // Handle success
+        //   })
+        //   .catch(error => {
+        //     // Handle error
+        //   });
+      };
+      
+      const handleReject = () => {
+        // Add your reject logic here
+        console.log('Rejecting order item:', itemId);
+        
+        // Example API call:
+        // AxiosInstance.patch(`/admin-orders/${itemId}/reject/`)
+        //   .then(response => {
+        //     // Handle success
+        //   })
+        //   .catch(error => {
+        //     // Handle error
+        //   });
+      };
+      
+      return (
+        <div className="flex items-center gap-2">
+          {/* Accept Button - only show for pending items */}
+          {itemStatus === 'pending' && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleAccept}
+              className="h-8 px-2 border-green-500 text-green-700 hover:bg-green-50 hover:text-green-800"
+              title="Accept Order Item"
+            >
+              <Check className="h-4 w-4" />
+            </Button>
+          )}
+          
+          {/* Reject Button - only show for pending items */}
+          {itemStatus === 'pending' && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleReject}
+              className="h-8 px-2 border-red-500 text-red-700 hover:bg-red-50 hover:text-red-800"
+              title="Reject Order Item"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+          
+          <Link to={`${orderId}`}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 px-2 border-blue-500 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+              title="View Order Details"
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+          </Link>
         </div>
       );
     },
