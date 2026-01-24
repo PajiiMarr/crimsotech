@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -ex  # Add -x for debugging
+set -ex
 
 echo ">>> entrypoint: starting (pid $$)"
 
@@ -11,14 +11,13 @@ python manage.py check --deploy
 echo ">>> entrypoint: collecting static files"
 python manage.py collectstatic --noinput || true
 
-# Start gunicorn with error capture
+# Start gunicorn - explicitly no config file
 echo ">>> entrypoint: starting gunicorn on port ${PORT:-10000}"
 exec gunicorn backend.wsgi:application \
+  -c python:gunicorn.glogging \
   --bind "0.0.0.0:${PORT:-10000}" \
   --workers 1 \
   --timeout 600 \
-  --log-level debug \
-  --capture-output \
-  --enable-stdio-inheritance \
+  --log-level info \
   --access-logfile - \
   --error-logfile -
