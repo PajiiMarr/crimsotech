@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 
 export default function RiderSignupScreen() {
-  const { login } = useAuth();
+  const { login } = useAuth() as any;
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
