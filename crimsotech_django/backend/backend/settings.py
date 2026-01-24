@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from corsheaders.defaults import default_headers
 
 
-load_dotenv()  # this loads the .env file
+# load_dotenv()  # uncomment in development
 
 # allow custom CORS headers
 
@@ -115,6 +115,9 @@ DATABASES = {
         'PASSWORD': os.getenv('POSTGRES_PASSWORD'),
         'HOST': os.getenv('POSTGRES_HOST'),
         'PORT': os.getenv('POSTGRES_PORT', '5432'),
+        'OPTIONS': {
+            'sslmode': 'require',
+        },
     }
 }
 
