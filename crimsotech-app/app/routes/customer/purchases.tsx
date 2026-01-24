@@ -175,8 +175,6 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
       return 'to_ship';
     case 'ready_for_pickup':
       return 'ready_for_pickup';
-    case 'shipped':
-      return 'to_ship';
     case 'delivered':
       return 'completed';
     case 'completed':
