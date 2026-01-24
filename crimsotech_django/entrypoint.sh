@@ -1,8 +1,17 @@
 #!/bin/sh
 set -e
 
-# Apply database migrations
-python manage.py migrate
+echo "==> Running migrations..."
+python manage.py migrate --noinput
 
-# Start server
-python manage.py runserver 0.0.0.0:8000
+echo "==> Collecting static files..."
+python manage.py collectstatic --noinput || true
+
+echo "==> Starting Gunicorn server on port 8000..."
+exec gunicorn backend.wsgi:application \
+    --bind 0.0.0.0:8000 \
+    --workers 2 \
+    --timeout 120 \
+    --log-level info \
+    --access-logfile - \
+    --error-logfile -
