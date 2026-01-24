@@ -22,7 +22,7 @@ if [ $# -eq 0 ]; then
   exec gunicorn backend.wsgi:application \
     --bind "0.0.0.0:${PORT:-10000}" \
     --workers 3 \
-    --timeout 120 \
+    --timeout 600 \
     --access-logfile - \
     --error-logfile -
 else
