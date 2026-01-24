@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from corsheaders.defaults import default_headers
 
 
-load_dotenv()  # this loads the .env file
+# load_dotenv()  # uncomment in development
 
 # allow custom CORS headers
 
