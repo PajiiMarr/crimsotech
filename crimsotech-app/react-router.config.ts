@@ -4,7 +4,7 @@ export default {
   // Config options...
   // Server-side render by default, to enable SPA mode set this to `false`
   future: {
-    v8_middleware: true,
+    v8_middleware: false,
   },
   ssr: true,
 } satisfies Config;
