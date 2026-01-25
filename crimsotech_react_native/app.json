@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "crimsotech_react_native",
+    "name": "Crimsotech",
     "slug": "crimsotech_react_native",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,28 +8,23 @@
     "scheme": "crimsotechreactnative",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-
     "ios": {
       "supportsTablet": true
     },
-
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/icon.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "package": "com.crimsonity.crimsotech"
     },
-
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-
     "plugins": [
       [
         "expo-splash-screen",
@@ -47,10 +42,14 @@
       "expo-web-browser",
       "expo-font"
     ],
-
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d165ec8d-4234-44ff-9c32-b644bf285531"
+      }
     }
   }
 }

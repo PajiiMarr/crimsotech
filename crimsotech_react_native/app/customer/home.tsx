@@ -63,9 +63,18 @@ const CompactProductCard = ({
     : product.category?.name || product.category_admin?.name || '';
 
   const getImageUrl = () => {
-    if (product.primary_image?.url) return product.primary_image.url;
-    if (product.shop?.shop_picture) return product.shop.shop_picture;
-    return 'https://via.placeholder.com/150';
+    const raw = typeof product.primary_image === 'string'
+      ? product.primary_image
+      : product.primary_image?.url || product.shop?.shop_picture || null;
+
+    if (!raw) return 'https://via.placeholder.com/150';
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+
+    // Assume relative path -> prefix with Axios baseURL
+    const base = AxiosInstance?.defaults?.baseURL || '';
+    const normalizedBase = base.replace(/\/$/, '');
+    const normalizedRaw = raw.startsWith('/') ? raw : `/${raw}`;
+    return normalizedBase ? `${normalizedBase}${normalizedRaw}` : normalizedRaw;
   };
 
   return (
@@ -97,6 +106,7 @@ const CompactProductCard = ({
           source={{ uri: getImageUrl() }}
           style={styles.productImage}
           defaultSource={require('../../assets/images/icon.png')}
+          onError={(e: any) => console.warn('Failed to load image for product', product.id, getImageUrl(), e.nativeEvent?.error || e.nativeEvent)}
         />
       </View>
 

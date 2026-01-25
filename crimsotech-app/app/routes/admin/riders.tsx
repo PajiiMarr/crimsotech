@@ -607,7 +607,7 @@ const columns: ColumnDef<any>[] = [
     },
   },
   {
-    accessorKey: "vehicle",
+    accessorKey: "vehicle_type",
     header: "Vehicle",
     cell: ({ row }: { row: any}) => {
       const vehicle = row.original;

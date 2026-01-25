@@ -1,6 +1,7 @@
 // contexts/authcontext.tsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import AxiosInstance from './axios';
 
 type UserRole = 'customer' | 'rider' | 'admin' | null;
 
@@ -34,6 +35,8 @@ type AuthContextType = {
   updateRegistrationStage: (newStage: number) => Promise<void>;
   removeShop: () => Promise<void>;
   clearAuthData: () => Promise<void>;
+  // Auth helpers
+  login: (username: string, password: string) => Promise<any>;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -181,6 +184,37 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await clearAuthData();
   };
 
+  // Login helper used by some flows (e.g., rider signup auto-login)
+  const login = async (username: string, password: string) => {
+    try {
+      const response = await AxiosInstance.post('/api/login/', { username, password }, { headers: { 'Content-Type': 'application/json' } });
+      const data = response.data;
+
+      // Derive role and shop id
+      const role = data.is_rider ? 'rider' : (data.is_customer ? 'customer' : null);
+      const shop = data.shop_id || data.profile?.shop?.id || null;
+
+      await setAuthData(data.user_id || data.id, role, data.username, data.email, shop, data.registration_stage);
+
+      // Try to fetch profile to get up-to-date shop id
+      try {
+        const profileRes = await AxiosInstance.get('/api/profile/', { headers: { 'X-User-Id': data.user_id || data.id, 'Content-Type': 'application/json' } });
+        if (profileRes.data?.success && profileRes.data.profile?.shop) {
+          const foundShopId = profileRes.data.profile.shop.id;
+          if (foundShopId) await updateShopId(foundShopId);
+        }
+      } catch (e) {
+        // Non-fatal
+        console.warn('Failed to fetch profile after login', e);
+      }
+
+      return data;
+    } catch (err) {
+      console.error('Login helper failed', err);
+      throw err;
+    }
+  };
+
   const user = userId ? { user_id: userId, id: userId, username, email } : null;
 
   const value: AuthContextType = {
@@ -199,6 +233,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     removeShop,
     clearAuthData,
     logout,
+    login,
   };
   return (
     <AuthContext.Provider value={value}>
