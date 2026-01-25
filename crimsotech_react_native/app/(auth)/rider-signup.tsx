@@ -4,6 +4,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
+import AxiosInstance from '../../contexts/axios';
+import * as SecureStore from 'expo-secure-store';
 import {
     ActivityIndicator,
     Alert,
@@ -93,37 +95,49 @@ export default function RiderSignupScreen() {
         username: username.trim(),
         password: password.trim(),
         registration_stage: 2,
+        is_rider: true,
       };
 
-      const response = await fetch(`${API_CONFIG.BASE_URL}/api/register/`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': userId,
-        },
-        body: JSON.stringify(payload),
+      console.log('🚀 Sending rider signup request:', payload);
+      const response = await AxiosInstance.post('/api/register/', payload, {
+        headers: { 'Content-Type': 'application/json', 'X-User-Id': userId },
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        console.log('Rider signup response status:', response.status, data);
-      }
+      const data = response.data;
+      console.log('✅ Rider signup response:', data);
 
       const returnedUserId = data.user_id || data.id;
 
-      if (response.ok && returnedUserId) {
-        // Update session and then auto-login to hydrate AuthContext (like web flow)
-        await AsyncStorage.setItem('userId', String(returnedUserId));
-        await AsyncStorage.setItem('registration_stage', '2');
+      if (returnedUserId) {
+        // Save user ID to SecureStore for next stages (like signup.tsx)
+        await SecureStore.setItemAsync('temp_user_id', String(returnedUserId));
+        const userObj = {
+          user_id: returnedUserId,
+          registration_stage: 2,
+          is_rider: true,
+          username: username.trim(),
+        };
+        await SecureStore.setItemAsync('user', JSON.stringify(userObj));
 
+        // Also persist AsyncStorage keys that rider-apply checks
         try {
-          await login(username.trim(), password.trim());
+          await AsyncStorage.setItem('userId', String(returnedUserId));
+          await AsyncStorage.setItem('is_rider', 'true');
+          await AsyncStorage.setItem('registration_stage', '2');
         } catch (e) {
-          console.error('Auto login after rider signup failed:', e);
-          Alert.alert('Signup created', 'Please continue to complete your profile.', [
-            { text: 'Continue', onPress: () => router.replace('/(auth)/setup-account') },
-          ]);
+          console.warn('Failed to persist AsyncStorage keys', e);
         }
+
+        Alert.alert(
+          'Success',
+          'Account created successfully! Please complete your profile.',
+          [
+            {
+              text: 'Continue',
+              onPress: () => router.replace('/(auth)/setup-account'),
+            },
+          ]
+        );
       } else {
         if (data.errors) {
           setErrors(data.errors);
@@ -132,7 +146,7 @@ export default function RiderSignupScreen() {
         } else if (data.error || data.message) {
           Alert.alert('Error', data.error || data.message || 'Signup failed');
         } else {
-          Alert.alert('Error', `Signup failed (status ${response.status}). Please try again.`);
+          Alert.alert('Error', 'Signup failed. Please try again.');
         }
       }
     } catch (error: any) {
