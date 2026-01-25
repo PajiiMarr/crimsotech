@@ -175,8 +175,6 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
       return 'to_ship';
     case 'ready_for_pickup':
       return 'ready_for_pickup';
-    case 'shipped':
-      return 'to_ship';
     case 'delivered':
       return 'completed';
     case 'completed':
@@ -197,9 +195,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
-  const { userContext } = await import("~/contexts/user-role");
 
-  let user = context.get(userContext);
+  let user = (context as any).user;
   if (!user) {
     user = await fetchUserRole({ request, context });
   }

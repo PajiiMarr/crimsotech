@@ -7,9 +7,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
-  const { userContext } = await import("~/contexts/user-role");
 
-  let user = (context as any).get(userContext);
+  let user = (context as any).user;
   if (!user) user = await fetchUserRole({ request, context });
 
   await requireRole(request, context, ["isAdmin"]);

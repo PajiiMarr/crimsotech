@@ -2,6 +2,7 @@ import { API_CONFIG } from '../../utils/config';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import * as ImagePicker from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
@@ -183,12 +184,21 @@ export default function RiderApplyScreen() {
           };
           await SecureStore.setItemAsync('user', JSON.stringify(userData));
 
+          // Persist values expected by rider-signup (uses AsyncStorage)
+          try {
+            await AsyncStorage.setItem('userId', String(userId));
+            await AsyncStorage.setItem('is_rider', 'true');
+            await AsyncStorage.setItem('registration_stage', '1');
+          } catch (e) {
+            console.warn('Failed to persist AsyncStorage keys for rider signup', e);
+          }
+
           Alert.alert(
             'Success',
-            'Rider registration completed! You can now sign in with your account.',
+            'Rider registration completed! Continue to create your rider account.',
             [{ 
-              text: 'Continue to Login', 
-              onPress: () => router.replace('/(auth)/login') 
+              text: 'Continue to Sign up', 
+              onPress: () => router.replace('/(auth)/rider-signup') 
             }]
           );
         } else {

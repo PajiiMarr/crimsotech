@@ -590,10 +590,9 @@ export async function loader({ params, request, context }: any) {
 
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
-  const { userContext } = await import("~/contexts/user-role");
 
   // Get user from session context
-  let user = context.get(userContext);
+  let user = (context as any).user;
   if (!user) {
     user = await fetchUserRole({ request, context });
   }

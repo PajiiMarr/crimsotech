@@ -21,7 +21,7 @@ export function meta(): Route.MetaDescriptors {
     {
       title: "Apply",
     }
-  ]
+  ] 
 }
 
 interface VehicleTypeSelectorProps {

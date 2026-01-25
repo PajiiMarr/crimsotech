@@ -1,0 +1,19 @@
+name: Docker Image CI
+on:
+  [workflow_dispatch]
+jobs:
+  publish_images:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: build image
+        run: docker build ./crimsotech_django/ -t pajiimarr/crimsotech_django:latest
+      - name: push to docker hub
+        run: |
+          docker login -u pajiimarr -p ${{ secrets.DOCKER_HUB_TOKEN }}
+          docker push pajiimarr/crimsotech_django:latest
+
+      - name: Trigger Render Deploy
+        run: |
+          curl -X POST "https://api.render.com/deploy/srv-d5q5fsh5pdvs738u0f9g?key=${{ secrets.RENDER_DEPLOY_HOOK }}"
