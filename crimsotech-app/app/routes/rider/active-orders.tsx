@@ -133,9 +133,8 @@ export async function loader({ request, context}: Route.LoaderArgs): Promise<Loa
   await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
-  const { userContext } = await import("~/contexts/user-role");
 
-  let user = (context as any).get(userContext);
+  let user = (context as any).user;
   if (!user) {
     user = await fetchUserRole({ request, context });
   }
