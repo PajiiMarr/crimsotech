@@ -1,20 +1,23 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
+set -ex
 
-echo "==> Starting Gunicorn server in background..."
-gunicorn backend.wsgi:application \
-    --bind 0.0.0.0:8000 \
-    --workers 2 \
-    --timeout 120 \
-    --log-level info \
-    --access-logfile - \
-    --error-logfile - &
+echo ">>> entrypoint: starting (pid $$)"
 
-echo "==> Running migrations..."
-python manage.py migrate --noinput
+# Test Django can start
+echo ">>> entrypoint: testing Django"
+python manage.py check --deploy
 
-echo "==> Collecting static files..."
+# Collect static files
+echo ">>> entrypoint: collecting static files"
 python manage.py collectstatic --noinput || true
 
-echo "==> Server is ready!"
-wait
+# Start gunicorn - explicitly no config file
+echo ">>> entrypoint: starting gunicorn on port ${PORT:-10000}"
+exec gunicorn backend.wsgi:application \
+  -c python:gunicorn.glogging \
+  --bind "0.0.0.0:${PORT:-10000}" \
+  --workers 1 \
+  --timeout 600 \
+  --log-level info \
+  --access-logfile - \
+  --error-logfile -
