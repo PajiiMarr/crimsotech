@@ -1,3 +1,4 @@
+// app/entry.server.tsx
 import type { AppLoadContext, EntryContext } from "react-router";
 import { ServerRouter } from "react-router";
 import { renderToString } from "react-dom/server";
@@ -23,8 +24,7 @@ export function getLoadContext(): AppLoadContext {
   const contextStore = new Map();
   
   return {
-    // Polyfill for context.get() and context.set()
     get: (key: any) => contextStore.get(key),
     set: (key: any, value: any) => contextStore.set(key, value),
-  };
+  } as AppLoadContext;
 }
