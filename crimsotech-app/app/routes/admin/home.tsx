@@ -1,4 +1,5 @@
 // app/routes/home.tsx
+"use client"
 import { useState } from 'react';
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
