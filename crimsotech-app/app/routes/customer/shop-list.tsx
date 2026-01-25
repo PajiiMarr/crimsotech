@@ -52,7 +52,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     unstable_pattern: undefined 
   } as any);
 
-  let user = context.get(userContext);
+  let user = (context as any).get(userContext);
   if (!user) {
     user = await fetchUserRole({ request, context });
   }

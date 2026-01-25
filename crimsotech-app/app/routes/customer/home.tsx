@@ -291,7 +291,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const { userContext } = await import("~/contexts/user-role")
 
   // Get user from context or fetch
-  let user = context.get(userContext)
+  let user = (context as any).get(userContext);
   if (!user) {
     user = await fetchUserRole({ request, context })
   }

@@ -593,7 +593,7 @@ export async function loader({ params, request, context }: any) {
   const { userContext } = await import("~/contexts/user-role");
 
   // Get user from session context
-  let user = context.get(userContext);
+  let user = (context as any).get(userContext);
   if (!user) {
     user = await fetchUserRole({ request, context });
   }

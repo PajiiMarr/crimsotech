@@ -2332,7 +2332,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
   const { fetchUserRole } = await import("~/middleware/role.server");
   const { userContext } = await import("~/contexts/user-role");
 
-  let user = context.get(userContext);
+  let user = (context as any).get(userContext);
   if (!user) {
     user = await fetchUserRole({ request, context });
   }
