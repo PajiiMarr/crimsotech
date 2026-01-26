@@ -288,10 +288,9 @@ const CompactProductCard = ({
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { fetchUserRole } = await import("~/middleware/role.server")
   const { requireRole } = await import("~/middleware/role-require.server");
-  const { userContext } = await import("~/contexts/user-role")
 
   // Get user from context or fetch
-  let user = context.get(userContext)
+  let user = (context as any).user;
   if (!user) {
     user = await fetchUserRole({ request, context })
   }

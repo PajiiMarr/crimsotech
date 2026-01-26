@@ -1,4 +1,5 @@
 // app/routes/home.tsx
+"use client"
 import { useState } from 'react';
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
@@ -61,9 +62,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
-  const { userContext } = await import("~/contexts/user-role");
   
-  let user = context.get(userContext);
+  let user = (context as any).user;
   if (!user) {
     user = await fetchUserRole({ request, context });
   }

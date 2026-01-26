@@ -24,10 +24,14 @@ if local_env.exists():
 SECRET_KEY = env.str('SECRET_KEY', default='unsafe-dev-key')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env.bool('DEBUG', default=False)
+DEBUG = True
 
-# Parse ALLOWED_HOSTS properly - strip whitespace
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",     # web
+    "0.0.0.0",        # technically optional, safe to include
+    "192.168.254.102",   # your PC LAN IP for mobile
+]
 
 # Application definition
 INSTALLED_APPS = [

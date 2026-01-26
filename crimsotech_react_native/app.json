@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Crimsotech",
-    "slug": "crimsotech_react_native",
+    "slug": "crimsotech",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -48,8 +48,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "d165ec8d-4234-44ff-9c32-b644bf285531"
+        "projectId": "ed68e017-a441-4351-a8b4-f5a772a55461"
       }
-    }
+    },
+    "owner": "crimsonity"
   }
 }
