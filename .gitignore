@@ -1,4 +1,4 @@
-.venv
+venv
 crimsotech_django\backend\backend\settings.py
 crimsotech_react_native\contexts\axios.ts
 crimsotech_react_native\package-lock.json
