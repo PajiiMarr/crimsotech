@@ -190,7 +190,7 @@ export default function SellingProductPage() {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await AxiosInstance.get<APIResponse>('/api/customer-product-list/products_list/', {
+      const response = await AxiosInstance.get<APIResponse>('/customer-product-list/products_list/', {
         headers: {
           'X-User-Id': user?.id,
         },
@@ -374,7 +374,7 @@ export default function SellingProductPage() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await AxiosInstance.delete(`/api/customer-products/${productId}/`, {
+              await AxiosInstance.delete(`/customer-products/${productId}/`, {
                 headers: {
                   'X-User-Id': user?.id,
                 },
@@ -397,7 +397,7 @@ export default function SellingProductPage() {
     
     try {
       await AxiosInstance.patch(
-        `/api/customer-products/${productId}/`,
+        `/customer-products/${productId}/`,
         { status: newStatus },
         {
           headers: {

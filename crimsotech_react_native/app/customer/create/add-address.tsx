@@ -132,7 +132,7 @@ export default function AddAddressPage() {
     try {
       setSaving(true);
       const response = await AxiosInstance.post(
-        '/api/shipping-address/add_shipping_address/',
+        '/shipping-address/add_shipping_address/',
         {
           user_id: user.id,
           ...formData
@@ -177,7 +177,7 @@ export default function AddAddressPage() {
     try {
       setSaving(true);
       const response = await AxiosInstance.put(
-        '/api/shipping-address/update_shipping_address/',
+        '/shipping-address/update_shipping_address/',
         {
           address_id: addressId,
           user_id: user.id,
@@ -223,7 +223,7 @@ export default function AddAddressPage() {
           onPress: async () => {
             try {
               const response = await AxiosInstance.delete(
-                '/api/shipping-address/delete_shipping_address/',
+                '/shipping-address/delete_shipping_address/',
                 {
                   data: {
                     address_id: addressId,

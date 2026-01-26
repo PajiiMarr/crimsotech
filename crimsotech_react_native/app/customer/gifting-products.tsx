@@ -80,7 +80,7 @@ export default function GiftingProductPage() {
 
     try {
       setLoading(true);
-      const response = await AxiosInstance.get('/api/customer-product-list/products_list/', {
+      const response = await AxiosInstance.get('/customer-product-list/products_list/', {
         headers: {
           'X-User-Id': user.id,
         },

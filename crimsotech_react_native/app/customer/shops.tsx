@@ -69,7 +69,7 @@ export default function ShopsPage() {
 
     try {
       setLoading(true);
-      const response = await AxiosInstance.get<ShopsResponse>('/api/customer-shops/', {
+      const response = await AxiosInstance.get<ShopsResponse>('/customer-shops/', {
         params: { customer_id: userId }
       });
 

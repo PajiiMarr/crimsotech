@@ -52,7 +52,7 @@ export default function VerifyPhoneScreen() {
         setUserId(storedUserId);
         
         // Check if user is a rider
-        const response = await AxiosInstance.get('/api/get-registration/', {
+        const response = await AxiosInstance.get('/get-registration/', {
           headers: { 'X-User-Id': storedUserId }
         });
         
@@ -142,7 +142,7 @@ export default function VerifyPhoneScreen() {
         contact_number: phoneNumber,
       };
 
-      const response = await AxiosInstance.post('/api/verify-number/verify_number/', payload, {
+      const response = await AxiosInstance.post('/verify-number/verify_number/', payload, {
         headers: { 'X-User-Id': userId }
       });
 
@@ -177,7 +177,7 @@ const handleVerifyOTP = async () => {
       otp_code: otp.join(''),
     };
 
-    const response = await AxiosInstance.post('/api/verify-number/verify_number/', payload, {
+    const response = await AxiosInstance.post('/verify-number/verify_number/', payload, {
       headers: { 'X-User-Id': userId }
     });
 
@@ -188,7 +188,7 @@ const handleVerifyOTP = async () => {
     // For customers: stage 2 → stage 3 (completed)
     const newRegistrationStage = isRider ? 4 : 3;
     
-    await AxiosInstance.put('/api/profiling/', {
+    await AxiosInstance.put('/profiling/', {
       registration_stage: newRegistrationStage
     }, {
       headers: { 'X-User-Id': userId }
@@ -260,7 +260,7 @@ const handleVerifyOTP = async () => {
         contact_number: phoneNumber,
       };
 
-      const response = await AxiosInstance.post('/api/verify-number/verify_number/', payload, {
+      const response = await AxiosInstance.post('/verify-number/verify_number/', payload, {
         headers: { 'X-User-Id': userId }
       });
 

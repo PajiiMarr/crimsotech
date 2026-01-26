@@ -176,7 +176,7 @@ export default function SetupAccountScreen() {
     if (!userId) return;
     
     try {
-      const response = await AxiosInstance.get('/api/profiling/', {
+      const response = await AxiosInstance.get('/profiling/', {
         headers: { 'X-User-Id': userId }
       });
       
@@ -285,7 +285,7 @@ export default function SetupAccountScreen() {
         newStage: registrationStage
       });
       
-      const response = await AxiosInstance.put('/api/profiling/', payload, {
+      const response = await AxiosInstance.put('/profiling/', payload, {
         headers: { 'X-User-Id': userId }
       });
 

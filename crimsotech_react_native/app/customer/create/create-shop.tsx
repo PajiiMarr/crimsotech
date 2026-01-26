@@ -56,7 +56,7 @@ export default function CreateShopPage() {
       // Add user ID
       data.append('customer', userId);
 
-      const response = await AxiosInstance.post('/api/customer-shops/', data, {
+      const response = await AxiosInstance.post('/customer-shops/', data, {
         headers: {
           'Content-Type': 'multipart/form-data',
           'X-User-Id': String(userId),

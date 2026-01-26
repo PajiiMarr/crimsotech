@@ -169,7 +169,7 @@ export default function ViewProductPage() {
   const fetchProduct = async () => {
     try {
       setLoading(true);
-      const response = await AxiosInstance.get(`/api/public-products/${productId}/`);
+      const response = await AxiosInstance.get(`/public-products/${productId}/`);
       setProduct(response.data);
       
       // Initialize variant selections
@@ -308,7 +308,7 @@ export default function ViewProductPage() {
         payload.variant_selection = selectedOptions;
       }
 
-      const response = await AxiosInstance.post("/api/cart/add/", payload);
+      const response = await AxiosInstance.post("/cart/add/", payload);
 
       if (response.data.success) {
         Alert.alert('Success', 'Product added to cart!');

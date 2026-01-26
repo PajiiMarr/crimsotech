@@ -77,7 +77,7 @@ export default function SignupScreen() {
 
       console.log('🚀 Sending signup request:', payload);
       
-      const response = await AxiosInstance.post('/api/register/', payload);
+      const response = await AxiosInstance.post('/register/', payload);
       
       console.log('✅ Signup API Response:', response.data);
 

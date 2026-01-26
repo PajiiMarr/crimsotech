@@ -140,7 +140,7 @@ export default function SearchPage() {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await AxiosInstance.get('/api/public-products/', {
+      const response = await AxiosInstance.get('/public-products/', {
         headers: { 'X-User-Id': String(user?.id || '') }
       });
       if (response.status === 200) {

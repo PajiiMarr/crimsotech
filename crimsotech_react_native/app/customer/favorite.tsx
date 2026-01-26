@@ -133,7 +133,7 @@ export default function Favorites() {
     }
 
     try {
-      const res = await AxiosInstance.get('/api/customer-favorites/', { headers: { 'X-User-Id': String(user.id) } });
+      const res = await AxiosInstance.get('/customer-favorites/', { headers: { 'X-User-Id': String(user.id) } });
       if (res.data && res.data.favorites) {
         const favoritesWithProduct = res.data.favorites.filter((f: any) => f.product);
         const products = await Promise.all(
@@ -144,7 +144,7 @@ export default function Favorites() {
 
               // Try product detail endpoint
               try {
-                const prodRes = await AxiosInstance.get(`/api/public-products/${productId}/`, { headers: { 'X-User-Id': String(user.id) } });
+                const prodRes = await AxiosInstance.get(`/public-products/${productId}/`, { headers: { 'X-User-Id': String(user.id) } });
                 const data = prodRes.data.data || prodRes.data;
                 return {
                   id: data.id,
@@ -163,7 +163,7 @@ export default function Favorites() {
                 if (err?.response?.status === 404) {
                   console.warn('Favorite product not found on server, removing favorite entry:', productId);
                   try {
-                    await AxiosInstance.delete('/api/customer-favorites/', {
+                    await AxiosInstance.delete('/customer-favorites/', {
                       data: { product: productId, customer: user.id },
                       headers: { 'X-User-Id': String(user.id) },
                     });
@@ -236,7 +236,7 @@ export default function Favorites() {
     try {
       if (nowFavorite) {
         // Add to favorites
-        await AxiosInstance.post('/api/customer-favorites/', { product: productId, customer: user.id }, { headers: { 'X-User-Id': String(user.id) } });
+        await AxiosInstance.post('/customer-favorites/', { product: productId, customer: user.id }, { headers: { 'X-User-Id': String(user.id) } });
         setFavoriteIds(prev => Array.from(new Set([...prev, productId])));
 
         // Optionally add optimistic product object to AsyncStorage (so page + web can sync)
@@ -249,7 +249,7 @@ export default function Favorites() {
         } catch (e) { console.warn('Failed to set optimistic favorites', e); }
       } else {
         // Remove from favorites
-        await AxiosInstance.delete('/api/customer-favorites/', { data: { product: productId, customer: user.id }, headers: { 'X-User-Id': String(user.id) } });
+        await AxiosInstance.delete('/customer-favorites/', { data: { product: productId, customer: user.id }, headers: { 'X-User-Id': String(user.id) } });
         setFavoriteIds(prev => prev.filter(id => id !== productId));
 
         // Remove from AsyncStorage optimistic list

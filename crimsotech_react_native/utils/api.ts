@@ -274,7 +274,7 @@ import AxiosInstance from '../contexts/axios';
 export const getUserShops = async (customerId: string): Promise<any> => {
   try {
     console.log('Fetching shops for customer via Axios:', customerId);
-    const response = await AxiosInstance.get('/api/customer-shops/', {
+    const response = await AxiosInstance.get('/customer-shops/', {
       params: { customer_id: customerId },
     });
 

@@ -148,7 +148,7 @@ export default function ViewTrackOrderPage() {
     try {
       setLoading(true);
       const response = await AxiosInstance.get(
-        `/api/purchases-buyer/${orderId}/view-order/`,
+        `/purchases-buyer/${orderId}/view-order/`,
         {
           headers: {
             'X-User-Id': user.id,
@@ -215,7 +215,7 @@ export default function ViewTrackOrderPage() {
           onPress: async () => {
             try {
               const response = await AxiosInstance.post(
-                `/api/purchases-buyer/${orderId}/cancel/`,
+                `/purchases-buyer/${orderId}/cancel/`,
                 null,
                 {
                   headers: {

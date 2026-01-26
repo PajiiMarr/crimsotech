@@ -85,7 +85,7 @@ export default function LoginScreen() {
     setLoginLoading(true);
     try {
       const { username, password } = formData;
-      const response = await AxiosInstance.post(`/api/login/`,{ username, password },
+      const response = await AxiosInstance.post(`/login/`,{ username, password },
         {
           headers: { 'Content-Type': 'application/json' },
           timeout: 10000,
@@ -113,7 +113,7 @@ export default function LoginScreen() {
 
       // Try to fetch full profile immediately to obtain shop information if server didn't include it in login response
       try {
-        const profileRes = await AxiosInstance.get('/api/profile/', {
+        const profileRes = await AxiosInstance.get('/profile/', {
           headers: { 'X-User-Id': data.user_id || data.id, 'Content-Type': 'application/json' },
         });
         if (profileRes.data?.success && profileRes.data.profile?.shop) {

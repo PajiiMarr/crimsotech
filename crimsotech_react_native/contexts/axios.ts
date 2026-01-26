@@ -1,7 +1,9 @@
 import axios from 'axios';
 
 // Make sure this is your actual Django server URL
-const API_BASE_URL = 'http://192.168.254.102:8000'; // Change to your actual IP
+// const API_BASE_URL = 'http://192.168.254.108:8000/api'; // Change to your actual IP
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+// const API_BASE_URL = 'https://68ad01eeeaad.ngrok-free.app/api'; 
 
 console.log('Axios configured with baseURL:', API_BASE_URL);
 

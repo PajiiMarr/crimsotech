@@ -32,7 +32,7 @@ export default function AddGiftPage() {
 
   const fetchGlobalCategories = async () => {
     try {
-      const response = await AxiosInstance.get('/api/customer-gift/global_categories/');
+      const response = await AxiosInstance.get('/customer-gift/global_categories/');
       if (response.data?.success) {
         setGlobalCategories(response.data.categories || []);
       }

@@ -60,7 +60,7 @@ export default function ShippingAddressPage() {
     try {
       setLoading(true);
       const response = await AxiosInstance.get(
-        '/api/shipping-address/get_shipping_addresses/',
+        '/shipping-address/get_shipping_addresses/',
         {
           params: {
             user_id: user.id
@@ -94,7 +94,7 @@ export default function ShippingAddressPage() {
 
     try {
       const response = await AxiosInstance.post(
-        '/api/shipping-address/set_default_address/',
+        '/shipping-address/set_default_address/',
         {
           address_id: addressId,
           user_id: user.id
@@ -128,7 +128,7 @@ export default function ShippingAddressPage() {
           onPress: async () => {
             try {
               const response = await AxiosInstance.delete(
-                '/api/shipping-address/delete_shipping_address/',
+                '/shipping-address/delete_shipping_address/',
                 {
                   data: {
                     address_id: addressId,

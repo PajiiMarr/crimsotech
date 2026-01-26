@@ -87,7 +87,7 @@
     const fetchUserShops = async () => {
       try {
         setLoading(true);
-        const response = await AxiosInstance.get('/api/customer-shops/', {
+        const response = await AxiosInstance.get('/customer-shops/', {
           params: { customer_id: userId }
         });
 
@@ -116,7 +116,7 @@
         let shopData = null;
         
         try {
-          const response = await AxiosInstance.get(`/api/shops/${shopId}/`);
+          const response = await AxiosInstance.get(`/shops/${shopId}/`);
           if (response.data) {
             shopData = response.data.shop || response.data;
             console.log('Shop data from /api/shops/:', shopData);
@@ -127,7 +127,7 @@
 
         if (!shopData) {
           try {
-            const response = await AxiosInstance.get('/api/customer-shops/', {
+            const response = await AxiosInstance.get('/customer-shops/', {
               params: { shop_id: shopId }
             });
             if (response.data.success && response.data.shops && response.data.shops.length > 0) {

@@ -187,7 +187,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // Login helper used by some flows (e.g., rider signup auto-login)
   const login = async (username: string, password: string) => {
     try {
-      const response = await AxiosInstance.post('/api/login/', { username, password }, { headers: { 'Content-Type': 'application/json' } });
+      const response = await AxiosInstance.post('/login/', { username, password }, { headers: { 'Content-Type': 'application/json' } });
       const data = response.data;
 
       // Derive role and shop id
@@ -198,7 +198,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
       // Try to fetch profile to get up-to-date shop id
       try {
-        const profileRes = await AxiosInstance.get('/api/profile/', { headers: { 'X-User-Id': data.user_id || data.id, 'Content-Type': 'application/json' } });
+        const profileRes = await AxiosInstance.get('/profile/', { headers: { 'X-User-Id': data.user_id || data.id, 'Content-Type': 'application/json' } });
         if (profileRes.data?.success && profileRes.data.profile?.shop) {
           const foundShopId = profileRes.data.profile.shop.id;
           if (foundShopId) await updateShopId(foundShopId);

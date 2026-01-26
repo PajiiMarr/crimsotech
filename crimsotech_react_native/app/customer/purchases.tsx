@@ -138,7 +138,7 @@ export default function PurchasesPage() {
 
     try {
       setLoading(true);
-      const response = await AxiosInstance.get('/api/purchases-buyer/user_purchases/', {
+      const response = await AxiosInstance.get('/purchases-buyer/user_purchases/', {
         headers: {
           'X-User-Id': user.id,
         },
@@ -198,7 +198,7 @@ export default function PurchasesPage() {
           onPress: async () => {
             try {
               setLoading(true);
-              const resp = await AxiosInstance.post(`/api/purchases-buyer/${orderId}/cancel/`, null, {
+              const resp = await AxiosInstance.post(`/purchases-buyer/${orderId}/cancel/`, null, {
                 headers: {
                   'X-User-Id': user?.id,
                 },
@@ -245,7 +245,7 @@ export default function PurchasesPage() {
 
     try {
       setLoadingCounts(true);
-      const response = await AxiosInstance.get('/api/purchases-buyer/status-counts/', {
+      const response = await AxiosInstance.get('/purchases-buyer/status-counts/', {
         headers: { 'X-User-Id': user.id },
       });
 

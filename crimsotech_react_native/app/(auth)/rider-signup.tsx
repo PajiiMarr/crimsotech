@@ -99,7 +99,7 @@ export default function RiderSignupScreen() {
       };
 
       console.log('🚀 Sending rider signup request:', payload);
-      const response = await AxiosInstance.post('/api/register/', payload, {
+      const response = await AxiosInstance.post('/register/', payload, {
         headers: { 'Content-Type': 'application/json', 'X-User-Id': userId },
       });
 

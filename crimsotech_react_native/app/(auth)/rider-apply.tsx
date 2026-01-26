@@ -156,7 +156,7 @@ export default function RiderApplyScreen() {
       console.log('📤 Sending rider registration (complete user+rider creation)...');
       
       // Use AxiosInstance for the API call - backend will create both user and rider
-      const response = await AxiosInstance.post('/api/rider/register/', formData, {
+      const response = await AxiosInstance.post('/rider/register/', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },

@@ -71,7 +71,7 @@ export default function CartPage() {
 
     try {
       setLoading(true);
-      const response = await AxiosInstance.get('/api/view-cart/', {
+      const response = await AxiosInstance.get('/view-cart/', {
         params: { user_id: userId },
         headers: {
           'Content-Type': 'application/json',
@@ -153,7 +153,7 @@ export default function CartPage() {
     try {
       setUpdatingItem(itemId);
       
-      const response = await AxiosInstance.put(`/api/view-cart/update/${itemId}/`, {
+      const response = await AxiosInstance.put(`/view-cart/update/${itemId}/`, {
         user_id: userId,
         quantity: newQuantity
       }, {
@@ -215,7 +215,7 @@ export default function CartPage() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const response = await AxiosInstance.delete(`/api/view-cart/delete/${itemId}/`, {
+              const response = await AxiosInstance.delete(`/view-cart/delete/${itemId}/`, {
                 data: { user_id: userId },
                 headers: {
                   'Content-Type': 'application/json',

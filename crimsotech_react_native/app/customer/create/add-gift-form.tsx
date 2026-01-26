@@ -162,7 +162,7 @@ export default function AddGiftForm({ globalCategories }: AddGiftFormProps) {
     setIsPredicting(true);
     try {
       // Call prediction API
-      const response = await AxiosInstance.post('/api/customer-gift/predict_category/', {
+      const response = await AxiosInstance.post('/customer-gift/predict_category/', {
         name,
         description,
         quantity: parseInt(quantity),
@@ -443,7 +443,7 @@ export default function AddGiftForm({ globalCategories }: AddGiftFormProps) {
       }
       
       // Make API call
-      const response = await AxiosInstance.post('/api/customer-gift/create_gift/', formData, {
+      const response = await AxiosInstance.post('/customer-gift/create_gift/', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },

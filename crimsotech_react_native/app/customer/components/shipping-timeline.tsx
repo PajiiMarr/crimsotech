@@ -153,7 +153,7 @@ export default function ShippingTimelinePage() {
       // Prefer the new shipping-timeline endpoint which returns a richer shape
       try {
         const resp = await AxiosInstance.get(
-          `/api/purchases-buyer/${orderId}/shipping-timeline/`,
+          `/purchases-buyer/${orderId}/shipping-timeline/`,
           { headers: { 'X-User-Id': user.id } }
         );
 
@@ -239,7 +239,7 @@ export default function ShippingTimelinePage() {
 
       // Fallback to view-order for older shape
       const response = await AxiosInstance.get(
-        `/api/purchases-buyer/${orderId}/view-order/`,
+        `/purchases-buyer/${orderId}/view-order/`,
         {
           headers: {
             'X-User-Id': user.id,

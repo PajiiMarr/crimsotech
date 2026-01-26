@@ -162,7 +162,7 @@ export default function ProfileScreen() {
 
     try {
       setLoadingProfile(true);
-      const response = await AxiosInstance.get('/api/profile/', {
+      const response = await AxiosInstance.get('/profile/', {
         headers: {
           'X-User-Id': userId,
           'Content-Type': 'application/json',
@@ -193,8 +193,8 @@ export default function ProfileScreen() {
       } else if (status === 500) {
         // Try a known alternative endpoint as a fallback
         try {
-          console.log('Attempting fallback endpoint /api/profile/get');
-          const fallback = await AxiosInstance.get('/api/profile/get', {
+          console.log('Attempting fallback endpoint /profile/get');
+          const fallback = await AxiosInstance.get('/profile/get', {
             headers: { 'X-User-Id': userId, 'Content-Type': 'application/json' },
           });
 
@@ -249,7 +249,7 @@ export default function ProfileScreen() {
 
     try {
       setLoadingCounts(true);
-      const response = await AxiosInstance.get('/api/purchases-buyer/status-counts/', {
+      const response = await AxiosInstance.get('/purchases-buyer/status-counts/', {
         headers: { 'X-User-Id': userId },
       });
 

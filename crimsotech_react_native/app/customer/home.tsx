@@ -152,7 +152,7 @@ export default function CustomerHome() {
 
 
  const fetchProducts = async () => {
-  const response = await AxiosInstance.get('/api/public-products/', {
+  const response = await AxiosInstance.get('/public-products/', {
     headers: { 'X-User-Id': String(user?.id || '') },
   });
 
@@ -166,7 +166,7 @@ export default function CustomerHome() {
 
   const fetchCategories = async () => {
     try {
-      const response = await AxiosInstance.get('/api/customer-products/global-categories/');
+      const response = await AxiosInstance.get('/customer-products/global-categories/');
       if (response.status === 200) {
         const categoriesData = response.data;
         setCategories(categoriesData.categories || categoriesData || []);
@@ -180,7 +180,7 @@ export default function CustomerHome() {
   const fetchFavorites = async () => {
   if (!user?.id) return;
   try {
-    const response = await AxiosInstance.get('/api/customer-favorites/', { headers: { 'X-User-Id': String(user.id) } });
+    const response = await AxiosInstance.get('/customer-favorites/', { headers: { 'X-User-Id': String(user.id) } });
     if (response.data.favorites) {
       const favIds = response.data.favorites
         .map((f: any) => typeof f.product === 'string' ? f.product : f.product?.id)
@@ -204,13 +204,13 @@ export default function CustomerHome() {
   try {
     if (currentFavoriteStatus) {
       // Remove from favorites (backend expects payload, not URL pk)
-      await AxiosInstance.delete('/api/customer-favorites/', {
+      await AxiosInstance.delete('/customer-favorites/', {
         data: { product: productId, customer: user.id },
         headers: { 'X-User-Id': String(user.id) },
       });
     } else {
       // Add to favorites
-      await AxiosInstance.post('/api/customer-favorites/', 
+      await AxiosInstance.post('/customer-favorites/', 
         { product: productId, customer: user.id }, 
         { headers: { 'X-User-Id': String(user.id) } }
       );

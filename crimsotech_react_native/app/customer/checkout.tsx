@@ -239,7 +239,7 @@ export default function CheckoutPage() {
       console.log('User ID:', userId);
       console.log('Selected IDs:', selectedIds);
 
-      const response = await AxiosInstance.get('/api/checkout-order/get_checkout_items/', {
+      const response = await AxiosInstance.get('/checkout-order/get_checkout_items/', {
         params: {
           selected: selectedIds.join(','),
           user_id: userId
@@ -425,7 +425,7 @@ export default function CheckoutPage() {
     setVoucherError(null);
 
     try {
-      const response = await AxiosInstance.post('/api/checkout-order/validate_voucher/', {
+      const response = await AxiosInstance.post('/checkout-order/validate_voucher/', {
         voucher_code: voucherCode.toUpperCase(),
         user_id: userId,
         subtotal: checkoutData.summary.subtotal,
@@ -461,7 +461,7 @@ export default function CheckoutPage() {
 
     setLoadingVouchers(true);
     try {
-      const response = await AxiosInstance.get('/api/checkout-order/get_vouchers_by_amount/', {
+      const response = await AxiosInstance.get('/checkout-order/get_vouchers_by_amount/', {
         params: {
           user_id: userId,
           amount: amount
@@ -572,7 +572,7 @@ export default function CheckoutPage() {
 
       console.log('Placing order with data:', requestBody);
 
-      const response = await AxiosInstance.post('/api/checkout-order/create_order/', requestBody);
+      const response = await AxiosInstance.post('/checkout-order/create_order/', requestBody);
 
       if (response.data.success) {
         Alert.alert(
