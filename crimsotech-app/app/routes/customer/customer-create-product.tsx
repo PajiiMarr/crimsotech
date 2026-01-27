@@ -111,7 +111,7 @@ export async function action({ request }: Route.ActionArgs) {
   const quantity = String(formData.get("quantity"));
   const used_for = String(formData.get("used_for") || "General use");
   const price = String(formData.get("price"));
-  const open_for_swap = String(formData.get('open_for_swap') || 'false');
+
   const condition = String(formData.get("condition"));
   const category_admin_id = String(formData.get("category_admin_id"));
 
@@ -158,18 +158,11 @@ export async function action({ request }: Route.ActionArgs) {
     errors.quantity = "Please enter a valid quantity";
   }
 
-  if (open_for_swap !== 'true') {
-    // For normal products, price is required and must be > 0
-    if (!price.trim()) {
-      errors.price = "Price is required";
-    } else if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
-      errors.price = "Please enter a valid price";
-    }
-  } else {
-    // For swap-only products, accept price 0 or empty and coerce to '0' when sending
-    if (price.trim() && (isNaN(parseFloat(price)) || parseFloat(price) < 0)) {
-      errors.price = "Please enter a valid price";
-    }
+  // Price is required and must be > 0
+  if (!price.trim()) {
+    errors.price = "Price is required";
+  } else if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
+    errors.price = "Please enter a valid price";
   }
 
   if (!condition.trim()) {
@@ -207,12 +200,7 @@ export async function action({ request }: Route.ActionArgs) {
     apiFormData.append('description', description.trim());
     apiFormData.append('quantity', quantity);
     apiFormData.append('used_for', used_for.trim());
-    // If this is a swap-only product, send price='0' for compatibility if no positive price provided
-    if (open_for_swap === 'true' && (!price.trim() || parseFloat(price) <= 0)) {
-      apiFormData.append('price', '0');
-    } else {
-      apiFormData.append('price', price);
-    }
+    apiFormData.append('price', price);
     apiFormData.append('condition', condition.trim());
     apiFormData.append('status', "active");
     apiFormData.append('customer_id', userId);
@@ -222,17 +210,11 @@ export async function action({ request }: Route.ActionArgs) {
       apiFormData.append('category_admin_id', category_admin_id.trim());
     }
 
-    // Swap-related fields (optional)
-    if (String(formData.get('open_for_swap')) === 'true') {
-      apiFormData.append('open_for_swap', 'true');
-      apiFormData.append('swap_type', String(formData.get('swap_type') || 'direct_swap'));
-      // accepted_categories may be sent as multiple values
-      const acceptedCategories = formData.getAll('accepted_categories') || [];
-      apiFormData.append('accepted_categories', JSON.stringify(acceptedCategories));
-      apiFormData.append('minimum_additional_payment', String(formData.get('minimum_additional_payment') || 0));
-      apiFormData.append('maximum_additional_payment', String(formData.get('maximum_additional_payment') || 0));
-      apiFormData.append('swap_description', String(formData.get('swap_description') || ''));
-    }
+    // Product-level refundable flag
+    const refundableValue = String(formData.get('is_refundable') || 'false');
+    // Send both keys: 'is_refundable' and 'refundable' so backend normalization handles either case
+    apiFormData.append('is_refundable', refundableValue);
+    apiFormData.append('refundable', refundableValue);
     if (height) apiFormData.append('height', String(height));
     if (weight) apiFormData.append('weight', String(weight));
 
@@ -324,8 +306,6 @@ export async function action({ request }: Route.ActionArgs) {
       apiFormData.append('skus', String(skusRaw));
     }
 
-    // Always include the open_for_swap indicator (can be 'true', 'false', or 'variant_specific')
-    apiFormData.append('open_for_swap', String(formData.get('open_for_swap') || 'false'));
 
 
     // Handle variant images and per-SKU images by forwarding their original keys

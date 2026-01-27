@@ -262,14 +262,24 @@ class ProductSerializer(serializers.ModelSerializer):
     height = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
     weight = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
     weight_unit = serializers.CharField(read_only=True)
+
+    def to_internal_value(self, data):
+        # Accept 'refundable' from frontend when updating products and map to 'is_refundable'
+        try:
+            mutable = data.copy()
+            if 'refundable' in mutable and 'is_refundable' not in mutable:
+                mutable['is_refundable'] = True if str(mutable.get('refundable')).lower() in ('true', '1') else False
+            return super().to_internal_value(mutable)
+        except Exception:
+            return super().to_internal_value(data)
     
     class Meta:
         model = Product
         fields = [
             'id', 'name', 'description', 'quantity', 'price',
-            'status', 'upload_status', 'condition', 'created_at', 'updated_at',
-            'shop', 'customer', 'category_admin', 'category', 'variants',
-            'media_files', 'primary_image', 'skus', 'compare_price', 'length', 'width', 'height', 'weight', 'weight_unit'
+            'status', 'upload_status', 'condition', 'is_refundable', 'created_at', 'updated_at',
+            'shop', 'category', 'category_admin', 'variants', 'media_files', 'primary_image',
+            'skus', 'compare_price', 'length', 'width', 'height', 'weight', 'weight_unit',
         ]
     
     def get_primary_image(self, obj):
@@ -309,6 +319,7 @@ class ProductSerializer(serializers.ModelSerializer):
                 'weight_unit': sku.weight_unit,
                 'sku_code': sku.sku_code,
                 'critical_trigger': sku.critical_trigger,
+                'is_refundable': sku.is_refundable,
                 'allow_swap': sku.allow_swap,
                 'swap_type': sku.swap_type,
                 'minimum_additional_payment': (str(sku.minimum_additional_payment) if sku.minimum_additional_payment is not None else None),
@@ -533,6 +544,16 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         model = Product
         fields = '__all__'
 
+    def to_internal_value(self, data):
+        # Allow frontend to send 'refundable' (string booleans) and map to model's 'is_refundable'
+        try:
+            mutable = data.copy()
+            if 'refundable' in mutable and 'is_refundable' not in mutable:
+                mutable['is_refundable'] = True if str(mutable.get('refundable')).lower() in ('true', '1') else False
+            return super().to_internal_value(mutable)
+        except Exception:
+            return super().to_internal_value(data)
+
 class ReviewCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
@@ -625,6 +646,7 @@ class ProductSKUSerializer(serializers.ModelSerializer):
             'id', 'option_ids', 'option_map', 'sku_code',
             'price', 'compare_price', 'quantity',
             'length', 'width', 'height', 'weight', 'weight_unit',
+            'is_refundable',
             'image_url',
         ]
 

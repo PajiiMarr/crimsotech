@@ -72,13 +72,7 @@ interface VariantGroup {
   options: VariantOption[];
 }
 
-interface VariantSwapConfig {
-  swapType: 'direct_swap' | 'swap_plus_payment';
-  minAdditionalPayment: number | '';
-  maxAdditionalPayment: number | '';
-  acceptedCategories: string[];
-  swapDescription: string;
-}
+
 
 interface CreateProductFormProps {
   selectedShop: Shop | null;
@@ -122,13 +116,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const [productPrice, setProductPrice] = useState<number | ''>('');
   const [productCondition, setProductCondition] = useState('');
 
-  // Swap-related state
-  const [openForSwap, setOpenForSwap] = useState(false);
-  const [swapType, setSwapType] = useState<'direct_swap' | 'swap_plus_payment'>('direct_swap');
-  const [acceptedCategoriesState, setAcceptedCategoriesState] = useState<string[]>([]);
-  const [minAdditionalPayment, setMinAdditionalPayment] = useState<number | ''>('');
-  const [maxAdditionalPayment, setMaxAdditionalPayment] = useState<number | ''>('');
-  const [swapDescription, setSwapDescription] = useState('');
+
 
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
   const [showVariants, setShowVariants] = useState(false);
@@ -157,16 +145,16 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     critical_trigger?: number | '';
     // Whether this combination is active (seller can disable combinations)
     is_active?: boolean;
-    // Whether this SKU is allowed for swap (derived from option flags or explicitly toggled)
-    allow_swap?: boolean;
+    // Whether this SKU is refundable (seller can toggle per-SKU)
+    refundable?: boolean;
   }
 
   const [skuCombinations, setSkuCombinations] = useState<SKUCombination[]>([]);
-  const [skuSwapConfigs, setSkuSwapConfigs] = useState<Record<string, VariantSwapConfig>>({});
-  const hasSkuSwap = skuCombinations.some(s => !!s.allow_swap);
   const [productWeight, setProductWeight] = useState<number | ''>('');
   const [productWeightUnit, setProductWeightUnit] = useState<'g' | 'kg' | 'lb' | 'oz'>('g');
   const [productLength, setProductLength] = useState<number | ''>('');
+  // Product-level refundable toggle (for non-variant products)
+  const [productRefundable, setProductRefundable] = useState(false);
   const [productWidth, setProductWidth] = useState<number | ''>('');
   const [productHeight, setProductHeight] = useState<number | ''>('');
   const [shippingZones, setShippingZones] = useState<ShippingZone[]>([
@@ -365,12 +353,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     ));
   };
 
-  // Toggle accepted categories for swap
-  const toggleAcceptedCategory = (categoryId: string) => {
-    setAcceptedCategoriesState(prev =>
-      prev.includes(categoryId) ? prev.filter(id => id !== categoryId) : [...prev, categoryId]
-    );
-  };
+
 
   // --- MAIN MEDIA HANDLERS ---
   const handleMainMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -534,8 +517,8 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
           imagePreview: found?.imagePreview ?? undefined,
           critical_trigger: found?.critical_trigger ?? '',
           is_active: found?.is_active ?? true,
-          // allow_swap: preserve existing value, default false
-          allow_swap: found?.allow_swap ?? false,
+          // refundable: preserve existing value, default false
+          refundable: found?.refundable ?? false,
         } as SKUCombination;
       });
 
@@ -552,15 +535,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     generateSkuCombinations();
   }, [variantGroups, productPrice]);
 
-  // Remove swap configs for SKUs that no longer exist
-  useEffect(() => {
-    setSkuSwapConfigs((prev) => {
-      const allowed = new Set(skuCombinations.map(s => s.id));
-      const nextEntries = Object.entries(prev).filter(([skuId]) => allowed.has(skuId));
-      const next = Object.fromEntries(nextEntries) as Record<string, VariantSwapConfig>;
-      return nextEntries.length === Object.keys(prev).length ? prev : next;
-    });
-  }, [skuCombinations]);
+
 
   const removeOption = (groupId: string, optionId: string) => {
     // Clean up image preview if exists
@@ -620,64 +595,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     setSkuCombinations(prev => prev.map(sku => sku.id === skuId ? { ...sku, [field]: value } : sku));
   };
 
-  const ensureSkuSwapConfig = (skuId: string) => {
-    setSkuSwapConfigs((prev) => {
-      if (prev[skuId]) return prev;
-      return {
-        ...prev,
-        [skuId]: {
-          swapType: 'direct_swap',
-          minAdditionalPayment: '',
-          maxAdditionalPayment: '',
-          acceptedCategories: [],
-          swapDescription: '',
-        },
-      };
-    });
-  };
 
-  const setSkuAllowSwap = (skuId: string, checked: boolean) => {
-    updateSkuField(skuId, 'allow_swap', checked);
-    if (checked) {
-      ensureSkuSwapConfig(skuId);
-    } else {
-      setSkuSwapConfigs((prev) => {
-        if (!prev[skuId]) return prev;
-        const copy = { ...prev };
-        delete copy[skuId];
-        return copy;
-      });
-    }
-  };
-
-  const updateSkuSwapConfig = (skuId: string, patch: Partial<VariantSwapConfig>) => {
-    setSkuSwapConfigs((prev) => {
-      const base: VariantSwapConfig = prev[skuId] ?? {
-        swapType: 'direct_swap',
-        minAdditionalPayment: '',
-        maxAdditionalPayment: '',
-        acceptedCategories: [],
-        swapDescription: '',
-      };
-      return { ...prev, [skuId]: { ...base, ...patch } };
-    });
-  };
-
-  const toggleSkuAcceptedCategory = (skuId: string, categoryId: string) => {
-    setSkuSwapConfigs((prev) => {
-      const base: VariantSwapConfig = prev[skuId] ?? {
-        swapType: 'direct_swap',
-        minAdditionalPayment: '',
-        maxAdditionalPayment: '',
-        acceptedCategories: [],
-        swapDescription: '',
-      };
-      const nextAccepted = base.acceptedCategories.includes(categoryId)
-        ? base.acceptedCategories.filter(id => id !== categoryId)
-        : [...base.acceptedCategories, categoryId];
-      return { ...prev, [skuId]: { ...base, acceptedCategories: nextAccepted } };
-    });
-  };
 
   // Handle SKU image upload (per combination)
   const handleSkuImageChange = (skuId: string, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -747,10 +665,9 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
       // Add auto-generated SKU combinations (if any)
       if (skuCombinations.length > 0) {
         const skusPayload = skuCombinations.map(s => {
-          const allowSwap = s.allow_swap ?? false;
-          const cfg = skuSwapConfigs[s.id];
+          const refundableFlag = !!s.refundable;
           return {
-              id: s.id,
+            id: s.id,
             option_ids: s.option_ids,
             price: s.price,
             compare_price: s.compare_price,
@@ -762,16 +679,16 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
             weight_unit: s.weight_unit,
             sku_code: s.sku_code,
             critical_trigger: s.critical_trigger || null,
-            allow_swap: allowSwap,
+            // Send both keys for backend normalization
+            refundable: refundableFlag,
+            is_refundable: refundableFlag,
             is_active: s.is_active ?? true,
-            // Per-SKU swap configuration (only meaningful if allow_swap=true)
-            swap_type: allowSwap ? (cfg?.swapType ?? null) : null,
-            minimum_additional_payment: allowSwap ? (cfg?.minAdditionalPayment ?? null) : null,
-            maximum_additional_payment: allowSwap ? (cfg?.maxAdditionalPayment ?? null) : null,
-            accepted_categories: allowSwap ? (cfg?.acceptedCategories ?? []) : [],
-            swap_description: allowSwap ? (cfg?.swapDescription ?? '') : '',
           };
         });
+
+        // Debug: log skus payload before appending
+        console.log('Submitting SKUs payload (seller):', skusPayload);
+
         formData.append('skus', JSON.stringify(skusPayload));
 
         // Append any SKU images as files with keys sku_image_<skuId>
@@ -1372,26 +1289,34 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="price">Price {openForSwap ? '(hidden for swap-only products)' : '*'}</Label>
-                  {!openForSwap ? (
-                    <Input
-                      type="number"
-                      id="price"
-                      name="price"
-                      required
-                      min="0"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={productPrice}
-                      onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
-                    />
-                  ) : (
-                    <>
-                      <input type="hidden" name="price" value="0" />
-                      <div className="text-xs text-gray-500">Swap-only product: price will be set to ₱0</div>
-                    </>
-                  )}
+                  <Label htmlFor="price">Price *</Label>
+                  <Input
+                    type="number"
+                    id="price"
+                    name="price"
+                    required
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={productPrice}
+                    onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
+                  />
                   {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
+
+                  {/* Product-level refundable toggle for non-variant products */}
+                  <div className="flex items-center justify-between mt-3">
+                    <div>
+                      <h4 className="font-medium">Refundable</h4>
+                      <p className="text-sm text-muted-foreground">Allow customers to request refunds for this product.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="product-refundable">Refundable</Label>
+                      <Switch id="product-refundable" checked={productRefundable} onCheckedChange={setProductRefundable} />
+                    </div>
+                  </div>
+
+                  {/* Hidden input so the value is included in FormData */}
+                  <input type="hidden" name="refundable" value={productRefundable ? 'true' : 'false'} />
                 </div>
                 
                 <div className="space-y-2">
@@ -1544,7 +1469,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                     <th className="px-2 py-2 font-medium">Weight</th>
                     <th className="px-2 py-2 font-medium">Unit</th>
                     <th className="px-2 py-2 font-medium">SKU Code</th>
-                    <th className="px-2 py-2 font-medium">Swap</th>
+                    <th className="px-2 py-2 font-medium">Refundable</th>
                     <th className="px-2 py-2 font-medium">Active</th>
                   </tr>
                 </thead>
@@ -1615,9 +1540,9 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                         <Input type="text" value={sku.sku_code || ''} onChange={(e) => updateSkuField(sku.id, 'sku_code', e.target.value)} />
                       </td>
 
-                      {/* Swap toggle per SKU (mirrors option-level flags unless changed) */}
+                      {/* Refundable toggle per SKU (seller can mark if this SKU is refundable) */}
                       <td className="px-2 py-2">
-                        <Switch checked={sku.allow_swap ?? false} onCheckedChange={(checked) => setSkuAllowSwap(sku.id, checked)} />
+                        <Switch checked={sku.refundable ?? false} onCheckedChange={(checked) => updateSkuField(sku.id, 'refundable', checked)} />
                       </td>
 
                       <td className="px-2 py-2">
@@ -1632,233 +1557,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
         </Card>
       )}
 
-      {/* STEP 5: Swap Options (Optional) */}
-      <Card id="swap-options">
-        <CardHeader>
-          <CardTitle>Step 5: Swap Options (Optional)</CardTitle>
-          <CardDescription>
-            Configure swap details. When variations are enabled, swap is configured per variant (SKU).
-          </CardDescription>
-        </CardHeader>
 
-        <CardContent>
-          <div className="space-y-4">
-            {/* When variations are enabled, swap is controlled by the per-SKU toggle in the combinations table */}
-            {!variantsEnabled && (
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-medium">Open for Swap</h3>
-                  <p className="text-xs text-muted-foreground">Allow other users to offer items in exchange for this product.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="open-for-swap">Open for swap</Label>
-                  <Switch
-                    id="open-for-swap"
-                    checked={openForSwap}
-                    onCheckedChange={(checked) => setOpenForSwap(checked)}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Hidden input to submit boolean value or indicate variant-specific swap */}
-            <input
-              type="hidden"
-              name="open_for_swap"
-              value={variantsEnabled ? (hasSkuSwap ? 'variant_specific' : 'false') : (openForSwap ? 'true' : 'false')}
-            />
-
-            {variantsEnabled && !hasSkuSwap && (
-              <div className="p-4 border rounded bg-gray-50 text-sm">
-                Turn on <span className="font-medium">Swap</span> for a variant in the Generated Combinations table to configure swap details for that variant.
-              </div>
-            )}
-
-            {variantsEnabled && hasSkuSwap && (
-              <div className="space-y-4">
-                {skuCombinations.filter(s => !!s.allow_swap).map((sku) => {
-                  const cfg = skuSwapConfigs[sku.id] ?? {
-                    swapType: 'direct_swap' as const,
-                    minAdditionalPayment: '' as number | '',
-                    maxAdditionalPayment: '' as number | '',
-                    acceptedCategories: [] as string[],
-                    swapDescription: '',
-                  };
-
-                  const skuLabel = variantGroups
-                    .map((g) => {
-                      const optTitle = g.options.find(o => o.id === sku.option_map[g.id])?.title || '';
-                      return `${g.title}: ${optTitle}`;
-                    })
-                    .join(' / ');
-
-                  return (
-                    <div key={sku.id} className="space-y-4 p-4 border rounded-lg bg-gray-50">
-                      <div className="text-sm font-medium">{skuLabel || 'Variant'}</div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <Label>Swap Type</Label>
-                          <Select
-                            value={cfg.swapType}
-                            onValueChange={(v) => updateSkuSwapConfig(sku.id, { swapType: v as 'direct_swap' | 'swap_plus_payment' })}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="direct_swap">Direct Swap (item for item)</SelectItem>
-                              <SelectItem value="swap_plus_payment">Swap + Payment (item + cash)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div>
-                          <Label>Minimum Additional Payment</Label>
-                          <Input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            placeholder="0.00"
-                            value={cfg.minAdditionalPayment}
-                            onChange={(e) => updateSkuSwapConfig(sku.id, { minAdditionalPayment: e.target.value === '' ? '' : parseFloat(e.target.value) })}
-                            disabled={cfg.swapType !== 'swap_plus_payment'}
-                          />
-                        </div>
-
-                        <div>
-                          <Label>Maximum Additional Payment</Label>
-                          <Input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            placeholder="0.00"
-                            value={cfg.maxAdditionalPayment}
-                            onChange={(e) => updateSkuSwapConfig(sku.id, { maxAdditionalPayment: e.target.value === '' ? '' : parseFloat(e.target.value) })}
-                            disabled={cfg.swapType !== 'swap_plus_payment'}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Accepted Categories</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {globalCategories.map((cat) => {
-                            const selected = cfg.acceptedCategories.includes(cat.id);
-                            return (
-                              <Button
-                                key={cat.id}
-                                type="button"
-                                variant={selected ? 'default' : 'outline'}
-                                size="sm"
-                                onClick={() => toggleSkuAcceptedCategory(sku.id, cat.id)}
-                              >
-                                {cat.name}
-                              </Button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div>
-                        <Label>Swap Description (Optional)</Label>
-                        <Textarea
-                          placeholder="Add details about what you expect in a swap"
-                          value={cfg.swapDescription}
-                          onChange={(e) => updateSkuSwapConfig(sku.id, { swapDescription: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {!variantsEnabled && openForSwap && (
-              <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="swap_type">Swap Type</Label>
-                    <Select value={swapType} onValueChange={(v) => setSwapType(v as 'direct_swap' | 'swap_plus_payment')}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="direct_swap">Direct Swap (item for item)</SelectItem>
-                        <SelectItem value="swap_plus_payment">Swap + Payment (item + cash)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {/* Mirror value for native submission */}
-                    <input type="hidden" name="swap_type" value={swapType} />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="minimum_additional_payment">Minimum Additional Payment</Label>
-                    <Input
-                      id="minimum_additional_payment"
-                      name="minimum_additional_payment"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={minAdditionalPayment}
-                      onChange={(e) => setMinAdditionalPayment(e.target.value === '' ? '' : parseFloat(e.target.value))}
-                      disabled={swapType !== 'swap_plus_payment'}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="maximum_additional_payment">Maximum Additional Payment</Label>
-                    <Input
-                      id="maximum_additional_payment"
-                      name="maximum_additional_payment"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="0.00"
-                      value={maxAdditionalPayment}
-                      onChange={(e) => setMaxAdditionalPayment(e.target.value === '' ? '' : parseFloat(e.target.value))}
-                      disabled={swapType !== 'swap_plus_payment'}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Accepted Categories</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {globalCategories.map((cat) => {
-                      const selected = acceptedCategoriesState.includes(cat.id);
-                      return (
-                        <Button
-                          key={cat.id}
-                          type="button"
-                          variant={selected ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => toggleAcceptedCategory(cat.id)}
-                        >
-                          {cat.name}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                  <input type="hidden" name="accepted_categories" value={JSON.stringify(acceptedCategoriesState)} />
-                </div>
-
-                <div>
-                  <Label htmlFor="swap_description">Swap Description (Optional)</Label>
-                  <Textarea
-                    id="swap_description"
-                    name="swap_description"
-                    placeholder="Add details about what you expect in a swap"
-                    value={swapDescription}
-                    onChange={(e) => setSwapDescription(e.target.value)}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Submit Button */}
       <div className="pt-6">

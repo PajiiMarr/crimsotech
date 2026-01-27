@@ -273,6 +273,7 @@ class Product(models.Model):
     status = models.TextField()
     condition = models.CharField(max_length=50)
     compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    is_refundable = models.BooleanField(default=False)
     # Physical dimensions
     length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
@@ -285,6 +286,7 @@ class Product(models.Model):
     is_removed = models.BooleanField(default=False)
     removal_reason = models.TextField(blank=True, null=True)
     removed_at = models.DateTimeField(blank=True, null=True)
+    refund_days = models.PositiveIntegerField(default=0)
 
     @property
     def active_report_count(self):
@@ -726,6 +728,7 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     receipt = models.FileField(upload_to="receipt/", null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"Order {self.order} by {self.user.username}"
@@ -1057,6 +1060,8 @@ class ProductSKU(models.Model):
 
     critical_trigger = models.IntegerField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    is_refundable = models.BooleanField(default=False)
+    refund_days = models.PositiveIntegerField(default=0)
 
     # Swap-related per-SKU
     allow_swap = models.BooleanField(default=False)
