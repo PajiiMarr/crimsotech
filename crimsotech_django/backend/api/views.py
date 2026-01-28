@@ -13447,6 +13447,9 @@ class SellerProducts(viewsets.ModelViewSet):
         # Map frontend 'refundable' to model's 'is_refundable' boolean field if provided
         if 'refundable' in product_data:
             product_data['is_refundable'] = True if str(product_data.get('refundable')).lower() in ('true', '1') else False
+        # Default: products are refundable unless seller explicitly disables it
+        if 'is_refundable' not in product_data and 'refundable' not in product_data:
+            product_data['is_refundable'] = True
         product_data['customer'] = seller.customer_id
         
         # Handle category_admin_id for global categories
@@ -13479,6 +13482,13 @@ class SellerProducts(viewsets.ModelViewSet):
                 # Save product and catch validation errors cleanly
                 try:
                     product = serializer.save()
+                    # If product-level refundable flag is set but no refund_days provided, default to 30
+                    try:
+                        if product.is_refundable and not getattr(product, 'refund_days', 0):
+                            product.refund_days = 30
+                            product.save(update_fields=['refund_days'])
+                    except Exception as e:
+                        print(f"Warning: failed to set product refund_days: {e}")
                 except ValidationError as e:
                     return Response({
                         "error": "Validation failed",
@@ -13587,6 +13597,12 @@ class SellerProducts(viewsets.ModelViewSet):
                                         except Exception:
                                             is_refundable_val = False
 
+                                    # Determine refund_days for this SKU: explicit value from payload > 30 if refundable > 0
+                                    try:
+                                        sku_refund_days = int(s.get('refund_days')) if s.get('refund_days') not in (None, '') else (30 if is_refundable_val else 0)
+                                    except Exception:
+                                        sku_refund_days = 30 if is_refundable_val else 0
+
                                     sku = ProductSKU.objects.create(
                                         product=product,
                                         option_ids=mapped_oids,
@@ -13607,6 +13623,7 @@ class SellerProducts(viewsets.ModelViewSet):
                                         maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
                                         swap_description=s.get('swap_description') or '',
                                         is_refundable=is_refundable_val,
+                                        refund_days=sku_refund_days,
                                     )
 
                                     # Attach accepted categories if provided
@@ -13674,6 +13691,7 @@ class SellerProducts(viewsets.ModelViewSet):
                                     for g in variants_list:
                                         for opt in g.get('options', []):
                                             option_id = opt.get('id') or str(uuid.uuid4())
+                                            sku_refund_days = product.refund_days if getattr(product, 'refund_days', None) else (30 if product.is_refundable else 0)
                                             sku = ProductSKU.objects.create(
                                                 product=product,
                                                 option_ids=[option_id],
@@ -13681,6 +13699,7 @@ class SellerProducts(viewsets.ModelViewSet):
                                                 price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
                                                 quantity=int(opt.get('quantity') or 0),
                                                 is_refundable=product.is_refundable,
+                                                refund_days=sku_refund_days,
                                             )
                                             f = option_image_files.get(str(option_id))
                                             if f:
@@ -13939,6 +13958,9 @@ class CustomerProducts(viewsets.ModelViewSet):
         # Prepare data with the customer from session user_id
         product_data = request.data.copy()
         product_data['customer'] = customer.customer_id
+        # Default: personal listings are refundable unless customer disables it
+        if 'is_refundable' not in product_data and 'refundable' not in product_data:
+            product_data['is_refundable'] = True
         
         # For personal listings, ensure no shop is attached
         product_data['shop'] = None
@@ -13972,6 +13994,13 @@ class CustomerProducts(viewsets.ModelViewSet):
             with transaction.atomic():
                 try:
                     product = serializer.save()
+                    # Ensure product-level refund_days default when is_refundable set
+                    try:
+                        if product.is_refundable and not getattr(product, 'refund_days', 0):
+                            product.refund_days = 30
+                            product.save(update_fields=['refund_days'])
+                    except Exception as e:
+                        print(f"Warning: failed to set product refund_days: {e}")
                     
                     # Handle media files if any
                     media_files = request.FILES.getlist('media_files')
@@ -14049,6 +14078,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                                 for g in variants_list:
                                     for opt in g.get('options', []):
                                         option_id = opt.get('id') or str(uuid.uuid4())
+                                        sku_refund_days = product.refund_days if getattr(product, 'refund_days', None) else (30 if product.is_refundable else 0)
                                         sku = ProductSKU.objects.create(
                                             product=product,
                                             option_ids=[option_id],
@@ -14056,6 +14086,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                                             price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
                                             quantity=int(opt.get('quantity') or 0),
                                             is_refundable=product.is_refundable,
+                                            refund_days=sku_refund_days,
                                         )
                                         # assign image if available
                                         f = option_image_files.get(str(option_id))
@@ -14112,7 +14143,12 @@ class CustomerProducts(viewsets.ModelViewSet):
                                         mapped_oids.append(oid_str)
 
                                     # Normalize refundable for this SKU payload
-                                    ref_flag = s.get('is_refundable') if 'is_refundable' in s else s.get('refundable', False)
+                                    if 'is_refundable' in s:
+                                        ref_flag = s.get('is_refundable')
+                                    elif 'refundable' in s:
+                                        ref_flag = s.get('refundable')
+                                    else:
+                                        ref_flag = product.is_refundable if product and getattr(product, 'is_refundable', False) else False
                                     if isinstance(ref_flag, bool):
                                         is_refundable_val = ref_flag
                                     else:
@@ -14141,6 +14177,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                                         maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
                                         swap_description=s.get('swap_description') or '',
                                         is_refundable=is_refundable_val,
+                                        refund_days=(int(s.get('refund_days')) if s.get('refund_days') not in (None, '') else (30 if is_refundable_val else 0)),
                                     )
 
                                     # Attach accepted categories if provided
@@ -14254,6 +14291,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                                     maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
                                     swap_description=s.get('swap_description') or '',
                                     is_refundable=is_refundable_val,
+                                    refund_days=(int(s.get('refund_days')) if s.get('refund_days') not in (None, '') else (30 if is_refundable_val else 0)),
                                 )
 
                                 # Attach accepted categories if provided
@@ -16852,14 +16890,27 @@ class PurchasesBuyer(viewsets.ViewSet):
                 # Get payment and delivery for this order
                 payment = payment_dict.get(str(order.order))
                 delivery = delivery_dict.get(str(order.order))
-                
+
+                # If order is delivered, set completed_at (use delivery.delivery_date if available)
+                if order.status == 'delivered' and not getattr(order, 'completed_at', None):
+                    try:
+                        if delivery and getattr(delivery, 'delivery_date', None):
+                            order.completed_at = delivery.delivery_date
+                        else:
+                            order.completed_at = timezone.now()
+                        # Save only the completed_at field to avoid unintended updates
+                        order.save(update_fields=['completed_at'])
+                    except Exception as _e:
+                        # Log but don't break the response building
+                        print(f"DEBUG: Failed to set completed_at for order {order.order}: {_e}")
+
                 # Get delivery address
                 delivery_address = None
                 if order.shipping_address:
                     delivery_address = order.shipping_address.get_full_address()
                 elif order.delivery_address_text:
                     delivery_address = order.delivery_address_text
-                
+
                 order_data = {
                     'order_id': str(order.order),
                     'status': order.status,  # From Order table
@@ -16868,6 +16919,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'delivery_method': order.delivery_method,
                     'delivery_address': delivery_address,
                     'created_at': order.created_at.isoformat(),
+                    'completed_at': order.completed_at.isoformat() if getattr(order, 'completed_at', None) else None,
                     'payment_status': payment.status if payment else None,
                     'delivery_status': delivery.status if delivery else None,
                     'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
@@ -19481,7 +19533,12 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 # Create SKU with safe conversions
                 # Normalize refundable flag on SKU payload (accept 'is_refundable' or 'refundable')
                 try:
-                    ref_flag = sku_data.get('is_refundable') if 'is_refundable' in sku_data else sku_data.get('refundable', False)
+                    if 'is_refundable' in sku_data:
+                        ref_flag = sku_data.get('is_refundable')
+                    elif 'refundable' in sku_data:
+                        ref_flag = sku_data.get('refundable')
+                    else:
+                        ref_flag = product.is_refundable if product and getattr(product, 'is_refundable', False) else False
                     if isinstance(ref_flag, bool):
                         is_refundable_val = ref_flag
                     else:
@@ -19507,6 +19564,7 @@ class CustomerProductViewSet(viewsets.ViewSet):
                     swap_type=swap_type if allow_swap else 'direct_swap',
                     minimum_additional_payment=safe_decimal(min_payment, Decimal('0.00')),
                     maximum_additional_payment=safe_decimal(max_payment, Decimal('0.00')),
+                    refund_days=(int(sku_data.get('refund_days')) if sku_data.get('refund_days') not in (None, '') else (30 if is_refundable_val else 0)),
                     swap_description=sku_data.get('swap_description', ''),
                     is_refundable=is_refundable_val,
                 )

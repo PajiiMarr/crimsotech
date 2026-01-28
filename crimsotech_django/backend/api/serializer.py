@@ -277,7 +277,7 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = [
             'id', 'name', 'description', 'quantity', 'price',
-            'status', 'upload_status', 'condition', 'is_refundable', 'created_at', 'updated_at',
+            'status', 'upload_status', 'condition', 'is_refundable', 'refund_days', 'created_at', 'updated_at',
             'shop', 'category', 'category_admin', 'variants', 'media_files', 'primary_image',
             'skus', 'compare_price', 'length', 'width', 'height', 'weight', 'weight_unit',
         ]
@@ -320,6 +320,7 @@ class ProductSerializer(serializers.ModelSerializer):
                 'sku_code': sku.sku_code,
                 'critical_trigger': sku.critical_trigger,
                 'is_refundable': sku.is_refundable,
+                'refund_days': sku.refund_days,
                 'allow_swap': sku.allow_swap,
                 'swap_type': sku.swap_type,
                 'minimum_additional_payment': (str(sku.minimum_additional_payment) if sku.minimum_additional_payment is not None else None),
@@ -647,6 +648,7 @@ class ProductSKUSerializer(serializers.ModelSerializer):
             'price', 'compare_price', 'quantity',
             'length', 'width', 'height', 'weight', 'weight_unit',
             'is_refundable',
+            'refund_days',
             'image_url',
         ]
 

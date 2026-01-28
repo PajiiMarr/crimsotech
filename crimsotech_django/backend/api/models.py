@@ -273,7 +273,7 @@ class Product(models.Model):
     status = models.TextField()
     condition = models.CharField(max_length=50)
     compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    is_refundable = models.BooleanField(default=False)
+    is_refundable = models.BooleanField(null=True,blank=True)
     # Physical dimensions
     length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
