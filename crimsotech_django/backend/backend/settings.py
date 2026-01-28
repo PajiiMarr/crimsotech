@@ -13,6 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, []),
+    SECRET_KEY=(str, 'unsafe-dev-key'),
 )
 
 # Read from local .env file if it exists (for development)
@@ -21,7 +22,7 @@ if local_env.exists():
     environ.Env.read_env(local_env)
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env.str('SECRET_KEY', default='unsafe-dev-key')
+SECRET_KEY = env('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True

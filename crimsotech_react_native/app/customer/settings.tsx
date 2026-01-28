@@ -71,11 +71,11 @@ export default function SettingsPage() {
           <Text style={styles.sectionTitle}>My Account</Text>
         </View>
         <View style={styles.group}>
-          <SettingItem title="Account & Security" />
+          <SettingItem title="Account & Security" onPress={() => router.push('/customer/settings/account-security')} />
           <View style={styles.separator} />
           <SettingItem title="My Addresses" onPress={() => router.push('/customer/components/shipping-address')} />
           <View style={styles.separator} />
-          <SettingItem title="Bank Accounts / Cards" />
+          <SettingItem title="Bank Accounts / Cards" onPress={() => router.push('/customer/settings/bank-accounts')} />
         </View>
 
         {/* Settings Section */}
@@ -83,11 +83,11 @@ export default function SettingsPage() {
           <Text style={styles.sectionTitle}>Settings</Text>
         </View>
         <View style={styles.group}>
-          <SettingItem title="Chat Settings" />
+          <SettingItem title="Chat Settings" onPress={() => router.push('/customer/settings/chat-settings')} />
           <View style={styles.separator} />
-          <SettingItem title="Notification Settings" />
+          <SettingItem title="Notification Settings" onPress={() => router.push('/customer/settings/notification-settings')} />
           <View style={styles.separator} />
-          <SettingItem title="Privacy Settings" />
+          <SettingItem title="Privacy Settings" onPress={() => router.push('/customer/settings/privacy-settings')} />
         </View>
 
         {/* Account */}
