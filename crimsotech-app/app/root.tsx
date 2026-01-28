@@ -7,6 +7,7 @@ import {
   ScrollRestoration,
   useNavigate,
   Link,
+  useLocation,
 } from "react-router";
 import { Toaster } from "~/components/ui/sonner";
 
@@ -14,6 +15,11 @@ import { Button } from '~/components/ui/button'
 
 import type { Route } from "./+types/root";
 import "./app.css";
+
+// ✅ NProgress
+import NProgress from "nprogress";
+import "nprogress/nprogress.css";
+import { useEffect } from "react";
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -52,8 +58,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ✅ NProgress Wrapper Component
+function RouteChangeProgress() {
+  const location = useLocation();
+
+  useEffect(() => {
+    NProgress.start();
+    // Stop progress after a tick (simulates page loaded)
+    setTimeout(() => NProgress.done(), 300); 
+  }, [location]);
+
+  return null;
+}
+
 export default function App() {
-  return <Outlet />;
+  return (
+    <>
+      <RouteChangeProgress />
+      <Outlet />
+    </>
+  );
 }
 
 export function meta(): Route.MetaDescriptors {
@@ -105,7 +129,6 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
         </Link>
       </div>
 
-      {/* Developer info (only in dev mode) */}
       {stack && (
         <pre className="mt-8 p-4 text-left text-sm text-gray-700 bg-gray-100 rounded-lg overflow-x-auto w-full max-w-2xl">
           <code>{stack}</code>

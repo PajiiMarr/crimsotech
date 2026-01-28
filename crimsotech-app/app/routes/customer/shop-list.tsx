@@ -61,7 +61,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Clear shop_id from session when loading shop-list
   session.unset("shopId");
 
-  return data({ user }, {
+  // Fetch shops from the API in the loader
+  let shops = [];
+  try {
+    const response = await AxiosInstance.get('/customer-shops/', {
+      params: { customer_id: user.user_id }
+    });
+    if (response.data.success) {
+      shops = response.data.shops || [];
+    }
+  } catch (error) {
+    console.error("Error fetching shops in loader:", error);
+    shops = [];
+  }
+
+  return data({ user, shops }, {
     headers: {
       "Set-Cookie": await commitSession(session),
     },
@@ -107,17 +121,16 @@ interface Shop {
 // ================================
 // ShopsContent Component
 // ================================
-function ShopsContent({ user }: { user: any }) {
+function ShopsContent({ user, shops: initialShops }: { user: any, shops?: Shop[] }) {
   const navigate = useNavigate();
-  const [shops, setShops] = useState<Shop[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [shops, setShops] = useState<Shop[]>(initialShops || []);
+  const [loading, setLoading] = useState(!initialShops);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectingShop, setSelectingShop] = useState<string | null>(null);
   
   const fetcher = useFetcher();
 
-  // Functi
   console.log("User object:", user);
 
   // Function to set shop ID in session and navigate to dashboard
@@ -149,6 +162,7 @@ function ShopsContent({ user }: { user: any }) {
   const fetchShops = async () => {
     try {
       setError(null);
+      setLoading(true);
       const response = await AxiosInstance.get('/customer-shops/',
         { params: { customer_id: user.user_id } }
       );
@@ -168,8 +182,11 @@ function ShopsContent({ user }: { user: any }) {
     }
   };
 
+  // Only fetch if shops weren't provided by loader
   useEffect(() => {
-    fetchShops();
+    if (!initialShops || initialShops.length === 0) {
+      fetchShops();
+    }
   }, []);
 
   const handleRefresh = () => {
@@ -274,14 +291,6 @@ function ShopsContent({ user }: { user: any }) {
             >
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="flex items-center gap-4 flex-1">
-                  <img 
-                    src={shop.shop_picture} 
-                    alt={shop.name} 
-                    className="h-16 w-16 rounded-lg object-cover flex-shrink-0"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = '/api/placeholder/64/64';
-                    }}
-                  />
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold text-gray-900 text-lg truncate">
                       {shop.name}
@@ -344,10 +353,12 @@ function ShopsContent({ user }: { user: any }) {
 // ================================
 export default function Shops({ loaderData }: Route.ComponentProps) {
   const user = loaderData.user;
+  const shops = loaderData.shops || [];
+  
   return (
     <UserProvider user={user}>
       <SidebarLayout>
-        <ShopsContent user={user} />
+        <ShopsContent user={user} shops={shops} />
       </SidebarLayout>
     </UserProvider>
   );
