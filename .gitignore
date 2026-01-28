@@ -100,3 +100,5 @@ crimsotech_react_native/app-example
 # Generated native folders
 crimsotech_react_native/ios/
 crimsotech_react_native/android/
+crimsotech_react_native/.env
+crimsotech_django/backend/api/migrations/0001_initial.py
