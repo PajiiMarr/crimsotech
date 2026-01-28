@@ -55,22 +55,87 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ✅ NProgress Wrapper Component - triggers on click AND completes on navigation
+// ✅ NProgress Wrapper Component - handles ALL navigation types including dropdowns
 function RouteChangeProgress() {
   const location = useLocation();
   
   useEffect(() => {
-    // Intercept all link clicks
-    const handleClick = (e: MouseEvent) => {
-      const target = (e.target as HTMLElement).closest('a');
-      if (target && target.href && target.href.startsWith(window.location.origin)) {
+    // Track if we've already started progress for this interaction
+    let progressStarted = false;
+    
+    // Helper to start progress only once per interaction
+    const startProgress = () => {
+      if (!progressStarted) {
         NProgress.start();
+        progressStarted = true;
+        // Reset flag after a short delay
+        setTimeout(() => { progressStarted = false; }, 100);
       }
     };
+    
+    // Intercept ALL clicks (links, buttons, dropdown items, etc.)
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      
+      // Check for <a> tags (including <Link> components)
+      const anchor = target.closest('a');
+      if (anchor && anchor.href && anchor.href.startsWith(window.location.origin)) {
+        const targetUrl = new URL(anchor.href);
+        if (targetUrl.pathname !== window.location.pathname || targetUrl.search !== window.location.search) {
+          startProgress();
+        }
+        return;
+      }
+      
+      // Check for dropdown menu items (they have role="menuitem")
+      const menuItem = target.closest('[role="menuitem"]');
+      if (menuItem) {
+        // Dropdown items that trigger navigation
+        startProgress();
+        return;
+      }
+      
+      // Check for buttons that might trigger navigate()
+      const button = target.closest('button');
+      if (button && !button.disabled) {
+        // Check if button text or aria-label suggests navigation
+        const buttonText = button.textContent?.toLowerCase() || '';
+        const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+        const navigationKeywords = ['view', 'details', 'go to', 'navigate', 'open', 'arrange', 'see'];
+        
+        if (navigationKeywords.some(keyword => 
+          buttonText.includes(keyword) || ariaLabel.includes(keyword)
+        )) {
+          startProgress();
+          return;
+        }
+        
+        // For any other button click, use a small delay to catch navigate() calls
+        requestAnimationFrame(() => {
+          startProgress();
+        });
+      }
+      
+      // Check for any clickable element with data attributes indicating navigation
+      const clickable = target.closest('[data-navigate], [data-link]');
+      if (clickable) {
+        startProgress();
+      }
+    };
+    
+    // Also intercept programmatic navigation by wrapping navigate calls
+    // This catches any navigate() calls that happen programmatically
+    const handleNavigate = () => {
+      startProgress();
+    };
+    
+    // Listen for custom navigation events (you can dispatch these from your components)
+    window.addEventListener('navigate', handleNavigate);
     
     document.addEventListener('click', handleClick, true);
     
     return () => {
+      window.removeEventListener('navigate', handleNavigate);
       document.removeEventListener('click', handleClick, true);
     };
   }, []);
