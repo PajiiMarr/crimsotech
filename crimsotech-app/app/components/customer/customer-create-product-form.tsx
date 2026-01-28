@@ -115,8 +115,8 @@ export default function CreateProductForm({ globalCategories, errors }: CreatePr
   const [productPrice, setProductPrice] = useState<number | ''>('');
   const [productCondition, setProductCondition] = useState('');
 
-  // Refundable flag
-  const [isRefundable, setIsRefundable] = useState(false);
+  // Refundable flag (default enabled)
+  const [isRefundable, setIsRefundable] = useState(true);
 
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
   const [showVariants, setShowVariants] = useState(false);
@@ -517,8 +517,8 @@ export default function CreateProductForm({ globalCategories, errors }: CreatePr
           imagePreview: found?.imagePreview ?? undefined,
           critical_trigger: found?.critical_trigger ?? '',
           is_active: found?.is_active ?? true,
-          // is_refundable: preserve existing value, default false
-          is_refundable: found?.is_refundable ?? false,
+          // is_refundable: preserve existing value, default to product-level toggle or enabled
+          is_refundable: found?.is_refundable ?? isRefundable ?? true,
         } as SKUCombination;
       });
 
