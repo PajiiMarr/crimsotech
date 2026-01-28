@@ -264,12 +264,14 @@ function StatusLayout({
   contactNumber,
   formatDate,
   formatCurrency,
+  onRequestRefund,
 }: {
   orderDetails: OrderDetails;
   customerName: string;
   contactNumber: string;
   formatDate: (dateString: string) => string;
   formatCurrency: (amount: number) => string;
+  onRequestRefund: (orderId: string) => void;
 }) {
   const order = orderDetails.order;
   const statusCfg = STATUS_CONFIG[order.status];
@@ -436,6 +438,17 @@ function StatusLayout({
             <CardTitle className="text-sm">Order Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
+            {(order && (order.status === "to_receive" || order.status === "completed")) ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start h-8 text-xs"
+                onClick={() => onRequestRefund(order.id)}
+              >
+                <RotateCcw className="h-3 w-3 mr-1.5" />
+                Refund
+              </Button>
+            ) : null}
             <Button variant="outline" size="sm" className="w-full justify-start h-8 text-xs" disabled>
               <MessageCircle className="h-3 w-3 mr-1.5" />
               Contact Seller
@@ -720,19 +733,7 @@ export default function ViewOrder({ loaderData }: any) {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>Order Actions</DropdownMenuLabel>
-                      {orderDetails.order.status === "to_receive" ||
-                      orderDetails.order.status === "completed" ? (
-                        <DropdownMenuItem
-                          onClick={() =>
-                            navigate(
-                              `/request-refund-return/${orderDetails.order.id}`
-                            )
-                          }
-                        >
-                          <RotateCcw className="w-4 h-4 mr-2" />
-                          Request Refund
-                        </DropdownMenuItem>
-                      ) : null}
+
                       <DropdownMenuItem onClick={handlePrint}>
                         <Printer className="w-4 h-4 mr-2" />
                         Print Order Details
@@ -761,6 +762,7 @@ export default function ViewOrder({ loaderData }: any) {
                 contactNumber={resolvedContactNumber}
                 formatDate={formatDate}
                 formatCurrency={formatCurrency}
+                onRequestRefund={(id: string) => navigate(`/request-refund-return/${id}`)}
               />
             </>
           )}
