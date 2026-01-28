@@ -89,6 +89,7 @@ crimsotech_react_native/*.pem
 
 # Local env files
 crimsotech_react_native/.env*.local
+crimsotech_react_native/.env
 
 # TypeScript
 crimsotech_react_native/*.tsbuildinfo
