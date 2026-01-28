@@ -280,7 +280,7 @@ export default function AddressDropdowns({
 
       {/* Street Address */}
       <View style={styles.inputGroup}>
-        <Text style={styles.label}>Street Address (Optional)</Text>
+        <Text style={styles.label}>Street Address</Text>
         <TextInput
           style={styles.input}
           placeholder="Enter street, house number, etc."
