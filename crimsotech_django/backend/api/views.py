@@ -13444,6 +13444,9 @@ class SellerProducts(viewsets.ModelViewSet):
         for key, value in request.data.items():
             if not hasattr(value, 'file'):  # Skip file objects
                 product_data[key] = value
+        # Map frontend 'refundable' to model's 'is_refundable' boolean field if provided
+        if 'refundable' in product_data:
+            product_data['is_refundable'] = True if str(product_data.get('refundable')).lower() in ('true', '1') else False
         product_data['customer'] = seller.customer_id
         
         # Handle category_admin_id for global categories
@@ -13574,6 +13577,16 @@ class SellerProducts(viewsets.ModelViewSet):
                                     provided_oids = s.get('option_ids') or []
                                     mapped_oids = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oids ]
 
+                                    # Normalize refundable flag (accepts 'refundable' or 'is_refundable' from frontend)
+                                    ref_flag = s.get('is_refundable') if 'is_refundable' in s else s.get('refundable', False)
+                                    if isinstance(ref_flag, bool):
+                                        is_refundable_val = ref_flag
+                                    else:
+                                        try:
+                                            is_refundable_val = str(ref_flag).strip().lower() in ('true', '1', 'yes', 'y')
+                                        except Exception:
+                                            is_refundable_val = False
+
                                     sku = ProductSKU.objects.create(
                                         product=product,
                                         option_ids=mapped_oids,
@@ -13593,6 +13606,7 @@ class SellerProducts(viewsets.ModelViewSet):
                                         minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
                                         maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
                                         swap_description=s.get('swap_description') or '',
+                                        is_refundable=is_refundable_val,
                                     )
 
                                     # Attach accepted categories if provided
@@ -13666,6 +13680,7 @@ class SellerProducts(viewsets.ModelViewSet):
                                                 option_map={g.get('title') or 'Option': opt.get('title')},
                                                 price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
                                                 quantity=int(opt.get('quantity') or 0),
+                                                is_refundable=product.is_refundable,
                                             )
                                             f = option_image_files.get(str(option_id))
                                             if f:
@@ -13689,6 +13704,7 @@ class SellerProducts(viewsets.ModelViewSet):
                                             option_map={g.get('title') or 'Option': opt.get('title')},
                                             price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
                                             quantity=int(opt.get('quantity') or 0),
+                                            is_refundable=product.is_refundable,
                                         )
                                         # Try to get image by mapped id first, then provided id
                                         f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(option_id))
@@ -13801,6 +13817,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "status": product.status,
                     "upload_status": product.upload_status,
                     "condition": product.condition,
+                    "is_refundable": product.is_refundable,
                     "shop": {
                         "id": str(product.shop.id),
                         "name": product.shop.name
@@ -14037,7 +14054,8 @@ class CustomerProducts(viewsets.ModelViewSet):
                                             option_ids=[option_id],
                                             option_map={g.get('title') or 'Option': opt.get('title')},
                                             price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
-                                            quantity=int(opt.get('quantity') or 0)
+                                            quantity=int(opt.get('quantity') or 0),
+                                            is_refundable=product.is_refundable,
                                         )
                                         # assign image if available
                                         f = option_image_files.get(str(option_id))
@@ -14093,6 +14111,16 @@ class CustomerProducts(viewsets.ModelViewSet):
                                         # As a last resort, keep the original provided value (so errors are visible)
                                         mapped_oids.append(oid_str)
 
+                                    # Normalize refundable for this SKU payload
+                                    ref_flag = s.get('is_refundable') if 'is_refundable' in s else s.get('refundable', False)
+                                    if isinstance(ref_flag, bool):
+                                        is_refundable_val = ref_flag
+                                    else:
+                                        try:
+                                            is_refundable_val = str(ref_flag).strip().lower() in ('true', '1', 'yes', 'y')
+                                        except Exception:
+                                            is_refundable_val = False
+
                                     sku = ProductSKU.objects.create(
                                         product=product,
                                         option_ids=mapped_oids,
@@ -14112,6 +14140,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                                         minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
                                         maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
                                         swap_description=s.get('swap_description') or '',
+                                        is_refundable=is_refundable_val,
                                     )
 
                                     # Attach accepted categories if provided
@@ -14195,6 +14224,16 @@ class CustomerProducts(viewsets.ModelViewSet):
                             skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
                             from decimal import Decimal
                             for s in skus_list:
+                                # Parse refundable flag
+                                ref_flag = s.get('is_refundable') if 'is_refundable' in s else s.get('refundable', False)
+                                if isinstance(ref_flag, bool):
+                                    is_refundable_val = ref_flag
+                                else:
+                                    try:
+                                        is_refundable_val = str(ref_flag).strip().lower() in ('true', '1', 'yes', 'y')
+                                    except Exception:
+                                        is_refundable_val = False
+
                                 sku = ProductSKU.objects.create(
                                     product=product,
                                     option_ids=s.get('option_ids'),
@@ -14214,6 +14253,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                                     minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
                                     maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
                                     swap_description=s.get('swap_description') or '',
+                                    is_refundable=is_refundable_val,
                                 )
 
                                 # Attach accepted categories if provided
@@ -19227,14 +19267,52 @@ class CustomerProductViewSet(viewsets.ViewSet):
             
             # Create product with transaction
             with transaction.atomic():
+                # Normalize refundable flag coming from frontend keys 'refundable' or 'is_refundable'
+                try:
+                    # Request data may contain list values from FormData; handle both 'is_refundable' and 'refundable'
+                    raw_ref = None
+                    if 'is_refundable' in request.data:
+                        raw_ref = request.data.get('is_refundable')
+                    elif 'refundable' in request.data:
+                        raw_ref = request.data.get('refundable')
+
+                    # If value is list (e.g., ['true']), take first element
+                    if isinstance(raw_ref, (list, tuple)) and len(raw_ref) > 0:
+                        raw_ref = raw_ref[0]
+
+                    if raw_ref is not None:
+                        product_data['is_refundable'] = True if str(raw_ref).strip().lower() in ('true','1','yes','y') else False
+                except Exception as _e:
+                    print('DEBUG:create_product - refundable normalization failed', _e)
+
+                # DEBUG: Log incoming refundable values and keys
+                try:
+                    print('DEBUG:create_product - incoming keys:', list(request.data.keys()))
+                    print('DEBUG:create_product - raw_ref:', raw_ref)
+                    print('DEBUG:create_product - product_data["is_refundable"]:', product_data.get('is_refundable'))
+                except Exception as _e:
+                    print('DEBUG:create_product - failed to log incoming refundable keys', _e)
+
                 serializer = ProductCreateSerializer(
                     data=product_data, 
                     context={'request': request}
                 )
                 
                 if serializer.is_valid():
+                    # DEBUG: log serializer.validated_data
+                    try:
+                        print('DEBUG:create_product - serializer.validated_data BEFORE save:', serializer.validated_data)
+                    except Exception as _e:
+                        print('DEBUG:create_product - cannot read validated_data yet', _e)
+
                     # Create the product (shop will be null for customer products)
                     product = serializer.save()
+
+                    # DEBUG: log created product refundable status
+                    try:
+                        print('DEBUG:create_product - product.is_refundable AFTER save:', getattr(product, 'is_refundable', None))
+                    except Exception as _e:
+                        print('DEBUG:create_product - failed to read product.is_refundable', _e)
                     
                     # Handle media files
                     media_files = request.FILES.getlist('media_files', [])
@@ -19253,12 +19331,29 @@ class CustomerProductViewSet(viewsets.ViewSet):
                     if variants_raw:
                         # Parse variants data
                         try:
+                            # Normalize list/tuple wrappers that can occur from multipart FormData
+                            if isinstance(variants_raw, (list, tuple)) and len(variants_raw) > 0:
+                                variants_raw = variants_raw[0]
+                            if isinstance(skus_raw, (list, tuple)) and len(skus_raw) > 0:
+                                skus_raw = skus_raw[0]
+
                             variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
                             
-                            # Parse SKUs data
+                            # Parse SKUs data robustly
                             skus_list = []
                             if skus_raw:
                                 skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
+
+                            # Debug: show skus_list and refundable flags if present
+                            try:
+                                print('DEBUG:create_product - parsed skus_list:', skus_list)
+                                for i, s in enumerate(skus_list):
+                                    try:
+                                        print(f"DEBUG:create_product - sku[{i}] is_refundable keys: is_refundable={s.get('is_refundable')}, refundable={s.get('refundable')}")
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
                             
                             # Process variants and SKUs
                             self._create_variants_with_skus(
@@ -19384,6 +19479,16 @@ class CustomerProductViewSet(viewsets.ViewSet):
                         return default
                 
                 # Create SKU with safe conversions
+                # Normalize refundable flag on SKU payload (accept 'is_refundable' or 'refundable')
+                try:
+                    ref_flag = sku_data.get('is_refundable') if 'is_refundable' in sku_data else sku_data.get('refundable', False)
+                    if isinstance(ref_flag, bool):
+                        is_refundable_val = ref_flag
+                    else:
+                        is_refundable_val = str(ref_flag).strip().lower() in ('true','1','yes','y')
+                except Exception:
+                    is_refundable_val = False
+
                 sku = ProductSKU.objects.create(
                     product=product,
                     option_ids=mapped_option_ids,
@@ -19403,6 +19508,7 @@ class CustomerProductViewSet(viewsets.ViewSet):
                     minimum_additional_payment=safe_decimal(min_payment, Decimal('0.00')),
                     maximum_additional_payment=safe_decimal(max_payment, Decimal('0.00')),
                     swap_description=sku_data.get('swap_description', ''),
+                    is_refundable=is_refundable_val,
                 )
                 print(f"Created SKU: {sku.id}")
                 
@@ -19456,13 +19562,9 @@ class CustomerProductViewSet(viewsets.ViewSet):
                         option_map={variant_group.get('title', 'Option'): option.get('title', '')},
                         price=price_decimal,
                         quantity=int(option.get('quantity', 0)),
+                        is_refundable=getattr(product, 'is_refundable', False)
                     )
-                    
-                    # Add image if available
-                    f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(provided_option_id))
-                    if f:
-                        sku.image = f
-                        sku.save()
+                    # objects.create() already persists the instance; do any additional setup here if needed
 
     def _get_product_detail_data(self, product):
         """Get detailed product data for response"""
@@ -19492,6 +19594,7 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 "maximum_additional_payment": str(sku.maximum_additional_payment) if sku.maximum_additional_payment else "0.00",
                 "swap_description": sku.swap_description,
                 "image": sku.image.url if sku.image else None,
+                "is_refundable": sku.is_refundable,
             }
             
             # Add accepted categories for this SKU
@@ -19503,7 +19606,7 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 })
             sku_data["accepted_categories"] = accepted_cats
             skus.append(sku_data)
-        
+            
         # Get variants
         variants = []
         for variant in product.variants_set.all():
@@ -19551,6 +19654,7 @@ class CustomerProductViewSet(viewsets.ViewSet):
             } if any([product.length, product.width, product.height, product.weight]) else None,
             "created_at": product.created_at.isoformat(),
             "updated_at": product.updated_at.isoformat(),
+            "is_refundable": getattr(product, 'is_refundable', False),
         }
     
     @action(detail=False, methods=['get'])
@@ -23739,6 +23843,7 @@ class SellerGifts(viewsets.ModelViewSet):
                                                 option_map={g.get('title') or 'Option': opt.get('title')},
                                                 price=Decimal('0.00'),  # SET SKU PRICE TO 0
                                                 quantity=int(opt.get('quantity') or 0),
+                                                is_refundable=product.is_refundable,
                                             )
                                             f = option_image_files.get(str(option_id))
                                             if f:
@@ -24514,6 +24619,16 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                         return default
                 
                 # Create SKU with safe conversions - price always 0 for gifts
+                # Normalize refundable in gift SKU payload
+                ref_flag = sku_data.get('is_refundable') if 'is_refundable' in sku_data else sku_data.get('refundable', False)
+                if isinstance(ref_flag, bool):
+                    is_refundable_val = ref_flag
+                else:
+                    try:
+                        is_refundable_val = str(ref_flag).strip().lower() in ('true', '1', 'yes', 'y')
+                    except Exception:
+                        is_refundable_val = False
+
                 sku = ProductSKU.objects.create(
                     product=product,
                     option_ids=mapped_option_ids,
@@ -24533,6 +24648,7 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                     minimum_additional_payment=Decimal('0.00'),  # No swap
                     maximum_additional_payment=Decimal('0.00'),  # No swap
                     swap_description='',  # No swap
+                    is_refundable=is_refundable_val,
                 )
                 print(f"Created SKU: {sku.id}")
                 

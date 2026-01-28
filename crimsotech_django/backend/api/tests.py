@@ -1,6 +1,6 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
-from .models import User, Product, Shop, Customer, Order, Refund, ReturnRequestItem
+from .models import User, Product, Shop, Customer, Order, Refund, ReturnRequestItem, DisputeRequest
 from django.utils import timezone
 from decimal import Decimal
 
