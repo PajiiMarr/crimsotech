@@ -17370,6 +17370,20 @@ class PurchasesBuyer(viewsets.ViewSet):
                 except Customer.DoesNotExist:
                     has_reviewed = False
                 
+                # Determine refundable flag (SKU-level overrides product-level)
+                is_refundable = False
+                try:
+                    sku_obj = None
+                    if hasattr(checkout, 'variant') and checkout.variant:
+                        sku_obj = ProductSKU.objects.filter(product=product, sku_code=checkout.variant).first()
+                    if sku_obj is not None:
+                        is_refundable = bool(sku_obj.is_refundable)
+                    else:
+                        is_refundable = bool(product.is_refundable)
+                except Exception:
+                    # Fallback to product-level flag in case of any error
+                    is_refundable = bool(product.is_refundable)
+
                 item_data = {
                     'checkout_id': str(checkout.id),
                     'product_id': str(product.id),
@@ -17387,6 +17401,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'shop_info': shop_info,
                     'can_review': not has_reviewed and order.status == 'delivered',
                     'can_return': order.status == 'delivered' and not has_reviewed,  # Only if delivered and not reviewed
+                    'is_refundable': is_refundable,
                     'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
                 }
                 items_data.append(item_data)
