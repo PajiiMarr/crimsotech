@@ -13,7 +13,11 @@ import {
 import { Badge } from '~/components/ui/badge';
 import { Button } from '~/components/ui/button';
 import { 
+  ClipboardList,
   Clock,
+  Truck,
+  MessageSquare,
+  Undo2,
   Package,
   Eye,
   CheckCircle,
@@ -21,7 +25,6 @@ import {
   RefreshCcw,
   List,
   User,
-  Truck,
   MessageCircle,
   FileText,
   Search,
@@ -107,17 +110,13 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
-// Tabs configuration
+// Updated Tabs configuration to match mobile (5 tabs)
 const STATUS_TABS = [
-  { id: 'all', label: 'All', icon: List },
-  { id: 'pending', label: 'Pending', icon: Clock },
-  { id: 'in_progress', label: 'In Progress', icon: Clock },
-  { id: 'to_ship', label: 'To Ship', icon: Package },
-  { id: 'ready_for_pickup', label: 'To Pickup', icon: Package },
-  { id: 'to_receive', label: 'To Receive', icon: Truck },
-  { id: 'completed', label: 'Completed', icon: CheckCircle },
-  { id: 'return_refund', label: 'Return & Refund', icon: RefreshCcw },
-  { id: 'cancelled', label: 'Cancelled', icon: XCircle }
+  { id: 'all', label: 'All', icon: ClipboardList },
+  { id: 'processing', label: 'Processing', icon: Clock },
+  { id: 'shipped', label: 'Shipped', icon: Truck },
+  { id: 'rate', label: 'Rate', icon: MessageSquare },
+  { id: 'returns', label: 'Returns', icon: Undo2 }
 ];
 
 // Status badges configuration
@@ -301,9 +300,59 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
   const [expandedPurchases, setExpandedPurchases] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [filteredItems, setFilteredItems] = useState<PurchaseItem[]>(purchaseItems);
+  
+  // State for order counts like mobile app
+  const [orderCounts, setOrderCounts] = useState({
+    processing: 0,
+    shipped: 0,
+    rate: 0,
+    returns: 0,
+    all: purchaseItems.length
+  });
+
+  // Calculate order counts based on mobile logic
+  useEffect(() => {
+    const counts = {
+      processing: 0,
+      shipped: 0,
+      rate: 0,
+      returns: 0,
+      all: purchaseItems.length
+    };
+
+    purchaseItems.forEach((item) => {
+      const orderStatus = item.order?.status;
+      const itemStatus = item.status;
+      
+      // Processing tab logic (pending or processing)
+      if (orderStatus === 'pending' || orderStatus === 'processing' || 
+          itemStatus === 'pending' || itemStatus === 'in_progress') {
+        counts.processing++;
+      }
+      
+      // Shipped tab logic (shipped or delivered)
+      if (orderStatus === 'shipped' || orderStatus === 'delivered' ||
+          itemStatus === 'to_ship' || itemStatus === 'to_receive') {
+        counts.shipped++;
+      }
+      
+      // Rate tab logic (completed)
+      if (orderStatus === 'completed' || itemStatus === 'completed') {
+        counts.rate++;
+      }
+      
+      // Returns tab logic (cancelled or refunded)
+      if (orderStatus === 'cancelled' || orderStatus === 'refunded' ||
+          itemStatus === 'cancelled' || itemStatus === 'return_refund') {
+        counts.returns++;
+      }
+    });
+
+    setOrderCounts(counts);
+  }, [purchaseItems]);
 
   useEffect(() => {
-    // Apply filters whenever search or activeTab changes
+    // Apply filters whenever search or activeTab changes using mobile tab logic
     let filtered = purchaseItems;
     
     if (search) {
@@ -315,7 +364,44 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
     }
     
     if (activeTab !== 'all') {
-      filtered = filtered.filter(item => item.status === activeTab);
+      switch (activeTab) {
+        case 'processing':
+          // Show items with status pending or processing (like mobile)
+          filtered = filtered.filter(item => 
+            item.order?.status === 'pending' || 
+            item.order?.status === 'processing' ||
+            item.status === 'pending' || 
+            item.status === 'in_progress'
+          );
+          break;
+        case 'shipped':
+          // Show items with status shipped or delivered (like mobile)
+          filtered = filtered.filter(item => 
+            item.order?.status === 'shipped' || 
+            item.order?.status === 'delivered' ||
+            item.status === 'to_ship' || 
+            item.status === 'to_receive'
+          );
+          break;
+        case 'rate':
+          // Show completed items that can be rated (like mobile)
+          filtered = filtered.filter(item => 
+            (item.order?.status === 'completed' || item.status === 'completed') &&
+            (item.item?.can_review || item.order?.status === 'completed')
+          );
+          break;
+        case 'returns':
+          // Show cancelled or refunded items (like mobile)
+          filtered = filtered.filter(item => 
+            item.order?.status === 'cancelled' || 
+            item.order?.status === 'refunded' ||
+            item.status === 'cancelled' || 
+            item.status === 'return_refund'
+          );
+          break;
+        default:
+          break;
+      }
     }
     
     setFilteredItems(filtered);
@@ -349,8 +435,20 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
   };
 
   const getTabCount = (tabId: string) => {
-    if (tabId === 'all') return purchaseItems.length;
-    return purchaseItems.filter(item => item.status === tabId).length;
+    switch (tabId) {
+      case 'all':
+        return orderCounts.all;
+      case 'processing':
+        return orderCounts.processing;
+      case 'shipped':
+        return orderCounts.shipped;
+      case 'rate':
+        return orderCounts.rate;
+      case 'returns':
+        return orderCounts.returns;
+      default:
+        return 0;
+    }
   };
 
   const togglePurchaseExpansion = (purchaseId: string) => {
@@ -364,9 +462,45 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
   };
 
   const getActionButtons = (item: PurchaseItem) => {
-    switch(item.status) {
-      case 'to_receive':
-        return (
+    // Determine which action buttons to show based on status
+    const orderStatus = item.order?.status;
+    const itemStatus = item.status;
+    
+    // Processing items (pending/processing) - Show Cancel button
+    if (orderStatus === 'pending' || orderStatus === 'processing' ||
+        itemStatus === 'pending' || itemStatus === 'in_progress') {
+      return (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+          title="Cancel Order"
+          onClick={() => navigate(`/cancel-order/${item.order_id}?item_id=${item.id}`)}
+        >
+          <XCircle className="w-3 h-3" />
+        </Button>
+      );
+    }
+    
+    // Shipped items (shipped/delivered) - Show Track button
+    if (orderStatus === 'shipped' || itemStatus === 'to_ship') {
+      return (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+          title="Track Order"
+          onClick={() => navigate(`/track-order/${item.id}`)}
+        >
+          <Truck className="w-3 h-3" />
+        </Button>
+      );
+    }
+    
+    // Delivered items (delivered) - Show Track and Refund buttons
+    if (orderStatus === 'delivered' || itemStatus === 'to_receive') {
+      return (
+        <>
           <Button
             size="sm"
             variant="ghost"
@@ -376,76 +510,56 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
           >
             <Truck className="w-3 h-3" />
           </Button>
-        );
-      case 'completed':
-        // Show Rate button either when item reports it's reviewable or when the overall order status is completed
-        if (item.item?.can_review || item.order?.status === 'completed') {
-          return (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
-              title="Rate Product"
-              onClick={() => navigate(`/product-rate?productId=${item.item?.product_id}`)}
-            >
-              <CheckCircle className="w-3 h-3 mr-1" />
-              <span className="text-xs">Rate</span>
-            </Button>
-          );
-        }
-        return null;
-      case 'pending':
-      case 'in_progress':
-        return (
           <Button
             size="sm"
             variant="ghost"
-            className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-            title="Cancel Order"
-            onClick={() => navigate(`/cancel-order/${item.order_id}?item_id=${item.id}`)}
-          >
-            <XCircle className="w-3 h-3" />
-          </Button>
-        );
-      case 'to_ship':
-        return (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-            title="View Shipping"
-            onClick={() => navigate(`/shipping/${item.order_id}`)}
-          >
-            <Truck className="w-3 h-3" />
-          </Button>
-        );
-      case 'return_refund':
-        return (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-            title="View Refund"
+            className="h-6 px-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+            title="Refund"
             onClick={() => navigate(`/customer-view-refund-request/${item.order_id}`)}
           >
-            <RefreshCcw className="w-3 h-3" />
+            <RefreshCcw className="w-3 h-3 mr-1" />
+            <span className="text-xs">Refund</span>
           </Button>
-        );
-      case 'cancelled':
+        </>
+      );
+    }
+    
+    // Rate items (completed) - Show Rate button
+    if (orderStatus === 'completed' || itemStatus === 'completed') {
+      if (item.item?.can_review || item.order?.status === 'completed') {
         return (
           <Button
             size="sm"
             variant="ghost"
-            className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50"
-            title="View Details"
-            onClick={() => navigate(`/cancelled/${item.order_id}`)}
+            className="h-6 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
+            title="Rate Product"
+            onClick={() => navigate(`/product-rate?productId=${item.item?.product_id}`)}
           >
-            <FileText className="w-3 h-3" />
+            <MessageSquare className="w-3 h-3 mr-1" />
+            <span className="text-xs">Rate</span>
           </Button>
         );
-      default:
-        return null;
+      }
     }
+    
+    // Returns items (cancelled/refunded) - Show Return Details button
+    if (orderStatus === 'cancelled' || orderStatus === 'refunded' ||
+        itemStatus === 'cancelled' || itemStatus === 'return_refund') {
+      return (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+          title="Return Details"
+          onClick={() => navigate(`/customer-view-refund-request/${item.order_id}`)}
+        >
+          <Undo2 className="w-3 h-3 mr-1" />
+          <span className="text-xs">Details</span>
+        </Button>
+      );
+    }
+    
+    return null;
   };
 
   return (
@@ -472,7 +586,7 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
             </div>
           </div>
 
-          {/* Status Tabs */}
+          {/* Status Tabs - Updated to match mobile */}
           <div className="flex items-center space-x-1 overflow-x-auto mb-2">
             {STATUS_TABS.map((tab) => {
               const Icon = tab.icon;
@@ -510,14 +624,10 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
                 <ShoppingBag className="mx-auto h-6 w-6 text-gray-300 mb-2" />
                 <p className="text-gray-500 text-xs">
                   {activeTab === 'all' ? 'No purchases found' :
-                   activeTab === 'pending' ? 'No pending purchases' :
-                   activeTab === 'in_progress' ? 'No in progress purchases' :
-                   activeTab === 'to_ship' ? 'No items to ship' :
-                   activeTab === 'ready_for_pickup' ? 'No items to pickup' :
-                   activeTab === 'to_receive' ? 'No items to receive' :
-                   activeTab === 'completed' ? 'No completed purchases' :
-                   activeTab === 'return_refund' ? 'No return & refund requests' :
-                   'No cancelled purchases'}
+                   activeTab === 'processing' ? 'No processing orders' :
+                   activeTab === 'shipped' ? 'No shipped orders' :
+                   activeTab === 'rate' ? 'No orders to rate' :
+                   'No returns or refunds'}
                 </p>
               </div>
             ) : (
@@ -634,7 +744,7 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => navigate(`/view-order/${item.order_id}`)}  // Changed this line
+                          onClick={() => navigate(`/view-order/${item.order_id}`)}
                           className="h-6 px-2 text-xs"
                         >
                           <Eye className="w-3 h-3 mr-1" />
