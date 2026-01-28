@@ -46,13 +46,11 @@ export default function PrivacySettingsPage() {
   };
 
   const handleSystemSettings = () => {
-    console.log('Navigate to System Settings');
-    // TODO: Navigate to system settings
+    router.push('/customer/settings/privacy-settings/system-settings');
   };
 
   const handleRecommendationSettings = () => {
-    console.log('Navigate to Recommendation Settings');
-    // TODO: Navigate to recommendation settings
+    router.push('/customer/settings/privacy-settings/recomendation-settings');
   };
 
   return (

@@ -12,14 +12,14 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.crimsonity.crimsotech",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/icon.png"
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#E6F4FE"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "usesCleartextTraffic": true,
-      "package": "com.crimsonity.crimsotech"
+      "usesCleartextTraffic": true
     },
     "web": {
       "output": "static",
@@ -46,11 +46,11 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
+    "owner": "nestyyy",
     "extra": {
       "eas": {
-        "projectId": "ed68e017-a441-4351-a8b4-f5a772a55461"
+        "projectId": "e5ebb4fa-f758-4b0b-a72a-f78c2f88cbd9"
       }
-    },
-    "owner": "crimsonity"
+    }
   }
 }
