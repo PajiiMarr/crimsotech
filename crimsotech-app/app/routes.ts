@@ -46,6 +46,7 @@ export default [
 
     route("request-refund-return/:id", "routes/customer/request-refund-return.tsx"),
     route('view-order/:orderId', 'routes/customer/view-order.tsx'),
+    route('seller-view-order/:orderId', 'routes/seller/seller-view-order.tsx'),
     route('shop/:shopId', 'routes/customer/view-shop.tsx'),
     // route('process-return', 'routes/customer/process-return.tsx'),
     // route('file-dispute/:refundId', 'routes/customer/file-dispute.tsx'),

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button } from '~/components/ui/button';
-import { Badge } from '~/components/ui/badge'; // Changed this import
+import { Badge } from '~/components/ui/badge';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,9 +44,11 @@ import {
   RefreshCw,
   Printer,
   FileText,
-  ExternalLink
-} from 'lucide-react'; // Removed Badge from here
+  ExternalLink,
+  PackagePlus
+} from 'lucide-react';
 import { Separator } from '~/components/ui/separator';
+import { useNavigate } from 'react-router';
 
 interface OrderActionsProps {
   order: {
@@ -54,22 +56,22 @@ interface OrderActionsProps {
     status: string;
     delivery_method?: string | null;
     shipping_method?: string | null;
-    delivery_info?: DeliveryInfo; // Add this
+    delivery_info?: DeliveryInfo;
   };
   isCancelled: boolean;
   isPickup: boolean;
-  hasPendingOffer?: boolean; // Add this
+  hasPendingOffer?: boolean;
   availableActions: string[];
   isLoadingActions: boolean;
   onUpdateStatus: (orderId: string, actionType: string) => Promise<void>;
   onCancelOrder: (orderId: string) => Promise<void>;
   onViewDetails: () => void;
-  onArrangeShipment?: () => void; // Add this
+  onArrangeShipment?: () => void;
+  onPrepareShipment?: () => Promise<void>;
   onRefreshActions: () => Promise<void>;
   isMobile?: boolean;
 }
 
-// Add DeliveryInfo interface
 interface DeliveryInfo {
   delivery_id?: string;
   rider_name?: string;
@@ -83,19 +85,26 @@ export function OrderActions({
   order, 
   isCancelled, 
   isPickup, 
-  hasPendingOffer = false, // Add default value
+  hasPendingOffer = false,
   availableActions,
   isLoadingActions,
   onUpdateStatus, 
   onCancelOrder, 
   onViewDetails,
-  onArrangeShipment, // Add this
-  onRefreshActions,
+  onArrangeShipment,
+  onPrepareShipment,
   isMobile = false 
 }: OrderActionsProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedAction, setSelectedAction] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  // Function to handle View Details navigation
+  const handleViewDetails = () => {
+    // Redirect to seller-view-order page with orderId
+    navigate(`/seller-view-order/${order.order_id}`);
+  };
 
   const handleActionClick = (action: string) => {
     setSelectedAction(action);
@@ -109,6 +118,8 @@ export function OrderActions({
     try {
       if (selectedAction === 'cancel') {
         await onCancelOrder(order.order_id);
+      } else if (selectedAction === 'prepare_shipment') {
+        await onPrepareShipment?.();
       } else {
         await onUpdateStatus(order.order_id, selectedAction);
       }
@@ -136,6 +147,13 @@ export function OrderActions({
           ? 'Confirm the pickup order and prepare items for collection' 
           : 'Confirm the delivery order and prepare for shipment'
       },
+      'prepare_shipment': {
+        label: 'Prepare for Shipment',
+        icon: <PackagePlus className="w-4 h-4 mr-2" />,
+        color: 'text-orange-600',
+        variant: 'default' as const,
+        description: 'Prepare order items for shipment and mark as ready for shipping arrangements'
+      },
       'ready_for_pickup': {
         label: 'Mark as Ready for Pickup',
         icon: <Store className="w-4 h-4 mr-2" />,
@@ -157,7 +175,6 @@ export function OrderActions({
         variant: 'default' as const,
         description: 'Go to shipment arrangement page'
       },
-
       'picked_up': {
         label: 'Mark as Picked Up',
         icon: <CheckCircle className="w-4 h-4 mr-2" />,
@@ -222,6 +239,7 @@ export function OrderActions({
     const actionMap: Record<string, string> = {
       'view_details': 'View Order Details',
       'confirm': isPickup ? 'Confirm Pickup Order' : 'Confirm Delivery Order',
+      'prepare_shipment': 'Prepare for Shipment',
       'ready_for_pickup': 'Mark as Ready for Pickup',
       'arrange_shipment': 'Arrange Shipping',
       'picked_up': 'Mark as Picked Up',
@@ -245,6 +263,8 @@ export function OrderActions({
           <div className="flex items-center gap-3 mb-2">
             {selectedAction === 'cancel' ? (
               <Ban className="w-8 h-8 text-red-500" />
+            ) : selectedAction === 'prepare_shipment' ? (
+              <PackagePlus className="w-8 h-8 text-orange-500" />
             ) : (
               <CheckCircle className="w-8 h-8 text-blue-500" />
             )}
@@ -265,6 +285,16 @@ export function OrderActions({
               <p className="text-sm text-red-600 font-medium">⚠️ Warning</p>
               <p className="text-sm text-red-600">
                 This action cannot be undone. The order will be permanently cancelled.
+              </p>
+            </div>
+          )}
+          
+          {selectedAction === 'prepare_shipment' && (
+            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
+              <p className="text-sm text-blue-600 font-medium">📦 Shipment Preparation</p>
+              <p className="text-sm text-blue-600">
+                This will mark the order as ready for shipping arrangements. 
+                The order status will change to "To Ship".
               </p>
             </div>
           )}
@@ -291,8 +321,12 @@ export function OrderActions({
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 Processing...
               </>
+            ) : selectedAction === 'prepare_shipment' ? (
+              'Prepare Shipment'
+            ) : selectedAction === 'cancel' ? (
+              'Cancel Order'
             ) : (
-              selectedAction === 'cancel' ? 'Cancel Order' : 'Confirm'
+              'Confirm'
             )}
           </Button>
         </div>
@@ -337,9 +371,16 @@ export function OrderActions({
     );
   };
 
-  // Handle arrange shipment separately (navigation)
+  // Handle arrange shipment navigation
   const handleArrangeShipment = () => {
     window.location.href = `/arrange-shipment?orderId=${order.order_id}`;
+  };
+
+  // Handle prepare shipment action
+  const handlePrepareShipment = () => {
+    if (onPrepareShipment) {
+      onPrepareShipment();
+    }
   };
 
   // Handle print
@@ -370,8 +411,14 @@ export function OrderActions({
           className="h-8 w-8 p-0"
           onClick={(e) => {
             e.stopPropagation();
-            // Show mobile actions sheet
-            const event = new CustomEvent('open-actions', { detail: { orderId: order.order_id } });
+            // For mobile, we'll handle it differently - you might need to adjust
+            // based on your mobile implementation
+            const event = new CustomEvent('open-actions', { 
+              detail: { 
+                orderId: order.order_id,
+                onViewDetails: handleViewDetails // Pass the handler
+              } 
+            });
             window.dispatchEvent(event);
           }}
         >
@@ -395,9 +442,13 @@ export function OrderActions({
           <DropdownMenuLabel>Order Actions</DropdownMenuLabel>
           <DropdownMenuSeparator />
           
-          {/* View Details */}
+          {/* View Details - Updated to use navigation */}
           <DropdownMenuItem 
-            onClick={() => onViewDetails()}
+            data-navigate="true"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleViewDetails();
+            }}
             className="cursor-pointer"
           >
             <Eye className="mr-2 h-4 w-4" />
@@ -406,24 +457,29 @@ export function OrderActions({
           
           {/* Available Actions */}
           {isLoadingActions ? (
-            <DropdownMenuItem className="cursor-pointer">
+            <DropdownMenuItem 
+              data-navigate="false"
+              className="cursor-pointer">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Loading actions...
             </DropdownMenuItem>
           ) : availableActions.length > 0 ? (
             availableActions.map((action) => (
-              <DropdownMenuItem 
+              <DropdownMenuItem
+                data-navigate="false"
                 key={action}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (action === 'arrange_shipment_nav') {
-                    onArrangeShipment?.(); // Add this prop to OrderActionsProps
+                    onArrangeShipment?.();
                   } else if (action === 'arrange_shipment') {
                     handleArrangeShipment();
+                  } else if (action === 'prepare_shipment') {
+                    handlePrepareShipment();
                   } else if (action === 'print') {
                     handlePrint();
                   } else if (action === 'view_details') {
-                    onViewDetails();
+                    handleViewDetails();
                   } else {
                     handleActionClick(action);
                   }
@@ -440,17 +496,9 @@ export function OrderActions({
             </DropdownMenuItem>
           )}
           
-          {/* Refresh Actions */}
-          <DropdownMenuItem 
-            onClick={onRefreshActions}
-            className="cursor-pointer"
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh Actions
-          </DropdownMenuItem>
-          
           {/* Print Option */}
           <DropdownMenuItem 
+            data-navigate="false"
             onClick={handlePrint}
             className="cursor-pointer"
           >

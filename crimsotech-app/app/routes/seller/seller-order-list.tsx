@@ -43,7 +43,8 @@ import {
   Ban,
   AlertCircle,
   MessageCircle,
-  Handshake
+  Handshake,
+  PackagePlus
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
 import { DataTable } from '~/components/ui/data-table';
@@ -224,6 +225,12 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
              order.delivery_info?.status !== 'pending_offer');
   };
 
+  // NEW: Check if order is for delivery (not pickup)
+  const isDeliveryOrder = (order: Order): boolean => {
+    const method = order.delivery_method || order.shipping_method || '';
+    return !(method.toLowerCase().includes('pickup') || method.toLowerCase().includes('store'));
+  };
+
   // Refresh orders function
   const refreshOrders = async () => {
     if (!shopId) return;
@@ -266,19 +273,86 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         }
       );
       
+      console.log('Available actions API response:', {
+        orderId,
+        response: response.data,
+        success: response.data.success
+      });
+      
       if (response.data.success) {
+        let actions = response.data.data.available_actions || [];
+        
+        // DEBUG: Log what we got from API
+        console.log('Actions from API:', actions);
+        console.log('Order status:', response.data.data.current_status);
+        
+        // Check if order exists in current state
+        const order = orders.find(o => o.order_id === orderId);
+        
+        // If order is in pending_shipment status, ensure 'confirm' action is available
+        if (order && order.status === 'pending_shipment') {
+          console.log('Order is pending_shipment, checking actions...');
+          
+          // If confirm is not in actions, add it
+          if (!actions.includes('confirm')) {
+            console.log('Adding "confirm" action for pending_shipment order');
+            actions = ['confirm', ...actions];
+          }
+          
+          // Only add 'prepare_shipment' for delivery orders
+          if (isDeliveryOrder(order) && !actions.includes('prepare_shipment')) {
+            console.log('Adding "prepare_shipment" for delivery order');
+            actions = [...actions, 'prepare_shipment'];
+          }
+          
+          // Always ensure cancel is available for pending orders
+          if (!actions.includes('cancel')) {
+            actions = [...actions, 'cancel'];
+          }
+        }
+        
+        console.log('Final actions to set:', actions);
+        
         setAvailableActions(prev => ({
           ...prev,
-          [orderId]: response.data.data.available_actions
+          [orderId]: actions
         }));
+      } else {
+        console.error('API returned unsuccessful:', response.data);
+        // Fallback: If API fails but order is pending_shipment, show basic actions
+        const order = orders.find(o => o.order_id === orderId);
+        if (order && order.status === 'pending_shipment') {
+          const fallbackActions = ['confirm', 'cancel'];
+          if (isDeliveryOrder(order)) {
+            fallbackActions.push('prepare_shipment');
+          }
+          setAvailableActions(prev => ({
+            ...prev,
+            [orderId]: fallbackActions
+          }));
+        }
       }
     } catch (error: any) {
       console.error('Error loading available actions:', error);
-      // Fallback to empty array if API fails
-      setAvailableActions(prev => ({
-        ...prev,
-        [orderId]: []
-      }));
+      console.error('Error details:', error.response?.data);
+      
+      // Fallback to basic actions for pending_shipment orders
+      const order = orders.find(o => o.order_id === orderId);
+      if (order && order.status === 'pending_shipment') {
+        const fallbackActions = ['confirm', 'cancel'];
+        if (isDeliveryOrder(order)) {
+          fallbackActions.push('prepare_shipment');
+        }
+        setAvailableActions(prev => ({
+          ...prev,
+          [orderId]: fallbackActions
+        }));
+      } else {
+        setAvailableActions(prev => ({
+          ...prev,
+          [orderId]: []
+        }));
+      }
     } finally {
       setLoadingActions(prev => ({ ...prev, [orderId]: false }));
     }
@@ -324,6 +398,52 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     }
     
     navigate(`/arrange-shipment?orderId=${orderId}&shopId=${shopId}`);
+  };
+
+  const handlePrepareShipment = async (orderId: string) => {
+    try {
+      setLoadingActions(prev => ({ ...prev, [orderId]: true }));
+      
+      const response = await AxiosInstance.post(
+        `/seller-order-list/${orderId}/prepare_shipment/`,
+        {},
+        {
+          params: { shop_id: shopId }
+        }
+      );
+      
+      if (response.data.success) {
+        const { updated_order, updated_available_actions } = response.data.data;
+        
+        // Update the specific order in state
+        setOrders(prevOrders => 
+          prevOrders.map(order => 
+            order.order_id === orderId 
+              ? { ...updated_order, order_id: orderId }
+              : order
+          )
+        );
+        
+        // Update available actions for this order
+        if (updated_available_actions) {
+          setAvailableActions(prev => ({
+            ...prev,
+            [orderId]: updated_available_actions
+          }));
+        }
+        
+        toast.success("Order prepared for shipment", {
+          description: response.data.message || "The order is now ready for shipping arrangements."
+        });
+      }
+    } catch (error: any) {
+      console.error('Error preparing shipment:', error);
+      toast.error("Failed to prepare shipment", {
+        description: error.response?.data?.message || "Please try again."
+      });
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [orderId]: false }));
+    }
   };
 
   // Load actions and delivery status when component mounts or orders change
@@ -420,7 +540,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         return isPickup ? 'To Prepare' : 'Pending Shipment';
       case 'to_ship': 
         return isPickup ? 'Ready for Pickup' : 'To Ship';
-      case 'ready_for_pickup': 
+      case 'processing': 
         return 'Ready for Pickup';
       case 'awaiting_pickup': 
         return 'Awaiting Pickup';
@@ -489,7 +609,14 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     });
 
     if (activeTab !== 'all') {
-      filtered = filtered.filter(order => order.status === activeTab);
+      // Show "ready_for_pickup" orders in the "arrange_shipment" tab
+      if (activeTab === 'arrange_shipment') {
+        filtered = filtered.filter(order => 
+          order.delivery_method === 'Pickup from Store'
+        );
+      } else {
+        filtered = filtered.filter(order => order.status === activeTab);
+      }
     }
 
     return filtered;
@@ -508,7 +635,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     out_for_delivery: orders.filter(o => o.status === 'out_for_delivery').length,
     completed: orders.filter(o => o.status === 'completed').length,
     cancelled: orders.filter(o => o.status === 'cancelled').length,
-    arrange_shipment: orders.filter(o => o.status === 'arrange_shipment').length
+    arrange_shipment: orders.filter(o => o.status === 'arrange_shipment' || o.status === 'ready_for_pickup').length
   };
 
   const getPaymentIcon = (method: string | null) => {
@@ -529,26 +656,55 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   };
 
   const handleUpdateStatus = async (orderId: string, actionType: string) => {
+    console.log('handleUpdateStatus called:', { orderId, actionType, shopId });
+    
     try {
-      const response = await AxiosInstance.patch(`/seller-order-list/${orderId}/update_status/`, {
-        action_type: actionType
-      }, {
-        params: { shop_id: shopId }
-      });
+      const response = await AxiosInstance.patch(
+        `/seller-order-list/${orderId}/update_status/`, 
+        {
+          action_type: actionType
+        }, 
+        {
+          params: { shop_id: shopId }
+        }
+      );
+      
+      console.log('Update status response:', response.data);
       
       if (response.data.success) {
-        // Refresh orders to get updated data
-        await refreshOrders();
-        // Refresh available actions for this order
-        await loadAvailableActions(orderId);
+        const { updated_order, updated_available_actions } = response.data.data;
+        
+        // Update the specific order in state WITHOUT full refresh
+        setOrders(prevOrders => 
+          prevOrders.map(order => 
+            order.order_id === orderId 
+              ? { ...updated_order, order_id: orderId } // Ensure order_id is preserved
+              : order
+          )
+        );
+        
+        // Update available actions for this order
+        if (updated_available_actions) {
+          setAvailableActions(prev => ({
+            ...prev,
+            [orderId]: updated_available_actions
+          }));
+        }
+        
         toast.success("Order status updated", {
-          description: `Order ${actionType} successfully`
+          description: response.data.message || `Order ${actionType} successfully`
+        });
+      } else {
+        toast.error("Failed to update order status", {
+          description: response.data.message || "Unknown error from server"
         });
       }
     } catch (error: any) {
       console.error('Error updating order status:', error);
+      console.error('Error response data:', error.response?.data);
+      
       toast.error("Failed to update order status", {
-        description: error.response?.data?.message || "Please try again."
+        description: error.response?.data?.message || error.message || "Please try again."
       });
     }
   };
@@ -759,13 +915,14 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       order={order}
                       isCancelled={isCancelled}
                       isPickup={isPickup}
-                      hasPendingOffer={hasPendingOffer} // This should now work
+                      hasPendingOffer={hasPendingOffer}
                       availableActions={customActions}
                       isLoadingActions={isLoading}
                       onUpdateStatus={handleUpdateStatus}
                       onCancelOrder={handleCancelOrder}
                       onViewDetails={() => toggleOrderExpansion(order.order_id)}
-                      onArrangeShipment={() => handleArrangeShipment(order.order_id)} // Add this
+                      onArrangeShipment={() => handleArrangeShipment(order.order_id)}
+                      onPrepareShipment={() => handlePrepareShipment(order.order_id)}
                       onRefreshActions={() => loadAvailableActions(order.order_id)}
                       isMobile={true}
                     />
@@ -777,13 +934,14 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                 order={order}
                 isCancelled={isCancelled}
                 isPickup={isPickup}
-                hasPendingOffer={hasPendingOffer} // This should now work
+                hasPendingOffer={hasPendingOffer}
                 availableActions={customActions}
                 isLoadingActions={isLoading}
                 onUpdateStatus={handleUpdateStatus}
                 onCancelOrder={handleCancelOrder}
                 onViewDetails={() => toggleOrderExpansion(order.order_id)}
-                onArrangeShipment={() => handleArrangeShipment(order.order_id)} // Add this
+                onArrangeShipment={() => handleArrangeShipment(order.order_id)}
+                onPrepareShipment={() => handlePrepareShipment(order.order_id)}
                 onRefreshActions={() => loadAvailableActions(order.order_id)}
                 isMobile={false}
               />
@@ -1002,231 +1160,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     />
                   </TabsContent>
                 </Tabs>
-
-                {/* Expanded Order Details */}
-                <div className="space-y-3 mt-6">
-                  {filteredOrders.map((order) => {
-                    if (!expandedOrders.has(order.order_id)) return null;
-                    
-                    const customerName = formatCustomerName(order.user);
-                    const statusColor = getStatusColor(order.status);
-                    const isPickup = isPickupOrder(order);
-                    const isCancelled = isCancelledOrder(order);
-                    const hasPendingOffer = hasPendingDeliveryOffer(order);
-                    const hasActiveDelivery = order.delivery_info?.status === 'pending';
-
-                    const deliveryInfo = order.delivery_info || deliveryStatuses[order.order_id];
-                    
-                    return (
-                      <Card key={order.order_id} className="overflow-hidden border">
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between mb-4">
-                            <div>
-                              <h3 className="font-semibold">Order Details</h3>
-                              <p className="text-sm text-muted-foreground">{order.order_id}</p>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => toggleOrderExpansion(order.order_id)}
-                            >
-                              <ChevronUp className="w-4 h-4" />
-                            </Button>
-                          </div>
-
-                          {/* Order Type Badge */}
-                          <div className="mb-4 flex flex-wrap gap-2">
-                            <Badge 
-                              variant={isCancelled ? "destructive" : (isPickup ? "default" : "secondary")}
-                              className="flex items-center gap-1 w-fit"
-                            >
-                              {isCancelled ? (
-                                <>
-                                  <Ban className="w-3 h-3" />
-                                  Cancelled Order
-                                </>
-                              ) : isPickup ? (
-                                <>
-                                  <Store className="w-3 h-3" />
-                                  Pickup Order
-                                </>
-                              ) : (
-                                <>
-                                  <Truck className="w-3 h-3" />
-                                  Delivery Order
-                                </>
-                              )}
-                            </Badge>
-                            
-                            {hasPendingOffer && (
-                              <Badge 
-                                variant="outline" 
-                                className="flex items-center gap-1 border-amber-200 text-amber-600"
-                              >
-                                <MessageCircle className="w-3 h-3" />
-                                Rider Offer Pending
-                              </Badge>
-                            )}
-                            
-                            {hasActiveDelivery && (
-                              <Badge 
-                                variant="outline" 
-                                className="flex items-center gap-1 border-blue-200 text-blue-600"
-                              >
-                                <Truck className="w-3 h-3" />
-                                Rider Assigned
-                              </Badge>
-                            )}
-                          </div>
-
-                          {/* Delivery Information (if available) */}
-                          {deliveryInfo && !isCancelled && (
-                            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                              <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                                <Truck className="w-4 h-4" />
-                                Delivery Information
-                              </h4>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                                {deliveryInfo.rider_name && (
-                                  <div>
-                                    <p className="font-medium">Rider</p>
-                                    <p className="text-muted-foreground">{deliveryInfo.rider_name}</p>
-                                  </div>
-                                )}
-                                {deliveryInfo.delivery_id && (
-                                  <div>
-                                    <p className="font-medium">Delivery ID</p>
-                                    <p className="text-muted-foreground">{deliveryInfo.delivery_id}</p>
-                                  </div>
-                                )}
-                                {deliveryInfo.tracking_number && (
-                                  <div>
-                                    <p className="font-medium">Tracking Number</p>
-                                    <p className="text-muted-foreground">{deliveryInfo.tracking_number}</p>
-                                  </div>
-                                )}
-                                {deliveryInfo.estimated_delivery && (
-                                  <div>
-                                    <p className="font-medium">Estimated Delivery</p>
-                                    <p className="text-muted-foreground">
-                                      {formatDate(deliveryInfo.estimated_delivery)}
-                                    </p>
-                                  </div>
-                                )}
-                                {deliveryInfo.status && (
-                                  <div>
-                                    <p className="font-medium">Delivery Status</p>
-                                    <Badge 
-                                      className="text-xs h-5 px-2 py-0 mt-1"
-                                      style={{ 
-                                        backgroundColor: `${getStatusColor(deliveryInfo.status)}15`, 
-                                        color: getStatusColor(deliveryInfo.status)
-                                      }}
-                                    >
-                                      {deliveryInfo.status.replace('_', ' ')}
-                                    </Badge>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Customer Information */}
-                          <div className="mb-4">
-                            <h4 className="text-sm font-medium mb-2">Customer Information</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                              <div>
-                                <p className="font-medium">{customerName}</p>
-                                <p className="text-muted-foreground">{order.user.email}</p>
-                                {order.user.phone && (
-                                  <p className="text-muted-foreground">{order.user.phone}</p>
-                                )}
-                              </div>
-                              <div>
-                                {!isCancelled && (
-                                  <>
-                                    <p className="font-medium">{isPickup ? 'Pickup Location' : 'Delivery Address'}</p>
-                                    <div className="flex items-start gap-2">
-                                      {isPickup ? (
-                                        <Store className="w-4 h-4 text-gray-500 mt-0.5" />
-                                      ) : (
-                                        <MapPinIcon className="w-4 h-4 text-gray-500 mt-0.5" />
-                                      )}
-                                      <p className="text-muted-foreground">
-                                        {order.delivery_address || 'No address provided'}
-                                      </p>
-                                    </div>
-                                    {order.delivery_method && (
-                                      <p className="text-sm text-muted-foreground mt-1">
-                                        Method: {order.delivery_method}
-                                      </p>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Order Items */}
-                          <div className="mb-4">
-                            <h4 className="text-sm font-medium mb-2">Order Items</h4>
-                            <div className="space-y-3">
-                              {order.items.map((item) => (
-                                <div key={item.id} className="flex items-center justify-between border-b pb-3">
-                                  <div className="flex-1">
-                                    <p className="font-medium">{item.cart_item.product.name}</p>
-                                    {item.cart_item.product.variant && (
-                                      <p className="text-sm text-muted-foreground">
-                                        Variant: {item.cart_item.product.variant}
-                                      </p>
-                                    )}
-                                    <p className="text-sm text-muted-foreground">
-                                      Quantity: {item.quantity} × 
-                                      <span className="ml-1">
-                                        <PhilippinePeso className="inline w-3 h-3 mr-0.5" />
-                                        {item.cart_item.product.price.toLocaleString()}
-                                      </span>
-                                    </p>
-                                  </div>
-                                  <div className="font-medium">
-                                    <PhilippinePeso className="inline w-3 h-3 mr-0.5" />
-                                    {item.total_amount.toLocaleString()}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Order Summary */}
-                          <div className="border-t pt-3">
-                            <div className="flex justify-between items-center">
-                              <div>
-                                <p className="text-sm text-muted-foreground">
-                                  Order Date: {formatDateTime(order.created_at)}
-                                </p>
-                                <p className="text-sm text-muted-foreground">
-                                  Payment Method: {order.payment_method || 'Not specified'}
-                                </p>
-                                {!isCancelled && (
-                                  <p className="text-sm text-muted-foreground">
-                                    Order Type: {isPickup ? 'Pickup' : 'Delivery'}
-                                  </p>
-                                )}
-                              </div>
-                              <div className="text-right">
-                                <p className="text-sm text-muted-foreground">Total Amount</p>
-                                <p className="text-2xl font-bold">
-                                  <PhilippinePeso className="inline w-4 h-4 mr-1" />
-                                  {order.total_amount.toLocaleString()}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
               </div>
             )}
           </CardContent>
