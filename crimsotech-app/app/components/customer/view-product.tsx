@@ -9,7 +9,9 @@ import {
   ShoppingBagIcon,
   MapPin,
   Store,
-  RefreshCw // Add this import
+  RefreshCw, // Add this import
+  ShieldCheck,
+  ShieldOff
 } from "lucide-react";
 
 import { useEffect, useState } from "react";
@@ -60,6 +62,10 @@ interface SKU {
   minimum_additional_payment?: number;
   maximum_additional_payment?: number;
   swap_description?: string;
+  // SKU-level refundable flag
+  is_refundable?: boolean;
+  // SKU-level refund days (from DB)
+  refund_days?: number;
   accepted_categories?: { id: string; name: string }[];
 }
 
@@ -90,6 +96,10 @@ interface Product {
   maximum_additional_payment?: number;
   swap_description?: string;
   accepted_categories?: { id: string; name: string }[];
+  // Product-level refundable flag
+  is_refundable?: boolean;
+  // Product-level refund days (from DB)
+  refund_days?: number;
   length?: number | null; // Product-level dimensions
   width?: number | null;
   height?: number | null;
@@ -125,16 +135,37 @@ export async function loader({ request }: Route.LoaderArgs) {
 function resolveImageUrl(img: any): string | null {
   if (!img) return null;
   
+  // If it's a plain string (sometimes returned by serializer), treat as URL/path
   if (typeof img === 'string') {
     return img.startsWith('http') ? img : `${MEDIA_URL}${img}`;
   }
   
+  // If object, try common fields in order of likelihood
   if (img && typeof img === 'object') {
+    // Primary direct URL field used by ProductSerializer.primary_image
     if (img.url && typeof img.url === 'string') {
       return img.url.startsWith('http') ? img.url : `${MEDIA_URL}${img.url}`;
     }
+
+    // File URL returned by ProductMediaSerializer
     if (typeof img.file_url === 'string') {
       return img.file_url.startsWith('http') ? img.file_url : `${MEDIA_URL}${img.file_url}`;
+    }
+
+    // Some payloads include file_data as a nested object or string
+    if (typeof img.file_data === 'string') {
+      return img.file_data.startsWith('http') ? img.file_data : `${MEDIA_URL}${img.file_data}`;
+    }
+    if (img.file_data && typeof img.file_data === 'object' && typeof img.file_data.url === 'string') {
+      return img.file_data.url.startsWith('http') ? img.file_data.url : `${MEDIA_URL}${img.file_data.url}`;
+    }
+
+    // Some serializers use 'file' or 'thumbnail' keys
+    if (typeof img.file === 'string') {
+      return img.file.startsWith('http') ? img.file : `${MEDIA_URL}${img.file}`;
+    }
+    if (typeof img.thumbnail === 'string') {
+      return img.thumbnail.startsWith('http') ? img.thumbnail : `${MEDIA_URL}${img.thumbnail}`;
     }
   }
   
@@ -183,6 +214,15 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const [swapError, setSwapError] = useState<string | null>(null); // Add this state
 
   const user = loaderData?.user;
+
+  // Refund policy from backend: prefer SKU-level setting when a SKU is selected
+  const isRefundable = !!(currentSKU?.is_refundable || product?.is_refundable || (product?.skus && product.skus.some((s) => s.is_refundable)));
+  const refundDays = currentSKU?.is_refundable ? (currentSKU.refund_days ?? product?.refund_days ?? 0) : (product?.is_refundable ? (product.refund_days ?? 0) : 0);
+  const refundText = `refundable (${refundDays} day${refundDays === 1 ? '' : 's'})`;
+  const refundAriaLabel = refundDays ? `Refundable for ${refundDays} day${refundDays === 1 ? '' : 's'}` : 'Refundable';
+
+  // Explicit non-refundable indicator (product-level false or selected SKU explicitly false)
+  const isExplicitlyNonRefundable = (currentSKU?.is_refundable === false) || (product?.is_refundable === false);
 
   // Check if product has variants
   const hasVariants = product?.variants && product.variants.length > 0;
@@ -649,6 +689,35 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               </Link>
               <span className="text-gray-300">•</span>
               <span className="text-gray-600">{product.sold || 0} sold</span>
+
+              {/* Refundable or Non-Refundable Badge */}
+              {isRefundable ? (
+                <>
+                  <span className="text-gray-300">•</span>
+                  <Link
+                    to="#"
+                    aria-label={refundAriaLabel}
+                    title={refundAriaLabel}
+                    className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-medium border border-emerald-100 hover:bg-emerald-100"
+                  >
+                    <ShieldCheck className="h-3 w-3 text-emerald-700" />
+                    <span>{refundText}</span>
+                  </Link>
+                </>
+              ) : (isExplicitlyNonRefundable && (
+                <>
+                  <span className="text-gray-300">•</span>
+                  <span
+                    role="status"
+                    aria-label="Non-refundable"
+                    title="Non-refundable"
+                    className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-medium border border-rose-100"
+                  >
+                    <ShieldOff className="h-3 w-3 text-rose-600" />
+                    <span>Non-refundable</span>
+                  </span>
+                </>
+              ))}
             </div>
 
             <div className="flex items-center gap-3">

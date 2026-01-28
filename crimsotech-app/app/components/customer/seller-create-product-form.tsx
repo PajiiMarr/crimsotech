@@ -153,8 +153,8 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   const [productWeight, setProductWeight] = useState<number | ''>('');
   const [productWeightUnit, setProductWeightUnit] = useState<'g' | 'kg' | 'lb' | 'oz'>('g');
   const [productLength, setProductLength] = useState<number | ''>('');
-  // Product-level refundable toggle (for non-variant products)
-  const [productRefundable, setProductRefundable] = useState(false);
+  // Product-level refundable toggle (for non-variant products) - default enabled
+  const [productRefundable, setProductRefundable] = useState(true);
   const [productWidth, setProductWidth] = useState<number | ''>('');
   const [productHeight, setProductHeight] = useState<number | ''>('');
   const [shippingZones, setShippingZones] = useState<ShippingZone[]>([
@@ -517,8 +517,8 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
           imagePreview: found?.imagePreview ?? undefined,
           critical_trigger: found?.critical_trigger ?? '',
           is_active: found?.is_active ?? true,
-          // refundable: preserve existing value, default false
-          refundable: found?.refundable ?? false,
+          // refundable: preserve existing value, default to product-level toggle or enabled
+          refundable: found?.refundable ?? productRefundable ?? true,
         } as SKUCombination;
       });
 
