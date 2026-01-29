@@ -42,7 +42,7 @@ export default function RiderLayout() {
             }} 
           />
           <Tabs.Screen 
-            name="messages" 
+            name="message" 
             options={{ 
               headerShown: false,
             }} 
