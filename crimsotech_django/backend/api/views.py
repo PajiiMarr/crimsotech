@@ -17996,7 +17996,460 @@ class PurchasesBuyer(viewsets.ViewSet):
 
         return Response(data, status=status.HTTP_200_OK)
 
-    
+    @action(detail=False, methods=['get'])
+    def user_purchases(self, request):
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            # Get all orders for this user
+            orders = Order.objects.filter(user=user).prefetch_related(
+                Prefetch(
+                    'checkout_set',
+                    queryset=Checkout.objects.select_related(
+                        'cart_item__product__shop',
+                        'cart_item__product__customer__customer',
+                        'voucher'
+                    ).prefetch_related(
+                        Prefetch(
+                            'cart_item__product__productmedia_set',
+                            queryset=ProductMedia.objects.only('id', 'file_data', 'file_type')
+                        )
+                    ).order_by('created_at')
+                ),
+                'shipping_address'
+            ).order_by('-created_at')
+            
+            # Get related payments and deliveries in bulk
+            order_ids = list(orders.values_list('order', flat=True))
+            payments = Payment.objects.filter(order_id__in=order_ids)
+            deliveries = Delivery.objects.filter(order_id__in=order_ids)
+            
+            # Create lookup dictionaries
+            payment_dict = {str(payment.order_id): payment for payment in payments}
+            delivery_dict = {str(delivery.order_id): delivery for delivery in deliveries}
+            
+            # Prepare response data
+            purchases = []
+            for order in orders:
+                # Get payment and delivery for this order
+                payment = payment_dict.get(str(order.order))
+                delivery = delivery_dict.get(str(order.order))
+
+                # If order is delivered, set completed_at (use delivery.delivery_date if available)
+                if order.status == 'delivered' and not getattr(order, 'completed_at', None):
+                    try:
+                        if delivery and getattr(delivery, 'delivery_date', None):
+                            order.completed_at = delivery.delivery_date
+                        else:
+                            order.completed_at = timezone.now()
+                        # Save only the completed_at field to avoid unintended updates
+                        order.save(update_fields=['completed_at'])
+                    except Exception as _e:
+                        # Log but don't break the response building
+                        print(f"DEBUG: Failed to set completed_at for order {order.order}: {_e}")
+
+                # Get delivery address
+                delivery_address = None
+                if order.shipping_address:
+                    delivery_address = order.shipping_address.get_full_address()
+                elif order.delivery_address_text:
+                    delivery_address = order.delivery_address_text
+
+                order_data = {
+                    'order_id': str(order.order),
+                    'status': order.status,  # From Order table
+                    'total_amount': str(order.total_amount),
+                    'payment_method': order.payment_method,
+                    'delivery_method': order.delivery_method,
+                    'delivery_address': delivery_address,
+                    'created_at': order.created_at.isoformat(),
+                    'completed_at': order.completed_at.isoformat() if getattr(order, 'completed_at', None) else None,
+                    'payment_status': payment.status if payment else None,
+                    'delivery_status': delivery.status if delivery else None,
+                    'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+                    'items': []
+                }
+                
+                # Process all checkouts for this order
+                for checkout in order.checkout_set.all():
+                    if checkout.cart_item and checkout.cart_item.product:
+                        product = checkout.cart_item.product
+                        
+                        # Get product media (images)
+                        product_images = []
+                        for media in product.productmedia_set.all():
+                            if media.file_data:
+                                try:
+                                    url = media.file_data.url
+                                    if request:
+                                        url = request.build_absolute_uri(url)
+                                    product_images.append({
+                                        'id': str(media.id),
+                                        'url': url,
+                                        'file_type': media.file_type
+                                    })
+                                except ValueError:
+                                    # If file doesn't exist, skip it
+                                    continue
+                        
+                        # Get primary image (first image)
+                        primary_image = product_images[0] if product_images else None
+                        
+                        # Check if user has reviewed this product
+                        has_reviewed = False
+                        try:
+                            # First check if user has a Customer profile
+                            customer_profile = Customer.objects.get(customer=user)
+                            has_reviewed = Review.objects.filter(
+                                customer=customer_profile,
+                                product=product
+                            ).exists()
+                        except Customer.DoesNotExist:
+                            # User doesn't have a customer profile yet
+                            has_reviewed = False
+                        
+                        item_data = {
+                            'checkout_id': str(checkout.id),
+                            'cart_item_id': str(checkout.cart_item.id) if checkout.cart_item else None,
+                            'product_id': str(product.id),
+                            'product_name': product.name,
+                            'product_description': product.description,
+                            'product_condition': product.condition,
+                            'product_status': product.status,
+                            'shop_id': str(product.shop.id) if product.shop else None,
+                            'shop_name': product.shop.name if product.shop else None,
+                            'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
+                            'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
+                            'quantity': checkout.quantity,
+                            'price': str(product.price),
+                            'subtotal': str(checkout.total_amount),
+                            'status': order.status,  # CHANGED: Use order.status instead of checkout.status
+                            'remarks': checkout.remarks,
+                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                            'product_images': product_images,
+                            'primary_image': primary_image,
+                            'voucher_applied': {
+                                'id': str(checkout.voucher.id),
+                                'name': checkout.voucher.name,
+                                'code': checkout.voucher.code
+                            } if checkout.voucher else None,
+                            'can_review': not has_reviewed and order.status == 'delivered'  # Using order.status here
+                        }
+                        order_data['items'].append(item_data)
+                    else:
+                        # Handle case where cart_item or product might be null
+                        item_data = {
+                            'checkout_id': str(checkout.id),
+                            'cart_item_id': None,
+                            'product_id': None,
+                            'product_name': 'Item no longer available',
+                            'product_description': '',
+                            'product_condition': '',
+                            'product_status': '',
+                            'shop_id': None,
+                            'shop_name': 'Unknown Shop',
+                            'shop_picture': None,
+                            'seller_username': None,
+                            'quantity': checkout.quantity,
+                            'price': '0.00',
+                            'subtotal': str(checkout.total_amount),
+                            'status': order.status,  # CHANGED: Use order.status instead of checkout.status
+                            'remarks': checkout.remarks,
+                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                            'product_images': [],
+                            'primary_image': None,
+                            'voucher_applied': None,
+                            'can_review': False
+                        }
+                        order_data['items'].append(item_data)
+                
+                purchases.append(order_data)
+            
+            return Response({
+                'user_id': str(user.id),
+                'username': user.username,
+                'total_purchases': len(purchases),
+                'purchases': purchases
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in user_purchases: {str(e)}")
+            print(traceback.format_exc())
+            return Response(
+                {'error': 'Internal server error', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'], url_path='status-counts')
+    def status_counts(self, request):
+        """Return counts per order status for the session user."""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            processing = Order.objects.filter(user=user, status__in=['pending', 'processing']).count()
+            shipped = Order.objects.filter(user=user, status='shipped').count()
+            rate = Order.objects.filter(user=user, status='completed').count()
+            returns = Order.objects.filter(user=user, status__in=['cancelled', 'refunded']).count()
+
+            return Response({
+                'processing': processing,
+                'shipped': shipped,
+                'rate': rate,
+                'returns': returns
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception('Error computing status counts: %s', e)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None):
+        """Allow buyer to cancel an order if it's still cancellable."""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            order = Order.objects.get(order=pk, user=user)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Do not allow cancelling if already shipped/delivered/completed or already cancelled/refunded
+        if order.status in ['shipped', 'delivered', 'completed', 'cancelled', 'refunded']:
+            return Response({'error': 'Order cannot be cancelled at this stage'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order.status = 'cancelled'
+            order.save()
+
+            # Optionally: create a log entry or send notification here
+            return Response({'success': True, 'message': 'Order cancelled successfully'}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception('Error cancelling order: %s', e)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def retrieve(self, request, pk=None):
+        """
+        Get a single order by ID
+        """
+        user_id = request.headers.get("X-User-Id")
+        if not user_id:
+            return Response(
+                {"error": "User ID required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            order = Order.objects.get(order=pk, user=user)
+        except Order.DoesNotExist:
+            return Response(
+                {"error": "Order not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get payment and delivery for this order
+        payment = Payment.objects.filter(order_id=order.order).first()
+        delivery = Delivery.objects.filter(order_id=order.order).first()
+        
+        # Get delivery address
+        delivery_address = None
+        if order.shipping_address:
+            delivery_address = order.shipping_address.get_full_address()
+        elif order.delivery_address_text:
+            delivery_address = order.delivery_address_text
+        
+        # Get order items
+        items_data = []
+        for checkout in order.checkout_set.all():
+            if checkout.cart_item and checkout.cart_item.product:
+                product = checkout.cart_item.product
+                
+                # Get product media (images)
+                product_images = []
+                for media in product.productmedia_set.all():
+                    if media.file_data:
+                        try:
+                            url = media.file_data.url
+                            if request:
+                                url = request.build_absolute_uri(url)
+                            product_images.append({
+                                'id': str(media.id),
+                                'url': url,
+                                'file_type': media.file_type
+                            })
+                        except ValueError:
+                            # If file doesn't exist, skip it
+                            continue
+                
+                # Get primary image (first image)
+                primary_image = product_images[0] if product_images else None
+                
+                # Check if user has reviewed this product
+                has_reviewed = False
+                try:
+                    # First check if user has a Customer profile
+                    customer_profile = Customer.objects.get(customer=user)
+                    has_reviewed = Review.objects.filter(
+                        customer=customer_profile,
+                        product=product
+                    ).exists()
+                except Customer.DoesNotExist:
+                    # User doesn't have a customer profile yet
+                    has_reviewed = False
+                
+                item_data = {
+                    'checkout_id': str(checkout.id),
+                    'cart_item_id': str(checkout.cart_item.id) if checkout.cart_item else None,
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'product_description': product.description,
+                    'product_condition': product.condition,
+                    'product_status': product.status,
+                    'shop_id': str(product.shop.id) if product.shop else None,
+                    'shop_name': product.shop.name if product.shop else None,
+                    'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
+                    'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
+                    'quantity': checkout.quantity,
+                    'price': str(product.price),
+                    'subtotal': str(checkout.total_amount),
+                    'status': order.status,  # Use order status for all items
+                    'remarks': checkout.remarks,
+                    'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                    'product_images': product_images,
+                    'primary_image': primary_image,
+                    'voucher_applied': {
+                        'id': str(checkout.voucher.id),
+                        'name': checkout.voucher.name,
+                        'code': checkout.voucher.code
+                    } if checkout.voucher else None,
+                    'can_review': not has_reviewed and order.status == 'delivered'  # Using order.status here
+                }
+                items_data.append(item_data)
+            else:
+                # Handle case where cart_item or product might be null
+                item_data = {
+                    'checkout_id': str(checkout.id),
+                    'cart_item_id': None,
+                    'product_id': None,
+                    'product_name': 'Item no longer available',
+                    'product_description': '',
+                    'product_condition': '',
+                    'product_status': '',
+                    'shop_id': None,
+                    'shop_name': 'Unknown Shop',
+                    'shop_picture': None,
+                    'seller_username': None,
+                    'quantity': checkout.quantity,
+                    'price': '0.00',
+                    'subtotal': str(checkout.total_amount),
+                    'status': order.status,  # Use order status
+                    'remarks': checkout.remarks,
+                    'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                    'product_images': [],
+                    'primary_image': None,
+                    'voucher_applied': None,
+                    'can_review': False
+                }
+                items_data.append(item_data)
+        
+        order_data = {
+            'order_id': str(order.order),
+            'status': order.status,
+            'total_amount': str(order.total_amount),
+            'payment_method': order.payment_method,
+            'delivery_method': order.delivery_method,
+            'delivery_address': delivery_address,
+            'created_at': order.created_at.isoformat(),
+            'payment_status': payment.status if payment else None,
+            'delivery_status': delivery.status if delivery else None,
+            'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+            'items': items_data
+        }
+        
+        return Response(order_data)
+
+    @action(detail=True, methods=['get'], url_path='view-order')
+    def view_order_detail(self, request, pk=None):
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            order = Order.objects.get(order=pk, user=user)
+        except (User.DoesNotExist, Order.DoesNotExist) as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get basic order data
+        order_data = {
+            'order': {
+                'id': str(order.order),
+                'status': order.status,
+                'status_display': order.get_status_display() if hasattr(order, 'get_status_display') else order.status,
+                'created_at': order.created_at.isoformat(),
+                'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                'payment_method': order.payment_method,
+                'total_amount': str(order.total_amount),
+            },
+            'items': [],
+            'shipping_info': {
+                'delivery_method': order.delivery_method or 'Standard Delivery',
+            },
+            'delivery_address': {
+                'address': order.delivery_address_text or (order.shipping_address.get_full_address() if order.shipping_address else ''),
+            }
+        }
+        
+        # Add simple items
+        for checkout in order.checkout_set.all():
+            if checkout.cart_item and checkout.cart_item.product:
+                product = checkout.cart_item.product
+                item_data = {
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'quantity': checkout.quantity,
+                    'price': str(product.price),
+                    'subtotal': str(checkout.total_amount),
+                    'is_refundable': bool(getattr(product, 'is_refundable', False)),
+                }
+                order_data['items'].append(item_data)
+        
+        return Response(order_data)
+
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])

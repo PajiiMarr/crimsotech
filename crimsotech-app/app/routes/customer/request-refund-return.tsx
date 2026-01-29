@@ -45,7 +45,9 @@ import {
   AlertCircle,
   Star,
   Home,
-  User
+  User,
+  Percent,
+  DollarSign
 } from 'lucide-react';
 
 // --- Types ---
@@ -85,13 +87,21 @@ interface PurchaseOrder {
   items: OrderItem[];
 }
 
+interface RefundType {
+  id: 'return_item' | 'keep_item' | 'replacement';
+  label: string;
+  description: string;
+  icon: any;
+  refundAmount: 'full' | 'partial' | 'replacement';
+}
+
 interface RefundMethod {
   id: string;
   label: string;
   description: string;
   icon: any;
-  type: 'return_item' | 'keep_item' | 'replacement';
-  subType: 'wallet' | 'bank' | 'voucher' | 'replace' | 'moneyback';
+  type: 'wallet' | 'bank' | 'voucher' | 'moneyback' | 'replace';
+  allowedRefundTypes: ('return_item' | 'keep_item' | 'replacement')[];
 }
 
 // Payment method detail types
@@ -123,79 +133,72 @@ interface RemittanceDetails {
   validIdNumber: string;
 }
 
-// Refund methods data - Updated to match your model's refund_category choices
+// Refund types - separate from methods
+const refundTypes: RefundType[] = [
+  {
+    id: 'return_item',
+    label: 'Return Item',
+    description: 'Return the item for a full refund',
+    icon: RotateCcw,
+    refundAmount: 'full'
+  },
+  {
+    id: 'keep_item',
+    label: 'Keep Item',
+    description: 'Keep the item and request partial refund',
+    icon: Package,
+    refundAmount: 'partial'
+  },
+  {
+    id: 'replacement',
+    label: 'Replacement',
+    description: 'Return item for a replacement',
+    icon: RefreshCw,
+    refundAmount: 'replacement'
+  }
+];
+
+// Refund methods - simplified
 const refundMethods: RefundMethod[] = [
   {
-    id: 'wallet-return',
-    label: 'Return Item & Refund to Wallet',
-    description: 'Return the item and get refund to your e-wallet',
+    id: 'wallet',
+    label: 'Refund to Wallet',
+    description: 'Get refund to your e-wallet',
     icon: Wallet,
-    type: 'return_item',
-    subType: 'wallet'
+    type: 'wallet',
+    allowedRefundTypes: ['return_item', 'keep_item']
   },
   {
-    id: 'bank-return',
-    label: 'Return Item & Bank Transfer',
-    description: 'Return the item and get refund via bank transfer',
+    id: 'bank',
+    label: 'Bank Transfer',
+    description: 'Get refund via bank transfer',
     icon: CreditCard,
-    type: 'return_item',
-    subType: 'bank'
+    type: 'bank',
+    allowedRefundTypes: ['return_item', 'keep_item']
   },
   {
-    id: 'voucher-return',
-    label: 'Return Item & Store Voucher',
-    description: 'Return the item and receive a store voucher',
+    id: 'voucher',
+    label: 'Store Voucher',
+    description: 'Receive a store voucher',
     icon: Tag,
-    type: 'return_item',
-    subType: 'voucher'
+    type: 'voucher',
+    allowedRefundTypes: ['return_item', 'keep_item']
+  },
+  {
+    id: 'moneyback',
+    label: 'Money Back (Remittance)',
+    description: 'Get cash via remittance',
+    icon: Banknote,
+    type: 'moneyback',
+    allowedRefundTypes: ['return_item', 'keep_item']
   },
   {
     id: 'replace',
-    label: 'Return & Replacement',
-    description: 'Return the item and get a replacement',
+    label: 'Replacement',
+    description: 'Get a replacement item',
     icon: RefreshCw,
-    type: 'replacement',
-    subType: 'replace'
-  },
-  {
-    id: 'moneyback-return',
-    label: 'Return Item & Money Back',
-    description: 'Return the item and get cash via remittance',
-    icon: Banknote,
-    type: 'return_item',
-    subType: 'moneyback'
-  },
-  {
-    id: 'wallet-keep',
-    label: 'Keep Item & Partial Refund to Wallet',
-    description: 'Keep the item and get partial refund to e-wallet',
-    icon: Wallet,
-    type: 'keep_item',
-    subType: 'wallet'
-  },
-  {
-    id: 'bank-keep',
-    label: 'Keep Item & Partial Bank Transfer',
-    description: 'Keep the item and get partial refund via bank',
-    icon: CreditCard,
-    type: 'keep_item',
-    subType: 'bank'
-  },
-  {
-    id: 'voucher-keep',
-    label: 'Keep Item & Partial Store Voucher',
-    description: 'Keep the item and get partial store voucher',
-    icon: Tag,
-    type: 'keep_item',
-    subType: 'voucher'
-  },
-  {
-    id: 'moneyback-keep',
-    label: 'Keep Item & Partial Money Back',
-    description: 'Keep the item and get partial cash via remittance',
-    icon: Banknote,
-    type: 'keep_item',
-    subType: 'moneyback'
+    type: 'replace',
+    allowedRefundTypes: ['replacement']
   }
 ];
 
@@ -574,6 +577,93 @@ const RemittanceForm: React.FC<{
   );
 };
 
+// Custom Dropdown Component
+const CustomDropdown = ({ 
+  value, 
+  onChange, 
+  options, 
+  placeholder,
+  icon: Icon,
+  label
+}: { 
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{id: string, label: string, icon?: any, description?: string}>;
+  placeholder: string;
+  icon?: any;
+  label: string;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  
+  const selectedOption = options.find(opt => opt.id === value);
+  
+  return (
+    <div className="relative">
+      <label className="text-sm font-medium mb-2 block">{label}</label>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-left flex items-center justify-between ${
+          selectedOption ? 'bg-white' : 'bg-gray-50'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          {Icon && <Icon className="w-4 h-4 text-gray-500" />}
+          <div className="flex-1">
+            {selectedOption ? (
+              <div>
+                <span className="font-medium">{selectedOption.label}</span>
+                {selectedOption.description && (
+                  <p className="text-xs text-gray-500 truncate">{selectedOption.description}</p>
+                )}
+              </div>
+            ) : (
+              <span className="text-gray-500">{placeholder}</span>
+            )}
+          </div>
+        </div>
+        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${isOpen ? 'transform rotate-180' : ''}`} />
+      </button>
+      
+      {isOpen && (
+        <div className="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+          {options.map((option) => {
+            const OptionIcon = option.icon;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => {
+                  onChange(option.id);
+                  setIsOpen(false);
+                }}
+                className={`w-full p-3 text-left hover:bg-gray-50 flex items-center gap-3 ${
+                  value === option.id ? 'bg-blue-50 border-l-4 border-blue-500' : ''
+                }`}
+              >
+                {OptionIcon && (
+                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+                    <OptionIcon className="w-4 h-4 text-gray-600" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm">{option.label}</div>
+                  {option.description && (
+                    <div className="text-xs text-gray-500 truncate">{option.description}</div>
+                  )}
+                </div>
+                {value === option.id && (
+                  <CheckCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // --- Loader ---
 export async function loader({ params, request, context }: any) {
   const orderId = params.id;
@@ -647,10 +737,11 @@ export default function RequestReturnRefund({ loaderData }: any) {
   const preselectedItemId = location.state?.selectedItemId;
   
   const [selectedItems, setSelectedItems] = useState<string[]>(preselectedItemId ? [preselectedItemId] : []);
-  const [returnReason, setReturnReason] = useState<string>('');
-  const [additionalDetails, setAdditionalDetails] = useState<string>('');
+  const [selectedRefundType, setSelectedRefundType] = useState<RefundType | null>(null);
   const [selectedRefundMethod, setSelectedRefundMethod] = useState<RefundMethod | null>(null);
   const [partialAmount, setPartialAmount] = useState<string>('');
+  const [returnReason, setReturnReason] = useState<string>('');
+  const [additionalDetails, setAdditionalDetails] = useState<string>('');
   const [images, setImages] = useState<string[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -711,11 +802,86 @@ export default function RequestReturnRefund({ loaderData }: any) {
     return `₱${numAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
   };
 
+  // Calculate refund amounts
+  const calculateRefundAmounts = () => {
+    if (selectedItems.length === 0) return { fullAmount: 0, maxPartialAmount: 0 };
+    
+    const fullAmount = selectedItemsDetails.reduce((sum: number, item: OrderItem) => 
+      sum + parseFloat(item.subtotal), 0
+    );
+    
+    // For keep items, max 70% of full amount
+    const maxPartialAmount = fullAmount * 0.7;
+    
+    return { fullAmount, maxPartialAmount };
+  };
+
+  const { fullAmount, maxPartialAmount } = calculateRefundAmounts();
+
+  // Compute refund breakdown (base amount, fee, final amount)
+  const computeRefundBreakdown = () => {
+    const selectedTotal = selectedItemsDetails.reduce((sum: number, item: OrderItem) => sum + parseFloat(item.subtotal), 0);
+
+    // Base amount depends on refund type
+    let baseAmount = selectedTotal;
+    if (selectedRefundType && selectedRefundType.id === 'keep_item') {
+      baseAmount = partialAmount ? parseFloat(partialAmount) : maxPartialAmount;
+    } else if (selectedRefundType && (selectedRefundType.id === 'return_item' || selectedRefundType.id === 'replacement')) {
+      baseAmount = selectedTotal;
+    }
+
+    // Fee rules by refund method subtype
+    let fee = 0;
+    const methodType = selectedRefundMethod?.type;
+    if (methodType === 'moneyback') {
+      fee = 50; // remittance fee
+    } else if (methodType === 'wallet') {
+      fee = 10; // e-wallet fee
+    }
+
+    const finalAmount = Math.max(0, baseAmount - fee);
+
+    return { baseAmount, fee, finalAmount };
+  };
+
+  // Precompute current breakdown for rendering
+  const breakdown = computeRefundBreakdown();
+
+  // Get available methods for selected refund type
+  const getAvailableMethods = () => {
+    if (!selectedRefundType) return refundMethods;
+    
+    return refundMethods.filter(method => 
+      method.allowedRefundTypes.includes(selectedRefundType.id)
+    );
+  };
+
   const handleItemSelect = (checkoutId: string) => {
     if (selectedItems.includes(checkoutId)) {
       setSelectedItems(selectedItems.filter(id => id !== checkoutId));
     } else {
       setSelectedItems([...selectedItems, checkoutId]);
+    }
+  };
+
+  const handleRefundTypeSelect = (typeId: string) => {
+    const type = refundTypes.find(t => t.id === typeId);
+    if (type) {
+      setSelectedRefundType(type);
+      // Reset method if incompatible
+      if (selectedRefundMethod) {
+        const availableMethods = getAvailableMethods();
+        if (!availableMethods.some(m => m.id === selectedRefundMethod.id)) {
+          setSelectedRefundMethod(null);
+        }
+      }
+    }
+  };
+
+  const handleRefundMethodSelect = (methodId: string) => {
+    const method = getAvailableMethods().find(m => m.id === methodId);
+    if (method) {
+      setSelectedRefundMethod(method);
     }
   };
 
@@ -736,7 +902,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
   const getPaymentForm = () => {
     if (!selectedRefundMethod) return null;
     
-    if (selectedRefundMethod.subType === 'wallet') {
+    if (selectedRefundMethod.type === 'wallet') {
       return (
         <EWalletForm
           details={eWalletDetails}
@@ -745,7 +911,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
       );
     }
     
-    if (selectedRefundMethod.subType === 'bank') {
+    if (selectedRefundMethod.type === 'bank') {
       return (
         <BankTransferForm
           details={bankDetails}
@@ -754,7 +920,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
       );
     }
     
-    if (selectedRefundMethod.subType === 'moneyback') {
+    if (selectedRefundMethod.type === 'moneyback') {
       return (
         <RemittanceForm
           details={remittanceDetails}
@@ -769,17 +935,17 @@ export default function RequestReturnRefund({ loaderData }: any) {
   const isPaymentDetailsValid = () => {
     if (!selectedRefundMethod) return false;
     
-    if (selectedRefundMethod.subType === 'wallet') {
+    if (selectedRefundMethod.type === 'wallet') {
       return eWalletDetails.provider && eWalletDetails.accountNumber && 
              eWalletDetails.accountName && eWalletDetails.contactNumber;
     }
     
-    if (selectedRefundMethod.subType === 'bank') {
+    if (selectedRefundMethod.type === 'bank') {
       return bankDetails.bankName && bankDetails.accountNumber && 
              bankDetails.accountName && bankDetails.accountType;
     }
     
-    if (selectedRefundMethod.subType === 'moneyback') {
+    if (selectedRefundMethod.type === 'moneyback') {
       return remittanceDetails.provider && remittanceDetails.firstName && 
              remittanceDetails.lastName && remittanceDetails.contactNumber &&
              remittanceDetails.validIdType && remittanceDetails.validIdNumber;
@@ -793,8 +959,8 @@ export default function RequestReturnRefund({ loaderData }: any) {
     if (selectedItems.length === 0) {
       return 'Please select at least one item to return';
     }
-    if (!returnReason) {
-      return 'Please select a reason for return';
+    if (!selectedRefundType) {
+      return 'Please select a refund type';
     }
     if (!selectedRefundMethod) {
       return 'Please select a refund method';
@@ -802,11 +968,14 @@ export default function RequestReturnRefund({ loaderData }: any) {
     if (!isPaymentDetailsValid()) {
       return 'Please complete the payment details';
     }
-    if (selectedRefundMethod?.type === 'keep_item' && (!partialAmount || parseFloat(partialAmount) <= 0)) {
+    if (!returnReason) {
+      return 'Please select a reason for return';
+    }
+    if (selectedRefundType.id === 'keep_item' && (!partialAmount || parseFloat(partialAmount) <= 0)) {
       return 'Please enter a valid partial refund amount';
     }
-    if (selectedRefundMethod?.type === 'keep_item' && parseFloat(partialAmount) > getMaxPartialAmount()) {
-      return `Amount cannot exceed ${formatCurrency(getMaxPartialAmount())}`;
+    if (selectedRefundType.id === 'keep_item' && parseFloat(partialAmount) > maxPartialAmount) {
+      return `Amount cannot exceed ${formatCurrency(maxPartialAmount)}`;
     }
     return null;
   };
@@ -823,35 +992,39 @@ export default function RequestReturnRefund({ loaderData }: any) {
     setLoading(true);
     setError(null);
 
-    // Calculate refund amount
-    const totalRefundAmount = selectedRefundMethod!.type === 'keep_item' && partialAmount 
-      ? parseFloat(partialAmount)
-      : selectedItemsDetails.reduce((sum: number, item: OrderItem) => sum + parseFloat(item.subtotal), 0);
+    // Recompute breakdown and use final amount as the total refund stored in DB
+    const breakdown = computeRefundBreakdown();
+    const requestedBaseAmount = Number((breakdown.baseAmount || 0).toFixed(2));
+    const feeAmount = Number((breakdown.fee || 0).toFixed(2));
+    const finalRefundAmount = Number((breakdown.finalAmount || 0).toFixed(2));
 
-    // Map subType to backend expected value
-    const mapSubTypeToRefundMethod = (subType: string) => {
-      switch (subType) {
+    // Map type to backend expected value
+    const mapTypeToRefundMethod = (type: string) => {
+      switch (type) {
         case 'wallet': return 'wallet';
         case 'bank': return 'bank';
         case 'voucher': return 'voucher';
         case 'moneyback': return 'remittance';
-        default: return subType;
+        case 'replace': return 'replace';
+        default: return type;
       }
     };
 
     // Create FormData for file uploads
     const formData = new FormData();
-    
-    // Add refund data as JSON string
+
+    // Add refund data as JSON string (include breakdown fields)
     const refundData = {
       order_id: order.order_id,
       reason: returnReason,
-      preferred_refund_method: mapSubTypeToRefundMethod(selectedRefundMethod!.subType),
-      total_refund_amount: totalRefundAmount,
+      preferred_refund_method: mapTypeToRefundMethod(selectedRefundMethod!.type),
+      requested_refund_amount: requestedBaseAmount, // buyer requested/base amount (before fees)
+      refund_fee: feeAmount,
+      total_refund_amount: finalRefundAmount, // final amount to be paid to buyer (stored)
       customer_note: additionalDetails || '',
-      refund_category: selectedRefundMethod!.type,
+      refund_category: selectedRefundType!.id,
       // Add payment method details based on type
-      ...(selectedRefundMethod!.subType === 'wallet' ? {
+      ...(selectedRefundMethod!.type === 'wallet' ? {
         wallet_details: {
           provider: eWalletDetails.provider,
           account_name: eWalletDetails.accountName,
@@ -859,7 +1032,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
           contact_number: eWalletDetails.contactNumber
         }
       } : {}),
-      ...(selectedRefundMethod!.subType === 'bank' ? {
+      ...(selectedRefundMethod!.type === 'bank' ? {
         bank_details: {
           bank_name: bankDetails.bankName,
           account_name: bankDetails.accountName,
@@ -868,7 +1041,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
           branch: bankDetails.branch || ''
         }
       } : {}),
-      ...(selectedRefundMethod!.subType === 'moneyback' ? {
+      ...(selectedRefundMethod!.type === 'moneyback' ? {
         remittance_details: {
           provider: remittanceDetails.provider,
           first_name: remittanceDetails.firstName,
@@ -902,7 +1075,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
     // Submit to backend - use multipart/form-data
     const response = await AxiosInstance.post('/return-refund/create_refund/', formData, {
       headers: {
-        'Content-Type': 'multipart/form-data', // Important for file uploads
+        'Content-Type': 'multipart/form-data',
         'X-User-Id': user.id
       }
     });
@@ -962,16 +1135,22 @@ export default function RequestReturnRefund({ loaderData }: any) {
   }
 };
 
-  // Calculate maximum partial amount for keep items
-  const getMaxPartialAmount = () => {
-    if (!selectedRefundMethod || selectedRefundMethod.type !== 'keep_item') return 0;
-    const selectedItemsTotal = selectedItemsDetails.reduce((sum: number, item: OrderItem) => 
-      sum + parseFloat(item.subtotal), 0
-    );
-    return selectedItemsTotal * 0.7; // Max 70% for partial refund
+  // Calculate refund amount based on selections
+  const calculateRefundAmount = () => {
+    if (!selectedRefundType || selectedItems.length === 0) return 0;
+    
+    if (selectedRefundType.id === 'keep_item' && partialAmount) {
+      return parseFloat(partialAmount) || 0;
+    }
+    
+    if (selectedRefundType.id === 'return_item') {
+      return fullAmount;
+    }
+    
+    return 0; // For replacement, no monetary refund
   };
 
-  const maxPartialAmount = getMaxPartialAmount();
+  const refundAmount = calculateRefundAmount();
 
   // Get order status badge color
   const getStatusBadgeColor = (status: string) => {
@@ -1089,7 +1268,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
         <Progress value={33} className="h-2" />
         <div className="flex justify-between text-xs text-gray-500 mt-2">
           <span className="font-medium text-blue-600">Select Items</span>
-          <span>Choose Method</span>
+          <span>Choose Type & Method</span>
           <span>Review & Submit</span>
         </div>
       </div>
@@ -1243,141 +1422,254 @@ export default function RequestReturnRefund({ loaderData }: any) {
                 )}
               </div>
 
-              {/* Refund Method Selection */}
+              {/* Refund Type Selection */}
               <div>
                 <p className="text-sm font-medium mb-3 flex items-center gap-2">
-                  <CreditCard className="h-4 w-4" />
-                  Preferred Refund Method
+                  <RotateCcw className="h-4 w-4" />
+                  Refund Type
                 </p>
-                <div className="relative">
-                  <select
-                    value={selectedRefundMethod?.id || ''}
-                    onChange={(e) => {
-                      const method = refundMethods.find(m => m.id === e.target.value);
-                      setSelectedRefundMethod(method || null);
-                      // Reset partial amount when method changes
-                      if (method?.type === 'keep_item') {
-                        setPartialAmount('');
-                      }
-                    }}
-                    className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none bg-white"
-                  >
-                    <option value="">Select refund method</option>
-                    <optgroup label="Return Item">
-                      {refundMethods.filter(m => m.type === 'return_item').map((method) => (
-                        <option key={method.id} value={method.id}>
-                          {method.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Keep Item (Partial Refund)">
-                      {refundMethods.filter(m => m.type === 'keep_item').map((method) => (
-                        <option key={method.id} value={method.id}>
-                          {method.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Replacement">
-                      {refundMethods.filter(m => m.type === 'replacement').map((method) => (
-                        <option key={method.id} value={method.id}>
-                          {method.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                    <ChevronDown className="h-4 w-4" />
-                  </div>
-                </div>
                 
-                {selectedRefundMethod && (
-                  <div className="mt-3 p-3 border rounded-lg bg-gradient-to-r from-blue-50 to-white">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                        <selectedRefundMethod.icon className="h-5 w-5 text-blue-600" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <p className="font-medium text-sm">{selectedRefundMethod.label}</p>
-                          <Badge variant="outline" className={`text-xs ${
-                            selectedRefundMethod.type === 'return_item' 
-                              ? 'bg-red-50 text-red-700 border-red-200' :
-                            selectedRefundMethod.type === 'keep_item'
-                              ? 'bg-green-50 text-green-700 border-green-200' :
-                              'bg-purple-50 text-purple-700 border-purple-200'
-                          }`}>
-                            {selectedRefundMethod.type === 'return_item' ? 'Return Item' : 
-                             selectedRefundMethod.type === 'keep_item' ? 'Keep Item' : 'Replacement'}
-                          </Badge>
+                <CustomDropdown
+                  value={selectedRefundType?.id || ''}
+                  onChange={handleRefundTypeSelect}
+                  options={refundTypes.map(type => ({
+                    id: type.id,
+                    label: type.label,
+                    icon: type.icon,
+                    description: type.description
+                  }))}
+                  placeholder="Select refund type"
+                  icon={RotateCcw}
+                  label="What do you want to do with the item?"
+                />
+                
+                {selectedRefundType && (
+                  <div className="mt-4 p-3 border rounded-lg bg-gradient-to-r from-blue-50 to-white">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                          <selectedRefundType.icon className="h-4 w-4 text-blue-600" />
                         </div>
-                        <p className="text-xs text-muted-foreground mt-1">{selectedRefundMethod.description}</p>
+                        <div>
+                          <p className="font-medium text-sm">{selectedRefundType.label}</p>
+                          <p className="text-xs text-gray-500">{selectedRefundType.description}</p>
+                        </div>
                       </div>
+                      <Badge variant="outline" className={`text-xs ${
+                        selectedRefundType.id === 'return_item' 
+                          ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                        selectedRefundType.id === 'keep_item'
+                          ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                          'bg-purple-50 text-purple-700 border-purple-200'
+                      }`}>
+                        {selectedRefundType.id === 'return_item' ? 'Full Refund' : 
+                         selectedRefundType.id === 'keep_item' ? 'Partial Refund' : 'Replacement'}
+                      </Badge>
                     </div>
-                  </div>
-                )}
-
-                {/* Payment Method Form */}
-                {getPaymentForm()}
-
-                {/* Partial Amount Input for Keep Items */}
-                {selectedRefundMethod?.type === 'keep_item' && (
-                  <div className="mt-4 space-y-3 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-yellow-600" />
-                      <label className="text-sm font-medium">Partial Refund Amount *</label>
+                    <div className="mt-2 text-xs text-gray-600">
+                      {selectedRefundType.id === 'return_item' && (
+                        <div>
+                          <div>You&apos;ll return the item and receive a full refund of <strong>{formatCurrency(fullAmount)}</strong>.</div>
+                          {selectedRefundMethod && (
+                            <div className="text-xs text-gray-600 mt-1">
+                              {breakdown.fee > 0 ? (
+                                <>
+                                  Fee ({selectedRefundMethod.label}): <strong>{formatCurrency(breakdown.fee)}</strong> — You will receive <strong>{formatCurrency(breakdown.finalAmount)}</strong>
+                                </>
+                              ) : (
+                                <>
+                                  You will receive <strong>{formatCurrency(breakdown.finalAmount)}</strong>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {selectedRefundType.id === 'keep_item' && (
+                        <div>
+                          <div>You&apos;ll keep the item and can request up to <strong>{formatCurrency(maxPartialAmount)}</strong> (70% of item value).</div>
+                          {selectedRefundMethod && (
+                            <div className="text-xs text-gray-600 mt-1">
+                              {breakdown.fee > 0 ? (
+                                <>
+                                  Fee ({selectedRefundMethod.label}): <strong>{formatCurrency(breakdown.fee)}</strong> — You will receive <strong>{formatCurrency(breakdown.finalAmount)}</strong>
+                                </>
+                              ) : (
+                                <>
+                                  You will receive <strong>{formatCurrency(breakdown.finalAmount)}</strong>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {selectedRefundType.id === 'replacement' && (
+                        <span>You'll return the item and receive a replacement</span>
+                      )}
                     </div>
-                    <p className="text-sm text-gray-600 mb-2">
-                      You can request up to 70% of the item value (Max: {formatCurrency(maxPartialAmount)})
-                    </p>
-                    <div className="relative max-w-xs">
-                      <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₱</span>
-                      <input
-                        type="number"
-                        value={partialAmount}
-                        onChange={(e) => setPartialAmount(e.target.value)}
-                        className="w-full pl-8 p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                        placeholder="Enter amount"
-                        min="1"
-                        max={maxPartialAmount}
-                        step="0.01"
-                        required
-                      />
-                    </div>
-                    {partialAmount && parseFloat(partialAmount) > maxPartialAmount && (
-                      <p className="text-sm text-red-600 mt-1">
-                        Amount cannot exceed {formatCurrency(maxPartialAmount)}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {/* Voucher/Replacement Information */}
-                {selectedRefundMethod?.subType === 'voucher' && (
-                  <div className="mt-4 bg-purple-50 border border-purple-200 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Bell className="w-4 h-4 text-purple-600" />
-                      <p className="text-sm font-medium text-purple-800">Voucher Information</p>
-                    </div>
-                    <p className="text-sm text-purple-700">
-                      Vouchers will be sent directly to your notifications and email once approved.
-                      No additional details required.
-                    </p>
-                  </div>
-                )}
-
-                {selectedRefundMethod?.subType === 'replace' && (
-                  <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Package className="w-4 h-4 text-green-600" />
-                      <p className="text-sm font-medium text-green-800">Replacement Information</p>
-                    </div>
-                    <p className="text-sm text-green-700">
-                      A replacement item will be shipped once we receive and verify the returned item.
-                      Please allow 7-14 business days for processing.
-                    </p>
                   </div>
                 )}
               </div>
+
+              {/* Refund Method Selection */}
+              {selectedRefundType && (
+                <div className="space-y-4">
+                  <p className="text-sm font-medium flex items-center gap-2">
+                    <CreditCard className="h-4 w-4" />
+                    Refund Method
+                  </p>
+                  
+                  <CustomDropdown
+                    value={selectedRefundMethod?.id || ''}
+                    onChange={handleRefundMethodSelect}
+                    options={getAvailableMethods().map(method => ({
+                      id: method.id,
+                      label: method.label,
+                      icon: method.icon,
+                      description: method.description
+                    }))}
+                    placeholder="Select refund method"
+                    icon={CreditCard}
+                    label="How do you want to receive your refund?"
+                  />
+                  
+                  {selectedRefundMethod && (
+                    <div className="mt-4 p-3 border rounded-lg bg-gradient-to-r from-blue-50 to-white">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                            <selectedRefundMethod.icon className="h-4 w-4 text-blue-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm">{selectedRefundMethod.label}</p>
+                            <p className="text-xs text-gray-500">{selectedRefundMethod.description}</p>
+                            <div className="text-xs text-gray-600 mt-1">
+                              {breakdown.fee > 0 ? (
+                                <>
+                                  Fee ({selectedRefundMethod.type === 'moneyback' ? 'Remittance' : selectedRefundMethod.type === 'wallet' ? 'E-Wallet' : selectedRefundMethod.type}): <strong>{formatCurrency(breakdown.fee)}</strong>
+                                  <span className="mx-1">•</span>
+                                  Net: <strong>{formatCurrency(breakdown.finalAmount)}</strong>
+                                </>
+                              ) : (
+                                <>Net: <strong>{formatCurrency(breakdown.finalAmount)}</strong></>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                          {selectedRefundMethod.type === 'wallet' ? 'E-Wallet' :
+                           selectedRefundMethod.type === 'bank' ? 'Bank Transfer' :
+                           selectedRefundMethod.type === 'voucher' ? 'Store Voucher' :
+                           selectedRefundMethod.type === 'moneyback' ? 'Remittance' : 'Replacement'}
+                        </Badge>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Compact Refund Amount Card */}
+                  {selectedRefundMethod && (
+                    <div className="mt-3">
+                      <Card className="border">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm">Refund Amount</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-medium">Refund to {selectedRefundMethod.type === 'wallet' ? 'Wallet' : selectedRefundMethod.type === 'moneyback' ? 'Remittance' : (selectedRefundMethod.type === 'bank' ? 'Bank' : 'Store Voucher')}</p>
+                              <p className="text-xs text-gray-500">{selectedRefundMethod.type === 'wallet' ? 'Get refund to your e-wallet' : selectedRefundMethod.type === 'moneyback' ? 'Get refund via remittance' : selectedRefundMethod.type === 'bank' ? 'Get refund via bank transfer' : 'Get refund as store voucher'}</p>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs text-gray-500">Fee ({selectedRefundMethod.type === 'wallet' ? 'E-Wallet' : selectedRefundMethod.type === 'moneyback' ? 'Remittance' : selectedRefundMethod.type}):</div>
+                              <div className="font-medium">{formatCurrency(breakdown.fee)}</div>
+                              <div className="text-xs text-gray-500 mt-1">Net:</div>
+                              <div className="font-medium">{formatCurrency(breakdown.finalAmount)}</div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {/* Payment Method Form */}
+                  {getPaymentForm()}
+
+                  {/* Partial Amount Input for Keep Items */}
+                  {selectedRefundType?.id === 'keep_item' && (
+                    <div className="mt-4 space-y-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <Percent className="w-4 h-4 text-amber-600" />
+                        <label className="text-sm font-medium">Partial Refund Amount *</label>
+                      </div>
+                      <p className="text-sm text-gray-600 mb-2">
+                        You can request up to 70% of the item value (Max: {formatCurrency(maxPartialAmount)})
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                        <div className="text-center">
+                          <div className="text-xs text-gray-500 mb-1">Full Amount</div>
+                          <div className="font-medium text-sm">{formatCurrency(fullAmount)}</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-xs text-gray-500 mb-1">Max Partial (70%)</div>
+                          <div className="font-medium text-sm text-amber-600">{formatCurrency(maxPartialAmount)}</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-xs text-gray-500 mb-1">Your Request</div>
+                          <div className="font-medium text-sm text-green-600">
+                            {partialAmount ? formatCurrency(parseFloat(partialAmount)) : '₱0.00'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="relative max-w-xs">
+                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₱</span>
+                        <input
+                          type="number"
+                          value={partialAmount}
+                          onChange={(e) => setPartialAmount(e.target.value)}
+                          className="w-full pl-8 p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          placeholder="Enter amount"
+                          min="1"
+                          max={maxPartialAmount}
+                          step="0.01"
+                          required
+                        />
+                      </div>
+                      {partialAmount && parseFloat(partialAmount) > maxPartialAmount && (
+                        <p className="text-sm text-red-600 mt-1">
+                          Amount cannot exceed {formatCurrency(maxPartialAmount)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Voucher/Replacement Information */}
+                  {selectedRefundMethod?.type === 'voucher' && (
+                    <div className="mt-4 bg-purple-50 border border-purple-200 rounded-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Bell className="w-4 h-4 text-purple-600" />
+                        <p className="text-sm font-medium text-purple-800">Voucher Information</p>
+                      </div>
+                      <p className="text-sm text-purple-700">
+                        Vouchers will be sent directly to your notifications and email once approved.
+                        No additional details required.
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedRefundMethod?.type === 'replace' && (
+                    <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Package className="w-4 h-4 text-green-600" />
+                        <p className="text-sm font-medium text-green-800">Replacement Information</p>
+                      </div>
+                      <p className="text-sm text-green-700">
+                        A replacement item will be shipped once we receive and verify the returned item.
+                        Please allow 7-14 business days for processing.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Return Reason */}
               <div>
@@ -1399,7 +1691,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
                     ))}
                   </select>
                   <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                    <ChevronDown className="h-4 w-4" />
+                    <ChevronDown className="h-4 h-4" />
                   </div>
                 </div>
                 
@@ -1530,50 +1822,86 @@ export default function RequestReturnRefund({ loaderData }: any) {
             </CardContent>
           </Card>
 
-          {/* Estimated Refund */}
+          {/* Refund Summary */}
           <Card className="border shadow-sm">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Banknote className="h-4 w-4" />
-                Estimated Refund
+                Refund Summary
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Items Selected:</span>
-                <span className="font-medium">{selectedItems.length} items</span>
+            <CardContent className="space-y-3 text-xs">
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Items Selected:</span>
+                  <span className="font-medium">{selectedItems.length} items</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total Value:</span>
+                  <span className="font-medium">{formatCurrency(fullAmount)}</span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Refund Type:</span>
-                <span className="font-medium">
-                  {selectedRefundMethod 
-                    ? selectedRefundMethod.type === 'return_item' ? 'Return Item' : 
-                      selectedRefundMethod.type === 'keep_item' ? 'Keep Item' : 'Replacement'
-                    : 'Not selected'
-                  }
-                </span>
+              
+              <Separator />
+              
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Refund Type:</span>
+                  {selectedRefundType ? (
+                    <Badge variant="outline" className={`text-xs ${
+                      selectedRefundType.id === 'return_item' 
+                        ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                      selectedRefundType.id === 'keep_item'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                        'bg-purple-50 text-purple-700 border-purple-200'
+                    }`}>
+                      {selectedRefundType.label}
+                    </Badge>
+                  ) : (
+                    <span className="text-gray-500">Not selected</span>
+                  )}
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Refund Method:</span>
+                  {selectedRefundMethod ? (
+                    <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                      {selectedRefundMethod.label.split('(')[0].trim()}
+                    </Badge>
+                  ) : (
+                    <span className="text-gray-500">Not selected</span>
+                  )}
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Refund Method:</span>
-                <span className="font-medium truncate max-w-[120px]">
-                  {selectedRefundMethod?.label.split('&')[0] || 'Not selected'}
-                </span>
-              </div>
-              <Separator className="my-2" />
-              <div className="flex justify-between font-bold text-sm">
-                <span>Refund Amount:</span>
-                <span className="text-green-600">
-                  {selectedRefundMethod?.type === 'keep_item' && partialAmount 
-                    ? formatCurrency(parseFloat(partialAmount))
-                    : selectedItems.length > 0 
-                    ? formatCurrency(
-                        selectedItemsDetails.reduce((sum: number, item: OrderItem) => 
-                          sum + parseFloat(item.subtotal), 0
-                        )
-                      )
-                    : formatCurrency(0)
-                  }
-                </span>
+              
+              <Separator />
+              
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Refund Amount:</span>
+                  <span className={`font-bold text-sm ${
+                    refundAmount > 0 ? 'text-green-600' : 'text-gray-500'
+                  }`}>
+                    {refundAmount > 0 ? formatCurrency(refundAmount) : '₱0.00'}
+                  </span>
+                </div>
+                
+                {selectedRefundType?.id === 'return_item' && (
+                  <div className="text-xs text-gray-500">
+                    Full refund of selected items
+                  </div>
+                )}
+                
+                {selectedRefundType?.id === 'keep_item' && (
+                  <div className="text-xs text-gray-500">
+                    {partialAmount ? `${formatCurrency(parseFloat(partialAmount))} / ${formatCurrency(maxPartialAmount)} (max)` : 'Enter amount above'}
+                  </div>
+                )}
+                
+                {selectedRefundType?.id === 'replacement' && (
+                  <div className="text-xs text-gray-500">
+                    No monetary refund - replacement only
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -1628,10 +1956,11 @@ export default function RequestReturnRefund({ loaderData }: any) {
                 disabled={
                   loading ||
                   selectedItems.length === 0 || 
-                  !returnReason || 
+                  !selectedRefundType || 
                   !selectedRefundMethod || 
                   !isPaymentDetailsValid() ||
-                  (selectedRefundMethod?.type === 'keep_item' && (!partialAmount || parseFloat(partialAmount) > maxPartialAmount))
+                  !returnReason ||
+                  (selectedRefundType.id === 'keep_item' && (!partialAmount || parseFloat(partialAmount) > maxPartialAmount))
                 }
               >
                 {loading ? (
