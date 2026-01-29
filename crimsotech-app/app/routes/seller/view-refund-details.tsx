@@ -90,6 +90,7 @@ interface RefundDetails {
   preferred_refund_method?: string | null;
   buyer_preferred_refund_method?: string | null;
   final_refund_method?: string | null;
+  final_refund_type?: string | null;
   refund_payment_status?: string | null;
   seller_response?: string | null;
   customer_note?: string | null;
@@ -679,6 +680,7 @@ function normalizeRefund(refundRaw: any): RefundDetails {
     preferred_refund_method: (refundRaw as any).buyer_preferred_refund_method || (refundRaw as any).preferred_refund_method || null,
     buyer_preferred_refund_method: (refundRaw as any).buyer_preferred_refund_method || null,
     final_refund_method: (refundRaw as any).final_refund_method || null,
+    final_refund_type: (refundRaw as any).final_refund_type || (refundRaw as any).refund_type || null,
     refund_payment_status: (refundRaw as any).refund_payment_status || null,
     refund_category: (refundRaw as any).refund_type === 'return' ? 'return_item' : (refundRaw as any).refund_type === 'keep' ? 'keep_item' : (refundRaw as any).refund_category || null,
 
@@ -740,16 +742,18 @@ function normalizeRefund(refundRaw: any): RefundDetails {
 
 // ========== SEPARATED UI FUNCTIONS ==========
 
-function PendingStatusUI() {
+function PendingStatusUI({ refund }: { refund?: Partial<any> }) {
+  const refLabel = refund?.refund_id || refund?.refund || refund?.id || 'this request';
   return (
     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <Clock className="h-5 w-5 text-yellow-600" />
-        <div>
+        <div className="flex-1">
           <p className="font-medium text-yellow-800">Review Required</p>
-          <p className="text-sm text-yellow-700">
-            Please review the refund request and decide to approve, reject, or make a counter offer within 48 hours.
+          <p className="text-sm text-yellow-700 mb-2">
+            Please respond to request <strong>{refLabel}</strong>. If you do not respond, the moderation team will automatically approve and process the refund within 3 days.
           </p>
+
         </div>
       </div>
     </div>
@@ -872,6 +876,14 @@ function SellerRejectedStatusUI({ refund }: { refund: RefundDetails }) {
 function ApprovedStatusUI({ refund }: { refund: RefundDetails }) {
   const isReturnItem = refund.refund_category === 'return_item';
   const payStatus = String(refund.refund_payment_status || '').toLowerCase();
+  const rrTracking = String(refund.return_request?.tracking_number || '').trim();
+  const hasShippingInfo = Boolean(rrTracking) || String(refund.return_request?.status || '').toLowerCase() === 'shipped' || String(refund.return_request?.status || '').toLowerCase() === 'received';
+  const rrStatus = String(refund.return_request?.status || '').toLowerCase();
+  const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+  const isReturnAcceptedWaitingModeration = isReturnItem && rrStatus === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
+  if (isReturnAcceptedWaitingModeration) {
+    return <ReturnAcceptedModerationSellerUI refund={refund} />;
+  }
 
   // If payment is completed but refund.status remains 'approved', show completed panel to seller
   if (String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'completed') {
@@ -907,7 +919,7 @@ function ApprovedStatusUI({ refund }: { refund: RefundDetails }) {
           <p className="font-medium text-green-800">Request Approved</p>
           <p className="text-sm text-green-700">
             {isReturnItem 
-              ? 'Waiting for customer to return the item'
+              ? (hasShippingInfo ? 'Return shipment in progress' : 'Waiting for customer to return the item')
               : 'Ready to process refund payment'}
           </p>
         </div>
@@ -954,6 +966,20 @@ function ToVerifyStatusUI({ refund }: { refund: RefundDetails }) {
               You approved this refund request. Please inspect the returned item's condition and accept or reject the return.
             </p>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReturnAcceptedModerationSellerUI({ refund }: { refund: RefundDetails }) {
+  return (
+    <div className="mt-3 p-3 rounded bg-indigo-50 border border-indigo-200 text-indigo-800">
+      <div className="flex items-center gap-3">
+        <PackageCheck className="h-5 w-5 text-indigo-600" />
+        <div>
+          <p className="font-medium text-indigo-800">Return Accepted</p>
+          <p className="text-sm text-indigo-700 mt-1">You approved the return item request. The moderation team will process the refund.</p>
         </div>
       </div>
     </div>
@@ -1037,16 +1063,30 @@ function ReceivedStatusUI({ refund }: { refund: RefundDetails }) {
   );
 }
 
-function ToProcessStatusUI({ refund }: { refund: RefundDetails }) {
+function ToProcessStatusUI({ refund, moderationOnly = false }: { refund: RefundDetails; moderationOnly?: boolean }) {
+  const orderLabel = refund.order_info?.order_number || refund.order_info?.order_id || '—';
+
+  if (moderationOnly) {
+    return (
+      <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+        <div className="flex items-center gap-3">
+          <RefreshCw className="h-5 w-5 text-purple-600" />
+          <div>
+            <p className="font-medium text-purple-800">Awaiting Admin Processing</p>
+            <p className="text-sm text-gray-700 mt-1">The request has been accepted. The moderation team will process the refund for order <span className="font-medium">{orderLabel}</span>.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
       <div className="flex items-center gap-3">
         <RefreshCw className="h-5 w-5 text-purple-600" />
         <div>
           <p className="font-medium text-purple-800">Ready for Refund Processing</p>
-          <p className="text-sm text-purple-700">
-            Item verified - Process the refund payment
-          </p>
+          <p className="text-sm text-purple-700">Item verified - Process the refund payment</p>
           <div className="mt-2 flex items-center gap-4">
             <span className="text-sm">Amount: <strong>{formatMoney(getRequestedAmount(refund))}</strong></span>
             <span className="text-sm">Method: <strong>{refund.final_refund_method || refund.preferred_refund_method}</strong></span>
@@ -1091,18 +1131,7 @@ function DisputeStatusUI({ refund, onProceed, actionLoading }: { refund: RefundD
             {created && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at || created))}</p>}
 
             <div className="mt-4">
-              <Button size="sm" onClick={async () => {
-                try {
-                  if (!onProceed) return;
-                  const conf = window.confirm('Proceed to start refund processing?');
-                  if (!conf) return;
-                  await onProceed();
-                } catch (e) {
-                  console.error('Proceed to refund failed', e);
-                }
-              }} disabled={Boolean(actionLoading)}>
-                {actionLoading ? 'Processing…' : 'Proceed to refund'}
-              </Button>
+              <ToProcessStatusUI refund={refund} moderationOnly />
             </div>
           </div>
         </div>
@@ -2188,12 +2217,81 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
     return 'wallet';
   };
 
-  const defaultMethodWithType = `${(refund?.refund_type as string) || 'return'}:${normalizeMethod((refund?.buyer_preferred_refund_method as string) || 'wallet')}`;
+  // Offer selection: now only select refund type ('return' or 'keep') per requirement
+  const defaultMethodWithType = `${(refund?.refund_type as string) || 'return'}`;
   const [methodWithType, setMethodWithType] = useState<string>(defaultMethodWithType);
   const [notes, setNotes] = useState<string>('');
   const [counterAmount, setCounterAmount] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Buyer requested type (used to restrict seller offers)
+  const buyerRequestedType = (refund?.refund_type as string) || (refund as any)?.refund_category || null;
+
+  // Allowed offer types are the opposite of what buyer requested (if known)
+  const allowedOfferTypes = useMemo<{id:string; label:string}[]>(() => {
+    if (String(buyerRequestedType).toLowerCase() === 'return') return [{ id: 'keep', label: 'Keep Item (Partial refund)' }];
+    if (String(buyerRequestedType).toLowerCase() === 'keep') return [{ id: 'return', label: 'Return Item (Full refund)' }];
+    return [
+      { id: 'return', label: 'Return Item (Full refund)' },
+      { id: 'keep', label: 'Keep Item (Partial refund)' }
+    ];
+  }, [buyerRequestedType]);
+
+  // Service fee table and helpers
+  const serviceFeeForMethod = (methodRaw?: string | null) => {
+    const m = String((methodRaw || '').toLowerCase()).trim();
+    if (!m) return 10; // default to ewallet-style small fee
+    if (m.includes('wallet') || m.includes('ewallet')) return 10;
+    if (m.includes('remittance') || m.includes('money')) return 50;
+    if (m.includes('bank')) return 20;
+    if (m.includes('voucher') || m.includes('store')) return 0;
+    return 10;
+  };
+
+  // Use the original order total (sum of items or order total) as the canonical full requested amount
+  const getFullRequestedAmount = () => {
+    if (!refund) return 0;
+    const itemsTotal = (refund.order_items || []).reduce((sum: number, it: any) => {
+      const t = (it.total != null) ? Number(it.total) : (it.price != null ? Number(it.price) * Number(it.checkout_quantity || it.checkout_quantity || 1) : 0);
+      return sum + (Number.isFinite(t) ? t : 0);
+    }, 0);
+    if (itemsTotal > 0) return itemsTotal;
+    if (refund.order_info?.total_amount != null) return Number(refund.order_info.total_amount);
+    return 0;
+  };
+
+  const computeCounterAmountForType = (type: string) => {
+    // Always base calculations on the full original requested amount (not buyer-submitted overrides)
+    const requested = Number(getFullRequestedAmount() || 0);
+    const methodRaw = (refund?.buyer_preferred_refund_method || refund?.preferred_refund_method || refund?.final_refund_method || 'wallet');
+    const fee = serviceFeeForMethod(methodRaw as string);
+
+    if (type === 'return') {
+      // Full refund minus fee
+      const base = requested;
+      const net = Math.max(0, Number((base - fee).toFixed(2)));
+      return { base: Number(base.toFixed(2)), fee, net };
+    }
+
+    if (type === 'keep') {
+      // 70% of requested minus fee
+      const base = Number((requested * 0.7).toFixed(2));
+      const net = Math.max(0, Number((base - fee).toFixed(2)));
+      return { base, fee, net };
+    }
+
+    return { base: 0, fee: 0, net: 0 };
+  };
+
+  // Compute and set counter amount when the selected type or refund changes
+  useEffect(() => {
+    try {
+      const computed = computeCounterAmountForType(methodWithType);
+      setCounterAmount(String(Number(computed.net.toFixed(2))));
+    } catch (err) {
+      setCounterAmount('');
+    }
+  }, [methodWithType, refund]);
   const typeLabel = (type: string, method: string) => {
     if (type === 'keep') {
       switch (method) {
@@ -2215,10 +2313,22 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
   };
 
   useEffect(() => {
-    setMethodWithType(`${(refund?.refund_type as string) || 'return'}:${normalizeMethod((refund?.buyer_preferred_refund_method as string) || 'wallet')}`);
+    // Choose the opposite default offer type from what the buyer requested (fallback to 'return')
+    let defaultType = 'return';
+    if (String(buyerRequestedType).toLowerCase() === 'return') defaultType = 'keep';
+    else if (String(buyerRequestedType).toLowerCase() === 'keep') defaultType = 'return';
+
+    setMethodWithType(defaultType);
     setNotes('');
-    setCounterAmount('');
-  }, [refund]);
+
+    // Compute counter amount based on selected type using the canonical computation (base, fee, net)
+    try {
+      const computed = computeCounterAmountForType(defaultType);
+      setCounterAmount(String(Number(computed.net.toFixed(2))));
+    } catch (err) {
+      setCounterAmount('');
+    }
+  }, [refund, buyerRequestedType]);
 
   // derive preview of selection for UI (be tolerant of values like 'wallet' or display labels)
   let previewType = '';
@@ -2229,8 +2339,11 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
     previewMethod = _parts[1];
   } else if (_parts.length === 1) {
     const single = _parts[0];
-    // If it's a known method key, treat it as method and default type to refund.refund_type
-    if (METHODS.includes(single)) {
+    // If seller provided a simple type (return/keep), treat it as type and use buyer preferred method as fallback
+    if (single === 'return' || single === 'keep') {
+      previewType = single;
+      previewMethod = (refund?.buyer_preferred_refund_method as string) || 'wallet';
+    } else if (METHODS.includes(single)) {
       previewMethod = single;
       previewType = (refund?.refund_type as string) || 'return';
     } else {
@@ -2268,37 +2381,36 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
 
       const url = apiUrlFor(`/return-refund/${encodeURIComponent(String(idToUse))}/seller_respond_to_refund/`);
       // Send the full selection string (e.g. 'return:wallet' or 'keep:voucher') to persist exactly what seller chose in the dropdown.
-      const selection = String(methodWithType || '').trim();
-      const payload: any = { action: 'negotiate', counter_notes: notes };
-      if (selection) {
-        // Validate the selection's method part before sending; if invalid, skip sending method (message-only)
-        const parts = selection.split(':').map(s => s.trim());
-        const methodPart = parts.length === 2 ? parts[1].toLowerCase() : parts[0].toLowerCase();
-        if (METHODS.includes(methodPart)) {
-          payload.counter_refund_method = selection;
-        } else {
-          console.warn('Not including unknown counter method in payload (message-only):', selection);
-        }
-      }
+      const selection = String(methodWithType || '').trim(); // either 'return' or 'keep'
+      const payload: any = { action: 'negotiate', counter_notes: notes, counter_refund_type: selection };
 
-      // If seller proposed an amount (required for keep/return offers), validate client-side before sending
-      if (selectedType === 'keep' || selectedType === 'return') {
-        if (!counterAmount || Number.isNaN(Number(counterAmount)) || Number(counterAmount) <= 0) {
-          toast({ title: 'Validation Error', description: 'Please enter a positive counter refund amount', variant: 'destructive' });
+      // Determine and validate counter amount based on selection
+      const orderTotal = refund?.order_info?.total_amount != null ? Number(refund.order_info.total_amount) : null;
+
+      if (selection === 'return' || selection === 'keep') {
+        // Use the auto-calculated net amount for either return or keep
+        const computed = computeCounterAmountForType(selection);
+        const amountVal = Number(Number(computed.net || 0).toFixed(2));
+        if (Number.isNaN(amountVal) || amountVal <= 0) {
+          toast({ title: 'Validation Error', description: 'Calculated refund amount is invalid.', variant: 'destructive' });
           setIsSubmitting(false);
           return;
         }
-
-        const amountVal = Number(Number(counterAmount).toFixed(2));
-        // Basic client-side check: do not exceed order total if available
-        const orderTotal = refund?.order_info?.total_amount != null ? Number(refund.order_info.total_amount) : null;
         if (orderTotal != null && amountVal > orderTotal) {
-          toast({ title: 'Validation Error', description: 'Counter amount cannot exceed order total', variant: 'destructive' });
+          toast({ title: 'Validation Error', description: 'Calculated amount cannot exceed order total', variant: 'destructive' });
           setIsSubmitting(false);
           return;
         }
 
         payload.counter_refund_amount = amountVal;
+        // Also include breakdown fields for backend clarity
+        payload.counter_refund_base = Number(Number(computed.base || 0).toFixed(2));
+        payload.counter_refund_fee = Number(Number(computed.fee || 0).toFixed(2));
+      } else {
+        // Unknown selection
+        toast({ title: 'Validation Error', description: 'Please select a valid offer type', variant: 'destructive' });
+        setIsSubmitting(false);
+        return;
       }
 
       const resp = await fetch(url, {
@@ -2333,6 +2445,11 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
     }
   };
 
+  const rrStatusForCounter = String(refund?.return_request?.status || '').toLowerCase();
+  const payStatusForCounter = String(refund?.refund_payment_status || '').toLowerCase();
+  const finalTypeForCounter = String(refund?.final_refund_type || refund?.refund_type || '').toLowerCase();
+  const isReturnAcceptedWaitingModerationCounter = (refund?.refund_category === 'return_item' || String(refund?.refund_type || '').toLowerCase() === 'return') && rrStatusForCounter === 'approved' && String(refund?.status || '').toLowerCase() === 'approved' && payStatusForCounter === 'pending' && finalTypeForCounter === 'return';
+
   return (
     <div className="p-4 border rounded bg-white shadow-sm mt-4">
       <div className="flex items-start justify-between">
@@ -2341,7 +2458,7 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
             <MessageCircle className="h-5 w-5 text-blue-600" />
             <div>
               <div className="font-medium">Make Counter Offer</div>
-              <div className="text-sm text-gray-500">Propose a refund method to the buyer. Choices default to buyer's preferred method.</div>
+              <div className="text-sm text-gray-500">Propose an offer to the buyer: choose whether they should return the item (full refund) or keep the item (partial refund).</div>
             </div>
           </div>
         </div>
@@ -2350,7 +2467,7 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
         </div>
       </div>
 
-      {refund?.return_address && (
+      {refund?.return_address && !isReturnAcceptedWaitingModerationCounter && (
         <div className="mt-3">
           <div className="mt-3 p-3 bg-gray-50 border rounded">
             <p className="text-sm font-medium">Current Return Address</p>
@@ -2366,19 +2483,15 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
 
       <div className="mt-4 space-y-3">
         <div>
-          <Label className="text-sm">Choose Refund Method & Type</Label>
-          <select aria-label="Choose refund type and method" className="mt-1 block w-full rounded-md border p-2" value={methodWithType} onChange={(e) => setMethodWithType(e.target.value)}>
-            <optgroup label="Return Item">
-              {METHODS.map(m => (
-                <option key={`return:${m}`} value={`return:${m}`}>{typeLabel('return', m)}</option>
-              ))}
-            </optgroup>
-            <optgroup label="Keep Item (Partial)">
-              {METHODS.map(m => (
-                <option key={`keep:${m}`} value={`keep:${m}`}>{typeLabel('keep', m)}</option>
-              ))}
-            </optgroup>
+          <Label className="text-sm">Offer Type</Label>
+          <select aria-label="Choose refund type" className="mt-1 block w-full rounded-md border p-2" value={methodWithType} onChange={(e) => setMethodWithType(e.target.value)}>
+            {allowedOfferTypes.map((opt) => (
+              <option key={opt.id} value={opt.id}>{opt.label}</option>
+            ))}
           </select>
+          {buyerRequestedType && (
+            <p className="text-xs text-gray-500 mt-1">Buyer requested <span className="font-medium">{String(buyerRequestedType).replace('_', ' ')}</span>; you can only propose the opposite option here.</p>
+          )}
         </div>
 
         <div>
@@ -2392,33 +2505,48 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
 
             <div className="mt-1 flex items-center gap-3">
               <Input
-                type="number"
-                min="0"
-                step="0.01"
+                type="text"
                 value={counterAmount}
-                onChange={(e) => setCounterAmount(e.target.value)}
-                placeholder={refund?.order_info?.total_amount ? `Max ${formatMoney(refund.order_info.total_amount)}` : 'Amount (e.g., 100.00)'}
+                readOnly
+                disabled
+                className="bg-gray-50"
+                aria-readonly="true"
               />
 
               {/* Quick action: show buyer requested amount and allow using it */}
               <div className="flex items-center gap-2">
                 <div className="text-xs text-gray-500">Buyer requested:</div>
                 <div className="text-sm font-medium">{formatMoney(getRequestedAmount(refund || null))}</div>
-                <Button size="sm" variant="outline" onClick={() => setCounterAmount(String(Number(getRequestedAmount(refund || null)).toFixed(2)))} className="h-8">Use buyer amount</Button>
-                <Button size="sm" variant="ghost" onClick={() => {
-                  const full = (refund && refund.order_info && refund.order_info.total_amount != null) ? Number(refund.order_info.total_amount) : getRequestedAmount(refund || null);
-                  setCounterAmount(String(Number(full).toFixed(2)));
-                }} className="h-8">Full refund</Button>
               </div>
+
+              {methodWithType === 'return' && (
+                <div className="text-xs text-gray-500">(Auto-calculated for return)</div>
+              )}
+
+              <Button size="sm" variant="outline" disabled className="h-8" title="Amount is calculated automatically">Use buyer amount</Button>
+              <Button size="sm" variant="ghost" disabled className="h-8" title="Amount is calculated automatically">Full refund</Button>
             </div>
 
-            <p className="text-xs text-gray-500 mt-2">Enter the amount you propose to refund if buyer keeps the item or returns it. Must be positive and not exceed order total.</p>
+            { /* Breakdown: show base, fee, net */ }
+            <div className="mt-2 text-xs text-gray-500">
+              {(() => {
+                const comp = computeCounterAmountForType(selectedType);
+                return (
+                  <div>
+                    <div>Base: <strong>{formatMoney(comp.base)}</strong> • Fee: <strong>{formatMoney(comp.fee)}</strong> • Net: <strong>{formatMoney(comp.net)}</strong></div>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
 
         <div className="mt-2 text-sm text-gray-600">
           <div className="font-medium">Preview</div>
-          <div className="text-sm text-gray-700 mt-1">{selectedLabel}{selectedType === 'keep' && counterAmount ? (` — Amount: ${formatMoney(Number(counterAmount))}`) : null}</div>
+          <div className="text-sm text-gray-700 mt-1">
+            {selectedLabel}
+            {counterAmount ? (` — Amount: ${formatMoney(Number(counterAmount))}`) : null}
+          </div>
         </div>
 
         {/* If user selected a return-type counter but no return address exists, prompt them to add one first */}
@@ -2933,8 +3061,15 @@ export default function ViewRefundDetails() {
   const StatusIcon = statusConfig.icon;
 
   const rrStatusTop = String(refund.return_request?.status || '').toLowerCase();
-const isReturnAwaitingShipmentTop = rrStatusTop === '' ? Boolean(refund?.buyer_notified_at) : ['pending','shipped'].includes(rrStatusTop);
+// Consider tracking info as evidence the buyer has provided shipping info
+const hasReturnTrackingTop = Boolean(refund.return_request?.tracking_number || refund.tracking_number);
+const isReturnAwaitingShipmentTop = rrStatusTop === '' ? Boolean(refund?.buyer_notified_at || hasReturnTrackingTop) : ['pending','shipped'].includes(rrStatusTop);
 const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (refund?.refund_category === 'return_item' || (refund as any)?.refund_type === 'return') && isReturnAwaitingShipmentTop));
+
+// Special case: seller accepted return and refund is approved but payment is pending -> moderation-only processing
+const payStatusTop = String(refund.refund_payment_status || '').toLowerCase();
+const finalTypeTop = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'return_item' || String(refund?.refund_type || '').toLowerCase() === 'return') && rrStatusTop === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatusTop === 'pending' && finalTypeTop === 'return';
 
   const isProcessingCompactView = status === 'to_process' || (status === 'approved' && refund?.refund_payment_status === 'processing');
 
@@ -3003,20 +3138,9 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
             (rtype === 'return' && paymentStatus === 'processing' && rrStatus === 'approved')
           );
 
-          if (readyToProcess) {
-            // Show inline Processing UI after approval, but do not auto-open the confirmation modal —
-            // the seller can interact with the Processing UI directly to confirm/complete the refund.
-            setShowProcessingNow(true);
-            // For keep-type refunds which are approved, proactively set the payment status to 'processing'
-            if (rtype === 'keep' && String(updatedRefund.refund_payment_status || '').toLowerCase() !== 'processing') {
-              // Fire and forget - handleSetPaymentStatus will update refund state when done
-              handleSetPaymentStatus('processing');
-            }
-            // We intentionally do NOT call setAutoOpenProcessing(true) here to avoid opening the confirmation dialog immediately.
-          } else {
-            // Keep seller on the current details view (Approved/Waiting) per the tab rules
-            setShowProcessingNow(false);
-          }
+          // Do NOT trigger processing from the seller view. The moderation/admin team is responsible for
+          // starting payment processing. Keep seller on the current details view (Approved/Waiting).
+          setShowProcessingNow(false);
         } else {
           await fetchLatestRefund();
         }
@@ -3137,8 +3261,8 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
     showProcessingNow ||
     _paymentStatus === 'processing' ||
     _statusLower === 'to_process' ||
-    // Keep items: processing OR approved but payment not yet set (pending/empty)
-    (_rtypeLower === 'keep' && (_paymentStatus === 'processing' || (_statusLower === 'approved' && _payIsPendingOrEmpty))) ||
+    // Keep items: only when payment is explicitly in 'processing' state (admins may set this)
+    (_rtypeLower === 'keep' && _paymentStatus === 'processing') ||
     // Return items: need processing and return_request must be approved
     (_rtypeLower === 'return' && _paymentStatus === 'processing' && _rrStatus === 'approved')
   );
@@ -3159,24 +3283,9 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
     }
   }, [autoOpenProcessing, showProcessingNow]);
 
-  // Auto-trigger processing for keep-item refunds that are already approved.
+  // Auto-triggering processing is disabled in seller UI. Moderation/admin will start processing when appropriate.
   useEffect(() => {
-    if (!refund) return;
-    const rtype = String(refund.refund_type || '').toLowerCase();
-    const stat = String(refund.status || '').toLowerCase();
-    const pay = String(refund.refund_payment_status || '').toLowerCase();
-
-    // Only auto-trigger processing for keep refunds when payment status is explicitly pending or empty
-    // This avoids overwriting an explicit 'completed' status set by the seller's manual action.
-    const payIsPendingOrEmpty = pay === '' || pay === 'pending' || pay === 'none';
-
-    if (!autoTriggeredProcessing && rtype === 'keep' && stat === 'approved' && payIsPendingOrEmpty) {
-      // Show inline processing UI and request backend to mark as processing
-      setAutoTriggeredProcessing(true);
-      setShowProcessingNow(true);
-      // Fire and forget - handleSetPaymentStatus will update refund state when done
-      handleSetPaymentStatus('processing');
-    }
+    // Intentionally left blank to prevent seller-initiated processing.
   }, [refund, autoTriggeredProcessing]);
 
   const handleMarkAsReceived = async () => {
@@ -3260,12 +3369,7 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
           const updatedRefund = normalizeRefund(data.refund);
           setRefund(updatedRefund);
 
-          if (String(updatedRefund.refund_payment_status).toLowerCase() === 'processing' || String(updatedRefund.status).toLowerCase() === 'to_process') {
-            // Open the inline Processing UI without auto-opening the confirmation modal when approval comes from inspection.
-            setShowProcessingNow(true);
-            // Ensure any previously-requested auto-open is cleared so the modal does not appear unexpectedly.
-            setAutoOpenProcessing(false);
-          }
+          // If moderation moved this refund to a processing state, do not open seller-side processing UI here; moderation handles payment processing.
 
           toast({
             title: 'Success',
@@ -3617,6 +3721,7 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
 
     return (
       <div className="space-y-3">
+
         {isPending && (
           <>
             <Button
@@ -3689,64 +3794,11 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
 
 
 
-        {isProcessingCompactView && refund?.refund_payment_status === 'processing' && (
-          <div className="space-y-2">
-            <Button
-              onClick={handleProcessRefund}
-              disabled={actionLoading || !buttonEnabled}
-              className="w-full bg-emerald-600 hover:bg-emerald-700"
-              size="sm"
-            >
-              <CheckCircle className="h-4 w-4 mr-2" />
-              {actionLoading ? 'Updating...' : 'Mark Completed'}
-            </Button>
-
-            <div className="mt-1 flex items-center justify-between text-xs text-gray-500">
-              <div>Uploaded: {((refund as any)?.proofs ? (refund as any).proofs.length : 0)}</div>
-              <div>Pending: {(selectedProofFiles || []).length}</div>
-            </div>
-
-            {!buttonEnabled && (
-              <p className="mt-1 text-xs text-red-600">Please upload at least one proof before marking this refund as completed.</p>
-            )}
-
-            <Button
-              variant="outline"
-              onClick={() => handleSetPaymentStatus('failed')}
-              disabled={actionLoading}
-              className="w-full text-red-600 hover:text-red-700 hover:bg-red-50"
-              size="sm"
-            >
-              <XCircle className="h-4 w-4 mr-2" />
-              Mark Failed
-            </Button>
-          </div>
+        {(paymentStatus === 'processing' || String(refund.status || '').toLowerCase() === 'to_process') && (
+          <ToProcessStatusUI refund={refund} moderationOnly />
         )}
 
-        {readyToProcess && !isProcessingCompactView && (
-          <div>
-            <Button
-              onClick={() => { if (isProcessingState && !buttonEnabled) return; setShowProcessConfirmation(true); }}
-              disabled={actionLoading || (isProcessingState && !buttonEnabled)}
-              className="w-full bg-green-600 hover:bg-green-700"
-              size="sm"
-            >
-              <Wallet className="h-4 w-4 mr-2" />
-              {actionLoading ? 'Processing...' : 'Complete Refund'}
-            </Button>
 
-            <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-              <div>Uploaded: {((refund as any)?.proofs ? (refund as any).proofs.length : 0)}</div>
-              <div>Pending: {(selectedProofFiles || []).length}</div>
-            </div>
-
-            {isProcessingState && !buttonEnabled ? (
-              <p className="mt-2 text-xs text-red-600">Please upload at least one proof before completing the refund.</p>
-            ) : (
-              <p className="mt-2 text-xs text-gray-500">Files will be uploaded when you click <strong>Complete Refund</strong>.</p>
-            )}
-          </div>
-        )}
 
         {isWaiting && (
           <Button
@@ -3787,9 +3839,7 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
                   if (data && data.refund) {
                     const updated = normalizeRefund(data.refund);
                     setRefund(updated);
-                    if (String(updated.status).toLowerCase() === 'to_process' || String(updated.refund_payment_status).toLowerCase() === 'processing') {
-                      setAutoOpenProcessing(true);
-                    }
+                    // Do not auto-open processing modal from seller inspection; moderation will handle processing.
                   } else {
                     await fetchLatestRefund();
                   }
@@ -3881,7 +3931,7 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
     );
 
     if (showProcessingNow || readyToProcess) {
-      return <ProcessingRefundUI refund={refund} onProcess={handleProcessRefund} onSetPaymentStatus={handleSetPaymentStatus} autoOpenDetails={autoOpenProcessing} />;
+      return <ToProcessStatusUI refund={refund} moderationOnly />;
     }
 
     if (isWaitingDerived) return <WaitingStatusUI refund={refund} />;
@@ -3889,13 +3939,13 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
     if (refund.return_request?.status === 'inspected') return <ToVerifyStatusUI refund={refund} />;
 
     switch (effectiveStatus) {
-      case 'pending': return <PendingStatusUI />;
+      case 'pending': return <PendingStatusUI refund={refund} />;
       case 'negotiation': return <NegotiationStatusUI refund={refund} />;
       case 'approved': return <ApprovedStatusUI refund={refund} />;
       case 'waiting': return <WaitingStatusUI refund={refund} />;
       case 'to_verify': return <ToVerifyStatusUI refund={refund} />;
-      case 'to_process': return <ProcessingRefundUI refund={refund} onProcess={handleProcessRefund} onSetPaymentStatus={handleSetPaymentStatus} autoOpenDetails={autoOpenProcessing} />;
-      case 'dispute': return <DisputeStatusUI refund={refund} onProceed={async () => { setShowProcessingNow(true); await handleSetPaymentStatus('processing'); }} actionLoading={actionLoading} />;
+      case 'to_process': return <ToProcessStatusUI refund={refund} moderationOnly />;
+      case 'dispute': return <DisputeStatusUI refund={refund} onProceed={async () => { toast({ title: 'Info', description: 'Only moderation/admin can process refunds. Please contact a moderator to proceed.' }); }} actionLoading={actionLoading} />;
       case 'completed': return <CompletedStatusUI refund={refund} />;
       case 'rejected': return <SellerRejectedStatusUI refund={refund} />;
       case 'cancelled': return null;
@@ -3924,7 +3974,7 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
             {renderStatusUI}
 
             {/* Current return address (visible first when present) */}
-            {refund?.return_address && !(String(refund.refund_type || '').toLowerCase() === 'keep' && status === 'pending') && (
+            {refund?.return_address && !isReturnAcceptedWaitingModerationTop && !(String(refund.refund_type || '').toLowerCase() === 'keep' && status === 'pending') && (
               <div className="mt-3">
                 <CurrentReturnAddress refund={refund} onEdit={() => setShowReturnAddressModal(true)} />
               </div>
@@ -4065,10 +4115,10 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Wallet className="h-5 w-5 text-green-600" />
-                Complete Refund
+                Refund Processing (Moderation Only)
               </DialogTitle>
               <DialogDescription>
-                Confirm and complete this refund.
+                Moderation/admin handles completing refunds. Sellers cannot complete refunds from this view.
               </DialogDescription>
             </DialogHeader>
 
@@ -4084,19 +4134,9 @@ const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (ref
 
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowProcessConfirmation(false)} disabled={actionLoading}>
-                Cancel
+                Close
               </Button>
-              <Button
-                onClick={async () => {
-                  // Guard: require proof in processing state
-                  if (isProcessingState && !buttonEnabled) return;
-                  const ok = await handleProcessRefund();
-                  if (ok) setShowProcessConfirmation(false);
-                }}
-                disabled={actionLoading || (isProcessingState && !buttonEnabled)}
-              >
-                {actionLoading ? 'Processing...' : 'Confirm and Complete'}
-              </Button>
+              <div className="text-sm text-gray-600">Only moderation/admin can complete refunds. If you need assistance, contact a moderator.</div>
             </DialogFooter>
           </DialogContent>
         </Dialog>

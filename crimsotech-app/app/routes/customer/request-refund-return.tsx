@@ -818,6 +818,17 @@ export default function RequestReturnRefund({ loaderData }: any) {
 
   const { fullAmount, maxPartialAmount } = calculateRefundAmounts();
 
+  // When refund type is partial (keep_item), default the partial amount to the maximum partial value
+  useEffect(() => {
+    if (selectedRefundType && selectedRefundType.id === 'keep_item') {
+      // If user hasn't entered a value yet, default to maxPartialAmount
+      if (!partialAmount || parseFloat(String(partialAmount)) <= 0) {
+        setPartialAmount((Math.round((maxPartialAmount || 0) * 100) / 100).toFixed(2));
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRefundType, maxPartialAmount]);
+
   // Compute refund breakdown (base amount, fee, final amount)
   const computeRefundBreakdown = () => {
     const selectedTotal = selectedItemsDetails.reduce((sum: number, item: OrderItem) => sum + parseFloat(item.subtotal), 0);
@@ -1586,6 +1597,44 @@ export default function RequestReturnRefund({ loaderData }: any) {
                               <div className="font-medium">{formatCurrency(breakdown.finalAmount)}</div>
                             </div>
                           </div>
+
+                          {/* When refund type is partial (keep_item), show max partial and quick input here */}
+                          {selectedRefundType?.id === 'keep_item' && (
+                            <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2 text-center">
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">Full Amount</div>
+                                  <div className="font-medium text-sm">{formatCurrency(fullAmount)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">Max Partial (70%)</div>
+                                  <div className="font-medium text-sm text-amber-600">{formatCurrency(maxPartialAmount)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">Your Request</div>
+                                  <div className="font-medium text-sm text-green-600">{partialAmount ? formatCurrency(parseFloat(partialAmount)) : '₱0.00'}</div>
+                                </div>
+                              </div>
+
+                              <div className="relative max-w-xs mx-auto">
+                                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₱</span>
+                                <input
+                                  type="number"
+                                  value={partialAmount}
+                                  onChange={(e) => setPartialAmount(e.target.value)}
+                                  className="w-full pl-8 p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                  placeholder={formatCurrency(maxPartialAmount)}
+                                  min="1"
+                                  max={maxPartialAmount}
+                                  step="0.01"
+                                />
+                              </div>
+
+                              {partialAmount && parseFloat(partialAmount) > maxPartialAmount && (
+                                <p className="text-sm text-red-600 mt-1">Amount cannot exceed {formatCurrency(maxPartialAmount)}</p>
+                              )}
+                            </div>
+                          )}
                         </CardContent>
                       </Card>
                     </div>
@@ -1594,53 +1643,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
                   {/* Payment Method Form */}
                   {getPaymentForm()}
 
-                  {/* Partial Amount Input for Keep Items */}
-                  {selectedRefundType?.id === 'keep_item' && (
-                    <div className="mt-4 space-y-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <Percent className="w-4 h-4 text-amber-600" />
-                        <label className="text-sm font-medium">Partial Refund Amount *</label>
-                      </div>
-                      <p className="text-sm text-gray-600 mb-2">
-                        You can request up to 70% of the item value (Max: {formatCurrency(maxPartialAmount)})
-                      </p>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                        <div className="text-center">
-                          <div className="text-xs text-gray-500 mb-1">Full Amount</div>
-                          <div className="font-medium text-sm">{formatCurrency(fullAmount)}</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-xs text-gray-500 mb-1">Max Partial (70%)</div>
-                          <div className="font-medium text-sm text-amber-600">{formatCurrency(maxPartialAmount)}</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-xs text-gray-500 mb-1">Your Request</div>
-                          <div className="font-medium text-sm text-green-600">
-                            {partialAmount ? formatCurrency(parseFloat(partialAmount)) : '₱0.00'}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="relative max-w-xs">
-                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₱</span>
-                        <input
-                          type="number"
-                          value={partialAmount}
-                          onChange={(e) => setPartialAmount(e.target.value)}
-                          className="w-full pl-8 p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500"
-                          placeholder="Enter amount"
-                          min="1"
-                          max={maxPartialAmount}
-                          step="0.01"
-                          required
-                        />
-                      </div>
-                      {partialAmount && parseFloat(partialAmount) > maxPartialAmount && (
-                        <p className="text-sm text-red-600 mt-1">
-                          Amount cannot exceed {formatCurrency(maxPartialAmount)}
-                        </p>
-                      )}
-                    </div>
-                  )}
+
 
                   {/* Voucher/Replacement Information */}
                   {selectedRefundMethod?.type === 'voucher' && (

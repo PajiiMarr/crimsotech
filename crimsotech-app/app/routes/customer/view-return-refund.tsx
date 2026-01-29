@@ -598,16 +598,18 @@ function getSelectedSku(item: OrderItem) {
 
 // ========== SEPARATED UI FUNCTIONS ==========
 
-function PendingStatusUI() {
+function PendingStatusUI({ refund }: { refund?: Partial<any> }) {
+  const refLabel = refund?.refund_id || refund?.refund || refund?.id || 'this request';
   return (
     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <Clock className="h-5 w-5 text-yellow-600" />
-        <div>
+        <div className="flex-1">
           <p className="font-medium text-yellow-800">Request Under Review</p>
-          <p className="text-sm text-yellow-700">
-            Your refund request is being reviewed by the seller. Seller has 48 hours to respond.
+          <p className="text-sm text-yellow-700 mb-2">
+            Your refund request <strong>{refLabel}</strong> is pending review by the seller. Seller has 48 hours to respond. If the seller does not respond, the moderation team will automatically approve and process the refund within 3 days.
           </p>
+         
         </div>
       </div>
     </div>
@@ -645,6 +647,8 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
   const isKeepItem = refund.refund_type === 'keep';
   const rrStatus = String(refund.return_request?.status || '').toLowerCase();
   const payStatus = String(refund.refund_payment_status || '').toLowerCase();
+  const rrTracking = String(refund.return_request?.tracking_number || '').trim();
+  const hasShippingInfo = Boolean(rrTracking) || rrStatus === 'shipped' || rrStatus === 'received';
   // Processing applies to:
   // - Return items: when return_request.status is 'approved' and payment is 'processing'
   // - Keep items: when refund.status is 'approved' and payment is 'processing'
@@ -657,6 +661,10 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
     // Special case: dispute approved by admin can trigger processing even if return_request is rejected
     (dr && String((dr.status || '').trim()).toLowerCase() === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'processing')
   );
+
+  const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+  const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
+  const canProvideShipping = !isReturnAcceptedWaitingModeration;
   
   return (
     <div className="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -673,15 +681,21 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
               <PaymentCompletedUI refund={refund} formatCurrency={formatCurrency} />
             </div>
           ) : (
-            <p className="text-sm text-green-700">
-              {isReturnItem 
-                ? 'Please return the item to complete your refund'
-                : 'Your refund will be processed soon'}
-            </p>
+            // For return items, do not show the 'Please return' message if the buyer already provided shipping info
+            (!isReturnItem ? (
+              <p className="text-sm text-green-700">Your refund will be processed soon</p>
+            ) : (
+              // Special case: seller accepted the return (rrStatus === 'approved') and payment is pending -> moderation will process the refund
+              (rrStatus === 'approved' && payStatus === 'pending' && ((String(refund.final_refund_type || '').toLowerCase() === 'return') || (String(refund.refund_type || '').toLowerCase() === 'return'))) ? (
+                <ReturnAcceptedModerationUI refund={refund} />
+              ) : (!hasShippingInfo ? (
+                <p className="text-sm text-green-700">Please return the item to complete your refund</p>
+              ) : null)
+            ))
           )}
 
           {/* Return deadline and address for return refunds */}
-          {isReturnItem && (
+          {isReturnItem && !hasShippingInfo && (
             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
               <div>
                 <div className="text-xs text-gray-500">Return Deadline</div>
@@ -766,9 +780,11 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
                 </div>
               )}
 
-              <div className="mt-3">
-                <Button variant="ghost" size="sm" onClick={() => onOpenTrackingDialog && onOpenTrackingDialog()} className="h-8">Update shipping info</Button>
-              </div>
+              {canProvideShipping && (
+                <div className="mt-3">
+                  <Button variant="ghost" size="sm" onClick={() => onOpenTrackingDialog && onOpenTrackingDialog()} className="h-8">Update shipping info</Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -875,6 +891,13 @@ function WaitingStatusUI({ refund, onOpenTrackingDialog, actionLoading, onSubmit
   
   const isShipped = Boolean(rr?.status && ['shipped', 'received', 'inspected', 'completed'].includes(rr.status));
   const isReceived = Boolean(rr?.status && ['received', 'inspected', 'completed'].includes(rr.status));
+
+  // Disallow buyer-provided shipping info when seller already accepted the return and moderation will process the refund
+  const rrStatus = String(rr?.status || '').toLowerCase();
+  const payStatus = String(refund.refund_payment_status || '').toLowerCase();
+  const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+  const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
+  const canProvideShipping = !isReturnAcceptedWaitingModeration;
 
   const [showDetails, setShowDetails] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1038,9 +1061,11 @@ function WaitingStatusUI({ refund, onOpenTrackingDialog, actionLoading, onSubmit
                     </div>
                   )}
 
-                  <div className="mt-3">
-                    <Button variant="ghost" size="sm" onClick={() => setShowDetails(true)} className="h-8">Update shipping info</Button>
-                  </div>
+                  {canProvideShipping && (
+                    <div className="mt-3">
+                      <Button variant="ghost" size="sm" onClick={() => setShowDetails(true)} className="h-8">Update shipping info</Button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1263,6 +1288,19 @@ function ToVerifyStatusUI() {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+// New UI shown to customer when seller accepted return and moderation needs to process the refund
+function ReturnAcceptedModerationUI({ refund }: { refund: RefundDetail }) {
+  return (
+    <div className="mt-3 p-3 rounded bg-indigo-50 border border-indigo-200 text-indigo-800">
+      <p className="font-medium">Return Accepted</p>
+      <p className="text-sm mt-1">Seller accepted your return request. Waiting for the moderation team to process the refund.</p>
+      {refund?.return_request?.return_deadline && (
+        <div className="text-xs text-gray-600 mt-2">Return Deadline: {formatDate(refund.return_request.return_deadline)}</div>
+      )}
     </div>
   );
 }
@@ -2008,15 +2046,20 @@ function StatusAlertSection({ refund, statusConfig, StatusIcon }: { refund: Refu
                 const pay = String(refund.refund_payment_status || '').toLowerCase();
                 const rtype = String(refund.refund_type || '').toLowerCase();
                 if (rr === 'received') return 'Item has been received by the seller. Seller will inspect the item.';
-                if (rr === 'inspected') return 'Item has been inspected by the seller. Seller is processing your refund.';
+                if (rr === 'inspected') return 'Item has been inspected by the seller. Seller will accept or reject the return.';
                 if (rr === 'shipped') return 'Item has been shipped. Waiting for the seller to receive the item.';
                 if (rr === 'approved' && pay === 'processing') return 'Return approved — your refund is currently being processed.';
+                if (rr === 'approved' && pay === 'pending') return 'Seller accepted your return request. Waiting for the moderation team to process the refund.';
                 // Keep-type refunds that are approved and in 'processing' should show a similar processing message
                 if (rtype === 'keep' && pay === 'processing') return 'Your refund is currently being processed.';
+                // If buyer already provided shipping info, show an updated message instead of the 'Please return' prompt
+                if (refund.return_request?.tracking_number || String(refund.return_request?.status || '').toLowerCase() === 'shipped' || String(refund.return_request?.status || '').toLowerCase() === 'received') {
+                  return 'Return shipping information received. Waiting for seller to receive the item.';
+                }
                 return 'Your return request has been approved! Please return the item to complete your refund.';
               })()
             ) : (
-              'Your refund has been approved! Seller will process your refund payment.'
+              'Your refund has been approved! Waiting for moderation team to process the refund.'
             )
           )
         )}
@@ -2997,7 +3040,7 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
 
     switch (status) {
       case 'pending':
-        return <PendingStatusUI />;
+        return <PendingStatusUI refund={refund} />;
       case 'negotiation':
         return <NegotiationStatusUI refund={refund} formatDate={formatDate} formatCurrency={formatCurrency} />;
       case 'approved':
@@ -3021,7 +3064,7 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
       case 'cancelled':
         return <CancelledStatusUI />;
       default:
-        return <PendingStatusUI />;
+        return <PendingStatusUI refund={refund} />;
     }
   };
 
@@ -3036,7 +3079,9 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
     const dr = (refund as any).dispute || (refund as any).dispute_request || null;
     // Show Add/Update Tracking action only when refund is approved and the return hasn't moved to shipped/received/inspected
     // Also hide the action when the return is approved but the refund payment is processing or already completed
-    const showAddTrackingAction = ((status === 'approved' && (refund?.refund_category === 'return_item' || (refund as any)?.refund_type === 'return') && !['shipped','received','inspected'].includes(rrStatus) && !(rrStatus === 'approved' && ['processing','completed'].includes(payStatus)) && !(dr && String(dr.status || '').toLowerCase() === 'approved'))) || isWaitingDerived;
+    const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+    const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
+    const showAddTrackingAction = ((status === 'approved' && (refund?.refund_category === 'return_item' || (refund as any)?.refund_type === 'return') && !['shipped','received','inspected'].includes(rrStatus) && !(rrStatus === 'approved' && ['processing','completed'].includes(payStatus)) && !(dr && String(dr.status || '').toLowerCase() === 'approved') && !isReturnAcceptedWaitingModeration)) || isWaitingDerived;
 
     if (showAddTrackingAction) {
       return (

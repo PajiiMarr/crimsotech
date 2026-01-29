@@ -1,10 +1,11 @@
 import type { Route } from "./+types/refunds"
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
+
 import { 
   Card, 
   CardHeader, 
-  CardTitle, 
+  CardTitle,  
   CardContent, 
   CardDescription 
 } from '~/components/ui/card';
@@ -25,7 +26,7 @@ import {
   Line,
   CartesianGrid,
 } from 'recharts';
-import { 
+import {
   RefreshCw,
   Clock,
   ArrowUpDown,
@@ -37,10 +38,14 @@ import {
   CheckCircle,
   XCircle,
   Truck,
+  Eye,
+  Edit,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
+import { Link } from 'react-router';
+import RefundActions from '~/components/admin/refund-actions';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -60,6 +65,10 @@ interface Refund {
   processed_by_username?: string;
   processed_by_email?: string;
   reason: string;
+  // Amounts (optional - provided by recent changes)
+  requested_refund_amount?: number;
+  refund_fee?: number;
+  total_refund_amount?: number;
   status: 'pending' | 'approved' | 'rejected' | 'waiting' | 'to process' | 'completed';
   requested_at: string;
   logistic_service?: string;
@@ -69,6 +78,13 @@ interface Refund {
   processed_at?: string;
   has_media?: boolean;
   media_count?: number;
+  // Negotiation/return fields
+  final_refund_type?: string | null;
+  refund_type?: string | null;
+  refund_payment_status?: string | null;
+  has_return_request?: boolean;
+  return_request_status?: string | null;
+  approved_refund_amount?: number | null;
 }
 
 interface LoaderData {
@@ -156,8 +172,12 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     }
 
     // Handle the flattened data structure directly
-    if (refundsResponse.data && Array.isArray(refundsResponse.data)) {
-      refundsList = refundsResponse.data.map((refund: any) => ({
+    const rawRefunds = (refundsResponse.data && Array.isArray(refundsResponse.data))
+      ? refundsResponse.data
+      : (refundsResponse.data && Array.isArray(refundsResponse.data.refunds) ? refundsResponse.data.refunds : []);
+
+    if (rawRefunds.length) {
+      refundsList = rawRefunds.map((refund: any) => ({
         refund: refund.refund,
         order_id: refund.order_id || 'N/A',
         order_total_amount: refund.order_total_amount || 0,
@@ -166,10 +186,23 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
         processed_by_username: refund.processed_by_username,
         processed_by_email: refund.processed_by_email,
         reason: refund.reason || 'No reason provided',
+        // Amounts (may be missing)
+        requested_refund_amount: refund.requested_refund_amount != null ? refund.requested_refund_amount : null,
+        refund_fee: refund.refund_fee != null ? refund.refund_fee : null,
+        total_refund_amount: refund.total_refund_amount != null ? refund.total_refund_amount : null,
+        approved_refund_amount: refund.approved_refund_amount != null ? refund.approved_refund_amount : null,
         status: refund.status || 'pending',
         requested_at: refund.requested_at,
         logistic_service: refund.logistic_service,
         tracking_number: refund.tracking_number,
+
+        // New fields for return/negotiation handling
+        final_refund_type: refund.final_refund_type || null,
+        refund_type: refund.refund_type || null,
+        refund_payment_status: refund.refund_payment_status || null,
+        has_return_request: refund.has_return_request || false,
+        return_request_status: refund.return_request_status || null,
+
         preferred_refund_method: refund.preferred_refund_method,
         final_refund_method: refund.final_refund_method,
         processed_at: refund.processed_at,
@@ -456,6 +489,8 @@ export default function Refunds({ loaderData }: { loaderData: LoaderData }) {
   );
 }
 
+// Actions are provided by `components/admin/refund-actions` which uses client-side navigation with `useNavigate`.
+
 const columns: ColumnDef<Refund>[] = [
   {
     accessorKey: "refund",
@@ -531,6 +566,30 @@ const columns: ColumnDef<Refund>[] = [
         </Badge>
       );
     },
+  },
+  {
+    id: 'request',
+    header: 'Request',
+    cell: ({ row }: { row: any }) => {
+      const reason = row.original.reason || 'No reason provided';
+      const requested = row.original.requested_refund_amount;
+      const total = row.original.total_refund_amount;
+      return (
+        <div className="text-xs sm:text-sm">
+          <div className="font-medium truncate max-w-[240px]">{reason}</div>
+          {(requested != null || total != null) && (
+            <div className="text-muted-foreground text-xs mt-1">
+              {requested != null && <span>Requested: ₱{Number(requested).toLocaleString()}</span>}
+              {requested != null && total != null && <span className="mx-1">•</span>}
+              {total != null && <span>Net: ₱{Number(total).toLocaleString()}</span>}
+            </div>
+          )}
+          <div className="mt-1">
+            <Link to={`/admin/view-refund-details/${row.original.refund}`} className="text-blue-600 text-xs">View details</Link>
+          </div>
+        </div>
+      )
+    }
   },
   {
     accessorKey: "requested_at",
@@ -614,5 +673,17 @@ const columns: ColumnDef<Refund>[] = [
         )}
       </div>
     ),
+  },
+  {
+    id: 'actions',
+    header: 'Actions',
+    cell: ({ row }: { row: any}) => {
+      const refund = row.original;
+      return (
+        <div className="flex items-center gap-1">
+          <RefundActions refundId={refund.refund} />
+        </div>
+      );
+    },
   }
 ];

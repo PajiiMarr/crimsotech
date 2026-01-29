@@ -106,6 +106,9 @@ export default [
         route('riders', 'routes/admin/riders.tsx'),
         route('vouchers', 'routes/admin/vouchers.tsx'),
         route('refunds', 'routes/admin/refunds.tsx'),
+        // Detail view for admin refund (supports :refundId and query-based navigation)
+        route('view-refund-details/:refundId', 'routes/admin/view_refund/view-refund-details.tsx'),
+        route('view-refund/process-refund/:refundId', 'routes/admin/view_refund/process-refund-page.tsx'),
         route('users', 'routes/admin/users.tsx'),
         route('team', 'routes/admin/team.tsx'), 
         route('reports', 'routes/admin/reports.tsx'),

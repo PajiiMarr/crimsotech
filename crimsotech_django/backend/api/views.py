@@ -6158,16 +6158,24 @@ class AdminRefunds(viewsets.ViewSet):
     def get_metrics(self, request):
         """Get refund metrics for admin dashboard"""
         try:
-            # Calculate all metrics with proper model relationships
+            # Dynamically resolve the Refund -> Order FK field name (handles 'order' or 'order_id')
+            order_field = None
+            for f in Refund._meta.get_fields():
+                if getattr(f, 'related_model', None) == Order and getattr(f, 'many_to_one', False):
+                    order_field = f.name
+                    break
+            if not order_field:
+                order_field = 'order_id'
+
             refunds_queryset = Refund.objects.select_related(
-                'order', 
-                'requested_by', 
+                order_field,
+                'requested_by',
                 'processed_by'
             )
             
             # Total counts by status
             status_counts = refunds_queryset.values('status').annotate(
-                count=Count('refund')
+                count=Count('refund_id')
             )
             
             status_count_map = {item['status']: item['count'] for item in status_counts}
@@ -6176,7 +6184,7 @@ class AdminRefunds(viewsets.ViewSet):
             total_refund_amount = refunds_queryset.filter(
                 status__in=['approved', 'completed']
             ).aggregate(
-                total_amount=Sum('order__total_amount')
+                total_amount=Sum(f"{order_field}__total_amount")
             )['total_amount'] or Decimal('0.00')
             
             # Average processing time in hours (for completed refunds)
@@ -6199,7 +6207,7 @@ class AdminRefunds(viewsets.ViewSet):
             common_reason = refunds_queryset.exclude(
                 Q(reason__isnull=True) | Q(reason__exact='')
             ).values('reason').annotate(
-                count=Count('refund')
+                count=Count('refund_id')
             ).order_by('-count').first()
             
             # This month's refunds
@@ -6215,7 +6223,7 @@ class AdminRefunds(viewsets.ViewSet):
             avg_refund_amount = refunds_queryset.filter(
                 status__in=['approved', 'completed']
             ).aggregate(
-                avg_amount=Avg('order__total_amount')
+                avg_amount=Avg(f"{order_field}__total_amount")
             )['avg_amount'] or Decimal('0.00')
             
             metrics = {
@@ -6269,7 +6277,7 @@ class AdminRefunds(viewsets.ViewSet):
             
             # Status distribution - ACTUALLY QUERY THE DATABASE
             status_distribution = Refund.objects.values('status').annotate(
-                count=Count('refund')
+                count=Count('refund_id')
             ).order_by('status')
             
             total_refunds = sum(item['count'] for item in status_distribution)
@@ -6294,8 +6302,8 @@ class AdminRefunds(viewsets.ViewSet):
             ).annotate(
                 month=TruncMonth('requested_at')
             ).values('month').annotate(
-                requested=Count('refund'),
-                processed=Count('refund', filter=Q(status__in=['completed', 'approved']))
+                requested=Count('refund_id'),
+                processed=Count('refund_id', filter=Q(status__in=['completed', 'approved']))
             ).order_by('month')
             
             monthly_trend = []
@@ -6307,11 +6315,11 @@ class AdminRefunds(viewsets.ViewSet):
                     'full_month': item['month'].strftime('%B %Y')
                 })
             
-            # Refund reasons (top 10)
+              # Refund reasons (top 10)
             refund_reasons = Refund.objects.exclude(
                 Q(reason__isnull=True) | Q(reason__exact='')
             ).values('reason').annotate(
-                count=Count('refund')
+                count=Count('refund_id')
             ).order_by('-count')[:10]
             
             total_with_reasons = sum(item['count'] for item in refund_reasons)
@@ -6325,25 +6333,25 @@ class AdminRefunds(viewsets.ViewSet):
                     'percentage': round(percentage, 1)
                 })
             
-            # Refund methods distribution
+            # Refund methods distribution (use actual model field name)
             refund_methods = Refund.objects.exclude(
-                Q(preferred_refund_method__isnull=True) | 
-                Q(preferred_refund_method__exact='')
-            ).values('preferred_refund_method').annotate(
-                count=Count('refund')
+                Q(buyer_preferred_refund_method__isnull=True) | 
+                Q(buyer_preferred_refund_method__exact='')
+            ).values('buyer_preferred_refund_method').annotate(
+                count=Count('refund_id')
             ).order_by('-count')
             
-            total_with_methods = sum(item['count'] for item in refund_methods)
+            total_with_methods = sum(item.get('count', 0) for item in refund_methods)
             
             methods_data = []
             for item in refund_methods:
                 percentage = (item['count'] / total_with_methods * 100) if total_with_methods > 0 else 0
                 methods_data.append({
-                    'method': item['preferred_refund_method'],
+                    'method': item['buyer_preferred_refund_method'],
                     'count': item['count'],
                     'percentage': round(percentage, 1)
                 })
-            
+        
             analytics_data = {
                 'status_distribution': status_data,
                 'monthly_trend_data': monthly_trend,
@@ -6378,33 +6386,136 @@ class AdminRefunds(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def refund_list(self, request):
-        """Simple refund list endpoint"""
+        """Get all refund requests for admin/moderation team"""
         try:
-            # Return empty array if models work but no data
+            # Resolve FK name used for Refund->Order relationship and fetch related data
+            order_field = None
+            for f in Refund._meta.get_fields():
+                if getattr(f, 'related_model', None) == Order and getattr(f, 'many_to_one', False):
+                    order_field = f.name
+                    break
+            if not order_field:
+                order_field = 'order_id'
+
+            refunds = Refund.objects.select_related(
+                order_field,
+                'requested_by',
+                'processed_by'
+            ).prefetch_related(
+                f'{order_field}__payment_set'  # Payments are a reverse FK (use payment_set)
+            ).all().order_by('-requested_at')  # Most recent first
+
             refunds_data = []
-            
-            # Try to get actual data if models are accessible
-            if hasattr(Refund, 'objects'):
-                refunds = Refund.objects.all()
-                for refund in refunds:
-                    refunds_data.append({
-                        'refund': str(refund.refund),
-                        'order_id': str(refund.order.order) if refund.order else 'N/A',
-                        'order_total_amount': float(refund.order.total_amount) if refund.order else 0.0,
-                        'requested_by_username': refund.requested_by.username if refund.requested_by else 'Unknown',
-                        'status': refund.status or 'pending',
-                        'requested_at': refund.requested_at.isoformat() if refund.requested_at else None,
-                        'reason': refund.reason or 'No reason provided',
-                    })
-            
+
+            for refund in refunds:
+                # Get refund amounts based on your model structure
+                requested_amount = None
+                refund_fee = None
+                total_refund_amount = None
+
+                # Calculate amounts using the resolved related order object
+                order_obj = getattr(refund, order_field, None)
+                if order_obj:
+                    requested_amount = float(order_obj.total_amount)
+                    # Example: 5% processing fee
+                    refund_fee = float(order_obj.total_amount) * 0.05
+                    total_refund_amount = requested_amount - refund_fee
+
+                refund_data = {
+                    'refund': str(getattr(refund, 'refund_id', getattr(refund, 'refund', ''))),
+                    'order_id': str(getattr(order_obj, 'order')) if order_obj else 'N/A',
+                    'order_total_amount': float(order_obj.total_amount) if order_obj else 0.0,
+                    
+                    # Requested by user info
+                    'requested_by_username': refund.requested_by.username if refund.requested_by else 'Unknown',
+                    'requested_by_email': refund.requested_by.email if refund.requested_by else 'N/A',
+                    
+                    # Processed by user info (if processed)
+                    'processed_by_username': refund.processed_by.username if refund.processed_by else None,
+                    'processed_by_email': refund.processed_by.email if refund.processed_by else None,
+                    
+                    # Refund details
+                    'reason': refund.reason or 'No reason provided',
+                    'status': refund.status or 'pending',
+                    'requested_at': refund.requested_at.isoformat() if refund.requested_at else None,
+                    'processed_at': refund.processed_at.isoformat() if refund.processed_at else None,
+                    
+                    # Amount information
+                    'requested_refund_amount': requested_amount,
+                    'refund_fee': refund_fee,
+                    'total_refund_amount': total_refund_amount,
+                    'approved_refund_amount': float(refund.approved_refund_amount) if getattr(refund, 'approved_refund_amount', None) is not None else None,
+                    
+                    # Shipping/logistics info (if available in your model)
+                    'logistic_service': refund.logistic_service if hasattr(refund, 'logistic_service') else None,
+                    'tracking_number': refund.tracking_number if hasattr(refund, 'tracking_number') else None,
+                    
+                    # Refund types and payment status
+                    'final_refund_type': getattr(refund, 'final_refund_type', None),
+                    'refund_type': getattr(refund, 'refund_type', None),
+                    'refund_payment_status': getattr(refund, 'refund_payment_status', None),
+
+                    # Return request serialized (if present) so clients can render return lifecycle UIs
+                    'return_request': None,
+                    'has_return_request': bool(getattr(refund, 'return_request', None)),
+                    'return_request_status': getattr(getattr(refund, 'return_request', None), 'status', None),
+                    'return_deadline': getattr(getattr(refund, 'return_request', None), 'return_deadline', None).isoformat() if (getattr(refund, 'return_request', None) and getattr(getattr(refund, 'return_request', None), 'return_deadline', None)) else None,
+
+                    # Refund method (provide both buyer_preferred_refund_method and preferred_refund_method for compatibility)
+                    'buyer_preferred_refund_method': getattr(refund, 'buyer_preferred_refund_method', getattr(refund, 'preferred_refund_method', None)),
+                    'preferred_refund_method': getattr(refund, 'preferred_refund_method', getattr(refund, 'buyer_preferred_refund_method', None)),
+                    'final_refund_method': refund.final_refund_method if hasattr(refund, 'final_refund_method') else None,
+                    
+                    # Media attachments
+                    'has_media': refund.refundmedia_set.exists() if hasattr(refund, 'refundmedia_set') else False,
+                    'media_count': refund.refundmedia_set.count() if hasattr(refund, 'refundmedia_set') else 0,
+                }
+                # If a ReturnRequestItem exists on the refund, include a serialized shape for UI consumption
+                rr_obj = getattr(refund, 'return_request', None)
+                if rr_obj:
+                    medias_list = []
+                    try:
+                        media_qs = rr_obj.medias.all() if hasattr(rr_obj, 'medias') else (rr_obj.returnrequestmedia_set.all() if hasattr(rr_obj, 'returnrequestmedia_set') else [])
+                        for m in media_qs:
+                            file_url = None
+                            if getattr(m, 'file_data', None):
+                                try:
+                                    file_url = request.build_absolute_uri(m.file_data.url)
+                                except Exception:
+                                    file_url = None
+                            medias_list.append({
+                                'id': str(getattr(m, 'id', None)),
+                                'file_url': file_url,
+                                'file_type': getattr(m, 'file_type', None),
+                                'notes': getattr(m, 'notes', None)
+                            })
+                    except Exception:
+                        medias_list = []
+
+                    refund_data['return_request'] = {
+                        'id': str(getattr(rr_obj, 'id', None)),
+                        'status': getattr(rr_obj, 'status', None),
+                        'tracking_number': getattr(rr_obj, 'tracking_number', None),
+                        'tracking_url': getattr(rr_obj, 'tracking_url', None),
+                        'shipped_at': getattr(rr_obj, 'shipped_at').isoformat() if getattr(rr_obj, 'shipped_at', None) else None,
+                        'received_at': getattr(rr_obj, 'received_at').isoformat() if getattr(rr_obj, 'received_at', None) else None,
+                        'logistic_service': getattr(rr_obj, 'logistic_service', None),
+                        'notes': getattr(rr_obj, 'notes', None),
+                        'medias': medias_list
+                    }
+
+                refunds_data.append(refund_data)
+
             return Response(refunds_data, status=status.HTTP_200_OK)
             
         except Exception as e:
+            print(f"Refund list error: {str(e)}")
             return Response(
-                {'error': f'Refund list error: {str(e)}'}, 
+                {'error': f'Failed to fetch refund list: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
+            )  
+
+
 class AdminUsers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
@@ -21802,6 +21913,18 @@ class RefundViewSet(viewsets.ViewSet):
                                 else:
                                     return Response({"error": "Invalid counter refund method"}, status=status.HTTP_400_BAD_REQUEST)
 
+                        # Also accept an explicit counter type parameter (frontend may send 'counter_refund_type' separately)
+                        explicit_type = request.data.get('counter_refund_type') or request.data.get('counter_type')
+                        if explicit_type:
+                            try:
+                                tval = str(explicit_type).strip().lower()
+                                if tval in allowed_types:
+                                    counter_type = tval
+                                else:
+                                    return Response({"error": "Invalid counter refund type"}, status=status.HTTP_400_BAD_REQUEST)
+                            except Exception:
+                                return Response({"error": "Invalid counter refund type"}, status=status.HTTP_400_BAD_REQUEST)
+
                         # Accept counter amount (required for keep/return offers)
                         counter_amount_raw = request.data.get('counter_refund_amount') or request.data.get('counter_amount')
                         counter_amount_decimal = None
@@ -21920,11 +22043,39 @@ class RefundViewSet(viewsets.ViewSet):
                     if ctype in ('return', 'keep'):
                         refund.refund_type = ctype
 
+                        # Record the final accepted counter type explicitly
+                        try:
+                            refund.final_refund_type = str(cr.counter_refund_type)
+                        except Exception:
+                            pass
+
+                        # If the accepted type is a return, prepare return workflow so buyer can enter shipping info
+                        if ctype == 'return':
+                            # Mark buyer as notified so UI shows 'to ship' flow
+                            refund.buyer_notified_at = timezone.now()
+                            # Create a ReturnRequestItem if one does not exist so buyer can submit tracking right away
+                            try:
+                                rr = refund.return_request
+                            except ReturnRequestItem.DoesNotExist:
+                                try:
+                                    ReturnRequestItem.objects.create(
+                                        refund_id=refund,
+                                        return_method=cr.counter_refund_method or refund.buyer_preferred_refund_method or 'courier',
+                                        return_deadline=timezone.now() + timedelta(days=7)
+                                    )
+                                except Exception:
+                                    # If creation fails, continue without blocking acceptance
+                                    pass
+
                 refund.status = 'approved'
                 refund.processed_by = user
                 refund.processed_at = timezone.now()
                 cr.status = 'accepted'
                 cr.save()
+                # Keep payment status as pending for admin/moderation to process the actual payment.
+                # Do not auto-set to 'processing' here. If the payment was already completed, preserve that state.
+                if getattr(refund, 'refund_payment_status', None) != 'completed':
+                    refund.refund_payment_status = 'pending'
                 refund.save()
 
                 data = self._get_refund_details_data(refund, request, user)
@@ -22383,9 +22534,11 @@ class RefundViewSet(viewsets.ViewSet):
                 return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
 
             # Authorization check: seller must own the shop for this refund
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
+            # Allow admin/moderator to upload proofs for any shop
+            if not (user.is_admin or user.is_moderator):
+                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+                if err:
+                    return err
 
             files = request.FILES.getlist('file_data') or []
             if not files:
@@ -22553,16 +22706,14 @@ class RefundViewSet(viewsets.ViewSet):
             notes = request.data.get('verification_notes', '')
 
             if action == 'approved':
-                # Seller accepts the return; keep refund.status = 'approved' but mark payment as processing
+                # Seller accepts the return; keep refund.status = 'approved'. Payment will be handled by admin/moderation.
                 return_request.status = 'approved'
-                refund.refund_payment_status = 'processing'
-                # ensure refund.status remains 'approved' for DB constraints
-                refund.processed_by = user
-                refund.processed_at = timezone.now()
+                # Do NOT mark payment as processing here; admin will set `refund.refund_payment_status` to 'processing' when they process the refund
                 return_request.notes = f"{return_request.notes or ''}\nSeller accepted: {notes}"
                 return_request.updated_by = user
                 return_request.updated_at = timezone.now()
                 return_request.save()
+                # Leave refund.refund_payment_status unchanged (remain pending)
                 refund.save()
 
             elif action == 'rejected':
@@ -22743,22 +22894,101 @@ class RefundViewSet(viewsets.ViewSet):
             except Refund.DoesNotExist:
                 return Response({"error": "Refund not found"}, 
                                 status=status.HTTP_404_NOT_FOUND)
-            
-            # Update fields
-            update_fields = {}
-            
-            if 'status' in request.data:
-                update_fields['status'] = request.data['status']
-            
-            if 'refund_payment_status' in request.data:
-                update_fields['refund_payment_status'] = request.data['refund_payment_status']
-            
-            if 'final_refund_method' in request.data:
-                update_fields['final_refund_method'] = request.data['final_refund_method']
-            
-            if 'customer_note' in request.data:
-                update_fields['customer_note'] = f"{refund.customer_note or ''}\n[Admin]: {request.data['customer_note']}"
 
+            # New admin_process_refund action: allow admin/moderator to process refund (multipart, with proofs)
+            # This mirrors seller.process_refund but is available to admins
+            # Usage: POST to /return-refund/<id>/admin_process_refund/ with multipart/form-data keys:
+            #   - file_data (file) (optional, can be multiple)
+            #   - final_refund_method (optional)
+            #   - set_status (one of processing/completed/failed) (optional)
+            #   - customer_note (optional)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def admin_process_refund(self, request, pk=None):
+        """
+        ADMIN VIEW: Process a refund payment as admin/moderator. Accepts multipart form for uploading proofs and setting payment status.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            # Require admin or moderator
+            if not (user.is_admin or user.is_moderator):
+                return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except (ValueError, TypeError):
+                return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Handle files (optional)
+            files = request.FILES.getlist('file_data') or []
+            if not files:
+                single = request.FILES.get('file')
+                if single:
+                    files = [single]
+
+            if files:
+                existing_count = RefundProof.objects.filter(refund=refund).count()
+                if existing_count + len(files) > 4:
+                    remaining = max(0, 4 - existing_count)
+                    return Response({"error": f"Cannot upload: only {remaining} proof(s) remaining"}, status=status.HTTP_400_BAD_REQUEST)
+                created = []
+                for f in files:
+                    file_type = request.data.get('file_type') or f.content_type or ''
+                    notes = request.data.get('notes', '')
+                    try:
+                        rp = RefundProof.objects.create(
+                            refund=refund,
+                            uploaded_by=user,
+                            file_type=file_type,
+                            file_data=f,
+                            notes=notes
+                        )
+                        created.append(str(rp.id))
+                    except Exception as e:
+                        print('Failed to save refund proof in admin_process_refund', e)
+
+            final_method = request.data.get('final_refund_method')
+            set_status = request.data.get('set_status')
+
+            # Validate status
+            if set_status:
+                if set_status not in ['processing', 'completed', 'failed']:
+                    return Response({"error": "Invalid payment status"}, status=status.HTTP_400_BAD_REQUEST)
+
+                if set_status == 'completed':
+                    if not RefundProof.objects.filter(refund=refund).exists():
+                        return Response({"error": "Proof required before completing refund"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if final_method:
+                refund.final_refund_method = final_method
+            else:
+                refund.final_refund_method = refund.final_refund_method or getattr(refund, 'buyer_preferred_refund_method', None)
+
+            if set_status:
+                refund.refund_payment_status = set_status
+                if set_status == 'completed':
+                    try:
+                        refund.processed_at = timezone.now()
+                        refund.processed_by = user
+                    except Exception:
+                        pass
+
+            refund.save()
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Refund payment updated by admin", "refund": data})
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
             # Allow admin to set an approved refund amount
             if 'approved_refund_amount' in request.data:
                 try:
