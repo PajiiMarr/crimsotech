@@ -6,14 +6,14 @@ export function meta(): Route.MetaDescriptors {
   return [
     {
       title: "CrimsoTech Marketplace",
-      description: "Discover, buy, and sell products. Connect with shops, find deals, and boost your products."
+      description: "Dipscover, buy, and sell products. Connect with shops, find deals, and boost your products."
     }
   ]
 }
 
 export default function LandingPage() {
   return (
-    <div className="min-h-svh flex flex-col bg-gradient-to-b from-orange-50 to-white">
+    <div className="min-h-svh flex flex-col">
       <Header />
       <HeroParallax products={products} />
       
