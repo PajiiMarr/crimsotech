@@ -1170,6 +1170,7 @@ class Refund(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     customer_note = models.TextField(blank=True, null=True)
     # Requested refund amounts
+    final_refund_type = models.CharField(max_length=50, blank=True, null=True)
     total_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     approved_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 

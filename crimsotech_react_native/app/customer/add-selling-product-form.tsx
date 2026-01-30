@@ -12,10 +12,13 @@ import {
   Dimensions,
   Alert,
   Modal,
+  ActivityIndicator,
 } from "react-native";
 import { router } from "expo-router";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import * as ImagePicker from 'expo-image-picker';
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const { width } = Dimensions.get("window");
 
@@ -29,6 +32,8 @@ const CONDITION_OPTIONS = [
 ];
 
 export default function AddSellingProductForm() {
+  const { userId } = useAuth();
+
   // --- Form State ---
   const [formData, setFormData] = useState({
     name: "",
@@ -49,19 +54,23 @@ export default function AddSellingProductForm() {
     criticalThreshold: "",
     enableVariations: false,
     openForSwap: false,
+    categoryId: "", // Store selected category
   });
 
   // Media State
-  const [images, setImages] = useState<string[]>([]); // Array of image URIs
+  const [images, setImages] = useState<string[]>([]);
 
   // Variation State
-  const [variantOption, setVariantOption] = useState("Color"); // e.g. "Color"
-  const [variantInput, setVariantInput] = useState(""); // Text input for new variant
-  const [variants, setVariants] = useState<any[]>([]); // The generated list: [{ name: 'Red', price: '', qty: '', sku: '' }]
+  const [variantOption, setVariantOption] = useState("Color");
+  const [variantInput, setVariantInput] = useState("");
+  const [variants, setVariants] = useState<any[]>([]);
 
   // UI State
   const [showConditionModal, setShowConditionModal] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [isPredicting, setIsPredicting] = useState(false);
+  const [predictionResult, setPredictionResult] = useState<any>(null);
 
   // --- Handlers ---
   const updateField = (key: string, value: any) => {
@@ -69,6 +78,47 @@ export default function AddSellingProductForm() {
   };
 
   const handleBack = () => router.back();
+
+  // AI Category Prediction
+  const predictCategory = async () => {
+    if (!formData.name.trim() || !formData.description.trim() || !formData.condition) {
+      Alert.alert("Error", "Please fill in name, description, and condition first");
+      return;
+    }
+
+    setIsPredicting(true);
+    try {
+      const response = await AxiosInstance.post('/customer-products-viewset/predict_category/', {
+        name: formData.name,
+        description: formData.description,
+        quantity: formData.quantity || '1',
+        price: formData.price || '0',
+        condition: formData.condition,
+      });
+
+      if (response.data.success && response.data.predicted_category) {
+        setPredictionResult(response.data);
+        
+        // Auto-select the predicted category
+        setFormData(prev => ({
+          ...prev,
+          categoryId: response.data.predicted_category.category_uuid
+        }));
+
+        Alert.alert(
+          "AI Suggestion",
+          `Category: ${response.data.predicted_category.category_name}\nConfidence: ${(response.data.predicted_category.confidence * 100).toFixed(1)}%`
+        );
+      } else {
+        Alert.alert("Error", "Failed to predict category");
+      }
+    } catch (error: any) {
+      console.error("Prediction error:", error);
+      Alert.alert("Error", error.response?.data?.error || "Failed to predict category");
+    } finally {
+      setIsPredicting(false);
+    }
+  };
 
   const handleImagePick = async () => {
     if (images.length >= 9) {
@@ -228,10 +278,11 @@ export default function AddSellingProductForm() {
     setVariants((prev) => prev.filter((v) => v.id !== id));
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     console.log("Form Data:", formData);
     console.log("Images:", images);
     console.log("Variants:", variants);
+    console.log("Current userId from context:", userId);
     
     // Validate required fields
     if (!formData.name.trim()) {
@@ -248,6 +299,16 @@ export default function AddSellingProductForm() {
       Alert.alert("Error", "Please add at least one product image");
       return;
     }
+
+    if (!formData.price && !formData.enableVariations) {
+      Alert.alert("Error", "Please enter product price");
+      return;
+    }
+
+    if (!formData.quantity && !formData.enableVariations) {
+      Alert.alert("Error", "Please enter product quantity");
+      return;
+    }
     
     // Validate critical threshold if low stock alert is enabled
     if (formData.lowStockAlert && !formData.criticalThreshold) {
@@ -255,7 +316,135 @@ export default function AddSellingProductForm() {
       return;
     }
     
-    Alert.alert("Success", "Product created successfully!");
+    // Validate variants if enabled
+    if (formData.enableVariations && variants.length === 0) {
+      Alert.alert("Error", "Please add at least one variant");
+      return;
+    }
+    
+    console.log("All validations passed, setting isSubmitting to true");
+    setIsSubmitting(true);
+    
+    try {
+      // Validate user ID
+      console.log("Checking userId:", userId, "Type:", typeof userId);
+      
+      if (!userId) {
+        console.log("ERROR: userId is empty/null");
+        Alert.alert("Error", "User ID not found. Please log in again.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      console.log("Starting product creation with userId:", userId);
+      
+      // Create FormData
+      const form = new FormData();
+      
+      // Add basic fields
+      form.append('name', formData.name.trim());
+      form.append('description', formData.description.trim());
+      form.append('condition', formData.condition);
+      form.append('quantity', String(formData.quantity || '0'));
+      form.append('price', String(formData.price || '0'));
+      
+      if (formData.comparePrice) {
+        form.append('compare_price', String(formData.comparePrice));
+      }
+
+      // Add dimensions if provided
+      if (formData.length) form.append('length', String(formData.length));
+      if (formData.width) form.append('width', String(formData.width));
+      if (formData.height) form.append('height', String(formData.height));
+      if (formData.weight) form.append('weight', String(formData.weight));
+      if (formData.weightUnit) form.append('weight_unit', formData.weightUnit);
+
+      // Add critical threshold if enabled
+      if (formData.lowStockAlert && formData.criticalThreshold) {
+        form.append('critical_trigger', String(formData.criticalThreshold));
+      }
+
+      // Add category if predicted
+      if (formData.categoryId) {
+        form.append('category_admin_id', formData.categoryId);
+      }
+
+      // Add images - using proper FormData image handling
+      for (let i = 0; i < images.length; i++) {
+        const uri = images[i];
+        const filename = `product_${i}_${Date.now()}.jpg`;
+        
+        // For Expo, image URIs from ImagePicker are already accessible
+        form.append('media_files', {
+          uri: uri,
+          type: 'image/jpeg',
+          name: filename,
+        } as any);
+      }
+
+      // Add variants if enabled
+      if (formData.enableVariations && variants.length > 0) {
+        form.append('variants', JSON.stringify(
+          variants.map(v => ({
+            name: v.name,
+            price: v.price || formData.price,
+            quantity: v.quantity || formData.quantity,
+            sku: v.sku
+          }))
+        ));
+      }
+
+      console.log("Submitting form data...");
+      console.log("Form data keys:", Object.keys(form) );
+
+      // Make API call
+      const response = await AxiosInstance.post(
+        '/customer-products-viewset/create_product/',
+        form,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'X-User-Id': userId,
+          }
+        }
+      );
+
+      console.log("Response received:", response.data);
+
+      if (response.data.success) {
+        console.log("Product created successfully!");
+        Alert.alert("Success", "Product created successfully!", [
+          {
+            text: "OK",
+            onPress: () => {
+              console.log("Navigating back...");
+              router.back();
+            }
+          }
+        ]);
+      } else {
+        const errorMsg = response.data.message || response.data.error || "Failed to create product";
+        console.error("API returned error:", errorMsg);
+        Alert.alert("Error", errorMsg);
+      }
+    } catch (error: any) {
+      console.error("Product creation error:", error);
+      console.error("Error response:", error.response?.data);
+      
+      let message = "Failed to create product";
+      
+      if (error.response?.data?.error) {
+        message = error.response.data.error;
+      } else if (error.response?.data?.details) {
+        message = JSON.stringify(error.response.data.details);
+      } else if (error.message) {
+        message = error.message;
+      }
+      
+      Alert.alert("Error", message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // --- RENDER HELPERS ---
@@ -398,10 +587,31 @@ export default function AddSellingProductForm() {
             />
           </View>
 
-          <TouchableOpacity style={styles.aiButton}>
-            <MaterialIcons name="auto-awesome" size={16} color="#4B5563" />
-            <Text style={styles.aiButtonText}>Get AI Category Suggestion</Text>
+          <TouchableOpacity 
+            style={[styles.aiButton, (isPredicting || !formData.name.trim() || !formData.description.trim()) && styles.disabledButton]}
+            onPress={predictCategory}
+            disabled={isPredicting || !formData.name.trim() || !formData.description.trim()}
+          >
+            {isPredicting ? (
+              <ActivityIndicator color="#4B5563" />
+            ) : (
+              <>
+                <MaterialIcons name="auto-awesome" size={16} color="#4B5563" />
+                <Text style={styles.aiButtonText}>Get AI Category Suggestion</Text>
+              </>
+            )}
           </TouchableOpacity>
+
+          {/* AI Prediction Result */}
+          {predictionResult && predictionResult.predicted_category && (
+            <View style={styles.predictionResultCard}>
+              <Text style={styles.predictionTitle}>Suggested Category:</Text>
+              <Text style={styles.predictionCategory}>{predictionResult.predicted_category.category_name}</Text>
+              <Text style={styles.confidenceText}>
+                Confidence: {(predictionResult.predicted_category.confidence * 100).toFixed(1)}%
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Step 2: Product Media */}
@@ -742,8 +952,16 @@ export default function AddSellingProductForm() {
 
       {/* Footer */}
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-          <Text style={styles.submitButtonText}>Create Product</Text>
+        <TouchableOpacity 
+          style={[styles.submitButton, isSubmitting && styles.disabledButton]} 
+          onPress={handleSubmit}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <ActivityIndicator color="#FFF" />
+          ) : (
+            <Text style={styles.submitButtonText}>Create Product</Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -1039,6 +1257,31 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#4B5563",
     marginLeft: 6,
+  },
+  predictionResultCard: {
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+  },
+  predictionTitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#0C4A6E",
+    marginBottom: 4,
+  },
+  predictionCategory: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0369A1",
+    marginBottom: 6,
+  },
+  confidenceText: {
+    fontSize: 11,
+    color: "#0C4A6E",
+    fontStyle: "italic",
   },
   row: { flexDirection: "row", alignItems: "center" },
   rowBetween: {
