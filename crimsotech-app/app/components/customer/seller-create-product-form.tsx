@@ -88,11 +88,16 @@ interface PredictionCategory {
   confidence: number;
 }
 
+// Update the interface in your frontend
 interface PredictionResult {
   success: boolean;
-  predicted_category: PredictionCategory; // Changed from number to object
+  predicted_category: PredictionCategory;
   alternative_categories?: PredictionCategory[];
-  all_categories?: string[];
+  all_categories?: Array<{
+    uuid: string;
+    name: string;
+    id: string;
+  }>;  // Change from string[] to object array
   feature_insights?: any;
 }
 
@@ -187,10 +192,36 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
   }, [productName, productDescription, productPrice, productCondition, productQuantity]);
 
   // Handle category selection change
-  const handleCategoryChange = (value: string) => {
-    console.log('Category changed to:', value);
+const handleCategoryChange = (value: string) => {
+  console.log('Category changed to:', value);
+  
+  // If value is "none", clear the selection
+  if (value === "none") {
+    setSelectedCategoryId("none");
+    return;
+  }
+  
+  // Try to find the category in predictionResult
+  if (predictionResult?.all_categories) {
+    const foundCategory = predictionResult.all_categories.find((cat: any) => {
+      if (typeof cat === 'string') {
+        return cat === value;
+      } else {
+        return cat.uuid === value || cat.id === value || cat.name === value;
+      }
+    });
+    
+    if (foundCategory) {
+      // Get the actual ID/UUID
+      const actualId = typeof foundCategory === 'string' ? foundCategory : foundCategory.uuid || foundCategory.id;
+      setSelectedCategoryId(actualId);
+    } else {
+      setSelectedCategoryId(value);
+    }
+  } else {
     setSelectedCategoryId(value);
-  };
+  }
+};
 
   // Function to trigger category prediction
   const predictCategory = useCallback(async (source: string = 'auto') => {
@@ -916,7 +947,6 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                       </div>
                     )}
 
-                    {/* Manual Category Selection (Optional) */}
                     <div className="pt-4 border-t">
                       <div className="flex items-center justify-between mb-2">
                         <h4 className="text-sm font-medium text-gray-700">Prefer a different category?</h4>
@@ -924,32 +954,36 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
                           Optional
                         </Badge>
                       </div>
-                      <Select 
-                        value={selectedCategoryId} 
-                        onValueChange={handleCategoryChange}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Choose from available categories" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">No Category (Not Recommended)</SelectItem>
-                          {globalCategories && globalCategories.length > 0 ? (
-                            globalCategories.map((category: Category) => (
-                              <SelectItem key={category.id} value={category.id}>
-                                {category.name}
-                              </SelectItem>
-                            ))
-                          ) : (
-                            <SelectItem value="none" disabled>
-                              No categories available
+  
+                    <Select 
+                      value={selectedCategoryId} 
+                      onValueChange={handleCategoryChange}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose from available categories" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No Category (Not Recommended)</SelectItem>
+                        
+                        {/* Always use globalCategories from loader */}
+                        {globalCategories && globalCategories.length > 0 ? (
+                          globalCategories.map((category: Category) => (
+                            <SelectItem key={category.id} value={category.id}>
+                              {category.name}
                             </SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-gray-500 mt-1">
-                        You can override the AI suggestion by selecting a different category here.
-                      </p>
-                    </div>
+                          ))
+                        ) : (
+                          <SelectItem value="none" disabled>
+                            No categories available
+                          </SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                    
+                    <p className="text-xs text-gray-500 mt-1">
+                      You can override the AI suggestion by selecting a different category here.
+                    </p>
+                  </div>
                   </>
                 ) : isPredicting ? (
                   <div className="p-4 bg-white border rounded-lg shadow-sm text-center">

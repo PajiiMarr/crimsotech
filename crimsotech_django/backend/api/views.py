@@ -13290,8 +13290,8 @@ class SellerProducts(viewsets.ModelViewSet):
             # ================================================
             # PREPARE RESPONSE WITH UUIDs
             # ================================================
-            
-            # Get all category names from database (not just from model)
+                        
+            # In predict_category function, ensure this section works:
             try:
                 all_categories_objs = Category.objects.filter(shop__isnull=True)
                 all_categories_list = []
@@ -13300,12 +13300,25 @@ class SellerProducts(viewsets.ModelViewSet):
                     all_categories_list.append({
                         'uuid': str(cat.id),
                         'name': cat.name,
-                        'id': str(cat.id)  # Include both uuid and id for compatibility
+                        'id': str(cat.id)
                     })
+                
+                # Add debugging
+                print(f"Found {len(all_categories_list)} categories in database")
+                if all_categories_list:
+                    print(f"First category: {all_categories_list[0]}")
+                    
             except Exception as e:
                 print(f"Error fetching categories from DB: {e}")
-                all_categories_list = list(category_le.classes_)
-            
+                # Fallback: use model classes
+                all_categories_list = []
+                for i, class_name in enumerate(category_le.classes_):
+                    all_categories_list.append({
+                        'uuid': f"model_{i}",
+                        'name': class_name,
+                        'id': f"model_{i}"
+                    })
+                print(f"Using {len(all_categories_list)} model classes as fallback")
             # Prepare top 3 categories
             top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
             top_categories = []
