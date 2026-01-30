@@ -35,7 +35,7 @@ export function Header() {
       <div className="flex items-center gap-2 p-3">
         <Link to="/" className="w-25 h-25 p-3 font-bold">
           <img
-            src="logo.jpg"
+            src="Crimsotech.png"
             alt="crimsotech"
             className="w-full h-full object-contain"
           />

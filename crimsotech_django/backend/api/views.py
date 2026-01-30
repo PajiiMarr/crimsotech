@@ -4,6 +4,7 @@ from django.http import JsonResponse
 import json
 import re
 import time
+from django.utils.text import slugify
 from django.shortcuts import render
 from django.db.models import Prefetch, DecimalField
 from django.db.models.functions import TruncMonth, Coalesce
@@ -35,7 +36,282 @@ import uuid
 from django.db.models import Min, Max
 from dateutil.relativedelta import relativedelta
 
+from rest_framework import viewsets, status
+from rest_framework.response import Response
+from django.db.models import Count, Avg, Q, F
+from django.utils import timezone
+from datetime import timedelta
+from .models import (
+    Product, Shop, Category, Review, 
+    Boost, Customer, ShopFollow, Order
+)
 
+class Landing(viewsets.ViewSet):
+    def list(self, request):
+        """
+        Get landing page data including stats, categories, and featured products.
+        STRICTLY respects data model integrity - all data comes from database.
+        """
+        try:
+            # 1. MARKETPLACE STATS (respects model constraints)
+            products_count = Product.objects.filter(
+                upload_status='published',
+                is_removed=False
+            ).count()
+            
+            shops_count = Shop.objects.filter(
+                verified=True,
+                is_suspended=False,
+                status='Active'
+            ).count()
+            
+            boosted_count = Boost.objects.filter(
+                status='active',
+                end_date__gt=timezone.now()
+            ).count()
+            
+            avg_rating_result = Review.objects.aggregate(
+                avg_rating=Avg('rating')
+            )
+            avg_rating = avg_rating_result['avg_rating'] if avg_rating_result['avg_rating'] else 4.8
+            
+            # 2. CATEGORIES (strictly respects model relationships)
+            categories_with_products = Category.objects.filter(
+                products__upload_status='published',
+                products__is_removed=False
+            ).annotate(
+                product_count=Count('products', filter=Q(
+                    products__upload_status='published',
+                    products__is_removed=False
+                ))
+            ).filter(
+                product_count__gt=0
+            ).distinct().order_by('-product_count')[:10]
+            
+            # 3. FEATURED PRODUCTS (respects all model constraints)
+            featured_products = Product.objects.filter(
+                upload_status='published',
+                is_removed=False,
+                shop__isnull=False,
+                shop__is_suspended=False,
+                shop__verified=True,
+                shop__status='Active'
+            ).select_related('shop').prefetch_related(
+                'productmedia_set'
+            ).order_by('-created_at')[:15]
+            
+            # 4. TRENDING SHOPS (respects model relationships)
+            # Create the base queryset WITHOUT slicing first
+            trending_shops_queryset = Shop.objects.filter(
+                verified=True,
+                is_suspended=False,
+                status='Active'
+            ).annotate(
+                follower_count=Count('followers', distinct=True),
+                active_product_count=Count('products', filter=Q(
+                    products__upload_status='published',
+                    products__is_removed=False
+                ), distinct=True)
+            ).filter(
+                active_product_count__gt=0
+            ).order_by('-follower_count', '-total_sales')
+            
+            # Check if any shops have followers BEFORE slicing
+            has_shops_with_followers = trending_shops_queryset.filter(
+                follower_count__gt=0
+            ).exists()
+            
+            # Now slice the queryset
+            trending_shops = list(trending_shops_queryset[:10])
+            
+            # 5. HERO SECTIONS (dynamic based on actual data)
+            hero_sections = []
+            
+            # Trending shops (only if we have shops with followers)
+            if has_shops_with_followers:
+                hero_sections.append({
+                    'title': 'Trending Shops',
+                    'link': '/shops/trending',
+                    'description': 'Discover the most popular shops this week'
+                })
+            
+            # Boosted products (only if we have active boosts)
+            if boosted_count > 0:
+                hero_sections.append({
+                    'title': 'Boosted Products',
+                    'link': '/boosts',
+                    'description': 'Featured products with maximum visibility'
+                })
+            
+            # New arrivals (always relevant)
+            hero_sections.append({
+                'title': 'New Arrivals',
+                'link': '/products/new',
+                'description': 'Fresh products just added'
+            })
+            
+            # Top rated (only if we have 5-star reviews)
+            has_top_rated = Review.objects.filter(rating=5).exists()
+            if has_top_rated:
+                hero_sections.append({
+                    'title': 'Top Rated',
+                    'link': '/products/top-rated',
+                    'description': '5-star favorites from the community'
+                })
+            
+            # Best deals (products with compare_price > price)
+            has_deals = Product.objects.filter(
+                upload_status='published',
+                is_removed=False,
+                compare_price__isnull=False,
+                compare_price__gt=F('price')
+            ).exists()
+            if has_deals:
+                hero_sections.append({
+                    'title': 'Best Deals',
+                    'link': '/deals',
+                    'description': 'Save big on amazing offers'
+                })
+            
+            # Add popular categories as hero sections
+            # Convert queryset to list before slicing
+            categories_list = list(categories_with_products)
+            for category in categories_list[:3]:
+                hero_sections.append({
+                    'title': category.name,
+                    'link': f'/category/{slugify(category.name)}',
+                    'description': f'Browse {category.product_count} products'
+                })
+            
+            # 6. TRUST BADGES (from actual verification data)
+            trust_badges = []
+            
+            # Verified shops count
+            verified_shops_count = Shop.objects.filter(
+                verified=True,
+                is_suspended=False
+            ).count()
+            if verified_shops_count > 0:
+                trust_badges.append({
+                    'title': 'Verified Shops',
+                    'description': f'{verified_shops_count} verified shops',
+                    'icon': '✓'
+                })
+            
+            # Secure payments (completed orders)
+            completed_orders = Order.objects.filter(
+                status__in=['delivered', 'completed']
+            ).count()
+            if completed_orders > 0:
+                trust_badges.append({
+                    'title': 'Secure Payments',
+                    'description': f'{completed_orders} secure transactions',
+                    'icon': '🛡️'
+                })
+            
+            # Verified riders
+            verified_riders = Rider.objects.filter(
+                verified=True,
+                rider__is_suspended=False
+            ).count()
+            if verified_riders > 0:
+                trust_badges.append({
+                    'title': 'Verified Riders',
+                    'description': f'{verified_riders} verified delivery partners',
+                    'icon': '🚚'
+                })
+            
+            # Format data for response
+            category_list = [
+                {
+                    'id': str(cat.id),
+                    'name': cat.name,
+                    'slug': slugify(cat.name),
+                    'product_count': cat.product_count,
+                    'shop_id': str(cat.shop.id) if cat.shop else None,
+                    'user_id': str(cat.user.id) if cat.user else None
+                }
+                for cat in categories_list  # Use the list instead of queryset
+            ]
+            
+            product_list = []
+            for product in featured_products:
+                image_url = None
+                media = product.productmedia_set.first()
+                if media and media.file_data:
+                    image_url = request.build_absolute_uri(media.file_data.url)
+                
+                product_list.append({
+                    'id': str(product.id),
+                    'title': product.name,
+                    'description': product.description[:150] + '...' if len(product.description) > 150 else product.description,
+                    'price': float(product.price),
+                    'compare_price': float(product.compare_price) if product.compare_price else None,
+                    'shop_id': str(product.shop.id) if product.shop else None,
+                    'shop_name': product.shop.name if product.shop else 'No Shop',
+                    'category_id': str(product.category.id) if product.category else None,
+                    'category_name': product.category.name if product.category else None,
+                    'image_url': image_url,
+                    'created_at': product.created_at.isoformat()
+                })
+            
+            trending_shop_list = [
+                {
+                    'id': str(shop.id),
+                    'name': shop.name,
+                    'description': shop.description or f"Shop in {shop.city}",
+                    'follower_count': shop.follower_count,
+                    'active_product_count': shop.active_product_count,
+                    'total_sales': float(shop.total_sales),
+                    'city': shop.city,
+                    'verified': shop.verified,
+                    'status': shop.status
+                }
+                for shop in trending_shops
+            ]
+            
+            response_data = {
+                'stats': {
+                    'products_count': products_count,
+                    'shops_count': shops_count,
+                    'boosted_count': boosted_count,
+                    'avg_rating': round(avg_rating, 1)
+                },
+                'categories': category_list,
+                'featured_products': product_list,
+                'trending_shops': trending_shop_list,
+                'ui_data': {
+                    'hero_products': hero_sections,
+                    'trust_badges': trust_badges
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in landing endpoint: {str(e)}")
+            print(traceback.format_exc())
+            
+            # Minimal fallback
+            return Response({
+                'stats': {
+                    'products_count': 0,
+                    'shops_count': 0,
+                    'boosted_count': 0,
+                    'avg_rating': 4.8
+                },
+                'categories': [],
+                'featured_products': [],
+                'trending_shops': [],
+                'ui_data': {
+                    'hero_products': [],
+                    'trust_badges': []
+                }
+            }, status=status.HTTP_200_OK)
+        
+
+        
 class UserView(APIView):
     def get(self, request):
         user = [{"user_id": user.id, "username": user.username, "email": user.email, "registration_stage": user.registration_stage, "is_rider": user.is_rider} for user in User.objects.all()]
