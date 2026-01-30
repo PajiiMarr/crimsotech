@@ -20033,6 +20033,14 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 "error": "Failed to fetch global categories",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'])
+    def products_list(self, request):
+        """
+        Backward-compatible endpoint for listing personal products.
+        Delegates to CustomerProductsList.products_list.
+        """
+        return CustomerProductsList().products_list(request)
     
     @action(detail=False, methods=['post'])
     def create_product(self, request):
@@ -20110,13 +20118,20 @@ class CustomerProductViewSet(viewsets.ViewSet):
             
             # Validate global category if provided
             category_admin_id = product_data.get('category_admin_id')
+            print(f"DEBUG: category_admin_id from request: {category_admin_id}")
+            print(f"DEBUG: product_data keys: {list(product_data.keys())}")
+            
             if category_admin_id and category_admin_id != "none":
                 try:
-                    Category.objects.get(id=category_admin_id, shop__isnull=True)
+                    cat = Category.objects.get(id=category_admin_id, shop__isnull=True)
+                    print(f"DEBUG: Category found: {cat.name} (ID: {cat.id})")
                 except Category.DoesNotExist:
+                    print(f"DEBUG: Category with ID {category_admin_id} not found")
                     return Response({
                         "error": "Invalid global category selected"
                     }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                print(f"DEBUG: No category provided or category is 'none'")
             
             # Handle accepted_categories for product-level swap
             accepted_categories_raw = request.data.get('accepted_categories')
@@ -20562,12 +20577,11 @@ class CustomerProductViewSet(viewsets.ViewSet):
             "is_refundable": getattr(product, 'is_refundable', False),
         }
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['post'])
     def predict_category(self, request):
         """
-        Predict category for a product - Reuse from SellerProducts
+        Predict category for a product - Customer version
         """
-        # Copy the predict_category method from SellerProducts class
         try:
             import pandas as pd
             import numpy as np
@@ -20578,14 +20592,19 @@ class CustomerProductViewSet(viewsets.ViewSet):
             CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
             MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
             
-            # Load models (same as seller version)
+            print(f"Looking for models in: {MODEL_DIR}")
+
+            # Load the trained models
             try:
                 category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
                 scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
                 model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
                 feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
                 
+                print(f"✅ Models loaded successfully!")
+                
             except FileNotFoundError as e:
+                print(f"❌ Model file not found: {str(e)}")
                 return Response(
                     {'success': False, 'error': f'Model files not found. Please train the model first.'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -20593,9 +20612,8 @@ class CustomerProductViewSet(viewsets.ViewSet):
             
             # Extract data from request
             data = request.data
-            
-            # Required fields
             required_fields = ['name', 'description', 'quantity', 'price', 'condition']
+            
             for field in required_fields:
                 if field not in data:
                     return Response(
@@ -20612,27 +20630,143 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 'condition': str(data['condition'])
             }
             
-            # ... [rest of the prediction logic from SellerProducts] ...
-            # For brevity, copying the full prediction logic from SellerProducts
+            print(f"\n=== PREDICTION STARTED ===")
+            print(f"Product: {item_data['name']}")
             
-            # This should be the same as the SellerProducts.predict_category method
-            # Just make sure to import the same packages and use the same model
+            # Initialize all features
+            features = {col: 0 for col in feature_columns}
+            price = item_data['price']
+            quantity = item_data['quantity']
             
-            return Response({
+            # Set numeric features
+            if 'price' in feature_columns:
+                features['price'] = price
+            if 'quantity' in feature_columns:
+                features['quantity'] = quantity
+            if 'price_quantity_interaction' in feature_columns:
+                features['price_quantity_interaction'] = price * np.log1p(quantity + 1)
+            if 'log_price' in feature_columns:
+                features['log_price'] = np.log1p(price)
+            if 'price_per_unit' in feature_columns:
+                features['price_per_unit'] = price / (quantity + 1)
+            
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            if 'condition_score' in feature_columns:
+                if 'new' in condition_lower:
+                    features['condition_score'] = 3
+                elif 'excellent' in condition_lower:
+                    features['condition_score'] = 0
+                elif 'good' in condition_lower:
+                    features['condition_score'] = -1
+                else:
+                    features['condition_score'] = 0
+            
+            # Text features
+            all_text = item_data['name'].lower() + ' ' + item_data['description'].lower()
+            if 'name_length' in feature_columns:
+                features['name_length'] = len(item_data['name'])
+            if 'desc_length' in feature_columns:
+                features['desc_length'] = len(item_data['description'])
+            
+            # Keyword features
+            for feature in feature_columns:
+                if feature.startswith('has_'):
+                    keyword = feature[4:]
+                    features[feature] = 1 if keyword in all_text else 0
+            
+            # Create DataFrame
+            X_item = pd.DataFrame([features])
+            for col in feature_columns:
+                if col not in X_item.columns:
+                    X_item[col] = 0
+            X_item = X_item[feature_columns]
+            
+            # Scale and predict
+            try:
+                X_scaled = scaler.transform(X_item)
+            except Exception:
+                X_scaled = X_item.values.astype(np.float32)
+            
+            prediction_probs = model.predict(X_scaled, verbose=0)
+            predicted_class = np.argmax(prediction_probs, axis=1)[0]
+            confidence = np.max(prediction_probs, axis=1)[0]
+            predicted_label = category_le.inverse_transform([predicted_class])[0]
+            
+            print(f"✅ Predicted: {predicted_label} ({confidence:.2%})")
+            
+            # Get UUID from database
+            try:
+                category_obj = Category.objects.filter(
+                    name__iexact=predicted_label,
+                    shop__isnull=True
+                ).first()
+                
+                if category_obj:
+                    category_uuid = str(category_obj.id)
+                    category_name = category_obj.name
+                else:
+                    first_category = Category.objects.filter(shop__isnull=True).first()
+                    if first_category:
+                        category_uuid = str(first_category.id)
+                        category_name = first_category.name
+                    else:
+                        category_uuid = None
+                        category_name = predicted_label
+            except Exception:
+                category_uuid = None
+                category_name = predicted_label
+            
+            # Get all categories
+            try:
+                all_categories_objs = Category.objects.filter(shop__isnull=True)
+                all_categories_list = [{'uuid': str(cat.id), 'name': cat.name, 'id': str(cat.id)} for cat in all_categories_objs]
+            except Exception:
+                all_categories_list = []
+            
+            # Top 3 categories
+            top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
+            top_categories = []
+            for idx in top_3_indices:
+                category_label = category_le.inverse_transform([idx])[0]
+                try:
+                    cat_obj = Category.objects.filter(name__iexact=category_label, shop__isnull=True).first()
+                    category_uuid_alt = str(cat_obj.id) if cat_obj else None
+                except Exception:
+                    category_uuid_alt = None
+                
+                top_categories.append({
+                    'category_id': int(idx),
+                    'category_uuid': category_uuid_alt,
+                    'category_name': category_label,
+                    'confidence': float(prediction_probs[0][idx])
+                })
+            
+            result = {
                 'success': True,
-                'message': 'Category prediction endpoint (copy logic from SellerProducts)'
-            }, status=status.HTTP_200_OK)
+                'predicted_category': {
+                    'category_id': int(predicted_class),
+                    'category_uuid': category_uuid,
+                    'category_name': predicted_label,
+                    'confidence': float(confidence)
+                },
+                'alternative_categories': top_categories[1:] if len(top_categories) > 1 else [],
+                'all_categories': all_categories_list,
+                'feature_insights': {
+                    'keywords_found': [col.replace('has_', '') for col in feature_columns if col.startswith('has_') and features.get(col, 0) == 1],
+                    'price': float(price),
+                    'quantity': int(quantity),
+                    'condition': item_data['condition']
+                }
+            }
+            
+            return Response(result, status=status.HTTP_200_OK)
             
         except Exception as e:
+            print(f"\n❌ PREDICTION ERROR: {str(e)}")
             import traceback
             traceback.print_exc()
-            return Response(
-                {
-                    'success': False, 
-                    'error': f'Prediction failed: {str(e)}'
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({'success': False, 'error': f'Prediction failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
