@@ -12,25 +12,25 @@ import {
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
+import { router } from 'expo-router'; // Ensure this is imported for navigation
 
 // --- Color Palette (Orange Theme) ---
 const COLORS = {
-  primary: '#F97316', // Bright Orange (Tailwind Orange-500)
-  primaryDark: '#C2410C', // Darker Orange for text (Orange-700)
-  primaryLight: '#FFF7ED', // Very light orange for backgrounds (Orange-50)
-  secondary: '#111827', // Dark Gray/Black
-  muted: '#6B7280', // Gray
-  bg: '#F9FAFB', // App Background
+  primary: '#F97316',
+  primaryDark: '#C2410C',
+  primaryLight: '#FFF7ED',
+  secondary: '#111827',
+  muted: '#6B7280',
+  bg: '#F9FAFB',
   cardBg: '#FFFFFF',
   dangerBg: '#FEF2F2',
   dangerText: '#DC2626',
   bookedBg: '#EFF6FF',
   bookedText: '#2563EB',
-  surge: '#F59E0B', // Amber for surge
+  surge: '#F59E0B',
 };
 
 // --- Types & Mock Data ---
-
 type ShiftStatus = 'available' | 'booked' | 'completed' | 'full';
 
 interface Shift {
@@ -53,8 +53,6 @@ const SHIFT_DATA: Record<string, Shift[]> = {
     { id: '5', timeRange: '06:00 PM - 10:00 PM', zone: 'Quezon', status: 'full', estEarnings: '₱450' },
   ],
 };
-
-// --- Helper Components ---
 
 const StatusBadge = ({ status, surge }: { status: ShiftStatus; surge?: number }) => {
   const getStyle = () => {
@@ -84,14 +82,10 @@ const StatusBadge = ({ status, surge }: { status: ShiftStatus; surge?: number })
   );
 };
 
-// --- Main Page Component ---
-
 export default function SchedulePage() {
   const { userRole } = useAuth();
-  // Ensure this date matches keys in SHIFT_DATA for demo purposes
   const [selectedDate, setSelectedDate] = useState('2025-01-29');
 
-  // Guard Clause
   if (userRole && userRole !== 'rider') {
     return (
       <SafeAreaView style={styles.center}>
@@ -102,7 +96,6 @@ export default function SchedulePage() {
     );
   }
 
-  // --- Dates Generator (Next 7 days) ---
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const dates = useMemo(() => {
     const arr = [];
@@ -132,21 +125,35 @@ export default function SchedulePage() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.cardBg} />
       
-      {/* --- Header & Stats --- */}
+      {/* --- Header & Action Icons --- */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View>
             <Text style={styles.greeting}>My Schedule</Text>
             <Text style={styles.subHeader}>Plan your week ahead</Text>
           </View>
-          <TouchableOpacity style={styles.filterBtn}>
-            <Feather name="sliders" size={20} color={COLORS.secondary} />
-          </TouchableOpacity>
+          
+          <View style={styles.headerActions}>
+            <TouchableOpacity 
+              style={styles.iconBtn} 
+              onPress={() => console.log('Open Notifications')}
+            >
+              <Feather name="bell" size={22} color={COLORS.secondary} />
+              <View style={styles.notifBadge} />
+            </TouchableOpacity>
+
+            {/* FIXED ROUTE HERE: Points to /rider/settings */}
+            <TouchableOpacity 
+              style={styles.iconBtn} 
+              onPress={() => router.push('/rider/settings')} 
+            >
+              <Feather name="settings" size={22} color={COLORS.secondary} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Bento Stats */}
         <View style={styles.statsRow}>
-          {/* Active Stat (Orange) */}
           <View style={[styles.statCard, { backgroundColor: COLORS.primary }]}>
             <View style={styles.statIconBgWhite}>
               <Feather name="clock" size={16} color={COLORS.primary} />
@@ -157,10 +164,8 @@ export default function SchedulePage() {
             </View>
           </View>
           
-          {/* Secondary Stat (Neutral) */}
           <View style={[styles.statCard, { backgroundColor: '#F3F4F6' }]}>
              <View style={[styles.statIconBg, { backgroundColor: '#E5E7EB' }]}>
-              {/* Using Material Community Icon for Peso */}
               <MaterialCommunityIcons name="currency-php" size={18} color={COLORS.secondary} />
             </View>
             <View>
@@ -260,14 +265,32 @@ const styles = StyleSheet.create({
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   greeting: { fontSize: 24, fontWeight: '700', color: COLORS.secondary },
   subHeader: { fontSize: 14, color: COLORS.muted },
-  filterBtn: { padding: 8, backgroundColor: '#F3F4F6', borderRadius: 8 },
+  
+  // New Header Actions
+  headerActions: { flexDirection: 'row', gap: 8 },
+  iconBtn: { 
+    padding: 10, 
+    backgroundColor: '#F3F4F6', 
+    borderRadius: 12,
+    position: 'relative' 
+  },
+  notifBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.dangerText,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
 
   // Stats
   statsRow: { flexDirection: 'row', gap: 12 },
   statCard: { flex: 1, borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
   statIconBg: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
   statIconBgWhite: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
-  
   statLabel: { fontSize: 12, color: COLORS.muted, fontWeight: '500' },
   statValue: { fontSize: 16, fontWeight: '700', color: COLORS.secondary },
   statLabelLight: { fontSize: 12, color: 'rgba(255,255,255,0.9)', fontWeight: '500' },
@@ -294,20 +317,14 @@ const styles = StyleSheet.create({
   cardDimmed: { opacity: 0.7, borderLeftColor: '#9CA3AF' },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   earningsText: { fontSize: 16, fontWeight: '700', color: COLORS.primaryDark },
-  
-  // Badge
   badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   badgeText: { fontSize: 12, fontWeight: '600' },
   surgeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surge, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6, gap: 2 },
   surgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
-
-  // Body
   cardBody: { marginBottom: 16 },
   timeText: { fontSize: 18, fontWeight: '700', color: COLORS.secondary, marginBottom: 4 },
   zoneRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   zoneText: { fontSize: 14, color: COLORS.muted },
-
-  // Footer/Buttons
   cardFooter: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 12 },
   actionBtnPrimary: { backgroundColor: COLORS.primary, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   actionBtnTextPrimary: { color: '#FFFFFF', fontWeight: '600', fontSize: 14 },

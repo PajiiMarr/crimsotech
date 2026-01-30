@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
+import { router } from 'expo-router';
 
 // --- Types & Mock Data ---
 interface ParcelItem {
@@ -111,7 +112,24 @@ export default function EarningsPage() {
           <Text style={styles.topBarTitle}>My Earnings</Text>
           <Text style={styles.topBarSubtext}>Electronics Delivery</Text>
         </View>
-        <View style={{ width: 40 }} />
+        
+        {/* Header Actions (Notifications & Settings) */}
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            style={styles.iconBtn} 
+            onPress={() => console.log('Notifications')}
+          >
+            <Feather name="bell" size={22} color="#111827" />
+            <View style={styles.notifBadge} />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.iconBtn} 
+            onPress={() => router.push('/rider/settings')}
+          >
+            <Feather name="settings" size={22} color="#111827" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 150 }}>
@@ -243,6 +261,26 @@ const styles = StyleSheet.create({
   },
   topBarTitle: { fontSize: 24, fontWeight: '700', color: '#111827' },
   topBarSubtext: { fontSize: 13, color: '#6B7280', marginTop: 2 },
+  
+  // New Header Actions
+  headerActions: { flexDirection: 'row', gap: 8 },
+  iconBtn: { 
+    padding: 10, 
+    backgroundColor: '#F3F4F6', 
+    borderRadius: 12,
+    position: 'relative' 
+  },
+  notifBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#DC2626',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
 
   // Total Card
   totalCard: { margin: 20, padding: 24, borderRadius: 24, backgroundColor: '#FFF', alignItems: 'center', elevation: 4, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10 },
