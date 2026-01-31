@@ -5,7 +5,9 @@ import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
-import { Truck, CheckCircle, RotateCcw, MessageCircle } from "lucide-react";
+import { Truck, CheckCircle, RotateCcw, MessageCircle, CreditCard } from "lucide-react";
+
+
 
 export default function ViewDelivered({ orderDetails, formatCurrency, formatDate, onRequestRefund }: any) {
   const order = orderDetails.order;
@@ -35,15 +37,35 @@ export default function ViewDelivered({ orderDetails, formatCurrency, formatDate
               </AlertDescription>
             </Alert>
 
-            {/* Delivery Info */}
+            {/* Delivery Info (Delivered At, Rider, Evidence) */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <p className="text-xs text-muted-foreground">Delivery Status</p>
-                <p className="font-medium text-sm">Out for Delivery</p>
+                <p className="font-medium text-sm">{isDelivered ? 'Delivered' : 'Out for Delivery'}</p>
+
+                {isDelivered && (
+                  <>
+                    <p className="text-xs text-muted-foreground mt-3">Delivered At</p>
+                    <p className="font-medium text-sm">{order.delivered_at ? formatDate(order.delivered_at) : 'N/A'}</p>
+                  </>
+                )}
               </div>
+
               <div>
-                <p className="text-xs text-muted-foreground">Estimated Arrival</p>
-                <p className="font-medium text-sm">Today</p>
+                <p className="text-xs text-muted-foreground">Rider</p>
+                <p className="font-medium text-sm">{order.rider_name || 'N/A'}</p>
+                {order.rider_contact && <p className="text-xs text-muted-foreground">{order.rider_contact}</p>}
+
+                {order.delivery_evidence && order.delivery_evidence.length > 0 && (
+                  <>
+                    <p className="text-xs text-muted-foreground mt-3">Delivery Evidence</p>
+                    <div className="flex gap-2 mt-2">
+                      {order.delivery_evidence.map((img: string, idx: number) => (
+                        <img key={idx} src={img} alt={`evidence-${idx}`} className="w-16 h-12 object-cover rounded" />
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -87,7 +109,7 @@ export default function ViewDelivered({ orderDetails, formatCurrency, formatDate
                 className="w-full justify-start h-8 text-xs"
                 onClick={() => onRequestRefund({ orderId: order.id })}
               >
-                <RotateCcw className="h-3 w-3 mr-1.5" />
+                <CreditCard className="h-3 w-3 mr-1.5" />
                 Request Refund (Order)
               </Button>
             )}
@@ -97,15 +119,15 @@ export default function ViewDelivered({ orderDetails, formatCurrency, formatDate
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground font-medium">Refundable Items</p>
                 {order.items.filter((i: any) => i.is_refundable).map((it: any) => (
-                  <div key={it.checkout_id || it.product_id} className="flex items-center justify-between gap-2">
+                  <div key={it.checkout_id || it.product_id} className="flex flex-col gap-2 w-full">
                     <div className="text-xs truncate">{it.product_name}</div>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      className="h-6 px-2 text-orange-600 hover:text-orange-700"
+                      className="w-full justify-start h-8 text-xs"
                       onClick={() => onRequestRefund({ orderId: order.id, productId: it.product_id, checkoutId: it.checkout_id })}
                     >
-                      <RotateCcw className="h-3 w-3 mr-1" />
+                      <CreditCard className="h-3 w-3 mr-1" />
                       <span className="text-xs">Refund</span>
                     </Button>
                   </div>
@@ -117,6 +139,7 @@ export default function ViewDelivered({ orderDetails, formatCurrency, formatDate
               <MessageCircle className="h-3 w-3 mr-1.5" />
               Contact Seller
             </Button>
+            
           </CardContent>
         </Card>
       </div>

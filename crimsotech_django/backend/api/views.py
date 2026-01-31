@@ -358,14 +358,6 @@ class Landing(viewsets.ViewSet):
                     'trust_badges': trust_badges
                 }
             }
-
-            # Debug: log featured product ids and stock/status summary
-            try:
-                ids = [p['id'] for p in product_list]
-                sample = product_list[:3]
-                print(f"LANDING: featured_count={len(product_list)} ids_sample={ids[:8]} sample_items={sample}")
-            except Exception as _e:
-                print("LANDING: failed to log featured products", _e)
             
             return Response(response_data, status=status.HTTP_200_OK)
             
