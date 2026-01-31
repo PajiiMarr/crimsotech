@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
+import { getRiderOrderHistory } from '../../services/api';
 
 // --- Types & Mock Data ---
 interface ParcelItem {
@@ -54,9 +55,72 @@ const EARNINGS_DATA: ParcelItem[] = [
 ];
 
 export default function EarningsPage() {
-  const { userRole } = useAuth();
+  const { userRole, userId } = useAuth();
   const [activeTab, setActiveTab] = useState('This Week');
-  const [selectedItem, setSelectedItem] = useState<ParcelItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [earningsData, setEarningsData] = useState<any>(null);
+
+  // Fetch earnings data
+  const fetchEarningsData = async () => {
+    if (!userId) return;
+    
+    try {
+      setError(null);
+      // Calculate date range based on active tab
+      const { startDate, endDate } = getDateRange(activeTab);
+      
+      const data = await getRiderOrderHistory(userId, {
+        startDate,
+        endDate,
+        status: 'completed', // Only show completed deliveries
+      });
+      
+      setEarningsData(data);
+    } catch (err: any) {
+      console.error('Error fetching earnings:', err);
+      setError(err.message || 'Failed to load earnings data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchEarningsData();
+  }, [userId, activeTab]);
+
+  // Helper function to get date range
+  const getDateRange = (tab: string) => {
+    const now = new Date();
+    let startDate = new Date();
+    const endDate = now.toISOString().split('T')[0];
+
+    switch (tab) {
+      case 'Today':
+        startDate = now;
+        break;
+      case 'This Week':
+        startDate = new Date(now.setDate(now.getDate() - now.getDay()));
+        break;
+      case 'This Month':
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+    }
+
+    return {
+      startDate: startDate.toISOString().split('T')[0],
+      endDate,
+    };
+  };
+
+  const metrics = earningsData?.metrics || {
+    total_earnings: 0,
+    delivered_count: 0,
+    avg_rating: 0,
+  };
+
+  const deliveries = earningsData?.deliveries || [];
 
   if (userRole && userRole !== 'rider') {
     return (

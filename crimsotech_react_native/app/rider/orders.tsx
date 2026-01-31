@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   SafeAreaView, 
   View, 
@@ -7,11 +7,13 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
-  StatusBar
+  StatusBar,
+  ActivityIndicator
 } from 'react-native';
 import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
+import { getRiderDashboard, acceptDeliveryOrder, updateDeliveryStatus } from '../../utils/riderApi';
 
 // --- Theme Colors (Consistent with Home/Schedule) ---
 const COLORS = {
@@ -28,65 +30,67 @@ const COLORS = {
 };
 
 export default function OrdersPage() {
-  const { userRole } = useAuth();
+  const { userRole, userId } = useAuth();
   const [activeTab, setActiveTab] = useState<'pending' | 'toDeliver'>('pending');
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [deliveries, setDeliveries] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  // Hardcoded data for demonstration
-  const pendingOrders = [
-    {
-      id: '1',
-      orderId: 'ORD-789456',
-      customerName: 'Maria Santos',
-      address: '123 Main St, Barangay 1, Manila City',
-      amount: 450,
-      items: 2,
-      scheduledTime: '2024-01-24T15:30:00Z',
-      distance: 3.5,
-    },
-    {
-      id: '2',
-      orderId: 'ORD-789457',
-      customerName: 'John Dela Cruz',
-      address: '456 Oak Ave, Barangay 2, Quezon City',
-      amount: 320,
-      items: 1,
-      scheduledTime: '2024-01-24T16:00:00Z',
-      distance: 2.1,
-    },
-  ];
+  // Fetch deliveries from API
+  const fetchDeliveries = async () => {
+    if (!userId) return;
+    
+    try {
+      setError(null);
+      const data = await getRiderDashboard(userId);
+      setDeliveries(data.deliveries || []);
+    } catch (err: any) {
+      console.error('Error fetching deliveries:', err);
+      setError(err.message || 'Failed to load orders');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const toDeliverOrders = [
-    {
-      id: '3',
-      orderId: 'ORD-789458',
-      customerName: 'Ana Reyes',
-      address: '789 Pine St, Barangay 3, Makati City',
-      amount: 580,
-      items: 3,
-      scheduledTime: '2024-01-24T14:30:00Z',
-      distance: 1.8,
-      pickupTime: '2024-01-24T14:00:00Z',
-    },
-    {
-      id: '4',
-      orderId: 'ORD-789459',
-      customerName: 'Carlos Gomez',
-      address: '321 Maple St, Barangay 4, Pasig City',
-      amount: 420,
-      items: 2,
-      scheduledTime: '2024-01-24T17:00:00Z',
-      distance: 4.2,
-      pickupTime: '2024-01-24T16:30:00Z',
-    },
-  ];
+  useEffect(() => {
+    fetchDeliveries();
+  }, [userId]);
 
-  const onRefresh = () => {
+  // Filter orders based on active tab
+  const pendingOrders = deliveries.filter(d => d.status === 'pending');
+  const toDeliverOrders = deliveries.filter(d => 
+    d.status === 'picked_up' || d.status === 'in_progress'
+  );
+
+  const onRefresh = async () => {
     setRefreshing(true);
-    // Simulate API call
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
+    await fetchDeliveries();
+    setRefreshing(false);
+  };
+
+  const handleAcceptOrder = async (deliveryId: string) => {
+    if (!userId) return;
+    
+    try {
+      await acceptDeliveryOrder(userId, deliveryId);
+      await fetchDeliveries(); // Refresh list
+      alert('Order accepted successfully!');
+    } catch (err: any) {
+      alert('Failed to accept order: ' + err.message);
+    }
+  };
+
+  const handleDeliverNow = async (deliveryId: string) => {
+    if (!userId) return;
+    
+    try {
+      await updateDeliveryStatus(userId, deliveryId, 'in_progress');
+      await fetchDeliveries(); // Refresh list
+      alert('Delivery started!');
+    } catch (err: any) {
+      alert('Failed to update status: ' + err.message);
+    }
   };
 
   const formatCurrency = (amount: number) => {
@@ -106,7 +110,37 @@ export default function OrdersPage() {
     );
   }
 
-  const renderOrderCard = (order: any, isToDeliver: boolean = false) => (
+  if (loading) {
+    return (
+      <SafeAreaView style={[styles.container, styles.center]}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={styles.loadingText}>Loading orders...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (error) {
+    return (
+      <SafeAreaView style={[styles.container, styles.center]}>
+        <MaterialIcons name="error-outline" size={48} color={COLORS.danger} />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={fetchDeliveries}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
+  const renderOrderCard = (order: any, isToDeliver: boolean = false) => {
+    const customerName = order.order?.user 
+      ? `${order.order.user.first_name} ${order.order.user.last_name}`.trim()
+      : order.customer_name || 'Customer';
+    
+    const address = order.order?.delivery_address_text || order.delivery_location || 'Address not available';
+    const amount = order.order?.total_amount || order.order_amount || 0;
+    const orderId = order.order_id || order.id;
+    
+    return (
     <TouchableOpacity 
       key={order.id}
       style={styles.orderCard}
@@ -115,7 +149,7 @@ export default function OrdersPage() {
       <View style={styles.orderHeader}>
         <View style={styles.orderIdContainer}>
           <MaterialIcons name="receipt" size={16} color={COLORS.muted} />
-          <Text style={styles.orderId}>Order #{order.orderId}</Text>
+          <Text style={styles.orderId}>Order #{orderId.substring(0, 8)}</Text>
         </View>
         <View style={[styles.statusBadge, isToDeliver ? styles.deliverBadge : styles.pendingBadge]}>
           <Text style={[styles.statusText, isToDeliver ? { color: '#0369A1' } : { color: COLORS.primary }]}>
@@ -127,50 +161,58 @@ export default function OrdersPage() {
       <View style={styles.orderDetails}>
         <View style={styles.detailRow}>
           <MaterialIcons name="person" size={16} color={COLORS.muted} />
-          <Text style={styles.detailText}>{order.customerName}</Text>
+          <Text style={styles.detailText}>{customerName}</Text>
         </View>
         
         <View style={styles.detailRow}>
           <MaterialIcons name="location-on" size={16} color={COLORS.muted} />
-          <Text style={styles.detailText} numberOfLines={1}>{order.address}</Text>
+          <Text style={styles.detailText} numberOfLines={1}>{address}</Text>
         </View>
         
         <View style={styles.detailRow}>
           <MaterialIcons name="schedule" size={16} color={COLORS.muted} />
           <Text style={styles.detailText}>
-            Deliver by: {formatTime(order.scheduledTime)}
+            {order.scheduled_delivery_time 
+              ? `Deliver by: ${formatTime(order.scheduled_delivery_time)}`
+              : 'Time not set'}
           </Text>
         </View>
         
-        {isToDeliver && order.pickupTime && (
+        {isToDeliver && order.picked_at && (
           <View style={styles.detailRow}>
             <MaterialIcons name="inventory" size={16} color={COLORS.muted} />
             <Text style={styles.detailText}>
-              Picked up: {formatTime(order.pickupTime)}
+              Picked up: {formatTime(order.picked_at)}
             </Text>
           </View>
         )}
         
         <View style={styles.detailRow}>
           <MaterialIcons name="directions-bike" size={16} color={COLORS.muted} />
-          <Text style={styles.detailText}>{order.distance} km away</Text>
+          <Text style={styles.detailText}>
+            {order.distance_km ? `${order.distance_km} km away` : 'Distance not set'}
+          </Text>
         </View>
       </View>
 
       <View style={styles.orderFooter}>
         <View style={styles.orderInfo}>
-          <Text style={styles.orderAmount}>{formatCurrency(order.amount)}</Text>
-          <Text style={styles.orderItems}>{order.items} item{order.items > 1 ? 's' : ''}</Text>
+          <Text style={styles.orderAmount}>{formatCurrency(amount)}</Text>
+          <Text style={styles.orderItems}>{order.items_count || 1} item{(order.items_count || 1) > 1 ? 's' : ''}</Text>
         </View>
         
-        <TouchableOpacity style={styles.actionButton}>
+        <TouchableOpacity 
+          style={styles.actionButton}
+          onPress={() => isToDeliver ? handleDeliverNow(order.id) : handleAcceptOrder(order.id)}
+        >
           <Text style={styles.actionButtonText}>
             {isToDeliver ? 'Deliver Now' : 'Accept Order'}
           </Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
-  );
+    );
+  };
 
   const currentOrders = activeTab === 'pending' ? pendingOrders : toDeliverOrders;
   const isEmpty = currentOrders.length === 0;
@@ -264,10 +306,34 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   message: {
     fontSize: 16,
     color: COLORS.muted,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: COLORS.muted,
+  },
+  errorText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: COLORS.danger,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
   
   // Header

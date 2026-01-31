@@ -1,5 +1,5 @@
 // app/rider/home.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -9,10 +9,13 @@ import {
   TouchableOpacity,
   Image,
   StatusBar,
-  SafeAreaView
+  SafeAreaView,
+  ActivityIndicator
 } from 'react-native';
 import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useAuth } from '../../contexts/AuthContext';
+import { getRiderDashboard, updateRiderAvailability } from '../../utils/riderApi';
 
 // --- Theme Colors ---
 const COLORS = {
@@ -28,67 +31,71 @@ const COLORS = {
 };
 
 export default function Home() {
-  const [acceptingDeliveries, setAcceptingDeliveries] = useState(true);
+  const { userId, user } = useAuth();
+  const [acceptingDeliveries, setAcceptingDeliveries] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [dashboardData, setDashboardData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Hardcoded data
-  const fullName = "John Rider";
-  const stats = {
-    total_deliveries: 128,
-    completed_deliveries: 120,
-    todays_earnings: 850,
-    total_earnings: 28500,
-    average_rating: 4.8,
-    active_deliveries: 2,
+  // Extract data from dashboard response
+  const fullName = user?.username || "Rider";
+  const stats = dashboardData?.metrics || {
+    total_deliveries: 0,
+    delivered: 0,
+    pending: 0,
+    total_earnings: 0,
+    avg_rating: 0,
+    active_deliveries: 0,
   };
 
-  const activeDeliveries = [
-    {
-      id: '1',
-      order_id: 'ORD-789456',
-      status: 'pending',
-      distance_km: 3.5,
-      estimated_minutes: 25,
-      order: {
-        total_amount: 450,
-        delivery_address_text: '123 Main St, Barangay 1, Manila City',
-        user: { first_name: 'Maria', last_name: 'Santos' }
-      },
-      scheduled_delivery_time: '2024-01-24T15:30:00Z'
-    },
-    {
-      id: '2',
-      order_id: 'ORD-123456',
-      status: 'picked_up',
-      distance_km: 2.1,
-      estimated_minutes: 15,
-      order: {
-        total_amount: 320,
-        delivery_address_text: '456 Oak St, Barangay 2, Quezon City',
-        user: { first_name: 'Juan', last_name: 'Dela Cruz' }
+  const activeDeliveries = dashboardData?.deliveries || [];
+  const riderData = dashboardData?.rider || null;
+
+  // Fetch dashboard data
+  const fetchDashboardData = async () => {
+    if (!userId) return;
+    
+    try {
+      setError(null);
+      const data = await getRiderDashboard(userId);
+      setDashboardData(data);
+      
+      // Update accepting deliveries from rider status
+      if (data.rider?.is_accepting_deliveries !== undefined) {
+        setAcceptingDeliveries(data.rider.is_accepting_deliveries);
       }
+    } catch (err: any) {
+      console.error('Error fetching dashboard data:', err);
+      setError(err.message || 'Failed to load dashboard data');
+    } finally {
+      setLoading(false);
     }
-  ];
-
-  const riderData = {
-    id: '1',
-    vehicle_type: 'Motorcycle',
-    plate_number: 'ABC-123',
-    vehicle_brand: 'Honda',
-    vehicle_model: 'Click 125',
-    vehicle_image: null,
-    verified: true,
   };
 
-  const onRefresh = () => {
+  useEffect(() => {
+    fetchDashboardData();
+  }, [userId]);
+
+  const onRefresh = async () => {
     setRefreshing(true);
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
+    await fetchDashboardData();
+    setRefreshing(false);
   };
 
-  const toggleAcceptingDeliveries = () => {
-    setAcceptingDeliveries(!acceptingDeliveries);
+  const toggleAcceptingDeliveries = async () => {
+    if (!userId) return;
+    
+    try {
+      const newStatus = !acceptingDeliveries;
+      await updateRiderAvailability(userId, newStatus);
+      setAcceptingDeliveries(newStatus);
+      // Refresh dashboard to get updated data
+      await fetchDashboardData();
+    } catch (err: any) {
+      console.error('Error updating availability:', err);
+      alert('Failed to update availability. Please try again.');
+    }
   };
 
   const formatCurrency = (amount: number) => {
@@ -114,6 +121,27 @@ export default function Home() {
       default: return status;
     }
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={[styles.container, styles.center]}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={styles.loadingText}>Loading dashboard...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (error) {
+    return (
+      <SafeAreaView style={[styles.container, styles.center]}>
+        <MaterialIcons name="error-outline" size={48} color={COLORS.danger} />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={fetchDashboardData}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -192,7 +220,7 @@ export default function Home() {
                <View style={[styles.statIconBg, { backgroundColor: '#EFF6FF' }]}>
                 <MaterialIcons name="check-circle" size={20} color="#3B82F6" />
               </View>
-              <Text style={styles.statValue}>{stats.completed_deliveries}</Text>
+              <Text style={styles.statValue}>{stats.delivered}</Text>
               <Text style={styles.statLabel}>Completed</Text>
             </View>
             
@@ -200,16 +228,16 @@ export default function Home() {
               <View style={[styles.statIconBg, { backgroundColor: '#FFF7ED' }]}>
                  <Text style={{ color: COLORS.primary, fontWeight: '700', fontSize: 16 }}>₱</Text>
               </View>
-              <Text style={styles.statValue}>{formatCurrency(stats.todays_earnings).replace('₱','')}</Text>
-              <Text style={styles.statLabel}>Today</Text>
+              <Text style={styles.statValue}>{formatCurrency(stats.total_earnings).replace('₱','')}</Text>
+              <Text style={styles.statLabel}>Earnings</Text>
             </View>
             
             <View style={styles.statCard}>
-               <View style={[styles.statIconBg, { backgroundColor: '#F3F4F6' }]}>
-                <MaterialIcons name="attach-money" size={20} color={COLORS.secondary} />
+               <View style={[styles.statIconBg, { backgroundColor: '#F3E8FF' }]}>
+                <MaterialIcons name="star" size={20} color="#9333EA" />
               </View>
-              <Text style={styles.statValue}>{formatCurrency(stats.total_earnings).replace('₱','')}</Text>
-              <Text style={styles.statLabel}>Total</Text>
+              <Text style={styles.statValue}>{stats.avg_rating.toFixed(1)}</Text>
+              <Text style={styles.statLabel}>Rating</Text>
             </View>
           </View>
         </View>
@@ -264,40 +292,42 @@ export default function Home() {
         </View>
 
         {/* Vehicle Info */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Vehicle Information</Text>
-          
-          <View style={styles.vehicleCard}>
-            <View style={styles.vehicleHeader}>
-              {riderData.vehicle_image ? (
-                <Image source={{ uri: riderData.vehicle_image }} style={styles.vehicleImage} />
-              ) : (
-                <View style={styles.vehicleImagePlaceholder}>
-                  <MaterialIcons name="two-wheeler" size={28} color={COLORS.primary} />
+        {riderData && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Vehicle Information</Text>
+            
+            <View style={styles.vehicleCard}>
+              <View style={styles.vehicleHeader}>
+                {riderData.vehicle_image ? (
+                  <Image source={{ uri: riderData.vehicle_image }} style={styles.vehicleImage} />
+                ) : (
+                  <View style={styles.vehicleImagePlaceholder}>
+                    <MaterialIcons name="two-wheeler" size={28} color={COLORS.primary} />
+                  </View>
+                )}
+                
+                <View style={styles.vehicleInfo}>
+                  <Text style={styles.vehicleModel}>
+                    {riderData.vehicle_brand} {riderData.vehicle_model}
+                  </Text>
+                  <Text style={styles.vehicleType}>{riderData.vehicle_type}</Text>
+                  <Text style={styles.plateNumber}>{riderData.plate_number}</Text>
                 </View>
-              )}
+              </View>
               
-              <View style={styles.vehicleInfo}>
-                <Text style={styles.vehicleModel}>
-                  {riderData.vehicle_brand} {riderData.vehicle_model}
+              <View style={styles.verificationBadge}>
+                <MaterialIcons 
+                  name={riderData.verified ? "verified" : "warning"} 
+                  size={16} 
+                  color={riderData.verified ? COLORS.success : COLORS.warning} 
+                />
+                <Text style={[styles.verificationText, { color: riderData.verified ? COLORS.success : COLORS.warning }]}>
+                  {riderData.verified ? 'Verified Rider' : 'Pending Verification'}
                 </Text>
-                <Text style={styles.vehicleType}>{riderData.vehicle_type}</Text>
-                <Text style={styles.plateNumber}>{riderData.plate_number}</Text>
               </View>
             </View>
-            
-            <View style={styles.verificationBadge}>
-              <MaterialIcons 
-                name={riderData.verified ? "verified" : "warning"} 
-                size={16} 
-                color={riderData.verified ? COLORS.success : COLORS.warning} 
-              />
-              <Text style={[styles.verificationText, { color: riderData.verified ? COLORS.success : COLORS.warning }]}>
-                {riderData.verified ? 'Verified Rider' : 'Pending Verification'}
-              </Text>
-            </View>
           </View>
-        </View>
+        )}
 
       </ScrollView>
     </SafeAreaView>
@@ -308,6 +338,34 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.bg,
+  },
+  center: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: COLORS.muted,
+  },
+  errorText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: COLORS.danger,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
   content: {
     flex: 1,
