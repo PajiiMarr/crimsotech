@@ -4,10 +4,11 @@ from keras import layers, models
 import os
 import numpy as np
 from keras.utils import load_img, img_to_array
+from django.conf import settings
 import matplotlib.pyplot as plt
 
 # ---------------- PARAMETERS ---------------- #
-DATA_DIR = "dataset"  # dataset folder
+DATA_DIR = os.path.join(os.getcwd(), "dataset")  # dataset folder
 IMG_SIZE = (256, 256)
 BATCH_SIZE = 16
 EPOCHS = 5  # start small, increase later
@@ -102,10 +103,12 @@ def predict_image(img_path):
     return class_name, confidence
 
 
-image_path = "dataset/test/try.jpeg"
+image_path = os.path.join(DATA_DIR, "test", "try.jpeg")
 predicted_class, confidence = predict_image(image_path)
 
 print(f"Predicted category: {predicted_class}")
 print(f"Confidence: {confidence:.2f}")
 
-model.save("electronics_classifier3.keras")
+model_dir = os.path.join(settings.BASE_DIR, "model")
+model_path = os.path.join(model_dir, "electronics_classifier3.keras")
+model.save(model_path)

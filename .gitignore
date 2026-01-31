@@ -11,6 +11,9 @@ crimsotech_react_native\package.json
 crimsotech_django/backend/api/__pycache__/__init__.cpython-312.pyc
 __pycache__/
 *.py[cod]
+crimsotech_django/backend/dataset
+crimsotech_django/backend/dataset/gits.webp
+crimsotech_django/backend/dataset/sample.jpeg
 crimsotech_django/__pycache__/
 crimsotech_django/*.py[cod]
 crimsotech_django/*$py.class
