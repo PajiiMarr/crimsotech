@@ -148,7 +148,11 @@ class Landing(viewsets.ViewSet):
             ).distinct().order_by('-product_count')[:10]
             
             # 3. FEATURED PRODUCTS (respects all model constraints)
-            featured_products = Product.objects.filter(
+            # Featured products (include all published products regardless of stock;
+            # frontend will mark out-of-stock items using the `stock` field)
+            featured_products = Product.objects.annotate(
+                sku_total=Coalesce(Sum('skus__quantity', filter=Q(skus__is_active=True)), 0)
+            ).filter(
                 upload_status='published',
                 is_removed=False,
                 shop__isnull=False,
@@ -300,6 +304,14 @@ class Landing(viewsets.ViewSet):
                 if media and media.file_data:
                     image_url = request.build_absolute_uri(media.file_data.url)
                 
+                # Prefer SKU totals for stock if available
+                try:
+                    sku_total = int(getattr(product, 'sku_total', 0) or 0)
+                except Exception:
+                    sku_total = 0
+
+                stock = sku_total if sku_total > 0 else (product.quantity or 0)
+
                 product_list.append({
                     'id': str(product.id),
                     'title': product.name,
@@ -311,6 +323,8 @@ class Landing(viewsets.ViewSet):
                     'category_id': str(product.category.id) if product.category else None,
                     'category_name': product.category.name if product.category else None,
                     'image_url': image_url,
+                    'stock': stock,
+                    'is_out_of_stock': stock <= 0,
                     'created_at': product.created_at.isoformat()
                 })
             
@@ -344,6 +358,14 @@ class Landing(viewsets.ViewSet):
                     'trust_badges': trust_badges
                 }
             }
+
+            # Debug: log featured product ids and stock/status summary
+            try:
+                ids = [p['id'] for p in product_list]
+                sample = product_list[:3]
+                print(f"LANDING: featured_count={len(product_list)} ids_sample={ids[:8]} sample_items={sample}")
+            except Exception as _e:
+                print("LANDING: failed to log featured products", _e)
             
             return Response(response_data, status=status.HTTP_200_OK)
             
@@ -15325,6 +15347,7 @@ class AddToCartView(APIView):
     def post(self, request):
         user_id = request.data.get("user_id") 
         product_id = request.data.get("product_id")
+        sku_id = request.data.get("sku_id")
         quantity = int(request.data.get("quantity", 1))
        
 
@@ -15343,24 +15366,83 @@ class AddToCartView(APIView):
             return Response({"success": False, "error": "User not found."},
                             status=status.HTTP_404_NOT_FOUND)
 
+        # Find product
         try:
             product = Product.objects.get(id=product_id)
         except Product.DoesNotExist:
             return Response({"success": False, "error": "Product not found."},
                             status=status.HTTP_404_NOT_FOUND)
 
-        cart_item, created = CartItem.objects.get_or_create(
-            user=user,
-            product=product,
-            defaults={"quantity": quantity}
-        )
+        # If sku_id provided, validate it belongs to product and check availability
+        sku = None
+        if sku_id:
+            try:
+                sku = ProductSKU.objects.get(id=sku_id, product=product)
+            except ProductSKU.DoesNotExist:
+                return Response({"success": False, "error": "SKU not found for this product."}, status=status.HTTP_404_NOT_FOUND)
 
-        if not created:
-            cart_item.quantity += quantity
-            cart_item.save()
+            if not sku.is_active:
+                return Response({"success": False, "error": "Selected variant is not available."}, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer = CartItemSerializer(cart_item)
-        return Response({"success": True, "cart_item": serializer.data})
+            if sku.quantity < quantity:
+                return Response({"success": False, "error": f"Only {sku.quantity} units available for selected variant.", "available_quantity": sku.quantity}, status=status.HTTP_400_BAD_REQUEST)
+
+        # If sku provided, try to update/merge intelligently
+        if sku:
+            print(f"AddToCart: user={user_id}, product={product_id}, sku={sku_id}, quantity={quantity}")
+            # 1) Try to find existing cart item with same sku
+            try:
+                cart_item = CartItem.objects.get(user=user, product=product, sku=sku)
+                new_qty = cart_item.quantity + quantity
+                print(f"Found existing SKU cart item {cart_item.id} qty={cart_item.quantity}, new_qty={new_qty}")
+                if new_qty > sku.quantity:
+                    print(f"Cannot add: requested {new_qty} > sku.quantity {sku.quantity}")
+                    return Response({"success": False, "error": f"Only {sku.quantity} units available for selected variant.", "available_quantity": sku.quantity}, status=status.HTTP_400_BAD_REQUEST)
+                cart_item.quantity = new_qty
+                cart_item.save()
+                serializer = CartItemSerializer(cart_item, context={"request": request})
+                print("Updated cart_item with sku", serializer.data)
+                return Response({"success": True, "cart_item": serializer.data})
+            except CartItem.DoesNotExist:
+                # 2) Try to find an existing cart item for this user/product without a sku (generic) and attach sku
+                try:
+                    generic = CartItem.objects.get(user=user, product=product, sku__isnull=True)
+                    new_qty = generic.quantity + quantity
+                    print(f"Found generic cart item {generic.id} qty={generic.quantity}, attaching sku -> new_qty={new_qty}")
+                    if new_qty > sku.quantity:
+                        print(f"Cannot attach: requested {new_qty} > sku.quantity {sku.quantity}")
+                        return Response({"success": False, "error": f"Only {sku.quantity} units available for selected variant.", "available_quantity": sku.quantity}, status=status.HTTP_400_BAD_REQUEST)
+                    generic.sku = sku
+                    generic.quantity = new_qty
+                    generic.save()
+                    serializer = CartItemSerializer(generic, context={"request": request})
+                    print("Attached sku to generic cart item", serializer.data)
+                    return Response({"success": True, "cart_item": serializer.data})
+                except CartItem.DoesNotExist:
+                    # 3) Create new cart item with sku
+                    print("No existing cart item found, creating new with sku")
+                    if quantity > sku.quantity:
+                        print(f"Cannot create: requested {quantity} > sku.quantity {sku.quantity}")
+                        return Response({"success": False, "error": f"Only {sku.quantity} units available for selected variant.", "available_quantity": sku.quantity}, status=status.HTTP_400_BAD_REQUEST)
+                    cart_item = CartItem.objects.create(user=user, product=product, sku=sku, quantity=quantity)
+                    serializer = CartItemSerializer(cart_item, context={"request": request})
+                    print("Created cart_item with sku", serializer.data)
+                    return Response({"success": True, "cart_item": serializer.data})
+        else:
+            # No SKU specified: use or create generic cart item
+            cart_item, created = CartItem.objects.get_or_create(
+                user=user,
+                product=product,
+                sku=None,
+                defaults={"quantity": quantity}
+            )
+
+            if not created:
+                cart_item.quantity += quantity
+                cart_item.save()
+
+            serializer = CartItemSerializer(cart_item, context={"request": request})
+            return Response({"success": True, "cart_item": serializer.data})
 
 class CartListView(APIView):
     """
@@ -15376,48 +15458,89 @@ class CartListView(APIView):
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
-        
-        # Optimized query with prefetch for media files
-        cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
-            .select_related("product", "product__shop")\
-            .prefetch_related('product__productmedia_set')\
-            .order_by('-added_at')
-        
-        serializer = CartItemSerializer(cart_items, many=True)
-        return Response({"success": True, "cart_items": serializer.data})    
+
+        try:
+            # Optimized query with prefetch for media files and related sku
+            cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
+                .select_related("product", "product__shop", 'sku')\
+                .prefetch_related('product__productmedia_set')\
+                .order_by('-added_at')
+
+            # Pass request in context so serializers can build absolute URIs safely
+            serializer = CartItemSerializer(cart_items, many=True, context={"request": request})
+            # Debug output: log count and first item for inspection
+            try:
+                print(f"CartListView.get: user={user_id} cart_count={len(serializer.data)}")
+                if len(serializer.data) > 0:
+                    print("CartListView.get: first_item=", serializer.data[0])
+            except Exception:
+                pass
+            return Response({"success": True, "cart_items": serializer.data})
+        except Exception as e:
+            import traceback
+            print("Error in CartListView.get:", str(e))
+            print(traceback.format_exc())
+            return Response({"success": False, "error": "Failed to fetch cart items", "details": str(e)}, status=500)    
 
     def put(self, request, item_id):
         user_id = request.data.get("user_id")
-        quantity = request.data.get("quantity")
-        
+        quantity_raw = request.data.get("quantity")
+
+        print(f"CartListView.put called: item_id={item_id}, user_id={user_id}, quantity_raw={quantity_raw}")
+
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
-        
-        if not quantity or quantity < 1:
-            return Response({"error": "Valid quantity is required"}, status=400)
-        
+
+        # Coerce quantity to integer with validation
         try:
-            cart_item = CartItem.objects.get(id=item_id, user_id=user_id)
-            
-            # Check available product quantity
-            if cart_item.product:
-                available_quantity = cart_item.product.quantity
-                if quantity > available_quantity:
-                    return Response({
-                        "error": f"Only {available_quantity} items available in stock",
-                        "available_quantity": available_quantity
-                    }, status=400)
-            
-            cart_item.quantity = quantity
-            cart_item.save()
-            
-            return Response({
-                "success": True,
-                "message": "Quantity updated"
-            })
+            quantity = int(quantity_raw)
+        except (TypeError, ValueError):
+            return Response({"error": "Quantity must be an integer"}, status=400)
+
+        if quantity < 1:
+            return Response({"error": "Valid quantity is required"}, status=400)
+
+        try:
+            cart_item = CartItem.objects.select_related("product").get(id=item_id, user_id=user_id)
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
+
+        try:
+            # Determine available quantity.
+            available_quantity = 0
+            product = cart_item.product
+            if product:
+                # If product has SKUs, prefer sum of active SKU quantities
+                try:
+                    sku_qs = product.skus.filter(is_active=True)
+                    if sku_qs.exists():
+                        total = sku_qs.aggregate(total=Coalesce(Sum('quantity'), 0))['total']
+                        available_quantity = int(total or 0)
+                    else:
+                        available_quantity = int(product.quantity or 0)
+                except Exception:
+                    # If any issue accessing SKUs, fallback to product.quantity
+                    available_quantity = int(product.quantity or 0)
+
+            if quantity > available_quantity:
+                return Response({
+                    "error": f"Only {available_quantity} items available in stock",
+                    "available_quantity": available_quantity
+                }, status=400)
+
+            cart_item.quantity = quantity
+            cart_item.save()
+
+            serializer = CartItemSerializer(cart_item)
+            return Response({
+                "success": True,
+                "message": "Quantity updated",
+                "cart_item": serializer.data
+            })
         except Exception as e:
+            import traceback
+            print("Error updating cart quantity:", str(e))
+            print(traceback.format_exc())
             return Response({"error": str(e)}, status=400)
 
     def delete(self, request, item_id):
@@ -15508,15 +15631,51 @@ class CheckoutView(viewsets.ViewSet):
                     if not product:
                         continue
 
-                    if product.quantity < cart_item.quantity:
-                        raise Exception(f"Insufficient stock for {product.name}")
+                    # Handle SKU-aware stock and pricing
+                    if getattr(cart_item, 'sku', None) and cart_item.sku:
+                        sku = cart_item.sku
+                        if sku.quantity < cart_item.quantity:
+                            raise Exception(f"Insufficient SKU stock for {product.name} - SKU {sku.sku_code}")
+                        unit_price = sku.price if sku.price is not None else product.price
+                        line_total = unit_price * cart_item.quantity
+                        total_amount += line_total
 
-                    line_total = product.price * cart_item.quantity
-                    total_amount += line_total
+                        # Deduct SKU stock
+                        sku.quantity -= cart_item.quantity
+                        sku.save(update_fields=['quantity'])
 
-                    # Deduct stock
-                    product.quantity -= cart_item.quantity
-                    product.save(update_fields=["quantity"])
+                        # Recalculate and sync product.quantity from SKU totals
+                        try:
+                            total = product.skus.filter(is_active=True).aggregate(total=Coalesce(Sum('quantity'), 0))['total']
+                            product.quantity = int(total or 0)
+                            product.save(update_fields=['quantity'])
+
+                            # Debug: product state after SKU sync
+                            try:
+                                shop = product.shop
+                                print(f"POST-CHECKOUT SKU SYNC: product={product.id} name={product.name} quantity={product.quantity} is_removed={product.is_removed} upload_status={product.upload_status} shop_verified={getattr(shop, 'verified', None)} shop_status={getattr(shop, 'status', None)}")
+                            except Exception as _e:
+                                print("POST-CHECKOUT SKU SYNC: failed to log product state", _e)
+                        except Exception:
+                            pass
+                    else:
+                        if product.quantity < cart_item.quantity:
+                            raise Exception(f"Insufficient stock for {product.name}")
+
+                        unit_price = product.price
+                        line_total = unit_price * cart_item.quantity
+                        total_amount += line_total
+
+                        # Deduct stock
+                        product.quantity -= cart_item.quantity
+                        product.save(update_fields=["quantity"])
+
+                        # Debug: product state after product stock decrement
+                        try:
+                            shop = product.shop
+                            print(f"POST-CHECKOUT PROD DECR: product={product.id} name={product.name} quantity={product.quantity} is_removed={product.is_removed} upload_status={product.upload_status} shop_verified={getattr(shop, 'verified', None)} shop_status={getattr(shop, 'status', None)}")
+                        except Exception as _e:
+                            print("POST-CHECKOUT PROD DECR: failed to log product state", _e)
 
                     # Create checkout row
                     Checkout.objects.create(
@@ -16593,7 +16752,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 is_ordered=False  # ADDED: Only get items that are not yet ordered
             ).select_related(
                 "product", 
-                "product__shop"
+                "product__shop",
+                'sku'
             ).prefetch_related(
                 'product__productmedia_set'
             )
@@ -16645,25 +16805,56 @@ class CheckoutOrder(viewsets.ViewSet):
                             'shop_contact_number': shop.contact_number
                         }
                 
+                # Prefer SKU price when available; fall back to product price
+                resolved_price = 0.0
+                sku_data = None
+
+                if getattr(cart_item, 'sku', None):
+                    sku = cart_item.sku
+                    try:
+                        if sku.price is not None:
+                            resolved_price = float(sku.price)
+                        else:
+                            resolved_price = float(product.price) if product else 0.0
+                    except Exception:
+                        resolved_price = float(product.price) if product else 0.0
+
+                    sku_data = {
+                        'id': str(sku.id),
+                        'price': float(sku.price) if sku.price is not None else None,
+                        'quantity': sku.quantity,
+                        'sku_code': sku.sku_code
+                    }
+                else:
+                    resolved_price = float(product.price) if product else 0.0
+
                 item_data = {
                     "id": str(cart_item.id),
                     "product_id": str(product.id) if product else None,
                     "name": product.name if product else "Unknown Product",
-                    "price": float(product.price) if product else 0,
+                    "price": resolved_price,
                     "quantity": cart_item.quantity,
                     "shop_name": shop.name if shop else "Unknown Shop",
                     "shop_id": str(shop.id) if shop else None,
                     "added_at": cart_item.added_at.isoformat() if cart_item.added_at else None,
-                    "subtotal": float(product.price * cart_item.quantity) if product else 0,
+                    "subtotal": resolved_price * cart_item.quantity,
                     "is_ordered": cart_item.is_ordered  # Include in response for clarity
                 }
-                
-                # Get product image if available
-                if product and product.productmedia_set.exists():
+
+                # If SKU has its own image, prefer that; otherwise fallback to product media
+                if sku_data and getattr(cart_item.sku, 'image', None) and getattr(cart_item.sku.image, 'url', None):
+                    try:
+                        item_data['image'] = request.build_absolute_uri(cart_item.sku.image.url)
+                    except Exception:
+                        item_data['image'] = cart_item.sku.image.url
+                elif product and product.productmedia_set.exists():
                     first_media = product.productmedia_set.first()
                     if first_media.file_data:
                         item_data["image"] = request.build_absolute_uri(first_media.file_data.url)
-                
+
+                if sku_data:
+                    item_data['sku'] = sku_data
+
                 checkout_items.append(item_data)
             
             # Calculate totals
@@ -17143,23 +17334,48 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
                 delivery_address_text = shipping_address.get_full_address()
             
-            # Get cart items
+# Get cart items (include sku)
             cart_items = CartItem.objects.filter(
                 id__in=selected_ids,
                 user=user
-            ).select_related("product", "product__shop", "product__customer__customer")
-            
+            ).select_related("product", "product__shop", "product__customer__customer", 'sku')
+
             if not cart_items.exists():
                 return Response(
                     {"error": "No cart items found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Calculate total - ensure we use Decimal
+            # Calculate total - ensure we use Decimal and prefer SKU price when present
             subtotal = Decimal('0')
             for cart_item in cart_items:
-                if cart_item.product:
-                    subtotal += cart_item.product.price * cart_item.quantity
+                # If product has SKUs and this cart item has no sku selected, require selection
+                try:
+                    has_active_skus = cart_item.product and cart_item.product.skus.filter(is_active=True).exists()
+                except Exception:
+                    has_active_skus = False
+
+                if has_active_skus and not getattr(cart_item, 'sku', None):
+                    return Response({
+                        "error": f"Please select a variant for product '{cart_item.product.name}' before placing your order.",
+                        "cart_item_id": str(cart_item.id)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                price = None
+                try:
+                    if getattr(cart_item, 'sku', None) and cart_item.sku and cart_item.sku.price is not None:
+                        price = Decimal(str(cart_item.sku.price))
+                    elif cart_item.product and cart_item.product.price is not None:
+                        price = Decimal(str(cart_item.product.price))
+                except Exception:
+                    price = None
+
+                if price is None:
+                    price = Decimal('0')
+
+                line_total = price * cart_item.quantity
+                subtotal += line_total
+                print(f"create_order: cart_item={cart_item.id} price={price} qty={cart_item.quantity} line_total={line_total}")
             
             # Apply voucher discount if provided
             discount_amount = Decimal('0')
@@ -17205,14 +17421,26 @@ class CheckoutOrder(viewsets.ViewSet):
                 shop_name = "Unknown Shop"
                 seller_username = None
                 
+                # Resolve per-item total using SKU price when present
                 if cart_item.product:
-                    checkout_total = cart_item.product.price * cart_item.quantity
+                    try:
+                        if getattr(cart_item, 'sku', None) and cart_item.sku and cart_item.sku.price is not None:
+                            unit_price = Decimal(str(cart_item.sku.price))
+                        else:
+                            unit_price = Decimal(str(cart_item.product.price))
+                    except Exception:
+                        unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
+
+                    checkout_total = unit_price * cart_item.quantity
                     product_name = cart_item.product.name
                     if cart_item.product.shop:
                         shop_name = cart_item.product.shop.name
                     if cart_item.product.customer and cart_item.product.customer.customer:
                         seller_username = cart_item.product.customer.customer.username
-                
+                else:
+                    unit_price = Decimal('0')
+                    checkout_total = Decimal('0')
+
                 checkout = Checkout.objects.create(
                     order=order,
                     cart_item=cart_item,
@@ -17222,7 +17450,34 @@ class CheckoutOrder(viewsets.ViewSet):
                     status='pending',
                     remarks=remarks[:500] if remarks else None
                 )
-                
+
+                print(f"create_order: created checkout for cart_item={cart_item.id} unit_price={unit_price} qty={cart_item.quantity} checkout_total={checkout_total}")
+
+                # Decrement SKU or product stock accordingly
+                try:
+                    if getattr(cart_item, 'sku', None) and cart_item.sku:
+                        sku = cart_item.sku
+                        if cart_item.quantity > sku.quantity:
+                            return Response({"error": f"Insufficient SKU stock for {sku.sku_code}"}, status=status.HTTP_400_BAD_REQUEST)
+                        sku.quantity -= cart_item.quantity
+                        sku.save()
+                        # Update parent product.quantity to reflect sum of active sku quantities
+                        try:
+                            total = cart_item.product.skus.filter(is_active=True).aggregate(total=Coalesce(Sum('quantity'), 0))['total']
+                            cart_item.product.quantity = int(total or 0)
+                            cart_item.product.save(update_fields=['quantity'])
+                        except Exception:
+                            pass
+                    else:
+                        # No SKU: decrement product.quantity
+                        if cart_item.product:
+                            if cart_item.quantity > cart_item.product.quantity:
+                                return Response({"error": f"Insufficient stock for {cart_item.product.name}"}, status=status.HTTP_400_BAD_REQUEST)
+                            cart_item.product.quantity -= cart_item.quantity
+                            cart_item.product.save(update_fields=['quantity'])
+                except Exception as e:
+                    print(f"Error decrementing stock for cart_item={cart_item.id}: {e}")
+
                 # Store cart item ID for response
                 cart_item.is_ordered = True
                 cart_item_ids.append(str(cart_item.id))

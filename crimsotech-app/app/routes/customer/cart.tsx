@@ -54,6 +54,10 @@ type ProductDetails = {
   shop_name: string;
   shop_id?: string;
   media_files: MediaFile[] | null;
+  sku?: {
+    price?: number | string;
+    [key: string]: any;
+  };
 };
 
 type ApiCartItem = {
@@ -482,10 +486,11 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
     // Get product details with proper fallbacks
     const productDetails = item.product_details;
     const productName = productDetails?.name || item.item_name || "Product";
-    const productPrice = productDetails?.price || item.item_price || "0";
+    // Prefer SKU price when available, then product price, then cart item price
+    const productPrice = productDetails?.sku?.price ?? productDetails?.price ?? item.item_price ?? "0";
     const shopName = productDetails?.shop_name || "Store";
     const shopId = productDetails?.shop_id;
-    const price = parseFloat(productPrice) || 0;
+    const price = parseFloat(String(productPrice)) || 0;
     
     // Try multiple image sources
     let image: string | null = null;

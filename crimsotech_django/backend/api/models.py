@@ -714,6 +714,14 @@ class CartItem(models.Model):
         null=True,
         blank=True,
     )
+    # Track selected SKU when product has variants
+    sku = models.ForeignKey(
+        'ProductSKU',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='cart_items'
+    )
     user = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -725,14 +733,16 @@ class CartItem(models.Model):
     added_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ['product', 'user']
+        # uniqueness now includes sku to allow same product with different SKUs
+        unique_together = ['product', 'user', 'sku']
         indexes = [
             models.Index(fields=['user', 'is_ordered']),
             models.Index(fields=['product', 'is_ordered']),
+            models.Index(fields=['sku', 'is_ordered']),
         ]
 
     def __str__(self):
-        return f"{self.quantity} x {self.product.name if self.product else 'Unknown Product'}"
+        return f"{self.quantity} x {(self.product.name if self.product else 'Unknown Product')} (SKU: {self.sku.sku_code if self.sku else 'none'})"
 
 class ShippingAddress(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)

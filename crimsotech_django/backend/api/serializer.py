@@ -439,16 +439,12 @@ class CartProductSerializer(serializers.ModelSerializer):
 class CartItemSerializer(serializers.ModelSerializer):
     """Serializer for cart items with product details"""
     item_name = serializers.CharField(source='product.name', read_only=True)
-    item_price = serializers.DecimalField(
-        source='product.price', 
-        max_digits=10, 
-        decimal_places=2, 
-        read_only=True
-    )
+    item_price = serializers.SerializerMethodField()
     item_image = serializers.SerializerMethodField()
     subtotal = serializers.SerializerMethodField()
     product_details = serializers.SerializerMethodField()
     shop_name = serializers.CharField(source='product.shop.name', read_only=True)
+    sku = serializers.SerializerMethodField()
     
     class Meta:
         model = CartItem
@@ -460,19 +456,38 @@ class CartItemSerializer(serializers.ModelSerializer):
             'item_price',
             'item_image',
             'shop_name',
+            'sku',
             'quantity', 
             'added_at',
             'subtotal'
         ]
         read_only_fields = ['id', 'added_at']
     
+    def get_item_price(self, obj):
+        # Prefer SKU price when present, otherwise product price
+        try:
+            if hasattr(obj, 'sku') and obj.sku and obj.sku.price is not None:
+                return float(obj.sku.price)
+        except Exception:
+            pass
+        if obj.product and obj.product.price is not None:
+            return float(obj.product.price)
+        return 0.0
+    
     def get_subtotal(self, obj):
-        if obj.product and obj.product.price:
-            return float(obj.product.price) * obj.quantity
-        return 0
+        price = self.get_item_price(obj)
+        return float(price) * obj.quantity
     
     def get_item_image(self, obj):
-        # Get the first media file from product
+        # Get the first media file from product or SKU image
+        # Prefer SKU image if available
+        try:
+            if obj.sku and obj.sku.image and getattr(obj.sku.image, 'url', None):
+                request = self.context.get('request')
+                return request.build_absolute_uri(obj.sku.image.url) if request else obj.sku.image.url
+        except Exception:
+            pass
+
         if obj.product:
             # Access the related media files
             media_files = obj.product.productmedia_set.all()
@@ -484,7 +499,32 @@ class CartItemSerializer(serializers.ModelSerializer):
                         return request.build_absolute_uri(first_media.file_data.url)
                     return first_media.file_data.url
         return None
-    
+
+    def get_sku(self, obj):
+        """Return a safe summary of the selected SKU for this cart item."""
+        try:
+            sku = obj.sku
+            if not sku:
+                return None
+
+            request = self.context.get('request')
+            image_url = None
+            try:
+                if sku.image and getattr(sku.image, 'url', None):
+                    image_url = request.build_absolute_uri(sku.image.url) if request else sku.image.url
+            except Exception:
+                image_url = None
+
+            return {
+                'id': str(sku.id),
+                'price': str(sku.price) if sku.price is not None else None,
+                'quantity': sku.quantity,
+                'sku_code': sku.sku_code,
+                'image': image_url
+            }
+        except Exception:
+            return None
+
     def get_product_details(self, obj):
         if obj.product:
             media_files = []
@@ -500,14 +540,24 @@ class CartItemSerializer(serializers.ModelSerializer):
                         'file_url': file_url,
                         'file_type': media.file_type
                     })
-            
-            return {
+            product_data = {
                 'id': str(obj.product.id),
                 'name': obj.product.name,
                 'price': str(obj.product.price),
                 'shop_name': obj.product.shop.name if obj.product.shop else None,
                 'media_files': media_files if media_files else None
             }
+
+            # If cart item has a sku, include sku summary
+            if obj.sku:
+                product_data['sku'] = {
+                    'id': str(obj.sku.id),
+                    'price': str(obj.sku.price) if obj.sku.price is not None else None,
+                    'quantity': obj.sku.quantity,
+                    'sku_code': obj.sku.sku_code
+                }
+
+            return product_data
         return None
 
 class CheckoutDetailSerializer(serializers.ModelSerializer):
