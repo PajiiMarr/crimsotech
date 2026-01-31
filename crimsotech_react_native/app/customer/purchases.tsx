@@ -267,8 +267,8 @@ export default function PurchasesPage() {
   };
 
   const handleRefund = (orderId: string) => {
-    // stub: start refund flow
-    // router.push(`/refund/${orderId}`);
+    // Navigate to customer refund screen (pass orderId as query param)
+    router.push(`/customer/request-refund?orderId=${encodeURIComponent(String(orderId))}`);
   };
 
   const getStatusIcon = (status: string) => {

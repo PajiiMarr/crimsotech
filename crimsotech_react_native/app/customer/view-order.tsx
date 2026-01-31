@@ -157,7 +157,65 @@ export default function ViewTrackOrderPage() {
       );
       
       if (response.data) {
-        setOrderData(response.data);
+        // Normalize response to avoid runtime crashes when fields are missing
+        const data = response.data as any;
+
+        // Ensure items is an array and each item has required sub-objects
+        data.items = Array.isArray(data.items) ? data.items.map((item: any) => ({
+          checkout_id: item.checkout_id || '',
+          product_id: item.product_id || '',
+          product_name: item.product_name || 'Unknown Product',
+          product_description: item.product_description || '',
+          product_variant: item.product_variant || '',
+          quantity: item.quantity ?? 0,
+          price: item.price ?? '0',
+          original_price: item.original_price ?? '0',
+          subtotal: item.subtotal ?? '0',
+          status: item.status ?? '',
+          purchased_at: item.purchased_at ?? null,
+          product_images: Array.isArray(item.product_images) ? item.product_images : [],
+          primary_image: item.primary_image || { url: null, file_type: null },
+          shop_info: item.shop_info || {
+            id: '',
+            name: '',
+            picture: null,
+            description: '',
+            items_count: 0,
+            followers_count: 0,
+            is_choices: false,
+            is_new: false,
+          },
+          can_review: item.can_review ?? false,
+          can_return: item.can_return ?? false,
+          return_deadline: item.return_deadline ?? null,
+        })) : [];
+
+        data.timeline = Array.isArray(data.timeline) ? data.timeline : [];
+
+        // Normalize order summary and compute total if missing
+        const rawSummary = data.order_summary || {};
+        const computedSubtotal = data.items.reduce((sum: number, it: any) => sum + (parseFloat(it.subtotal || '0') || 0), 0).toFixed(2);
+        const subtotalStr = rawSummary.subtotal ?? computedSubtotal;
+        const shippingFeeStr = rawSummary.shipping_fee ?? '0';
+        const discountStr = rawSummary.discount ?? '0';
+        const taxStr = rawSummary.tax ?? '0';
+        const totalStr = rawSummary.total ?? ((parseFloat(subtotalStr || '0') + parseFloat(shippingFeeStr || '0') - parseFloat(discountStr || '0') + parseFloat(taxStr || '0')).toFixed(2));
+
+        data.order_summary = {
+          subtotal: subtotalStr,
+          shipping_fee: shippingFeeStr,
+          tax: taxStr,
+          discount: discountStr,
+          total: totalStr,
+          payment_fee: rawSummary.payment_fee ?? '0'
+        };
+
+        data.summary_counts = data.summary_counts || { total_items: data.items.length || 0, total_unique_items: data.items.length || 0 };
+        data.actions = data.actions || { can_cancel: false, can_track: false, can_review: false, can_return: false, can_contact_seller: false, can_buy_again: false };
+        data.shipping_info = data.shipping_info || { logistics_carrier: '', tracking_number: null, delivery_method: '', estimated_delivery: null };
+        data.delivery_address = data.delivery_address || { recipient_name: '', phone_number: '', address: '', address_details: { street: '', barangay: '', city: '', province: '', postal_code: '' } };
+
+        setOrderData(data);
       }
     } catch (error: any) {
       console.error('Error fetching order details:', error);
@@ -437,43 +495,40 @@ export default function ViewTrackOrderPage() {
         {items.map((item, index) => (
           <View key={item.checkout_id} style={styles.productCard}>
             {/* Shop Header */}
-            <TouchableOpacity 
-              style={styles.storeHeader}
-              activeOpacity={0.7}
-              // onPress={() => router.push(`/shop/${item.shop_info.id}`)}
-            >
-              {item.shop_info.picture ? (
-                <Image 
-                  source={{ uri: item.shop_info.picture }} 
-                  style={styles.storeLogo} 
-                />
-              ) : (
-                <View style={styles.storeLogo}>
-                  <Text style={styles.logoText}>
-                    {item.shop_info.name.substring(0, 2).toUpperCase()}
+            {item.shop_info && item.shop_info.name ? (
+              <TouchableOpacity 
+                style={styles.storeHeader}
+                activeOpacity={0.7}
+                // onPress={() => router.push(`/shop/${item.shop_info.id}`)}
+              >
+                {item.shop_info.picture ? (
+                  <Image 
+                    source={{ uri: item.shop_info.picture }} 
+                    style={styles.storeLogo} 
+                  />
+                ) : (
+                  <View style={styles.storeLogo}>
+                    <Text style={styles.logoText}>
+                      {item.shop_info.name.substring(0, 2).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.storeInfo}>
+                  <View style={styles.storeTitleRow}>
+                    <Text style={styles.storeName}>{item.shop_info.name}</Text>
+                    {item.shop_info.is_choices && (
+                      <View style={styles.choicesBadge}>
+                        <Text style={styles.badgeText}>Choices</Text>
+                      </View>
+                    )}
+                    <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
+                  </View>
+                  <Text style={styles.followerText}>
+                    {item.shop_info.items_count} Items | {item.shop_info.followers_count.toLocaleString()} followers
                   </Text>
                 </View>
-              )}
-              <View style={styles.storeInfo}>
-                <View style={styles.storeTitleRow}>
-                  <Text style={styles.storeName}>{item.shop_info.name}</Text>
-                  {item.shop_info.is_choices && (
-                    <View style={styles.choicesBadge}>
-                      <Text style={styles.badgeText}>Choices</Text>
-                    </View>
-                  )}
-                  {/* {item.shop_info.is_new && (
-                    <View style={styles.newBadge}>
-                      <Text style={styles.newBadgeText}>✨ New</Text>
-                    </View>
-                  )} */}
-                  <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
-                </View>
-                <Text style={styles.followerText}>
-                  {item.shop_info.items_count} Items | {item.shop_info.followers_count.toLocaleString()} followers
-                </Text>
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+            ) : null}
 
             {/* Product Body */}
             <View style={styles.productBody}>
@@ -592,13 +647,8 @@ export default function ViewTrackOrderPage() {
             <Text style={styles.infoValue}>{order.payment_method}</Text>
           </View>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Payment Status:</Text>
-            <Text style={[
-              styles.infoValue, 
-              { color: order.payment_status === 'completed' ? '#10B981' : '#F59E0B' }
-            ]}>
-              {order.payment_status || 'Pending'}
-            </Text>
+            <Text style={styles.infoLabel}>Delivery Method:</Text>
+            <Text style={styles.infoValue}>{shipping_info.delivery_method || 'N/A'}</Text>
           </View>
         </View>
 
