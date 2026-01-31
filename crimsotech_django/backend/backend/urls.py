@@ -98,4 +98,6 @@ urlpatterns = [
     path('api/profiling/', Profiling.as_view(), name='profiling'),
     path('api/get-role/', GetRole.as_view(), name='get-role'),
     path('api/get-registration/', GetRegistration.as_view(), name='get-registration'),
+    path('api/predict/', predict_image, name='predict'),
+    path('api/classes/', get_classes, name='get_classes'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
