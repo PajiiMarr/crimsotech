@@ -13,7 +13,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, []),
-    SECRET_KEY=(str, 'unsafe-dev-key'),
 )
 
 # Read from local .env file if it exists (for development)
@@ -22,16 +21,16 @@ if local_env.exists():
     environ.Env.read_env(local_env)
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env('SECRET_KEY')
+SECRET_KEY = env.str('SECRET_KEY', default='unsafe-dev-key')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",     # web
     "0.0.0.0",        # technically optional, safe to include
-    "192.168.254.102",   # your PC LAN IP for mobile
+    "192.168.254.105",   # your PC LAN IP for mobile
     ".ngrok-free.app",
 ]
 
@@ -70,7 +69,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000", 
-    "http://localhost:8081",
+    "http://localhost:8000",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
