@@ -192,14 +192,6 @@ export default function SellerProductList() {
     }
   };
 
-  const formatPrice = (price: string) => {
-    const priceNumber = parseFloat(price);
-    return new Intl.NumberFormat('en-PH', {
-      style: 'currency',
-      currency: 'PHP'
-    }).format(priceNumber);
-  };
-
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-PH', {
       year: 'numeric',
@@ -279,29 +271,6 @@ export default function SellerProductList() {
           <Badge variant="outline">
             {getCategoryName(product)}
           </Badge>
-        );
-      },
-    },
-    {
-      accessorKey: "price",
-      header: "Price",
-      cell: ({ row }) => {
-        return (
-          <div className="text-right font-medium">
-            {formatPrice(row.original.price)}
-          </div>
-        );
-      },
-    },
-    {
-      accessorKey: "quantity",
-      header: "Stock",
-      cell: ({ row }) => {
-        const quantity = row.original.quantity;
-        return (
-          <div className={`text-right ${quantity === 0 ? 'text-red-600 font-medium' : ''}`}>
-            {quantity}
-          </div>
         );
       },
     },
