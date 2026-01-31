@@ -38,6 +38,17 @@ class User(models.Model):
     warning_count = models.IntegerField(default=0)
     last_warning_date = models.DateTimeField(blank=True, null=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['username']),
+            models.Index(fields=['email']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['is_suspended', 'suspended_until']),
+            models.Index(fields=['is_customer', 'is_suspended']),
+            models.Index(fields=['is_moderator', 'is_suspended']),
+            models.Index(fields=['is_rider', 'is_suspended']),
+        ]
+
     def __str__(self):
         return f"User {self.username or self.id}"
     
@@ -51,15 +62,18 @@ class User(models.Model):
 
 class Customer(models.Model):
     customer = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
-    product_limit = models.IntegerField(default=500)  # Maximum products a customer can sell
-    current_product_count = models.IntegerField(default=0)  # Track current product count
+    product_limit = models.IntegerField(default=500)
+    current_product_count = models.IntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['current_product_count', 'product_limit']),
+        ]
 
     def can_add_product(self):
-        """Check if customer can add more products"""
         return self.current_product_count < self.product_limit
 
     def increment_product_count(self):
-        """Increment product count when adding a product"""
         if self.can_add_product():
             self.current_product_count += 1
             self.save()
@@ -67,7 +81,6 @@ class Customer(models.Model):
             raise ValidationError("Product limit reached")
 
     def decrement_product_count(self):
-        """Decrement product count when removing a product"""
         if self.current_product_count > 0:
             self.current_product_count -= 1
             self.save()
@@ -76,8 +89,13 @@ class Customer(models.Model):
         return f"{self.customer.username}"
 
 class Moderator(models.Model):
-    moderator = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)  # Add this default)
+    moderator = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     approval_status = models.CharField(max_length=20, choices=[('pending','Pending'),('approved','Approved'),('rejected','Rejected')], default='pending')
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['approval_status']),
+        ]
 
     def __str__(self):
         return f"Moderator: {self.moderator.username}"
@@ -107,7 +125,13 @@ class Rider(models.Model):
     )
     is_accepting_deliveries = models.BooleanField(default=False)
     last_status_update = models.DateTimeField(auto_now=True)
-    
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['verified', 'availability_status']),
+            models.Index(fields=['availability_status', 'is_accepting_deliveries']),
+            models.Index(fields=['last_status_update']),
+        ]
 
     def __str__(self):
         return f"Rider: {self.rider.username}"
@@ -124,6 +148,12 @@ class Logs(models.Model):
     action = models.CharField(max_length=200)
     timestamp = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'timestamp']),
+            models.Index(fields=['timestamp']),
+        ]
+
     def __str__(self):
         return f"Log {self.id} by {self.user.username} at {self.timestamp}"
     
@@ -136,6 +166,12 @@ class Notification(models.Model):
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'is_read', 'created_at']),
+            models.Index(fields=['created_at']),
+        ]
+
     def __str__(self):
         return f"Notification {self.id} for {self.user.username}"
     
@@ -145,13 +181,17 @@ class OTP(models.Model):
     sent_at = models.DateTimeField(auto_now_add=True)
     expired_at = models.DateTimeField(default=timezone.now)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['expired_at']),
+        ]
+
     def save(self, *args, **kwargs):
         if not self.expired_at:
             self.expired_at = timezone.now() + timedelta(minutes=5)
         super().save(*args,**kwargs)
 
     def is_expired(self):
-        """Check if OTP is expired."""
         return timezone.now() > self.expired_at
 
     def __str__(self):
@@ -183,6 +223,15 @@ class Shop(models.Model):
     suspension_reason = models.TextField(blank=True, null=True)
     suspended_until = models.DateTimeField(blank=True, null=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['customer', 'verified']),
+            models.Index(fields=['verified', 'status']),
+            models.Index(fields=['name']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['is_suspended', 'suspended_until']),
+        ]
+
     def __str__(self):
         return f"{self.name}"
     
@@ -210,6 +259,10 @@ class ShopFollow(models.Model):
 
     class Meta:
         unique_together = ['customer', 'shop']
+        indexes = [
+            models.Index(fields=['shop', 'followed_at']),
+            models.Index(fields=['customer', 'followed_at']),
+        ]
 
     def __str__(self):
         return f"{self.customer} follows {self.shop}"
@@ -230,10 +283,14 @@ class Category(models.Model):
         blank=True,
     )
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['shop', 'name']),
+            models.Index(fields=['name']),
+        ]
+
     def __str__(self):
         return f"{self.name}"
-    
-
 
 class Product(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -274,7 +331,6 @@ class Product(models.Model):
     condition = models.CharField(max_length=50)
     compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     is_refundable = models.BooleanField(null=True,blank=True)
-    # Physical dimensions
     length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
@@ -288,17 +344,26 @@ class Product(models.Model):
     removed_at = models.DateTimeField(blank=True, null=True)
     refund_days = models.PositiveIntegerField(default=0)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['shop', 'upload_status']),
+            models.Index(fields=['customer', 'upload_status']),
+            models.Index(fields=['upload_status', 'created_at']),
+            models.Index(fields=['category', 'upload_status']),
+            models.Index(fields=['price']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['is_removed', 'removed_at']),
+        ]
+
     @property
     def active_report_count(self):
         return self.reports_against.filter(status__in=['pending', 'under_review']).count()
 
     def clean(self):
-        """Validate product limit before saving"""
         if self.customer and not self.customer.can_add_product():
             raise ValidationError(f"Customer cannot add more than {self.customer.product_limit} products")
 
     def save(self, *args, **kwargs):
-        """Override save to handle product count"""
         is_new = self._state.adding
         
         if is_new and self.customer:
@@ -307,14 +372,12 @@ class Product(models.Model):
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        """Override delete to handle product count"""
         if self.customer:
             self.customer.decrement_product_count()
         super().delete(*args, **kwargs)
 
     def __str__(self):
         return f"{self.name}"
-
 
 class Favorites(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -333,6 +396,9 @@ class Favorites(models.Model):
 
     class Meta:
         unique_together = ['product', 'customer']
+        indexes = [
+            models.Index(fields=['customer', 'product']),
+        ]
 
     def __str__(self):
         return f"{self.customer} favorites {self.product}"
@@ -347,6 +413,11 @@ class ProductMedia(models.Model):
         null=True,
         blank=True,
     )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['product']),
+        ]
 
     def __str__(self):
         return f"Media for {self.product.name}"
@@ -367,9 +438,13 @@ class Variants(models.Model):
     )
     title = models.CharField(max_length=100)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['product']),
+        ]
+
     def __str__(self):
         return f"{self.title} for {self.product.name}"
-
 
 class VariantOptions(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -382,7 +457,12 @@ class VariantOptions(models.Model):
     title = models.CharField(max_length=100)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # Backwards-compatible properties (quantity/price removed, keep properties so older code doesn't break)
+    class Meta:
+        indexes = [
+            models.Index(fields=['variant']),
+            models.Index(fields=['created_at']),
+        ]
+
     @property
     def quantity(self):
         return None
@@ -403,6 +483,11 @@ class Issues(models.Model):
         blank=True,
     )
     description = models.CharField(max_length=300)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['product']),
+        ]
 
     def __str__(self):
         return f"Issue with {self.product.name}"
@@ -432,6 +517,12 @@ class BoostPlan(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['status', 'price']),
+            models.Index(fields=['created_at']),
+        ]
+
     def __str__(self):
         return f"{self.name}"
 
@@ -447,10 +538,13 @@ class BoostPlanFeature(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     boost_plan = models.ForeignKey(BoostPlan, on_delete=models.CASCADE, related_name='features')
     feature = models.ForeignKey(BoostFeature, on_delete=models.CASCADE)
-    value = models.CharField(max_length=100, blank=True, null=True)  # e.g., "5 products", "Higher ranking"
+    value = models.CharField(max_length=100, blank=True, null=True)
     
     class Meta:
         unique_together = ['boost_plan', 'feature']
+        indexes = [
+            models.Index(fields=['boost_plan']),
+        ]
     
     def __str__(self):
         return f"{self.boost_plan.name} - {self.feature.name}"
@@ -491,10 +585,17 @@ class Boost(models.Model):
     end_date = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['status', 'end_date']),
+            models.Index(fields=['product', 'status']),
+            models.Index(fields=['shop', 'status']),
+            models.Index(fields=['start_date', 'end_date']),
+        ]
     
     def save(self, *args, **kwargs):
         if not self.end_date and self.boost_plan:
-            # Calculate end date based on boost plan duration
             duration_map = {
                 'hours': timedelta(hours=self.boost_plan.duration),
                 'days': timedelta(days=self.boost_plan.duration),
@@ -523,7 +624,6 @@ class Voucher(models.Model):
     maximum_usage = models.IntegerField(default=0)
     valid_until = models.DateField()
     added_at = models.DateField(auto_now_add=True)
-    # Add the missing attributes
     created_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -532,6 +632,13 @@ class Voucher(models.Model):
         related_name='created_vouchers'
     )
     is_active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['code', 'is_active']),
+            models.Index(fields=['shop', 'is_active', 'valid_until']),
+            models.Index(fields=['valid_until', 'is_active']),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.code})"
@@ -564,6 +671,12 @@ class CustomerActivity(models.Model):
     activity_type = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['customer', 'created_at']),
+            models.Index(fields=['product', 'created_at']),
+        ]
+
     def __str__(self):
         return f"{self.customer} - {self.activity_type}"
 
@@ -583,6 +696,12 @@ class AiRecommendation(models.Model):
     )
     score = models.FloatField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['customer', 'score']),
+            models.Index(fields=['created_at']),
+        ]
 
     def __str__(self):
         return f"Recommendation for {self.customer}"
@@ -607,10 +726,13 @@ class CartItem(models.Model):
 
     class Meta:
         unique_together = ['product', 'user']
+        indexes = [
+            models.Index(fields=['user', 'is_ordered']),
+            models.Index(fields=['product', 'is_ordered']),
+        ]
 
     def __str__(self):
         return f"{self.quantity} x {self.product.name if self.product else 'Unknown Product'}"
-
 
 class ShippingAddress(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -619,11 +741,8 @@ class ShippingAddress(models.Model):
         on_delete=models.CASCADE,
         related_name='shipping_addresses'
     )
-    # Recipient information
     recipient_name = models.CharField(max_length=200)
     recipient_phone = models.CharField(max_length=20)
-    
-    # Address information
     street = models.CharField(max_length=200)
     barangay = models.CharField(max_length=100)
     city = models.CharField(max_length=100)
@@ -631,15 +750,11 @@ class ShippingAddress(models.Model):
     state = models.CharField(max_length=100, blank=True, default='')
     zip_code = models.CharField(max_length=20)
     country = models.CharField(max_length=100, default='Philippines')
-    
-    # Additional details
     building_name = models.CharField(max_length=200, blank=True, default='')
     floor_number = models.CharField(max_length=50, blank=True, default='')
     unit_number = models.CharField(max_length=50, blank=True, default='')
     landmark = models.CharField(max_length=300, blank=True, default='')
     instructions = models.TextField(blank=True, default='')
-    
-    # Address type and preferences
     address_type = models.CharField(max_length=20, choices=[
         ('home', 'Home'),
         ('work', 'Work'),
@@ -647,20 +762,22 @@ class ShippingAddress(models.Model):
     ], default='home')
     is_default = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
-    
-    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['-is_default', '-created_at']
         verbose_name_plural = "Shipping Addresses"
+        indexes = [
+            models.Index(fields=['user', 'is_default']),
+            models.Index(fields=['user', 'is_active']),
+            models.Index(fields=['city', 'province']),
+        ]
     
     def __str__(self):
         return f"{self.recipient_name} - {self.street}, {self.barangay}, {self.city}"
     
     def get_full_address(self):
-        """Get the complete formatted address"""
         address_parts = []
         if self.building_name:
             address_parts.append(self.building_name)
@@ -684,17 +801,13 @@ class ShippingAddress(models.Model):
         return ", ".join(filter(None, address_parts))
     
     def save(self, *args, **kwargs):
-        """Ensure only one default address per user"""
         if self.is_default:
-            # Remove default status from other addresses of this user
             ShippingAddress.objects.filter(
                 user=self.user, 
                 is_default=True
             ).exclude(id=self.id).update(is_default=False)
         super().save(*args, **kwargs)
 
-
-# Also update the Order model to use ShippingAddress
 class Order(models.Model):
     order = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -705,13 +818,11 @@ class Order(models.Model):
         blank=True,
         related_name='orders'
     )
-
     approval = models.CharField(max_length=20, choices=[
         ('pending', 'Pending'),
         ('accepted', 'Accepted'),
         ('rejected', 'Rejected'),
     ], default='pending')
-
     status = models.CharField(max_length=20, choices=[
         ('pending', 'Pending'),
         ('processing', 'Processing'),
@@ -723,18 +834,25 @@ class Order(models.Model):
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_method = models.CharField(max_length=50)
     delivery_method = models.CharField(max_length=50, null=True, blank=True)
-    # Keep delivery_address as a text field for backup/archival purposes
     delivery_address_text = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     receipt = models.FileField(upload_to="receipt/", null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'created_at']),
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['approval', 'status']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['total_amount']),
+        ]
+
     def __str__(self):
         return f"Order {self.order} by {self.user.username}"
     
     def save(self, *args, **kwargs):
-        # Store the shipping address as text for archival purposes
         if self.shipping_address and not self.delivery_address_text:
             self.delivery_address_text = self.shipping_address.get_full_address()
         super().save(*args, **kwargs)
@@ -764,6 +882,12 @@ class Checkout(models.Model):
     status = models.TextField()
     remarks = models.CharField(max_length=500, null=True, blank=True)
     created_at = models.DateField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['order']),
+            models.Index(fields=['created_at']),
+        ]
 
     def __str__(self):
         return f"Checkout {self.id}"
@@ -796,40 +920,49 @@ class Review(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['shop', 'rating']),
+            models.Index(fields=['product', 'rating']),
+            models.Index(fields=['customer', 'created_at']),
+            models.Index(fields=['created_at']),
+        ]
+
     def __str__(self):
         return f"Review by {self.customer} - {self.rating} stars"
 
-# In your models.py, update the Delivery model
 class Delivery(models.Model):
-    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
     rider = models.ForeignKey(Rider, on_delete=models.SET_NULL, null=True)
-    
-    # Original status choices
     status = models.CharField(max_length=20, choices=[
         ('pending','Pending'),
         ('picked_up','Picked Up'),
-        ('in_progress','In Progress'),  # Added for frontend compatibility
+        ('in_progress','In Progress'),
         ('delivered','Delivered'),
-        ('cancelled','Cancelled'),      # Added for frontend compatibility
+        ('cancelled','Cancelled'),
     ], default='pending')
-    
-    # New fields for frontend requirements
     distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     estimated_minutes = models.IntegerField(null=True, blank=True)
     actual_minutes = models.IntegerField(null=True, blank=True)
     delivery_rating = models.IntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)])
     notes = models.TextField(blank=True, null=True)
-    
     picked_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    scheduled_pickup_time = models.DateTimeField(null=True, blank=True)
+    scheduled_delivery_time = models.DateTimeField(null=True, blank=True)
+    is_scheduled = models.BooleanField(default=False)
 
-    scheduled_pickup_time = models.DateTimeField(null=True, blank=True)  # ⬅️ Add this
-    scheduled_delivery_time = models.DateTimeField(null=True, blank=True)  # ⬅️ Add this
-    is_scheduled = models.BooleanField(default=False)  # ⬅️ Add this
+    class Meta:
+        indexes = [
+            models.Index(fields=['order', 'status']),
+            models.Index(fields=['rider', 'status']),
+            models.Index(fields=['status', 'scheduled_delivery_time']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['delivered_at']),
+        ]
 
     def __str__(self):
         return f"Delivery {self.id} for Order {self.order.order}"
@@ -843,6 +976,14 @@ class Payment(models.Model):
     transaction_date = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['order', 'status']),
+            models.Index(fields=['status', 'transaction_date']),
+            models.Index(fields=['transaction_date']),
+        ]
+
     def __str__(self):
         return f"Payment {self.id} for Order {self.order.order}"
 
@@ -885,8 +1026,6 @@ class Report(models.Model):
     reason = models.CharField(max_length=50, choices=REPORT_REASONS)
     description = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    
-    # Generic foreign key fields - only one will be filled based on report_type
     reported_account = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -908,7 +1047,6 @@ class Report(models.Model):
         blank=True,
         related_name='reports_against'
     )
-    
     assigned_moderator = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -917,23 +1055,28 @@ class Report(models.Model):
         related_name='assigned_reports',
         limit_choices_to={'is_moderator': True}
     )
-    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['report_type', 'status']),
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['assigned_moderator', 'status']),
+            models.Index(fields=['reported_account', 'status']),
+            models.Index(fields=['reported_product', 'status']),
+            models.Index(fields=['reported_shop', 'status']),
+        ]
     
     def clean(self):
-        """Validate that only one report target is set based on report_type"""
         targets = [self.reported_account, self.reported_product, self.reported_shop]
         set_targets = [target for target in targets if target is not None]
         
         if len(set_targets) != 1:
             raise ValidationError("Exactly one report target must be set based on report_type")
         
-        # Validate report_type matches the target
         if self.report_type == 'account' and not self.reported_account:
             raise ValidationError("Report type 'account' requires a reported account")
         elif self.report_type == 'product' and not self.reported_product:
@@ -946,7 +1089,6 @@ class Report(models.Model):
         super().save(*args, **kwargs)
     
     def get_reported_object(self):
-        """Get the actual reported object"""
         if self.report_type == 'account':
             return self.reported_account
         elif self.report_type == 'product':
@@ -957,7 +1099,6 @@ class Report(models.Model):
     
     def __str__(self):
         return f"Report {self.id} - {self.get_report_type_display()} - {self.get_status_display()}"
-
 
 class ReportMedia(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -970,9 +1111,13 @@ class ReportMedia(models.Model):
     file_type = models.CharField(max_length=50)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     
+    class Meta:
+        indexes = [
+            models.Index(fields=['report']),
+        ]
+    
     def __str__(self):
         return f"Media for Report {self.report.id}"
-
 
 class ReportAction(models.Model):
     ACTION_TYPES = [
@@ -1007,7 +1152,6 @@ class ReportAction(models.Model):
     def __str__(self):
         return f"{self.get_action_type_display()} for Report {self.report.id}"
 
-
 class ReportComment(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     report = models.ForeignKey(
@@ -1027,43 +1171,36 @@ class ReportComment(models.Model):
     
     class Meta:
         ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['report', 'created_at']),
+            models.Index(fields=['user', 'created_at']),
+        ]
     
     def __str__(self):
         return f"Comment by {self.user.username} on Report {self.report.id}"
-    
-# Add this after the User model and before the Customer model
-
 
 class ProductSKU(models.Model):
-    """SKU combination for a product (generated from variants)"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
         related_name='skus'
     )
-    # Store option ids and map as JSON for easy reconstruction
     option_ids = models.JSONField(blank=True, null=True)
     option_map = models.JSONField(blank=True, null=True)
-
     sku_code = models.CharField(max_length=100, blank=True, null=True)
-
     price = models.DecimalField(decimal_places=2, max_digits=9, null=True, blank=True)
     compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     quantity = models.IntegerField(default=0)
-
     length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     weight_unit = models.CharField(max_length=10, default='g', blank=True)
-
     critical_trigger = models.IntegerField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_refundable = models.BooleanField(default=False)
     refund_days = models.PositiveIntegerField(default=0)
-
-    # Swap-related per-SKU
     allow_swap = models.BooleanField(default=False)
     swap_type = models.CharField(
         max_length=30,
@@ -1074,20 +1211,22 @@ class ProductSKU(models.Model):
     maximum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
     swap_description = models.TextField(blank=True, null=True)
     accepted_categories = models.ManyToManyField('Category', blank=True, related_name='accepted_for_sku_swaps')
-
     image = models.ImageField(upload_to='product/skus/', null=True, blank=True)
-
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['product', 'is_active']),
+            models.Index(fields=['sku_code']),
+            models.Index(fields=['quantity', 'is_active']),
+            models.Index(fields=['price']),
+        ]
 
     def __str__(self):
         return f"SKU for {self.product.name} ({self.sku_code or 'no-code'})"
 
-
-
-# Add this table to track user's saved payment methods
 class UserPaymentMethod(models.Model):
-    """User's saved payment methods for future use"""
     METHOD_CHOICES = [
         ('wallet', 'E-Wallet'),
         ('bank', 'Bank Account'),
@@ -1097,19 +1236,13 @@ class UserPaymentMethod(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='payment_methods')
     method_type = models.CharField(max_length=20, choices=METHOD_CHOICES)
-    
-    # Common fields
     provider = models.CharField(max_length=100, blank=True, null=True)
     account_name = models.CharField(max_length=200, blank=True, null=True)
     account_number = models.CharField(max_length=50, blank=True, null=True)
     contact_number = models.CharField(max_length=20, blank=True, null=True)
-    
-    # Bank specific
     bank_name = models.CharField(max_length=100, blank=True, null=True)
     account_type = models.CharField(max_length=50, blank=True, null=True)
     branch = models.CharField(max_length=200, blank=True, null=True)
-    
-    # Remittance specific
     first_name = models.CharField(max_length=100, blank=True, null=True)
     last_name = models.CharField(max_length=100, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
@@ -1118,19 +1251,19 @@ class UserPaymentMethod(models.Model):
     zip_code = models.CharField(max_length=10, blank=True, null=True)
     valid_id_type = models.CharField(max_length=100, blank=True, null=True)
     valid_id_number = models.CharField(max_length=50, blank=True, null=True)
-    
     is_default = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['-is_default', '-created_at']
+        indexes = [
+            models.Index(fields=['user', 'is_default']),
+            models.Index(fields=['method_type', 'user']),
+        ]
     
     def __str__(self):
         return f"{self.get_method_type_display()} - {self.account_number}"
-    
-
-
 
 class Refund(models.Model):
     REFUND_METHOD_CHOICES = [
@@ -1169,11 +1302,9 @@ class Refund(models.Model):
     refund_type = models.CharField(max_length=10, choices=REFUND_TYPE_CHOICES)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     customer_note = models.TextField(blank=True, null=True)
-    # Requested refund amounts
     final_refund_type = models.CharField(max_length=50, blank=True, null=True)
     total_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     approved_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-
     final_refund_method = models.CharField(max_length=50, blank=True, null=True)
     refund_payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
     requested_at = models.DateTimeField(auto_now_add=True)
@@ -1183,9 +1314,16 @@ class Refund(models.Model):
     requested_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='requested_refunds')
     buyer_notified_at = models.DateTimeField(null=True, blank=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['order_id', 'status']),
+            models.Index(fields=['requested_by', 'status']),
+            models.Index(fields=['status', 'requested_at']),
+            models.Index(fields=['refund_payment_status']),
+        ]
+
     def __str__(self):
         return f"Refund {self.refund_id}"
-
 
 class RefundMedia(models.Model):
     refundmedia = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1195,9 +1333,13 @@ class RefundMedia(models.Model):
     uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['refund_id']),
+        ]
+
     def __str__(self):
         return f"Media for Refund {self.refund_id.refund_id}"
-
 
 class RefundWallet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1212,7 +1354,6 @@ class RefundWallet(models.Model):
     def __str__(self):
         return f"Wallet for Refund {self.refund_id.refund_id}"
 
-
 class RefundBank(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     bank_name = models.CharField(max_length=100)
@@ -1226,7 +1367,6 @@ class RefundBank(models.Model):
 
     def __str__(self):
         return f"Bank for Refund {self.refund_id.refund_id}"
-
 
 class RefundRemittance(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1250,7 +1390,6 @@ class RefundRemittance(models.Model):
     def __str__(self):
         return f"Remittance for Refund {self.refund_id.refund_id}"
 
-
 class CounterRefundRequest(models.Model):
     REQUESTED_BY_CHOICES = [
         ('buyer', 'Buyer'),
@@ -1264,6 +1403,11 @@ class CounterRefundRequest(models.Model):
         ('dispute', 'Dispute'),
     ]
 
+    COUNTER_TYPE_CHOICES = [
+        ('return', 'Return'),
+        ('keep', 'Keep'),
+    ]
+
     counter_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     refund_id = models.ForeignKey(Refund, on_delete=models.CASCADE, related_name='counter_requests')
     requested_by = models.CharField(max_length=10, choices=REQUESTED_BY_CHOICES)
@@ -1271,24 +1415,22 @@ class CounterRefundRequest(models.Model):
     shop_id = models.ForeignKey(Shop, on_delete=models.CASCADE)
     counter_refund_method = models.CharField(max_length=50)
     counter_refund_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-
-    COUNTER_TYPE_CHOICES = [
-        ('return', 'Return'),
-        ('keep', 'Keep'),
-    ]
     counter_refund_type = models.CharField(max_length=10, choices=COUNTER_TYPE_CHOICES, null=True, blank=True)
-
     notes = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     requested_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['refund_id', 'status']),
+            models.Index(fields=['seller_id', 'requested_at']),
+        ]
+
     def __str__(self):
         return f"Counter Request for Refund {self.refund_id.refund_id}"
 
-
 class DisputeRequest(models.Model):
-
     REQUESTED_BY_CHOICES = [
         ('buyer', 'Buyer'),
         ('seller', 'Seller'),
@@ -1313,9 +1455,14 @@ class DisputeRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['refund_id', 'status']),
+            models.Index(fields=['requested_by', 'created_at']),
+        ]
+
     def __str__(self):
         return f"Dispute for Refund {self.refund_id.refund_id}"
-
 
 class DisputeEvidence(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1323,20 +1470,21 @@ class DisputeEvidence(models.Model):
     dispute_id = models.ForeignKey(DisputeRequest, on_delete=models.CASCADE, related_name='evidences', null=True, blank=True)
     uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    # Note: file_data is not specified in the table, but assuming it's needed
     file_data = models.FileField(upload_to='disputes/evidence/', null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['dispute_id']),
+        ]
 
     def __str__(self):
         return f"Evidence for Dispute {self.dispute_id.dispute_id}"
-
 
 class ReturnRequestItem(models.Model):
     STATUS_CHOICES = [
         ('shipped', 'Shipped'),
         ('received', 'Received'),
         ('inspected', 'Inspected'),
-        # decision results
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
         ('completed', 'Completed'),
@@ -1358,9 +1506,14 @@ class ReturnRequestItem(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_returns')
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['refund_id', 'status']),
+            models.Index(fields=['status', 'return_deadline']),
+        ]
+
     def __str__(self):
         return f"Return for Refund {self.refund_id.refund_id}"
-
 
 class ReturnRequestMedia(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1371,14 +1524,16 @@ class ReturnRequestMedia(models.Model):
     uploaded_at = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(blank=True, null=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['return_id']),
+        ]
+
     def __str__(self):
         return f"Media for Return {self.return_id.return_id}"
-    
 
 class ReturnAddress(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    # Change the OneToOneField to allow NULL
     refund = models.OneToOneField(
         Refund,
         on_delete=models.CASCADE,
@@ -1386,8 +1541,6 @@ class ReturnAddress(models.Model):
         null=True,
         blank=True,
     )
-
-    # Link directly to shop and seller for easier querying and ownership
     shop = models.ForeignKey(
         Shop,
         on_delete=models.SET_NULL,
@@ -1395,7 +1548,6 @@ class ReturnAddress(models.Model):
         blank=True,
         related_name='return_addresses'
     )
-
     seller = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -1403,32 +1555,32 @@ class ReturnAddress(models.Model):
         blank=True,
         related_name='seller_return_addresses'
     )
-
     recipient_name = models.CharField(max_length=100)
     contact_number = models.CharField(max_length=20)
-
     country = models.CharField(max_length=100)
     province = models.CharField(max_length=100)
     city = models.CharField(max_length=100)
     barangay = models.CharField(max_length=100)
     street = models.CharField(max_length=255)
     zip_code = models.CharField(max_length=20)
-
     notes = models.TextField(blank=True, null=True)
-
     created_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
         related_name='created_return_addresses'
     )
-
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['shop', 'seller']),
+            models.Index(fields=['refund']),
+        ]
 
     def __str__(self):
         shop_part = f" for Shop {self.shop.name}" if self.shop else ''
         return f"Return Address for Refund {self.refund.refund_id}{shop_part}"
-
 
 class RefundProof(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1443,17 +1595,18 @@ class RefundProof(models.Model):
         null=True,
         related_name='uploaded_refund_proofs'
     )
-    file_type = models.CharField(max_length=50)  # e.g., 'image', 'pdf'
+    file_type = models.CharField(max_length=50)
     file_data = models.FileField(upload_to='refunds/proof/')
-    notes = models.TextField(blank=True, null=True)  # optional description
+    notes = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['refund']),
+        ]
 
     def __str__(self):
         return f"Proof for Refund {self.refund.refund_id}"
-
-
-
-
 
 class AppliedGift(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1478,9 +1631,14 @@ class AppliedGift(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['shop_id', 'is_active']),
+            models.Index(fields=['is_active', 'end_time']),
+        ]
+
     def __str__(self):
         return f"Gift: {self.gift_product_id.name if self.gift_product_id else 'No Product'}"
-
 
 class AppliedGiftProduct(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1498,22 +1656,37 @@ class AppliedGiftProduct(models.Model):
 
     class Meta:
         unique_together = ['applied_gift_id', 'product_id']
+        indexes = [
+            models.Index(fields=['applied_gift_id']),
+            models.Index(fields=['product_id']),
+        ]
 
     def __str__(self):
         product_name = self.product_id.name if self.product_id else 'No Product'
         return f"Eligible: {product_name}"
 
-# Models that DON'T exist in your schema:
 class RiderSchedule(models.Model):
     rider = models.ForeignKey(Rider, on_delete=models.CASCADE)
-    day_of_week = models.IntegerField()  # 0=Monday, 6=Sunday
+    day_of_week = models.IntegerField()
     start_time = models.TimeField()
     end_time = models.TimeField()
     is_available = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['rider', 'day_of_week']),
+            models.Index(fields=['day_of_week', 'is_available']),
+        ]
 
 class TimeOffRequest(models.Model):
     rider = models.ForeignKey(Rider, on_delete=models.CASCADE)
     start_date = models.DateField()
     end_date = models.DateField()
     reason = models.TextField()
-    status = models.CharField(max_length=20)  # pending/approved/rejected
+    status = models.CharField(max_length=20)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['rider', 'start_date']),
+            models.Index(fields=['status', 'start_date']),
+        ]

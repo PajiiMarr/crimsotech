@@ -636,7 +636,7 @@ export default function ProfileScreen() {
             <Text style={styles.accountLabel}>Addresses</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/pages/my-vouchers')}>
+          <TouchableOpacity style={styles.accountItem} onPress={() => pushRoute('/customer/my-vouchers')}>
             <View style={styles.accountIconBox}>
               <MaterialIcons name="local-offer" size={20} color="#111" />
             </View>

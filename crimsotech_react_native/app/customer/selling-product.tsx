@@ -17,6 +17,7 @@ import {
   Modal,
   TouchableWithoutFeedback
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -187,17 +188,33 @@ export default function SellingProductPage() {
     }
   }, [user?.id]);
 
+  // Refresh products when screen is focused (returns from add product screen)
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log('Screen focused, refetching products...');
+      if (user?.id) {
+        fetchProducts();
+      }
+    }, [user?.id])
+  );
+
   const fetchProducts = async () => {
     try {
       setLoading(true);
+      console.log('Fetching products for user:', user?.id);
+      
       const response = await AxiosInstance.get<APIResponse>('/customer-product-list/products_list/', {
         headers: {
           'X-User-Id': user?.id,
         },
       });
 
+      console.log('Products fetch response:', response.data);
+
       if (response.data.success) {
         const productsData = response.data.products || [];
+
+        console.log('Products received:', productsData.length);
 
         // Transform products with normalized image URLs
         const transformedProducts = productsData.map((product: any) => {
@@ -246,12 +263,17 @@ export default function SellingProductPage() {
         if (response.data.customer_info?.remaining_products <= 0) {
           setShowLimitAlert(true);
         }
+      } else {
+        console.error('API returned success: false', response.data);
+        Alert.alert('Error', response.data.message || 'Failed to load products');
       }
     } catch (error: any) {
       console.error('Error fetching products:', error);
+      console.error('Error response:', error.response?.data);
+      const errorMsg = error.response?.data?.message || error.response?.data?.error || error.message || 'Failed to load products. Please try again.';
       Alert.alert(
         'Error',
-        error.response?.data?.message || 'Failed to load products. Please try again.'
+        errorMsg
       );
     } finally {
       setLoading(false);

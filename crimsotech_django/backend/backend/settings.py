@@ -32,6 +32,7 @@ ALLOWED_HOSTS = [
     "0.0.0.0",        # technically optional, safe to include
     "192.168.254.105",   # your PC LAN IP for mobile
     ".ngrok-free.app",
+    "10.55.244.79",
 ]
 
 # Application definition

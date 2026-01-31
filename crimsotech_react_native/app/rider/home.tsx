@@ -7,11 +7,25 @@ import {
   ScrollView,
   RefreshControl,
   TouchableOpacity,
-  Image
+  Image,
+  StatusBar,
+  SafeAreaView
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import RiderHeader from './includes/riderHeader';
+
+// --- Theme Colors ---
+const COLORS = {
+  primary: '#F97316',
+  primaryLight: '#FFF7ED',
+  secondary: '#111827',
+  muted: '#6B7280',
+  bg: '#F9FAFB',
+  cardBg: '#FFFFFF',
+  danger: '#DC2626',
+  success: '#10B981',
+  warning: '#F59E0B',
+};
 
 export default function Home() {
   const [acceptingDeliveries, setAcceptingDeliveries] = useState(true);
@@ -38,10 +52,7 @@ export default function Home() {
       order: {
         total_amount: 450,
         delivery_address_text: '123 Main St, Barangay 1, Manila City',
-        user: {
-          first_name: 'Maria',
-          last_name: 'Santos'
-        }
+        user: { first_name: 'Maria', last_name: 'Santos' }
       },
       scheduled_delivery_time: '2024-01-24T15:30:00Z'
     },
@@ -54,10 +65,7 @@ export default function Home() {
       order: {
         total_amount: 320,
         delivery_address_text: '456 Oak St, Barangay 2, Quezon City',
-        user: {
-          first_name: 'Juan',
-          last_name: 'Dela Cruz'
-        }
+        user: { first_name: 'Juan', last_name: 'Dela Cruz' }
       }
     }
   ];
@@ -70,12 +78,10 @@ export default function Home() {
     vehicle_model: 'Click 125',
     vehicle_image: null,
     verified: true,
-    is_accepting_deliveries: true,
   };
 
   const onRefresh = () => {
     setRefreshing(true);
-    // Simulate refresh
     setTimeout(() => {
       setRefreshing(false);
     }, 1000);
@@ -89,46 +95,57 @@ export default function Home() {
     return `₱${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
-  const formatTime = (dateString?: string) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'pending': return '#F59E0B';
+      case 'pending': return COLORS.warning;
       case 'picked_up': return '#3B82F6';
       case 'in_progress': return '#8B5CF6';
-      case 'delivered': return '#10B981';
-      case 'cancelled': return '#EF4444';
-      default: return '#6B7280';
+      case 'delivered': return COLORS.success;
+      case 'cancelled': return COLORS.danger;
+      default: return COLORS.muted;
     }
   };
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case 'pending': return 'Pending';
+      case 'pending': return 'Pending Pickup';
       case 'picked_up': return 'Picked Up';
-      case 'in_progress': return 'In Progress';
-      case 'delivered': return 'Delivered';
-      case 'cancelled': return 'Cancelled';
+      case 'in_progress': return 'On the way';
       default: return status;
     }
   };
 
   return (
-    <View style={styles.container}>
-      <RiderHeader 
-        title={`Hello, ${fullName}`}
-        subtitle={acceptingDeliveries ? 'Ready for deliveries' : 'Currently offline'}
-      />
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.cardBg} />
+
+      {/* --- Header (Matches Schedule/Messages Style) --- */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>Hello, {fullName}</Text>
+          <Text style={styles.headerSubtitle}>
+            {acceptingDeliveries ? 'Ready for deliveries' : 'Currently offline'}
+          </Text>
+        </View>
+        
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => console.log('Notifications')}>
+            <Feather name="bell" size={22} color={COLORS.secondary} />
+            <View style={styles.notifBadge} />
+          </TouchableOpacity>
+
+          {/* FIXED ROUTE: Points to /rider/settings instead of /settings */}
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/rider/settings')}>
+            <Feather name="settings" size={22} color={COLORS.secondary} />
+          </TouchableOpacity>
+        </View>
+      </View>
 
       <ScrollView 
         style={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#EE4D2D']} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />
         }
         contentContainerStyle={styles.scrollContent}
       >
@@ -160,44 +177,95 @@ export default function Home() {
           </TouchableOpacity>
         </View>
 
-        {/* Stats Overview */}
+        {/* Stats Grid */}
         <View style={styles.statsContainer}>
           <View style={styles.statsGrid}>
             <View style={styles.statCard}>
-              <MaterialIcons name="delivery-dining" size={24} color="#059669" />
+              <View style={[styles.statIconBg, { backgroundColor: '#ECFDF5' }]}>
+                <MaterialIcons name="delivery-dining" size={20} color={COLORS.success} />
+              </View>
               <Text style={styles.statValue}>{stats.total_deliveries}</Text>
-              <Text style={styles.statLabel}>Total Deliveries</Text>
+              <Text style={styles.statLabel}>Deliveries</Text>
             </View>
             
             <View style={styles.statCard}>
-              <MaterialIcons name="check-circle" size={24} color="#3B82F6" />
+               <View style={[styles.statIconBg, { backgroundColor: '#EFF6FF' }]}>
+                <MaterialIcons name="check-circle" size={20} color="#3B82F6" />
+              </View>
               <Text style={styles.statValue}>{stats.completed_deliveries}</Text>
               <Text style={styles.statLabel}>Completed</Text>
             </View>
             
             <View style={styles.statCard}>
-              <MaterialIcons name="today" size={24} color="#8B5CF6" />
-              <Text style={styles.statValue}>{formatCurrency(stats.todays_earnings)}</Text>
-              <Text style={styles.statLabel}>Today's Earnings</Text>
+              <View style={[styles.statIconBg, { backgroundColor: '#FFF7ED' }]}>
+                 <Text style={{ color: COLORS.primary, fontWeight: '700', fontSize: 16 }}>₱</Text>
+              </View>
+              <Text style={styles.statValue}>{formatCurrency(stats.todays_earnings).replace('₱','')}</Text>
+              <Text style={styles.statLabel}>Today</Text>
             </View>
             
             <View style={styles.statCard}>
-              <MaterialIcons name="attach-money" size={24} color="#EC4899" />
-              <Text style={styles.statValue}>{formatCurrency(stats.total_earnings)}</Text>
-              <Text style={styles.statLabel}>Total Earnings</Text>
+               <View style={[styles.statIconBg, { backgroundColor: '#F3F4F6' }]}>
+                <MaterialIcons name="attach-money" size={20} color={COLORS.secondary} />
+              </View>
+              <Text style={styles.statValue}>{formatCurrency(stats.total_earnings).replace('₱','')}</Text>
+              <Text style={styles.statLabel}>Total</Text>
             </View>
           </View>
         </View>
 
-      
+        {/* Active Deliveries List */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Active Deliveries</Text>
+            <TouchableOpacity onPress={() => router.push('/rider/orders')}>
+              <Text style={styles.sectionLink}>View All</Text>
+            </TouchableOpacity>
+          </View>
 
-  
+          {activeDeliveries.map((item) => (
+            <View key={item.id} style={styles.deliveryCard}>
+              <View style={styles.deliveryHeader}>
+                <Text style={styles.deliveryId}>{item.order_id}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + '20' }]}>
+                  <Text style={[styles.statusBadgeText, { color: getStatusColor(item.status) }]}>
+                    {getStatusText(item.status)}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.deliveryDetails}>
+                <View style={styles.detailRow}>
+                  <Feather name="user" size={14} color={COLORS.muted} />
+                  <Text style={styles.detailText}>
+                    {item.order.user.first_name} {item.order.user.last_name}
+                  </Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Feather name="map-pin" size={14} color={COLORS.muted} />
+                  <Text style={styles.detailText} numberOfLines={1}>
+                    {item.order.delivery_address_text}
+                  </Text>
+                </View>
+                <View style={styles.detailRow}>
+                   <Feather name="navigation" size={14} color={COLORS.muted} />
+                   <Text style={styles.detailText}>{item.distance_km} km • {item.estimated_minutes} mins</Text>
+                </View>
+              </View>
+
+              <View style={styles.deliveryFooter}>
+                <Text style={styles.deliveryAmount}>{formatCurrency(item.order.total_amount)}</Text>
+                <TouchableOpacity style={styles.actionButton}>
+                  <Text style={styles.actionButtonText}>View Details</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
 
         {/* Vehicle Info */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Vehicle Information</Text>
-          </View>
+          <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Vehicle Information</Text>
           
           <View style={styles.vehicleCard}>
             <View style={styles.vehicleHeader}>
@@ -205,7 +273,7 @@ export default function Home() {
                 <Image source={{ uri: riderData.vehicle_image }} style={styles.vehicleImage} />
               ) : (
                 <View style={styles.vehicleImagePlaceholder}>
-                  <MaterialIcons name="directions-bike" size={28} color="#EE4D2D" />
+                  <MaterialIcons name="two-wheeler" size={28} color={COLORS.primary} />
                 </View>
               )}
               
@@ -222,42 +290,88 @@ export default function Home() {
               <MaterialIcons 
                 name={riderData.verified ? "verified" : "warning"} 
                 size={16} 
-                color={riderData.verified ? "#10B981" : "#F59E0B"} 
+                color={riderData.verified ? COLORS.success : COLORS.warning} 
               />
-              <Text style={styles.verificationText}>
+              <Text style={[styles.verificationText, { color: riderData.verified ? COLORS.success : COLORS.warning }]}>
                 {riderData.verified ? 'Verified Rider' : 'Pending Verification'}
               </Text>
             </View>
           </View>
         </View>
+
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bg,
   },
   content: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 20,
+    paddingBottom: 100, // Extra space for bottom tab
   },
-  availabilityCard: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 16,
+
+  // --- Header Styles ---
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: COLORS.cardBg,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.secondary,
+  },
+  headerSubtitle: {
+    fontSize: 13,
+    color: COLORS.muted,
+    marginTop: 2,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  iconBtn: {
+    padding: 10,
+    backgroundColor: '#F3F4F6',
     borderRadius: 12,
+    position: 'relative',
+  },
+  notifBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.danger,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+
+  // --- Availability Card ---
+  availabilityCard: {
+    backgroundColor: COLORS.cardBg,
+    marginHorizontal: 20,
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#F3F4F6',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowRadius: 4,
     elevation: 2,
   },
   availabilityHeader: {
@@ -267,9 +381,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   availabilityTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.secondary,
   },
   statusIndicator: {
     flexDirection: 'row',
@@ -280,28 +394,29 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#9CA3AF',
+    backgroundColor: COLORS.muted,
   },
   activeDot: {
-    backgroundColor: '#10B981',
+    backgroundColor: COLORS.success,
   },
   statusText: {
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.secondary,
   },
   availabilitySubtitle: {
     fontSize: 13,
-    color: '#6B7280',
+    color: COLORS.muted,
     marginBottom: 16,
   },
   toggleButton: {
     backgroundColor: '#F3F4F6',
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: 'center',
   },
   toggleButtonActive: {
-    backgroundColor: '#EE4D2D',
+    backgroundColor: COLORS.primary,
   },
   toggleButtonText: {
     color: '#374151',
@@ -311,39 +426,54 @@ const styles = StyleSheet.create({
   toggleButtonTextActive: {
     color: '#FFFFFF',
   },
+
+  // --- Stats Grid ---
   statsContainer: {
-    marginHorizontal: 16,
-    marginTop: 16,
+    marginHorizontal: 20,
+    marginTop: 20,
   },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 12,
   },
   statCard: {
     flex: 1,
-    minWidth: '48%',
-    backgroundColor: '#F9FAFB',
+    minWidth: '47%',
+    backgroundColor: COLORS.cardBg,
     padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
+    borderRadius: 16,
+    alignItems: 'flex-start',
     borderWidth: 1,
     borderColor: '#F3F4F6',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  statIconBg: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   statValue: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
-    marginTop: 8,
-    marginBottom: 4,
+    color: COLORS.secondary,
+    marginBottom: 2,
   },
   statLabel: {
     fontSize: 12,
-    color: '#6B7280',
-    textAlign: 'center',
+    color: COLORS.muted,
   },
+
+  // --- Sections ---
   section: {
-    marginHorizontal: 16,
+    marginHorizontal: 20,
     marginTop: 24,
   },
   sectionHeader: {
@@ -353,27 +483,24 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.secondary,
   },
   sectionLink: {
-    fontSize: 12,
-    color: '#EE4D2D',
-    fontWeight: '500',
+    fontSize: 13,
+    color: COLORS.primary,
+    fontWeight: '600',
   },
+
+  // --- Delivery Card ---
   deliveryCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.cardBg,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#F3F4F6',
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
   },
   deliveryHeader: {
     flexDirection: 'row',
@@ -383,8 +510,8 @@ const styles = StyleSheet.create({
   },
   deliveryId: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: '700',
+    color: COLORS.secondary,
   },
   statusBadge: {
     paddingHorizontal: 8,
@@ -393,8 +520,7 @@ const styles = StyleSheet.create({
   },
   statusBadgeText: {
     fontSize: 11,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    fontWeight: '700',
   },
   deliveryDetails: {
     gap: 8,
@@ -407,7 +533,7 @@ const styles = StyleSheet.create({
   },
   detailText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: COLORS.muted,
     flex: 1,
   },
   deliveryFooter: {
@@ -419,59 +545,27 @@ const styles = StyleSheet.create({
     borderTopColor: '#F3F4F6',
   },
   deliveryAmount: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#059669',
+    color: COLORS.primary,
   },
   actionButton: {
-    backgroundColor: '#EE4D2D',
+    backgroundColor: COLORS.secondary,
     paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   actionButtonText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
   },
-  actionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  actionCard: {
-    flex: 1,
-    minWidth: '48%',
-    backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#F3F4F6',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  actionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  actionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111827',
-    textAlign: 'center',
-  },
+
+  // --- Vehicle Card ---
   vehicleCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.cardBg,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#F3F4F6',
   },
@@ -481,16 +575,16 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   vehicleImage: {
-    width: 60,
-    height: 60,
+    width: 56,
+    height: 56,
     borderRadius: 12,
     marginRight: 12,
   },
   vehicleImagePlaceholder: {
-    width: 60,
-    height: 60,
+    width: 56,
+    height: 56,
     borderRadius: 12,
-    backgroundColor: '#FFF5F2',
+    backgroundColor: COLORS.primaryLight,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -500,19 +594,25 @@ const styles = StyleSheet.create({
   },
   vehicleModel: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: '700',
+    color: COLORS.secondary,
     marginBottom: 2,
   },
   vehicleType: {
     fontSize: 13,
-    color: '#6B7280',
+    color: COLORS.muted,
     marginBottom: 2,
   },
   plateNumber: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: COLORS.muted,
     fontWeight: '500',
+    backgroundColor: '#F3F4F6',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden'
   },
   verificationBadge: {
     flexDirection: 'row',
@@ -525,7 +625,6 @@ const styles = StyleSheet.create({
   },
   verificationText: {
     fontSize: 12,
-    color: '#6B7280',
-    fontWeight: '500',
+    fontWeight: '600',
   },
 });

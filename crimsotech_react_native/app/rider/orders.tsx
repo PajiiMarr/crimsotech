@@ -6,11 +6,26 @@ import {
   StyleSheet, 
   ScrollView,
   TouchableOpacity,
-  RefreshControl
+  RefreshControl,
+  StatusBar
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
+
+// --- Theme Colors (Consistent with Home/Schedule) ---
+const COLORS = {
+  primary: '#F97316',
+  primaryLight: '#FFF7ED',
+  secondary: '#111827',
+  muted: '#6B7280',
+  bg: '#F9FAFB',
+  cardBg: '#FFFFFF',
+  danger: '#DC2626',
+  success: '#10B981',
+  warning: '#F59E0B',
+  border: '#F3F4F6'
+};
 
 export default function OrdersPage() {
   const { userRole } = useAuth();
@@ -95,15 +110,15 @@ export default function OrdersPage() {
     <TouchableOpacity 
       key={order.id}
       style={styles.orderCard}
-    //   onPress={() => router.push(`/rider/order-details/${order.id}`)}
+      // onPress={() => router.push(`/rider/order-details/${order.id}`)}
     >
       <View style={styles.orderHeader}>
         <View style={styles.orderIdContainer}>
-          <MaterialIcons name="receipt" size={16} color="#6B7280" />
+          <MaterialIcons name="receipt" size={16} color={COLORS.muted} />
           <Text style={styles.orderId}>Order #{order.orderId}</Text>
         </View>
         <View style={[styles.statusBadge, isToDeliver ? styles.deliverBadge : styles.pendingBadge]}>
-          <Text style={styles.statusText}>
+          <Text style={[styles.statusText, isToDeliver ? { color: '#0369A1' } : { color: COLORS.primary }]}>
             {isToDeliver ? 'To Deliver' : 'Pending'}
           </Text>
         </View>
@@ -111,17 +126,17 @@ export default function OrdersPage() {
 
       <View style={styles.orderDetails}>
         <View style={styles.detailRow}>
-          <MaterialIcons name="person" size={16} color="#6B7280" />
+          <MaterialIcons name="person" size={16} color={COLORS.muted} />
           <Text style={styles.detailText}>{order.customerName}</Text>
         </View>
         
         <View style={styles.detailRow}>
-          <MaterialIcons name="location-on" size={16} color="#6B7280" />
+          <MaterialIcons name="location-on" size={16} color={COLORS.muted} />
           <Text style={styles.detailText} numberOfLines={1}>{order.address}</Text>
         </View>
         
         <View style={styles.detailRow}>
-          <MaterialIcons name="schedule" size={16} color="#6B7280" />
+          <MaterialIcons name="schedule" size={16} color={COLORS.muted} />
           <Text style={styles.detailText}>
             Deliver by: {formatTime(order.scheduledTime)}
           </Text>
@@ -129,7 +144,7 @@ export default function OrdersPage() {
         
         {isToDeliver && order.pickupTime && (
           <View style={styles.detailRow}>
-            <MaterialIcons name="inventory" size={16} color="#6B7280" />
+            <MaterialIcons name="inventory" size={16} color={COLORS.muted} />
             <Text style={styles.detailText}>
               Picked up: {formatTime(order.pickupTime)}
             </Text>
@@ -137,7 +152,7 @@ export default function OrdersPage() {
         )}
         
         <View style={styles.detailRow}>
-          <MaterialIcons name="directions-bike" size={16} color="#6B7280" />
+          <MaterialIcons name="directions-bike" size={16} color={COLORS.muted} />
           <Text style={styles.detailText}>{order.distance} km away</Text>
         </View>
       </View>
@@ -162,22 +177,22 @@ export default function OrdersPage() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Updated Header */}
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.cardBg} />
+      
+      {/* --- Standardized Header --- */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.headerTextContainer}>
-            <Text style={styles.title}>Orders</Text>
-          </View>
+        <View>
+          <Text style={styles.title}>Orders</Text>
         </View>
 
-        <View style={styles.headerRight}>
+        <View style={styles.headerActions}>
           <TouchableOpacity 
             style={styles.iconButton} 
-            // onPress={() => router.push('/rider/notifications')}
+            onPress={() => console.log('Notifications')}
           >
-            <MaterialIcons name="notifications" size={22} color="#374151" />
+            <Feather name="bell" size={22} color={COLORS.secondary} />
             <View style={styles.notificationBadge}>
-              <Text style={styles.badgeText}>2</Text>
+              {/* <Text style={styles.badgeText}>2</Text> */}
             </View>
           </TouchableOpacity>
           
@@ -185,7 +200,7 @@ export default function OrdersPage() {
             style={styles.iconButton} 
             onPress={() => router.push('/rider/settings')}
           >
-            <MaterialIcons name="settings" size={22} color="#374151" />
+            <Feather name="settings" size={22} color={COLORS.secondary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -217,13 +232,14 @@ export default function OrdersPage() {
       <ScrollView
         style={styles.scrollView}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#EE4D2D']} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />
         }
         contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
         {isEmpty ? (
           <View style={styles.emptyContainer}>
-            <MaterialIcons name="inventory" size={64} color="#D1D5DB" />
+            <MaterialIcons name="inventory" size={64} color={COLORS.muted} />
             <Text style={styles.emptyTitle}>No Orders</Text>
             <Text style={styles.emptyText}>
               {activeTab === 'pending' 
@@ -242,7 +258,7 @@ export default function OrdersPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.bg,
   },
   center: {
     flex: 1,
@@ -251,63 +267,54 @@ const styles = StyleSheet.create({
   },
   message: {
     fontSize: 16,
-    color: '#6B7280',
+    color: COLORS.muted,
   },
+  
+  // Header
   header: {
-    backgroundColor: '#FFFFFF',
-    paddingTop: 50,
-    paddingBottom: 12,
-    paddingHorizontal: 16,
+    backgroundColor: COLORS.cardBg,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: COLORS.border,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  headerTextContainer: {
-    flex: 1,
-  },
   title: {
-    fontSize: 18,
+    fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
+    color: COLORS.secondary,
   },
-  headerRight: {
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
   iconButton: {
-    padding: 6,
+    padding: 10,
+    backgroundColor: COLORS.border,
+    borderRadius: 12,
     position: 'relative',
   },
   notificationBadge: {
     position: 'absolute',
-    top: 0,
-    right: 0,
-    backgroundColor: '#EF4444',
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 3,
+    top: 10,
+    right: 10,
+    backgroundColor: COLORS.danger,
+    borderRadius: 4,
+    width: 8,
+    height: 8,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
-  badgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '700',
-  },
+  
+  // Tabs
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: COLORS.cardBg,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: COLORS.border,
   },
   tab: {
     flex: 1,
@@ -316,37 +323,41 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   activeTab: {
-    backgroundColor: '#FFF5F2',
+    backgroundColor: COLORS.primaryLight,
   },
   tabText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#6B7280',
+    color: COLORS.muted,
   },
   activeTabText: {
-    color: '#EE4D2D',
+    color: COLORS.primary,
   },
   tabIndicator: {
     position: 'absolute',
     bottom: 0,
     width: '100%',
     height: 3,
-    backgroundColor: '#EE4D2D',
+    backgroundColor: COLORS.primary,
   },
+  
+  // List
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 20,
+    paddingBottom: 100, // Space for bottom tab
   },
+  
+  // Order Card
   orderCard: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
+    backgroundColor: COLORS.cardBg,
+    marginHorizontal: 20,
     marginTop: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: COLORS.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
@@ -367,7 +378,7 @@ const styles = StyleSheet.create({
   orderId: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: COLORS.secondary,
   },
   statusBadge: {
     paddingHorizontal: 10,
@@ -375,15 +386,14 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   pendingBadge: {
-    backgroundColor: '#FFF5F2',
+    backgroundColor: COLORS.primaryLight,
   },
   deliverBadge: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: '#E0F2FE', // Light blue
   },
   statusText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#EE4D2D',
   },
   orderDetails: {
     gap: 8,
@@ -396,7 +406,7 @@ const styles = StyleSheet.create({
   },
   detailText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: COLORS.muted,
     flex: 1,
   },
   orderFooter: {
@@ -405,7 +415,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
+    borderTopColor: COLORS.border,
   },
   orderInfo: {
     flexDirection: 'row',
@@ -413,25 +423,27 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   orderAmount: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#059669',
+    color: COLORS.success,
   },
   orderItems: {
     fontSize: 13,
-    color: '#6B7280',
+    color: COLORS.muted,
   },
   actionButton: {
-    backgroundColor: '#EE4D2D',
+    backgroundColor: COLORS.primary,
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
   },
   actionButtonText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '600',
   },
+  
+  // Empty State
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -442,13 +454,13 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#374151',
+    color: COLORS.secondary,
     marginTop: 16,
     marginBottom: 8,
   },
   emptyText: {
     fontSize: 14,
-    color: '#6B7280',
+    color: COLORS.muted,
     textAlign: 'center',
     lineHeight: 20,
   },
