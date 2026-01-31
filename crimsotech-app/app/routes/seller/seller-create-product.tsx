@@ -55,10 +55,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
     // Fetch global categories
     let globalCategories = [];
+    // Fetch model class names
+    let modelClasses: string[] = [];
     try {
       const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
       if (categoriesResponse.data.success) {
         globalCategories = categoriesResponse.data.categories || [];
+      }
+      // Get model class names used by the classifier
+      const classesResponse = await AxiosInstance.get('/classes/');
+      if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
+        modelClasses = classesResponse.data.classes;
       }
     } catch (categoryError) {
       console.error('Failed to fetch global categories:', categoryError);
@@ -68,7 +75,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     return data({ 
       user,
       selectedShop: selectedShop,
-      globalCategories: globalCategories
+      globalCategories: globalCategories,
+      modelClasses
     }, {
       headers: {
         "Set-Cookie": await commitSession(session),
@@ -77,10 +85,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   } catch (error) {
     // Even if shops fail, try to fetch categories
     let globalCategories = [];
+    let modelClasses: string[] = [];
     try {
       const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
       if (categoriesResponse.data.success) {
         globalCategories = categoriesResponse.data.categories || [];
+      }
+      const classesResponse = await AxiosInstance.get('/classes/');
+      if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
+        modelClasses = classesResponse.data.classes;
       }
     } catch (categoryError) {
       console.error('Failed to fetch global categories:', categoryError);
@@ -90,7 +103,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       user,
       shops: [],
       selectedShop: null,
-      globalCategories: globalCategories
+      globalCategories: globalCategories,
+      modelClasses
     }, {
       headers: {
         "Set-Cookie": await commitSession(session),
@@ -113,8 +127,13 @@ export async function action({ request }: Route.ActionArgs) {
   const quantity = String(formData.get("quantity"));
   const used_for = String(formData.get("used_for") || "General use");
   const price = String(formData.get("price"));
+
+  // Detect if variants/skus are provided in the form; if so, product-level quantity/price can be optional
+  const hasVariants = Boolean(formData.get('variants') || formData.get('skus') || Array.from(formData.keys()).some(k => k.startsWith('variant_') || k.startsWith('sku_')));
+  console.log('Detected variants/skus in submission:', hasVariants);
   const condition = String(formData.get("condition"));
-  const category_admin_id = String(formData.get("category_admin_id"));
+  const category_admin_id = String(formData.get("category_admin_id") || "");
+  const category_admin_name = String(formData.get("category_admin_name") || "");
 
   // Get dimension fields
   const length = formData.get("length");
@@ -153,16 +172,34 @@ export async function action({ request }: Route.ActionArgs) {
     errors.description = "Description should be at most 1000 characters";
   }
 
-  if (!quantity.trim()) {
-    errors.quantity = "Quantity is required";
-  } else if (isNaN(parseInt(quantity)) || parseInt(quantity) < 0) {
-    errors.quantity = "Please enter a valid quantity";
-  }
+  // Quantity & price validation: If variants/skus are present, product-level price/quantity are optional
+  // Use a tolerant sanitizer to handle commas and whitespace (e.g., '1,000')
+  const sanitizeNumber = (s: string) => String(s || '').replace(/,/g, '').replace(/[^0-9.\-]/g, '').trim();
+  const rawQuantity = sanitizeNumber(quantity);
+  const rawPrice = sanitizeNumber(price);
+  console.log('Quantity (raw):', quantity, '=> sanitized:', rawQuantity);
+  console.log('Price (raw):', price, '=> sanitized:', rawPrice);
 
-  if (!price.trim()) {
-    errors.price = "Price is required";
-  } else if (isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
-    errors.price = "Please enter a valid price";
+  if (!hasVariants) {
+    if (!rawQuantity) {
+      errors.quantity = "Quantity is required";
+    } else if (isNaN(Number(rawQuantity)) || Number(rawQuantity) < 0) {
+      errors.quantity = "Please enter a valid quantity";
+    }
+
+    if (!rawPrice) {
+      errors.price = "Price is required";
+    } else if (isNaN(Number(rawPrice)) || Number(rawPrice) <= 0) {
+      errors.price = "Please enter a valid price";
+    }
+  } else {
+    // Variants present: if product-level quantity/price provided, validate; otherwise it's allowed to be empty
+    if (rawQuantity && (isNaN(Number(rawQuantity)) || Number(rawQuantity) < 0)) {
+      errors.quantity = "Please enter a valid quantity";
+    }
+    if (rawPrice && (isNaN(Number(rawPrice)) || Number(rawPrice) <= 0)) {
+      errors.price = "Please enter a valid price";
+    }
   }
 
   if (!condition.trim()) {
@@ -199,9 +236,14 @@ export async function action({ request }: Route.ActionArgs) {
     // Append basic fields
     apiFormData.append('name', name.trim());
     apiFormData.append('description', description.trim());
-    apiFormData.append('quantity', quantity);
+    // If variants/skus are present, default product-level quantity/price to 0 when not provided.
+    // Use sanitized numeric values so backend receives clean numbers.
+    const apiQuantity = (hasVariants && !rawQuantity) ? '0' : (rawQuantity || '0');
+    const apiPrice = (hasVariants && !rawPrice) ? '0' : (rawPrice || '0');
+
+    apiFormData.append('quantity', apiQuantity);
     apiFormData.append('used_for', used_for.trim());
-    apiFormData.append('price', price);
+    apiFormData.append('price', apiPrice);
     apiFormData.append('condition', condition.trim());
     apiFormData.append('shop', shop_id ?? "");
     apiFormData.append('status', "active");
@@ -216,7 +258,13 @@ export async function action({ request }: Route.ActionArgs) {
     // Add category_admin_id if provided and not "none"
     if (category_admin_id.trim() && category_admin_id !== "none") {
       apiFormData.append('category_admin_id', category_admin_id.trim());
+    } else if (category_admin_name.trim() && category_admin_name.toLowerCase() !== 'none') {
+      // Forward suggested name so backend can create a global Category (shop=None, user=None)
+      apiFormData.append('category_admin_name', category_admin_name.trim());
     }
+
+    console.log("Category admin ID:", category_admin_id);
+    console.log("Category admin name:", category_admin_name);
 
 
     if (height) apiFormData.append('height', String(height));
@@ -451,7 +499,7 @@ interface Category {
 }
 
 export default function CreateProduct({ loaderData, actionData }: Route.ComponentProps) {
-  const { user, selectedShop, globalCategories } = loaderData;
+  const { user, selectedShop, globalCategories, modelClasses } = loaderData;
   const errors: FormErrors = actionData?.errors || {};
 
   return (
@@ -477,6 +525,7 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
             <CreateProductForm 
               selectedShop={selectedShop}
               globalCategories={globalCategories}
+              modelClasses={modelClasses}
               errors={errors}
             />
           </div>

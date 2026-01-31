@@ -77,33 +77,48 @@ interface VariantGroup {
 interface CreateProductFormProps {
   selectedShop: Shop | null;
   globalCategories: Category[];
+  modelClasses: string[];
   errors: FormErrors;
 }
 
 // --- PREDICTION STATE INTERFACE ---
-// UPDATED: Based on actual API response
-interface PredictionCategory {
-  category_id: number;
-  category_name: string;
-  confidence: number;
+// UPDATED: Based on actual API response (image-based prediction)
+
+interface PredictedCategory {
+  id?: string;
+  uuid?: string;
+  name?: string;
+  [key: string]: any;
 }
 
-// Update the interface in your frontend
-interface PredictionResult {
-  success: boolean;
-  predicted_category: PredictionCategory;
-  alternative_categories?: PredictionCategory[];
-  all_categories?: Array<{
-    uuid: string;
-    name: string;
-    id: string;
-  }>;  // Change from string[] to object array
-  feature_insights?: any;
+interface ImagePredictions {
+  predicted_class?: string;
+  confidence?: number;
+  // any additional fields returned by the model
+  [key: string]: any;
 }
+
+interface PredictionResult {
+  success?: boolean;
+  predictions?: ImagePredictions;
+  all_categories?: Array<string | PredictedCategory>;
+  error?: string;
+  predicted_category?: {
+    category_name: string;
+    confidence: number;
+    category_uuid?: string | null;
+  };
+  alternative_categories?: Array<{ category_name: string; confidence: number }>;
+  all_predictions?: Record<string, number>;
+  predicted_class?: string;
+  [key: string]: any;
+}
+
+
 
 // --- REACT COMPONENT ---
 
-export default function CreateProductForm({ selectedShop, globalCategories, errors }: CreateProductFormProps) {
+export default function CreateProductForm({ selectedShop, globalCategories, modelClasses, errors }: CreateProductFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const mediaFilesRef = useRef<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -168,157 +183,208 @@ export default function CreateProductForm({ selectedShop, globalCategories, erro
     { id: generateId(), name: 'Far Province', fee: '', freeShipping: false },
   ]);
   
-  // Prediction state
+  // Prediction state (image-based)
   const [isPredicting, setIsPredicting] = useState(false);
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
   const [showPrediction, setShowPrediction] = useState(false);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('none');
-  
-  // Refs for preventing duplicate requests
-  const predictionInProgress = useRef(false);
-  const predictionAbortController = useRef<AbortController | null>(null);
-  const lastPredictionTime = useRef<number>(0);
-  const predictionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Empty means no selection
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
 
-  // Check if all required prediction fields are filled
-  const arePredictionFieldsValid = useCallback(() => {
-    return (
-      productName.trim().length >= 2 &&
-      productDescription.trim().length >= 10 &&
-      productPrice !== '' && productPrice > 0 &&
-      productCondition !== '' &&
-      productQuantity !== '' && productQuantity >= 0
-    );
-  }, [productName, productDescription, productPrice, productCondition, productQuantity]);
+  const [predictionImagePreview, setPredictionImagePreview] = useState<string | null>(null);
+  const [predictionImageFile, setPredictionImageFile] = useState<File | null>(null);
+  const [predictionError, setPredictionError] = useState<string | null>(null);
+  const [apiResponseError, setApiResponseError] = useState<string | null>(null);
+  const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(null);
+  const predictionAbortController = useRef<AbortController | null>(null);
+
+  // Note: Prediction is image-based now. Validation is performed when an image is provided.
 
   // Handle category selection change
+const [closestMatch, setClosestMatch] = useState<{ name: string; score: number } | null>(null);
+const [appliedCategory, setAppliedCategory] = useState<Category | null>(null);
+
+const normalizeText = (s: string) => {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(' ');
+};
+
+const tokenSimilarity = (a: string, b: string) => {
+  const ta = new Set(normalizeText(a).split(' '));
+  const tb = new Set(normalizeText(b).split(' '));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  const inter = [...ta].filter(x => tb.has(x)).length;
+  const union = new Set([...ta, ...tb]).size;
+  return union === 0 ? 0 : inter / union;
+};
+
+const findBestCategoryMatch = (predictedName: string) => {
+  const scores = globalCategories.map((gc) => ({
+    category: gc,
+    score: tokenSimilarity(predictedName, gc.name),
+  }));
+  scores.sort((a, b) => b.score - a.score);
+  return scores[0] || null;
+};
+
 const handleCategoryChange = (value: string) => {
   console.log('Category changed to:', value);
   
-  // If value is "none", clear the selection
-  if (value === "none") {
-    setSelectedCategoryId("none");
+  // Reset closest match and applied category when user manually picks
+  setClosestMatch(null);
+  setAppliedCategory(null);
+
+  // If value is empty/none, clear the selection
+  if (value === "none" || value === "") {
+    setSelectedCategoryName("");
     return;
   }
-  
-  // Try to find the category in predictionResult
-  if (predictionResult?.all_categories) {
-    const foundCategory = predictionResult.all_categories.find((cat: any) => {
-      if (typeof cat === 'string') {
-        return cat === value;
-      } else {
-        return cat.uuid === value || cat.id === value || cat.name === value;
-      }
-    });
-    
-    if (foundCategory) {
-      // Get the actual ID/UUID
-      const actualId = typeof foundCategory === 'string' ? foundCategory : foundCategory.uuid || foundCategory.id;
-      setSelectedCategoryId(actualId);
-    } else {
-      setSelectedCategoryId(value);
-    }
-  } else {
-    setSelectedCategoryId(value);
+
+  // If user selects "Others", set canonical name 'others' (no custom input allowed)
+  if (value === 'Others' || value === 'others') {
+    setSelectedCategoryName('others');
+    return;
   }
+
+  // For model classes or category names, we store the name directly
+  setSelectedCategoryName(value);
 };
 
-  // Function to trigger category prediction
-  const predictCategory = useCallback(async (source: string = 'auto') => {
-    console.log(`predictCategory called from: ${source}. Valid:`, arePredictionFieldsValid(), 'In progress:', predictionInProgress.current);
-    
-    if (!arePredictionFieldsValid()) {
-      console.log('Prediction blocked: fields not valid');
-      return;
-    }
-    
-    // Prevent duplicate requests
-    if (predictionInProgress.current) {
-      console.log('Prediction already in progress, skipping...');
-      return;
-    }
-    
-    // Debounce: Don't make requests too frequently
-    const now = Date.now();
-    if (now - lastPredictionTime.current < 2000) { // 2 second cooldown
-      console.log('Prediction debounced: too soon since last request');
-      return;
-    }
-    
-    // Abort any previous request
-    if (predictionAbortController.current) {
-      predictionAbortController.current.abort();
-    }
-    
-    // Create new abort controller
-    predictionAbortController.current = new AbortController();
-    
-    setIsPredicting(true);
-    setShowPrediction(true);
-    predictionInProgress.current = true;
-    lastPredictionTime.current = now;
-    
-    try {
-      const predictionData = {
-        quantity: productQuantity,
-        price: productPrice,
-        condition: productCondition,
-        name: productName,
-        description: productDescription
-      };
-      
-      console.log('Sending prediction request with data:', predictionData);
-      
-      const response = await AxiosInstance.post('/seller-products/global-categories/predict/', predictionData, {
-        signal: predictionAbortController.current.signal
+  // Image-based prediction using the cover image (or provided file)
+ // Image-based prediction using the cover image
+const predictCategoryFromImage = async (file?: File) => {
+  // Delegate to analyzeImages for single-file support
+  const files = file ? [file] : (mainMedia.map(m => m.file).filter(Boolean) as File[]);
+  await analyzeImages(files);
+};
+
+// Analyze multiple images and aggregate predictions
+const analyzeImages = async (files: File[]) => {
+  const imageFiles = (files || []).filter(f => f && f.type && f.type.startsWith('image/')) as File[];
+  if (imageFiles.length === 0) {
+    alert('No image files to analyze.');
+    return;
+  }
+
+  // Abort any previous request
+  if (predictionAbortController.current) {
+    predictionAbortController.current.abort();
+  }
+  predictionAbortController.current = new AbortController();
+
+  setIsPredicting(true);
+  setPredictionError(null);
+
+  try {
+    // Send all images in parallel
+    const requests = imageFiles.map((file) => {
+      const form = new FormData();
+      form.append('image', file);
+      return AxiosInstance.post('/predict/', form, {
+        signal: predictionAbortController.current!.signal,
+        timeout: 30000,
       });
-      
-      console.log('Prediction API response:', response.data);
-      console.log('Predicted category object:', response.data.predicted_category);
-      
-      if (response.data.success) {
-        setPredictionResult(response.data);
-        
-        // Auto-select the predicted category
-        if (response.data.predicted_category?.category_uuid) {
-          const predictedCategoryId = response.data.predicted_category.category_uuid.toString();
-          console.log('Setting selected category to:', predictedCategoryId);
-          setSelectedCategoryId(predictedCategoryId);
-        }
-      } else {
-        console.error('Prediction API returned success: false', response.data);
-      }
-    } catch (error: any) {
-      // Don't log if error is from abort
-      if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
-        console.log('Prediction request was cancelled');
-        return;
-      }
-      
-      console.error('Category prediction failed:', error);
-      if (error.response) {
-        console.error('Response status:', error.response.status);
-        console.error('Response data:', error.response.data);
-      } else if (error.request) {
-        console.error('No response received');
-      } else {
-        console.error('Error setting up request:', error.message);
-      }
-    } finally {
-      setIsPredicting(false);
-      predictionInProgress.current = false;
-      predictionAbortController.current = null;
+    });
+
+    const settled = await Promise.allSettled(requests);
+    const successful = settled.filter(s => s.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+
+    if (successful.length === 0) {
+      setPredictionError('All image predictions failed');
+      return;
     }
-  }, [arePredictionFieldsValid, productQuantity, productPrice, productCondition, productName, productDescription]);
+
+    // Aggregate per-class probabilities
+    const aggregateScores: Record<string, number> = {};
+    let count = 0;
+
+    successful.forEach(res => {
+      const data = res.value?.data;
+      if (!data || !data.success || !data.predictions) return;
+      const p = data.predictions;
+
+      if (p.all_predictions && typeof p.all_predictions === 'object') {
+        Object.entries(p.all_predictions).forEach(([cls, score]) => {
+          aggregateScores[cls] = (aggregateScores[cls] || 0) + Number(score || 0);
+        });
+      } else if (p.predicted_class) {
+        const cls = String(p.predicted_class);
+        const conf = Number(p.confidence || 1);
+        aggregateScores[cls] = (aggregateScores[cls] || 0) + conf;
+      }
+
+      count += 1;
+    });
+
+    if (count === 0) {
+      setPredictionError('No valid predictions received');
+      return;
+    }
+
+    // Average the scores
+    Object.keys(aggregateScores).forEach(k => { aggregateScores[k] = aggregateScores[k] / count; });
+
+    // Sort classes
+    const sorted = Object.entries(aggregateScores).sort((a, b) => b[1] - a[1]);
+    const topClass = sorted[0]?.[0] || 'Unknown';
+    const topConfidence = Number(sorted[0]?.[1] || 0);
+
+    const mapped: PredictionResult = {
+      success: true,
+      predicted_category: {
+        category_name: topClass,
+        confidence: topConfidence,
+        category_uuid: null
+      } as any,
+      alternative_categories: sorted.slice(1, 4).map(s => ({ category_name: s[0], confidence: s[1] })),
+      all_categories: globalCategories ? globalCategories.map((c: Category) => ({ uuid: c.id, name: c.name, id: c.id })) : [],
+      all_predictions: Object.fromEntries(sorted),
+      predicted_class: topClass,
+      analyzed_images_count: count
+    };
+
+    setPredictionResult(mapped);
+    setShowPrediction(true);
+
+    // Auto-select matching category by name when an exact match exists
+    if (mapped.predicted_category?.category_name && globalCategories) {
+      const predictedName = mapped.predicted_category.category_name.toLowerCase();
+      const found = globalCategories.find((gc: any) => gc.name.toLowerCase() === predictedName);
+      if (found) {
+        setSelectedCategoryName(found.name);
+        console.log('Auto-selected category:', found.name);
+      }
+    }
+
+  } catch (error: any) {
+    if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
+      console.log('Prediction request cancelled');
+      return;
+    }
+
+    let errorMsg = 'Prediction request failed';
+    if (error.response?.status === 404) {
+      errorMsg = 'Prediction endpoint not found. Make sure the Django endpoint is configured.';
+    } else if (error.response?.data?.error) {
+      errorMsg = error.response.data.error;
+    } else if (error.message) {
+      errorMsg = error.message;
+    }
+
+    setPredictionError(errorMsg);
+    console.error('Image prediction failed:', error);
+  } finally {
+    setIsPredicting(false);
+    predictionAbortController.current = null;
+  }
+};
 
   // Clean up on component unmount
   useEffect(() => {
     return () => {
-      // Clear any pending timeout
-      if (predictionTimeoutRef.current) {
-        clearTimeout(predictionTimeoutRef.current);
-      }
-      
       // Abort any pending request
       if (predictionAbortController.current) {
         predictionAbortController.current.abort();
@@ -339,44 +405,9 @@ const handleCategoryChange = (value: string) => {
     };
   }, []);
 
-  // Auto-predict when all fields are filled - with better debouncing
-  useEffect(() => {
-    if (arePredictionFieldsValid()) {
-      // Clear any existing timeout
-      if (predictionTimeoutRef.current) {
-        clearTimeout(predictionTimeoutRef.current);
-      }
-      
-      // Set new timeout with debounce
-      predictionTimeoutRef.current = setTimeout(() => {
-        predictCategory('auto');
-      }, 1500); // Increased debounce time
-      
-      return () => {
-        if (predictionTimeoutRef.current) {
-          clearTimeout(predictionTimeoutRef.current);
-        }
-      };
-    } else {
-      // Reset prediction when fields are not valid
-      setPredictionResult(null);
-      setShowPrediction(false);
-    }
-  }, [arePredictionFieldsValid, predictCategory]);
 
-  // Manual trigger for prediction
-  const handleManualPredict = () => {
-    console.log('Manual predict button clicked');
-    if (arePredictionFieldsValid() && !isPredicting) {
-      // Clear auto-prediction timeout if exists
-      if (predictionTimeoutRef.current) {
-        clearTimeout(predictionTimeoutRef.current);
-        predictionTimeoutRef.current = null;
-      }
-      
-      predictCategory('manual');
-    }
-  };
+
+
 
   const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
     setShippingZones(prev => prev.map(zone => 
@@ -412,6 +443,13 @@ const handleCategoryChange = (value: string) => {
     // Store files in ref
     mediaFilesRef.current = [...mediaFilesRef.current, ...filesToAdd];
     setMainMedia(prev => [...prev, ...newMedia]);
+
+    // Automatically analyze newly added image files (not videos)
+    const newImageFiles = filesToAdd.filter(f => f.type.startsWith('image/'));
+    if (newImageFiles.length > 0) {
+      // Run analysis asynchronously (do not block UI)
+      analyzeImages(newImageFiles as File[]).catch((err) => console.error('Auto image analysis failed:', err));
+    }
   };
 
   const removeMainMedia = (index: number) => {
@@ -669,8 +707,28 @@ const handleCategoryChange = (value: string) => {
       }
     }
     
-    // Add category
-    formData.append('category_admin_id', selectedCategoryId);
+    // Map selected model class name to actual category ID or send name for server to create
+if (selectedCategoryName?.trim()) {
+      // Exact match first
+      let match = globalCategories.find(gc => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
+      // Fuzzy match fallback (lower threshold)
+      if (!match) {
+        const best = findBestCategoryMatch(selectedCategoryName);
+        if (best && best.score >= 0.25) {
+          match = best.category;
+        }
+      }
+
+      if (match) {
+        formData.append('category_admin_id', match.id);
+        // Keep UI consistent
+        setSelectedCategoryName(match.name);
+      } else {
+        // Send the suggested name to backend so it can create a global category if needed
+        const nameToSend = (selectedCategoryName && selectedCategoryName.toLowerCase() === 'others') ? 'others' : selectedCategoryName;
+        formData.append('category_admin_name', nameToSend);
+      }
+    }
     
     // Add media files from ref
     mediaFilesRef.current.forEach(file => {
@@ -738,6 +796,16 @@ const handleCategoryChange = (value: string) => {
       formData.append(`shipping_zone_${zone.id}_freeShipping`, String(zone.freeShipping));
     });
     
+    // Debug: log FormData entries being submitted
+    try {
+      for (const [k, v] of (formData as any).entries()) {
+        const preview = (v && typeof v === 'object' && 'name' in v) ? { name: v.name, size: v.size, type: v.type } : String(v).slice(0, 200);
+        console.log('Submitting form entry ->', k, preview);
+      }
+    } catch (err) {
+      console.log('Failed to iterate formData entries:', err);
+    }
+
     // Submit using fetcher
     fetcher.submit(formData, {
       method: 'post',
@@ -746,14 +814,40 @@ const handleCategoryChange = (value: string) => {
   };
 
   // --- RENDER ---
+  // Show API errors returned by the action (client-side feedback)
+  useEffect(() => {
+    if (fetcher && (fetcher.data)) {
+      console.log('fetcher.data changed:', fetcher.data);
+      if (fetcher.data.errors) {
+        setApiResponseError(typeof fetcher.data.errors === 'string' ? fetcher.data.errors : JSON.stringify(fetcher.data.errors));
+      } else if (fetcher.data.error) {
+        setApiResponseError(fetcher.data.error);
+      } else if (fetcher.data.success) {
+        setApiResponseError(null);
+        setApiResponseMessage(fetcher.data.message || 'Product created');
+      }
+    }
+  }, [fetcher.data]);
+
+  // Auto-apply model suggestion to the category dropdown when prediction result updates
+  useEffect(() => {
+    if (predictionResult && predictionResult.predicted_category) {
+      const predictedName = predictionResult.predicted_category.category_name || '';
+      // Auto-set when user hasn't chosen a category yet or current selection is 'others'
+      if (!selectedCategoryName?.trim() || selectedCategoryName === 'others') {
+        console.log('Auto-applying predicted category to dropdown:', predictedName);
+        setSelectedCategoryName(predictedName);
+      }
+    }
+  }, [predictionResult, selectedCategoryName]);
+
   return (
     <form 
       ref={formRef}
       onSubmit={handleSubmit}
       className="space-y-8"
     >
-      {/* Hidden category field for form submission */}
-      <input type="hidden" name="category_admin_id" value={selectedCategoryId} />
+      {/* No hidden category ID field; map class name to ID on submit */}
       
       {/* STEP 1: AI Category Prediction Section */}
       <Card id="ai-category-prediction">
@@ -810,40 +904,7 @@ const handleCategoryChange = (value: string) => {
                 {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
               </div>
 
-              {/* Quantity */}
-              <div className="space-y-2">
-                <Label htmlFor="quantity">Quantity *</Label>
-                <Input
-                  type="number"
-                  id="quantity"
-                  name="quantity"
-                  required
-                  min="0"
-                  placeholder="0"
-                  value={productQuantity}
-                  onChange={(e) => setProductQuantity(parseInt(e.target.value) || '')}
-                  className={showPrediction && predictionResult ? 'border-green-500' : ''}
-                />
-                {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
-              </div>
-              
-              {/* Price */}
-              <div className="space-y-2">
-                <Label htmlFor="price">Price *</Label>
-                <Input
-                  type="number"
-                  id="price"
-                  name="price"
-                  required
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={productPrice}
-                  onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
-                  className={showPrediction && predictionResult ? 'border-green-500' : ''}
-                />
-                {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
-              </div>
+
             </div>
 
             {/* Description */}
@@ -862,149 +923,9 @@ const handleCategoryChange = (value: string) => {
               {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
             </div>
 
-            {/* Manual Predict Button */}
             <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleManualPredict}
-                disabled={!arePredictionFieldsValid() || isPredicting}
-                className="flex items-center gap-2"
-              >
-                {isPredicting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4" />
-                    Get AI Category Suggestion
-                  </>
-                )}
-              </Button>
+              <p className="text-sm text-gray-500">Category prediction is image-based. Upload a cover image in Step 2 and click "Analyze Cover Image".</p>
             </div>
-
-            {/* AI Prediction Result */}
-            {showPrediction && (
-              <div className="space-y-4 p-4 border rounded-lg bg-gradient-to-r from-purple-50 to-blue-50">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-purple-600" />
-                    AI Category Suggestion
-                  </h3>
-                  {isPredicting && (
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Analyzing...
-                    </div>
-                  )}
-                </div>
-                
-                {predictionResult && predictionResult.predicted_category ? (
-                  <>
-                    {/* Top Prediction */}
-                    <div className="p-4 bg-white border rounded-lg shadow-sm">
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <span className="font-medium text-lg">
-                            {predictionResult.predicted_category.category_name}
-                          </span>
-                          <Badge className="ml-2 bg-green-100 text-green-800 hover:bg-green-100">
-                            {/* Convert confidence from decimal (e.g., 0.9991) to percentage */}
-                            {Math.round(predictionResult.predicted_category.confidence * 100)}% confidence
-                          </Badge>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleCategoryChange(predictionResult.predicted_category.category_id.toString())}
-                          className="border-green-500 text-green-700 hover:bg-green-50"
-                        >
-                          Select This Category
-                        </Button>
-                      </div>
-                      <p className="text-sm text-gray-600">
-                        Based on your product details, this category seems to be the best fit.
-                      </p>
-                    </div>
-
-                    {/* Alternative Categories (Optional) */}
-                    {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
-                      <div className="pt-4 border-t">
-                        <h4 className="text-sm font-medium text-gray-700 mb-2">Alternative Suggestions:</h4>
-                        <div className="space-y-2">
-                          {predictionResult.alternative_categories.map((category, index) => (
-                            <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                              <span className="text-sm">{category.category_name}</span>
-                              <Badge variant="outline" className="text-xs">
-                                {Math.round(category.confidence * 100)}%
-                              </Badge>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="pt-4 border-t">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium text-gray-700">Prefer a different category?</h4>
-                        <Badge variant="outline" className="text-xs">
-                          Optional
-                        </Badge>
-                      </div>
-  
-                    <Select 
-                      value={selectedCategoryId} 
-                      onValueChange={handleCategoryChange}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Choose from available categories" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No Category (Not Recommended)</SelectItem>
-                        
-                        {/* Always use globalCategories from loader */}
-                        {globalCategories && globalCategories.length > 0 ? (
-                          globalCategories.map((category: Category) => (
-                            <SelectItem key={category.id} value={category.id}>
-                              {category.name}
-                            </SelectItem>
-                          ))
-                        ) : (
-                          <SelectItem value="none" disabled>
-                            No categories available
-                          </SelectItem>
-                        )}
-                      </SelectContent>
-                    </Select>
-                    
-                    <p className="text-xs text-gray-500 mt-1">
-                      You can override the AI suggestion by selecting a different category here.
-                    </p>
-                  </div>
-                  </>
-                ) : isPredicting ? (
-                  <div className="p-4 bg-white border rounded-lg shadow-sm text-center">
-                    <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
-                    <p className="text-sm text-gray-600">Analyzing your product details...</p>
-                  </div>
-                ) : (
-                  <div className="p-4 bg-white border rounded-lg shadow-sm text-center">
-                    <p className="text-sm text-gray-600">No prediction available yet. Fill all required fields above.</p>
-                  </div>
-                )}
-                
-                {/* Prediction Status */}
-                <div className="text-xs text-gray-500 flex items-center gap-1">
-                  <div className={`h-2 w-2 rounded-full ${arePredictionFieldsValid() ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                  {arePredictionFieldsValid() 
-                    ? 'All required fields filled ✓' 
-                    : 'Fill all required fields above for AI prediction'}
-                </div>
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>
@@ -1026,61 +947,160 @@ const handleCategoryChange = (value: string) => {
                   * First image/video will be used as the cover image
                 </p>
               </div>
-              <Badge variant="outline" className="text-xs">
-                {mainMedia.length}/9
-              </Badge>
-            </div>
-            
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-              {mainMedia.map((item, index) => (
-                <div key={index} className="relative group aspect-square border rounded-md overflow-hidden">
-                  {item.type === 'image' ? (
-                    <img
-                      src={item.preview}
-                      alt={`Preview ${index + 1}`}
-                      className="w-full h-full object-cover"
-                    />
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-xs">
+                  {mainMedia.length}/9
+                </Badge>
+                <Button type="button" variant="outline" size="sm" onClick={() => analyzeImages(mainMedia.map(m => m.file))} disabled={mainMedia.length === 0 || isPredicting}>
+                  {isPredicting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <div className="w-full h-full bg-gray-100 flex items-center justify-center">
-                      <Video className="h-6 w-6 text-gray-400" />
+                    'Analyze All Images'
+                  )}
+                </Button>
+              </div>
+            </div> 
+            
+            <div className="flex flex-col gap-4">
+              <div className="flex-1">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                  {mainMedia.map((item, index) => (
+                    <div key={index} className="relative group aspect-square border rounded-md overflow-hidden">
+                      {item.type === 'image' ? (
+                        <img
+                          src={item.preview}
+                          alt={`Preview ${index + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+                          <Video className="h-6 w-6 text-gray-400" />
+                        </div>
+                      )}
+                      {index === 0 && (
+                        <Badge className="absolute bottom-0 left-0 rounded-none bg-black/80 text-white px-1.5 py-0.5 text-[10px]">
+                          Cover
+                        </Badge>
+                      )}
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                        onClick={() => removeMainMedia(index)}
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </Button>
+                    </div>
+                  ))}
+                  
+                  {mainMedia.length < 9 && (
+                    <div className="aspect-square">
+                      <Input 
+                        ref={fileInputRef}
+                        type="file" 
+                        id="main-media-upload" 
+                        name="media_files"
+                        multiple 
+                        accept="image/*,video/*" 
+                        onChange={handleMainMediaChange}
+                        className="hidden" 
+                      />
+                      <Label htmlFor="main-media-upload" className="cursor-pointer flex flex-col items-center justify-center aspect-square border-2 border-dashed border-gray-300 rounded-md text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50 transition-colors h-full w-full p-2">
+                        <Upload className="h-5 w-5 mb-1" />
+                        <span className="text-xs text-center">Add Picture/Video</span>
+                      </Label>
                     </div>
                   )}
-                  {index === 0 && (
-                    <Badge className="absolute bottom-0 left-0 rounded-none bg-black/80 text-white px-1.5 py-0.5 text-[10px]">
-                      Cover
-                    </Badge>
+                </div>
+
+                {/* Inline: Category Panel (below images) */}
+                <div className="mt-4 p-3 border rounded bg-gray-50 space-y-2">
+                  <div className="text-sm font-medium">Category</div>
+                  <Select value={selectedCategoryName} onValueChange={handleCategoryChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="others">Others</SelectItem>
+
+                      {modelClasses && modelClasses.length > 0 ? (
+                        modelClasses.map((name) => (
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="none" disabled>
+                          No model classes available
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+
+                  {/* If selected name isn't among the model classes, show it explicitly so the user sees the AI suggestion */}
+                  {selectedCategoryName && (!modelClasses || !modelClasses.includes(selectedCategoryName)) && (
+                    <div className="text-xs text-gray-600 mt-1">Selected: {selectedCategoryName}</div>
                   )}
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="sm"
-                    className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                    onClick={() => removeMainMedia(index)}
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </Button>
+
+
+
+      
+
+                  <p className="text-xs text-gray-500">Select a category here to override AI suggestion or to set it manually.</p>
+
+                  {predictionError && (
+                    <div className="mt-2 p-2 border rounded bg-red-50 text-sm text-red-700">
+                      {predictionError}
+                    </div>
+                  )}
+
+                  {predictionResult && !predictionError && (
+                    <div className="mt-2 p-2 border rounded bg-green-50 text-sm text-green-800 space-y-2">
+                      <div className="font-medium">Suggested Category</div>
+                      <div>
+                        {predictionResult.predicted_category?.category_name || 'Unknown'}
+                        {typeof predictionResult.predicted_category?.confidence === 'number' && (
+                          <span className="ml-1 text-green-700">(
+                            {Math.round((predictionResult.predicted_category.confidence || 0) * 100)}%
+                          )</span>
+                        )}
+                      </div>
+                      {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
+                        <div className="text-xs text-green-700">
+                          Alternatives: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        
+
+                        {closestMatch && (
+                          <div className="mt-2 p-2 border rounded bg-yellow-50 text-sm text-yellow-800">
+                            Closest match: <strong>{closestMatch.name}</strong> ({Math.round(closestMatch.score * 100)}%)
+                            <div className="mt-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedCategoryName(closestMatch.name);
+                                  setAppliedCategory(globalCategories.find(gc => gc.name === closestMatch.name) || null);
+                                  setClosestMatch(null);
+                                  setPredictionError(null);
+                                }}
+                              >
+                                Use Closest Match
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
-              
-              {mainMedia.length < 9 && (
-                <div className="aspect-square">
-                  <Input 
-                    ref={fileInputRef}
-                    type="file" 
-                    id="main-media-upload" 
-                    name="media_files"
-                    multiple 
-                    accept="image/*,video/*" 
-                    onChange={handleMainMediaChange}
-                    className="hidden" 
-                  />
-                  <Label htmlFor="main-media-upload" className="cursor-pointer flex flex-col items-center justify-center aspect-square border-2 border-dashed border-gray-300 rounded-md text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50 transition-colors h-full w-full p-2">
-                    <Upload className="h-5 w-5 mb-1" />
-                    <span className="text-xs text-center">Add Picture/Video</span>
-                  </Label>
-                </div>
-              )}
+              </div>
             </div>
+
           </div>
         </CardContent>
       </Card>
@@ -1594,16 +1614,29 @@ const handleCategoryChange = (value: string) => {
 
 
       {/* Submit Button */}
-      <div className="pt-6">
+      <div className="pt-6 space-y-3">
         <Button
           type="submit"
-          disabled={!selectedShop}
+          disabled={!selectedShop || fetcher.state === 'submitting'}
           variant="default"
           size="lg"
           className="w-full"
         >
-          {selectedShop ? "Create Product" : "Create Shop First"}
+          {fetcher.state === 'submitting' ? 'Creating...' : (selectedShop ? 'Create Product' : 'Create Shop First')}
         </Button>
+
+        {apiResponseError && (
+          <div className="p-3 border rounded bg-red-50 text-sm text-red-700">
+            <div className="font-medium">Failed to create product</div>
+            <div className="mt-1 whitespace-pre-wrap">{apiResponseError}</div>
+          </div>
+        )}
+
+        {apiResponseMessage && (
+          <div className="p-3 border rounded bg-green-50 text-sm text-green-800">
+            {apiResponseMessage}
+          </div>
+        )}
       </div>
     </form>
   );

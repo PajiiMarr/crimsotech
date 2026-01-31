@@ -46,6 +46,65 @@ from .models import (
     Boost, Customer, ShopFollow, Order
 )
 
+# views.py
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.core.files.storage import FileSystemStorage
+import os
+from .utils.model_handler import ElectronicsClassifier
+import json
+
+# Initialize classifier once (Django will cache this)
+MODEL_PATH = os.path.join('model', 'electronics_classifier3.keras')
+classifier = ElectronicsClassifier(MODEL_PATH)
+
+@csrf_exempt
+def predict_image(request):
+    if request.method == 'POST' and request.FILES.get('image'):
+        # Save uploaded file
+        uploaded_file = request.FILES['image']
+        fs = FileSystemStorage(location='temp_uploads/')
+        
+        # Create directory if it doesn't exist
+        os.makedirs('temp_uploads', exist_ok=True)
+        
+        filename = fs.save(uploaded_file.name, uploaded_file)
+        file_path = os.path.join('temp_uploads', filename)
+        
+        try:
+            # Make prediction
+            result = classifier.predict(file_path)
+            
+            # Clean up temporary file
+            os.remove(file_path)
+            
+            return JsonResponse({
+                'success': True,
+                'predictions': result
+            })
+        
+        except Exception as e:
+            # Clean up on error
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return JsonResponse({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+    
+    return JsonResponse({
+        'success': False,
+        'error': 'No image provided'
+    }, status=400)
+
+def get_classes(request):
+    """API endpoint to get available classes"""
+    return JsonResponse({
+        'classes': classifier.class_names
+    })
+
+
+
 class Landing(viewsets.ViewSet):
     def list(self, request):
         """
@@ -13852,8 +13911,11 @@ class SellerProducts(viewsets.ModelViewSet):
             product_data['is_refundable'] = True
         product_data['customer'] = seller.customer_id
         
-        # Handle category_admin_id for global categories
+        # Handle category_admin for global categories (accepts id or name)
         category_admin_id = request.data.get('category_admin_id')
+        category_admin_name = request.data.get('category_admin_name') or request.data.get('category_name')
+
+        # Try by ID first
         if category_admin_id and category_admin_id != "none":
             try:
                 category_admin = Category.objects.get(id=category_admin_id, shop__isnull=True)
@@ -13861,6 +13923,21 @@ class SellerProducts(viewsets.ModelViewSet):
             except Category.DoesNotExist:
                 return Response({
                     "error": "Invalid global category selected"
+                }, status=status.HTTP_400_BAD_REQUEST)
+        # Fallback: try by provided name and create global category if missing
+        elif category_admin_name and str(category_admin_name).strip().lower() not in ('none', 'null', 'undefined'):
+            cat_candidate = str(category_admin_name).strip()
+            try:
+                category_obj = Category.objects.filter(name__iexact=cat_candidate, shop__isnull=True).first()
+                if not category_obj:
+                    category_obj = Category.objects.create(name=cat_candidate, shop=None, user=None)
+                    print(f"Created new global Category from provided name: {category_obj.id} - {category_obj.name}")
+                product_data['category_admin'] = str(category_obj.id)
+            except Exception as e:
+                print('Error handling category_admin_name:', e)
+                return Response({
+                    "error": "Invalid global category name provided",
+                    "details": str(e)
                 }, status=status.HTTP_400_BAD_REQUEST)
 
         # If accepted_categories was sent as a JSON string, parse it into a list for the serializer
@@ -14268,7 +14345,184 @@ class SellerProducts(viewsets.ModelViewSet):
                 "message": "No seller found for this user",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-        
+
+    @csrf_exempt
+    @action(detail=False, methods=['post'], url_path='predict-from-image')
+    def predict_category_from_image(self, request):
+        """
+        Predict category from product image using trained model
+        """
+        try:
+            import tensorflow as tf
+            import numpy as np
+            from keras.utils import load_img, img_to_array
+            import os
+            import tempfile
+            
+            # Get the uploaded image
+            if 'image' not in request.FILES:
+                return Response({
+                    'success': False,
+                    'error': 'No image provided'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            image_file = request.FILES['image']
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                for chunk in image_file.chunks():
+                    tmp_file.write(chunk)
+                tmp_file_path = tmp_file.name
+            
+            try:
+                # Define class names (must match your training order)
+                class_names = [
+                    'Audio Devices', 
+                    'Computer Accessories', 
+                    'Controllers',
+                    'Desktop and Laptops', 
+                    'Home Appliances', 
+                    'Mobile Phones',
+                    'Storage Devices', 
+                    'Televisions', 
+                    'Wearables'
+                ]
+                
+                # Load your trained model - USE THE SAME PATH AS YOUR WORKING PREDICTOR
+                CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+                MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+                MODEL_PATH = os.path.join(MODEL_DIR, 'electronics_classifier3.keras')
+                
+                if not os.path.exists(MODEL_PATH):
+                    # Try alternative path
+                    MODEL_PATH = 'model/electronics_classifier3.keras'
+                    if not os.path.exists(MODEL_PATH):
+                        return Response({
+                            'success': False,
+                            'error': f'Model file not found. Looked at: {os.path.join(MODEL_DIR, "electronics_classifier3.keras")}'
+                        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+                # Load model
+                model = tf.keras.models.load_model(MODEL_PATH)
+                
+                # Preprocess image
+                IMG_SIZE = (256, 256)
+                
+                # Load and preprocess image
+                img = load_img(tmp_file_path, target_size=IMG_SIZE)
+                img_array = img_to_array(img)
+                img_array = np.expand_dims(img_array, axis=0)
+                img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
+                
+                # Make prediction
+                predictions = model.predict(img_array, verbose=0)
+                
+                # Get top predictions
+                class_idx = np.argmax(predictions[0])
+                confidence = float(predictions[0][class_idx])
+                predicted_class = class_names[class_idx]
+                
+                # Get top 3 predictions
+                top_3_indices = np.argsort(predictions[0])[-3:][::-1]
+                top_predictions = []
+                
+                for idx in top_3_indices:
+                    category_name = class_names[idx]
+                    category_confidence = float(predictions[0][idx])
+                    
+                    # Try to find this category in the database
+                    try:
+                        category_obj = Category.objects.filter(
+                            name__iexact=category_name,
+                            shop__isnull=True
+                        ).first()
+                        
+                        if category_obj:
+                            category_uuid = str(category_obj.id)
+                            category_name = category_obj.name  # Use exact name from DB
+                        else:
+                            category_uuid = None
+                            
+                    except Exception:
+                        category_uuid = None
+                    
+                    top_predictions.append({
+                        'class': category_name,
+                        'confidence': category_confidence,
+                        'category_uuid': category_uuid
+                    })
+                
+                # Get UUID for the top predicted category
+                try:
+                    top_category_obj = Category.objects.filter(
+                        name__iexact=predicted_class,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if top_category_obj:
+                        category_uuid = str(top_category_obj.id)
+                        predicted_class = top_category_obj.name  # Use exact name from DB
+                    else:
+                        category_uuid = None
+                        
+                except Exception:
+                    category_uuid = None
+                
+                # Get all categories from database for frontend
+                try:
+                    all_categories_objs = Category.objects.filter(shop__isnull=True)
+                    all_categories_list = []
+                    
+                    for cat in all_categories_objs:
+                        all_categories_list.append({
+                            'uuid': str(cat.id),
+                            'name': cat.name,
+                            'id': str(cat.id)
+                        })
+                except Exception as e:
+                    print(f"Error fetching categories from DB: {e}")
+                    all_categories_list = []
+                
+                # Prepare response in same format as your frontend expects
+                result = {
+                    'success': True,
+                    'predicted_category': {
+                        'category_uuid': category_uuid,
+                        'category_name': predicted_class,
+                        'confidence': confidence
+                    },
+                    'alternative_categories': top_predictions[1:] if len(top_predictions) > 1 else [],
+                    'all_categories': all_categories_list,
+                    'predictions': {
+                        'predicted_class': predicted_class,
+                        'confidence': confidence,
+                        'top_predictions': top_predictions,
+                        'all_predictions': {
+                            class_names[i]: float(predictions[0][i])
+                            for i in range(len(class_names))
+                        }
+                    }
+                }
+                
+                return Response(result, status=status.HTTP_200_OK)
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(tmp_file_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            import traceback
+            print(f"Image prediction error: {str(e)}")
+            traceback.print_exc()
+            
+            return Response({
+                'success': False,
+                'error': f'Image prediction failed: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
@@ -14905,6 +15159,11 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         # Get the serializer data
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
+        # Debug: log media fields to help troubleshoot missing images
+        try:
+            print('PublicProducts.retrieve - product media debug: primary_image=', data.get('primary_image'), 'media_files=', (data.get('media_files') or [])[:3])
+        except Exception:
+            pass
         
         # Manually enhance variant options with SKU images and price info
         if data.get('variants') and data.get('skus'):
