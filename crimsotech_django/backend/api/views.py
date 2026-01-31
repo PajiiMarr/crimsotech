@@ -14397,18 +14397,25 @@ class SellerProducts(viewsets.ModelViewSet):
                 tmp_file_path = tmp_file.name
             
             try:
-                # Define class names (must match your training order)
-                class_names = [
-                    'Audio Devices', 
-                    'Computer Accessories', 
-                    'Controllers',
-                    'Desktop and Laptops', 
-                    'Home Appliances', 
-                    'Mobile Phones',
-                    'Storage Devices', 
-                    'Televisions', 
-                    'Wearables'
-                ]
+                # Fetch categories from database (shop=None means admin categories)
+                try:
+                    category_objects = Category.objects.filter(shop__isnull=True).order_by('name')
+                    class_names = [cat.name for cat in category_objects]
+                    
+                    if not class_names:
+                        return Response({
+                            'success': False,
+                            'error': 'No categories found in database. Please add categories first.'
+                        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    
+                    # Create a mapping from category name to category object
+                    category_name_to_obj = {cat.name: cat for cat in category_objects}
+                    
+                except Exception as e:
+                    return Response({
+                        'success': False,
+                        'error': f'Failed to fetch categories from database: {str(e)}'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                 
                 # Load your trained model - USE THE SAME PATH AS YOUR WORKING PREDICTOR
                 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14427,6 +14434,15 @@ class SellerProducts(viewsets.ModelViewSet):
                 # Load model
                 model = tf.keras.models.load_model(MODEL_PATH)
                 
+                # Check if model output matches our category count
+                num_model_classes = model.output_shape[1] if hasattr(model, 'output_shape') else None
+                
+                # IMPORTANT: If your model was trained with different categories than what's in the DB,
+                # you'll need to handle this. This assumes the model was trained with ALL admin categories.
+                if num_model_classes and num_model_classes != len(class_names):
+                    print(f"Warning: Model expects {num_model_classes} classes but database has {len(class_names)} categories")
+                    # You might need to implement category mapping logic here if they differ
+                
                 # Preprocess image
                 IMG_SIZE = (256, 256)
                 
@@ -14442,53 +14458,36 @@ class SellerProducts(viewsets.ModelViewSet):
                 # Get top predictions
                 class_idx = np.argmax(predictions[0])
                 confidence = float(predictions[0][class_idx])
-                predicted_class = class_names[class_idx]
+                
+                # Ensure we have a valid index
+                if class_idx < len(class_names):
+                    predicted_class_name = class_names[class_idx]
+                else:
+                    # If index is out of range, use the highest confidence category
+                    predicted_class_name = class_names[0] if class_names else "Unknown"
                 
                 # Get top 3 predictions
                 top_3_indices = np.argsort(predictions[0])[-3:][::-1]
                 top_predictions = []
                 
                 for idx in top_3_indices:
-                    category_name = class_names[idx]
-                    category_confidence = float(predictions[0][idx])
-                    
-                    # Try to find this category in the database
-                    try:
-                        category_obj = Category.objects.filter(
-                            name__iexact=category_name,
-                            shop__isnull=True
-                        ).first()
+                    if idx < len(class_names):
+                        category_name = class_names[idx]
+                        category_confidence = float(predictions[0][idx])
                         
-                        if category_obj:
-                            category_uuid = str(category_obj.id)
-                            category_name = category_obj.name  # Use exact name from DB
-                        else:
-                            category_uuid = None
-                            
-                    except Exception:
-                        category_uuid = None
-                    
-                    top_predictions.append({
-                        'class': category_name,
-                        'confidence': category_confidence,
-                        'category_uuid': category_uuid
-                    })
+                        # Get category UUID from database
+                        category_obj = category_name_to_obj.get(category_name)
+                        category_uuid = str(category_obj.id) if category_obj else None
+                        
+                        top_predictions.append({
+                            'class': category_name,
+                            'confidence': category_confidence,
+                            'category_uuid': category_uuid
+                        })
                 
                 # Get UUID for the top predicted category
-                try:
-                    top_category_obj = Category.objects.filter(
-                        name__iexact=predicted_class,
-                        shop__isnull=True
-                    ).first()
-                    
-                    if top_category_obj:
-                        category_uuid = str(top_category_obj.id)
-                        predicted_class = top_category_obj.name  # Use exact name from DB
-                    else:
-                        category_uuid = None
-                        
-                except Exception:
-                    category_uuid = None
+                top_category_obj = category_name_to_obj.get(predicted_class_name)
+                category_uuid = str(top_category_obj.id) if top_category_obj else None
                 
                 # Get all categories from database for frontend
                 try:
@@ -14510,18 +14509,18 @@ class SellerProducts(viewsets.ModelViewSet):
                     'success': True,
                     'predicted_category': {
                         'category_uuid': category_uuid,
-                        'category_name': predicted_class,
+                        'category_name': predicted_class_name,
                         'confidence': confidence
                     },
                     'alternative_categories': top_predictions[1:] if len(top_predictions) > 1 else [],
                     'all_categories': all_categories_list,
                     'predictions': {
-                        'predicted_class': predicted_class,
+                        'predicted_class': predicted_class_name,
                         'confidence': confidence,
                         'top_predictions': top_predictions,
                         'all_predictions': {
-                            class_names[i]: float(predictions[0][i])
-                            for i in range(len(class_names))
+                            class_name: float(predictions[0][i]) if i < len(predictions[0]) else 0.0
+                            for i, class_name in enumerate(class_names)
                         }
                     }
                 }
