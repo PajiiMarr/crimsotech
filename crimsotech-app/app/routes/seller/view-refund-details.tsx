@@ -1119,7 +1119,7 @@ function DisputeStatusUI({ refund, onProceed, actionLoading }: { refund: RefundD
   }
 
   // If dispute has been approved by admin and the return request was previously rejected,
-  // inform the seller and provide a button to proceed with refund processing.
+  // inform the seller that the admin will process the refund (text-only; no seller action required).
   if (dr && String((dr.status || '').trim()).toLowerCase() === 'approved' && String(refund.return_request?.status || '').toLowerCase() === 'rejected') {
     return (
       <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
@@ -1127,12 +1127,80 @@ function DisputeStatusUI({ refund, onProceed, actionLoading }: { refund: RefundD
           <ShieldAlert className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="font-medium text-amber-800">Dispute Approved</p>
-            <p className="text-sm text-amber-700 mt-1">The dispute filed by the buyer has been approved by the admin. Please proceed to refund.</p>
+            <p className="text-sm text-amber-700 mt-1">The dispute has been approved by the administrator. The admin will proceed to process the refund request.</p>
             {created && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at || created))}</p>}
 
-            <div className="mt-4">
-              <ToProcessStatusUI refund={refund} moderationOnly />
+            {((dr as any).admin_notes) && (
+              <div className="mt-3 p-3 bg-white border rounded text-sm text-gray-700">
+                <div className="text-xs text-gray-500">Admin notes</div>
+                <div className="mt-1">{(dr as any).admin_notes}</div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If dispute has been approved by admin and the refund still shows as 'dispute',
+  // show either an informational 'Dispute Approved' panel or a 'Refund Completed' panel
+  // if the moderation/admin already processed the refund and uploaded proof.
+  if (dr && String((dr.status || '').trim()).toLowerCase() === 'approved' && String(refund.status || '').toLowerCase() === 'dispute') {
+    // Completed payment handled by admin
+    if (String(refund.refund_payment_status || '').toLowerCase() === 'completed' || String(refund.status || '').toLowerCase() === 'completed') {
+      const processedBy = (refund as any).processed_by || null;
+      const processedByName = typeof processedBy === 'string' ? processedBy : (processedBy?.username || processedBy?.email || (refund as any).processed_by_username || 'Admin');
+      const proofs = (refund as any).proofs || [];
+      return (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <CheckSquare className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-emerald-800">Refund Completed</p>
+              <p className="text-sm text-emerald-700 mt-1">The refund has been processed by the administrator. Proof has been uploaded below.</p>
+
+              {(refund.processed_at || processedByName) && (
+                <p className="text-xs text-gray-500 mt-2">Processed by: <strong>{processedByName}</strong>{refund.processed_at ? ` • ${formatDate(String(refund.processed_at))}` : ''}</p>
+              )}
+
+              {proofs.length > 0 && (
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {proofs.map((p: any, idx: number) => (
+                    <a key={p.id || idx} href={p.file_url || p.file_data || '#'} target="_blank" rel="noreferrer" className="block rounded overflow-hidden bg-gray-100 border">
+                      {p.file_type && p.file_type.startsWith('image/') ? (
+                        <img src={p.file_url || p.file_data} alt={`Proof ${idx + 1}`} className="w-full h-20 object-cover" />
+                      ) : (
+                        <div className="w-full h-20 flex items-center justify-center text-gray-500">{p.file_type?.split('/')[1]?.toUpperCase() || 'FILE'}</div>
+                      )}
+                    </a>
+                  ))}
+                </div>
+              )}
+
             </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Otherwise show a plain approved panel with no action
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-800">Dispute Approved</p>
+            <p className="text-sm text-amber-700 mt-1">The dispute has been approved by the administrator. The admin will proceed to process the refund request.</p>
+            {dr?.resolved_at && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at))}</p>}
+
+            {((dr as any).admin_notes) && (
+              <div className="mt-3 p-3 bg-white border rounded text-sm text-gray-700">
+                <div className="text-xs text-gray-500">Admin notes</div>
+                <div className="mt-1">{(dr as any).admin_notes}</div>
+              </div>
+            )}
+
           </div>
         </div>
       </div>
@@ -3917,8 +3985,8 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
     // If payment completed for an approved refund, show Completed UI immediately (covers both keep and return)
     const _paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
     const _status = String(refund.status || '').toLowerCase();
-    const drSeller = (refund as any).dispute || (refund as any).dispute_request || null;
-  if ((_status === 'completed' && (!drSeller || String((drSeller.status || '').trim()).toLowerCase() === 'resolved')) || (_status === 'approved' && _paymentStatus === 'completed')) return <CompletedStatusUI refund={refund} />;
+    // Show completed UI whenever refund status is completed, or when refund payment is completed for approved refunds
+  if (_status === 'completed' || (_status === 'approved' && _paymentStatus === 'completed')) return <CompletedStatusUI refund={refund} />;
 
     // Decide if the refund is already ready to process (ensures correct UI after refresh)
     const _rtype = String(refund.refund_type || '').toLowerCase();

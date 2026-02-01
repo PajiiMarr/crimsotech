@@ -99,6 +99,52 @@ export default function ReviewDispute() {
   const [uiState, setUiState] = useState<'review' | 'approved' | 'declined' | 'partial'>(initialUiState);
   const [lastPartial, setLastPartial] = useState<{ amount?: number }>({});
 
+  // New: processing action state
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // When admin clicks "Process Refund" from the dispute review, mark refund payment status as 'processing'
+  const handleProcessClick = async () => {
+    const id = refund?.refund || refund?.refund_id;
+    if (!id) {
+      toast({ title: 'Missing refund id', description: 'Cannot process refund without an id', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      const formData = new FormData();
+      formData.append('set_status', 'processing');
+
+      const response = await AxiosInstance.post(
+        `/return-refund/${encodeURIComponent(String(id))}/admin_process_refund/`,
+        formData,
+        {
+          headers: {
+            'X-User-Id': String(user?.id || '')
+          }
+        }
+      );
+
+      if (response && response.data) {
+        toast({ title: 'Processing', description: 'Refund payment status set to processing.' });
+        // Refresh to reflect changes
+        await refreshData();
+        // navigate to process page for additional processing actions
+        navigate(`/admin/view-refund/process-refund/${id}`);
+      } else {
+        throw new Error('Failed to update refund status');
+      }
+    } catch (error: any) {
+      console.error('Process error:', error);
+      let errorMessage = 'Failed to set refund to processing';
+      if (error.response?.data?.error) errorMessage = error.response.data.error;
+      else if (error.message) errorMessage = error.message;
+      toast({ title: 'Error', description: errorMessage, variant: 'destructive' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   // Helper function to refresh data
   const refreshData = async () => {
     try {
@@ -718,12 +764,12 @@ export default function ReviewDispute() {
 
                   <Button 
                     variant="default"
-                    disabled={!canProcess}
-                    onClick={() => navigate(`/admin/view-refund/process-refund/${refund.refund || refund.refund_id}`)}
+                    disabled={!canProcess || isProcessing}
+                    onClick={handleProcessClick}
                     className="gap-2 h-11"
                   >
                     <CreditCard className="h-4 w-4" />
-                    Process Refund
+                    {isProcessing ? 'Processing...' : 'Process Refund'}
                   </Button>
                 </div>
 

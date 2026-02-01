@@ -1390,7 +1390,7 @@ function DisputeStatusUI({ refund, formatCurrency, user }: { refund: RefundDetai
           <CheckCircle className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
           <div>
             <p className="font-medium text-emerald-800">Dispute Approved</p>
-            <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The seller has been requested to proceed with your refund — you will be notified once the refund is processed.</p>
+            <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The admin will process the refund request — you will be notified once the refund is processed.</p>
             {dr?.resolved_at && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at))}</p>}
           </div>
         </div>
@@ -1411,7 +1411,7 @@ function DisputeStatusUI({ refund, formatCurrency, user }: { refund: RefundDetai
             <CheckCircle className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="font-medium text-emerald-800">Dispute Approved</p>
-              <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The seller has been requested to proceed with your refund.</p>
+              <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The admin will process the refund.</p>
               {dr?.resolved_at && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at))}</p>}
 
               <div className="mt-3">
@@ -1430,7 +1430,7 @@ function DisputeStatusUI({ refund, formatCurrency, user }: { refund: RefundDetai
           <CheckCircle className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
           <div>
             <p className="font-medium text-emerald-800">Dispute Approved</p>
-            <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The seller has been requested to proceed with your refund — you will be notified once the refund is processed.</p>
+            <p className="text-sm text-emerald-700 mt-1">Your dispute has been approved by the administrator. The admin will process the refund request — you will be notified once the refund is processed.</p>
             {dr?.resolved_at && <p className="text-xs text-gray-500 mt-2">Approved at: {formatDate(String(dr.resolved_at))}</p>}
           </div>
         </div>
@@ -2023,6 +2023,15 @@ function StatusAlertSection({ refund, statusConfig, StatusIcon }: { refund: Refu
   if (status === 'rejected' && latestCounter && latestCounter.status === 'rejected') {
     return null;
   }
+
+  // Determine dispute object if present
+  const dr = (refund as any).dispute || (refund as any).dispute_request || null;
+
+  // When dispute is already approved and refund remains in 'dispute', hide the generic "Dispute" alert
+  // so the detailed approved message (shown elsewhere) is the only visible content.
+  if (status === 'dispute' && dr && String((dr.status || '').trim()).toLowerCase() === 'approved') {
+    return null;
+  }
   
   return (
     <Alert className={statusConfig.color}>
@@ -2062,7 +2071,7 @@ function StatusAlertSection({ refund, statusConfig, StatusIcon }: { refund: Refu
         )}
         {status === 'to_verify' && "Seller has received the item and is verifying its condition."}
         {status === 'to_process' && "Item verification complete. Seller is processing your refund."}
-        {status === 'dispute' && "This dispute is under admin review."}
+        {status === 'dispute' && !(dr && String((dr.status || '').trim()).toLowerCase() === 'approved') && "This dispute is under admin review."}
         {status === 'completed' && "Your refund has been successfully completed."}
         {status === 'rejected' && "Your refund request has been rejected by the seller."}
         {status === 'cancelled' && "This refund request has been cancelled."}

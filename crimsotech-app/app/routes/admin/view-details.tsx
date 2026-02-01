@@ -45,6 +45,13 @@ type RefundDetails = {
   admin_note?: string | null;
   admin_response?: string | null;
   available_actions?: any;
+  // Optional: proofs uploaded by admin when completing refunds
+  proofs?: Array<{ id?: string; file_url?: string | null; file_type?: string | null; file_data?: string | null }>;
+  // Optional processed-by fields supplied by backend
+  processed_by_username?: string | null;
+  processed_by_email?: string | null;
+  processed_at?: string | null;
+  refund_payment_status?: string | null;
   order_info?: {
     order_number?: string | null;
     order_id?: string | null;
