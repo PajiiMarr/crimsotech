@@ -23948,6 +23948,13 @@ class RefundViewSet(viewsets.ViewSet):
                 if dispute_id:
                     try:
                         dispute = DisputeRequest.objects.get(id=dispute_id, refund_id=refund)
+                        print('[admin_process_refund] resolve_dispute start', {
+                            'refund_id': str(refund.refund_id),
+                            'dispute_id': str(dispute_id),
+                            'current_status': str(dispute.status),
+                            'action': str(dispute_action),
+                            'user': str(user.id)
+                        })
                         
                         if dispute_action == 'approve':
                             dispute.status = 'approved'
@@ -23973,6 +23980,13 @@ class RefundViewSet(viewsets.ViewSet):
                         dispute.processed_by = user
                         dispute.resolved_at = timezone.now()
                         dispute.save()
+                        print('[admin_process_refund] resolve_dispute persisted', {
+                            'refund_id': str(refund.refund_id),
+                            'dispute_id': str(dispute.id),
+                            'new_status': str(dispute.status),
+                            'refund_status': str(refund.status),
+                            'refund_payment_status': str(refund.refund_payment_status)
+                        })
                         
                     except DisputeRequest.DoesNotExist:
                         return Response({"error": "Dispute not found"}, 
@@ -24999,6 +25013,64 @@ class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'])
+    def partial(self, request, pk=None):
+        """Admin marks dispute decision as partial; does not process refund yet"""
+        try:
+            dispute = self.get_object()
+            dispute.status = 'partial'
+            # Optionally record amount in admin_notes
+            amt = request.data.get('partial_amount')
+            note = request.data.get('admin_notes')
+            if amt is not None:
+                try:
+                    from decimal import Decimal
+                    amt_val = float(amt)
+                    prefix = f"Partial amount decided: ₱{amt_val:.2f}. "
+                    # Store partial amount on the refund record as approved_refund_amount
+                    if getattr(dispute, 'refund_id', None):
+                        refund = dispute.refund_id
+                        try:
+                            refund.approved_refund_amount = Decimal(str(amt_val))
+                            refund.save(update_fields=['approved_refund_amount'])
+                        except Exception:
+                            # Fallback without crashing; keep admin_notes
+                            pass
+                except Exception:
+                    prefix = "Partial amount decided. "
+                dispute.admin_notes = f"{prefix}{note or (dispute.admin_notes or '')}".strip()
+            elif note:
+                dispute.admin_notes = note
+
+            # Set processed_by from X-User-Id when available
+            user_id = request.headers.get('X-User-Id')
+            resolved_user = None
+            if user_id:
+                import re
+                user_id = user_id.strip()
+                user_id = re.sub(r'^[\'"\u201c\u201d\u2018\u2019]+|[\'"\u201c\u201d\u2018\u2019]+$', '', user_id)
+                try:
+                    resolved_user = User.objects.get(id=user_id)
+                except (User.DoesNotExist, ValueError):
+                    try:
+                        resolved_user = User.objects.get(username=user_id)
+                    except User.DoesNotExist:
+                        try:
+                            resolved_user = User.objects.get(email=user_id)
+                        except User.DoesNotExist:
+                            if str(user_id).isdigit():
+                                resolved_user = User.objects.filter(is_admin=True).first()
+                            else:
+                                resolved_user = None
+            if resolved_user:
+                dispute.processed_by = resolved_user
+
+            # Do not set resolved_at; partial decision precedes processing
+            dispute.save(update_fields=['status', 'admin_notes', 'processed_by'])
+            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
         """Admin accepts dispute: set status to 'approved' and mark resolved_by/at"""
         try:
@@ -25026,6 +25098,36 @@ class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
                                 resolved_user = None
             if resolved_user:
                 dispute.processed_by = resolved_user
+            # When approved, set approved/final amounts to the requested total.
+            # Fallback: compute from order checkouts if not stored on refund.
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
+                if getattr(dispute, 'refund_id', None):
+                    refund = dispute.refund_id
+                    logger.info('Accept: found refund %s, total_refund_amount=%s', getattr(refund, 'refund_id', None), getattr(refund, 'total_refund_amount', None))
+                    requested_total = getattr(refund, 'total_refund_amount', None)
+                    if requested_total is None:
+                        try:
+                            from .models import Checkout
+                            agg = Checkout.objects.filter(order=refund.order_id).aggregate(total=Sum('total_amount'))
+                            requested_total = agg.get('total')
+                            logger.info('Accept: computed requested_total from checkouts=%s', requested_total)
+                        except Exception as e:
+                            logger.exception('Accept: failed to compute requested_total fallback: %s', e)
+                            requested_total = None
+                    if requested_total is not None:
+                        try:
+                            from decimal import Decimal
+                            refund.approved_refund_amount = Decimal(str(requested_total))
+                            # Model does not have `final_refund_amount` (do not write non-existent fields)
+                            refund.save(update_fields=['approved_refund_amount'])
+                            logger.info('Accept: saved approved_refund_amount=%s for refund=%s', refund.approved_refund_amount, getattr(refund, 'refund_id', None))
+                        except Exception as e:
+                            logger.exception('Accept: failed to save refund amounts: %s', e)
+            except Exception:
+                # Non-blocking: continue saving dispute approval even if refund update fails
+                pass
             dispute.save(update_fields=['status', 'processed_by', 'resolved_at'])
             return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
         except Exception as e:

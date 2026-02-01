@@ -669,20 +669,7 @@ function AdminDisputeStatusUI({ refund }: { refund: RefundFlat & { [key: string]
               <p className="text-sm">Review dispute and make final decision</p>
             </div>
             
-            <div className="bg-white/50 p-3 rounded border border-orange-100">
-              <p className="text-xs font-medium text-orange-800 mb-1">Possible Decisions</p>
-              <div className="flex gap-2 mt-1">
-                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs">
-                  Approve
-                </Badge>
-                <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-xs">
-                  Reject
-                </Badge>
-                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
-                  Modify
-                </Badge>
-              </div>
-            </div>
+          
           </div>
         </div>
       </div>
@@ -919,7 +906,7 @@ export async function loader({ request, context, params }: any) {
 }
 
 export default function AdminViewRefundDetails() {
-  const { refund: initialRefund } = useLoaderData<typeof loader>();
+  const { refund: initialRefund, user } = useLoaderData<typeof loader>();
   const [refund, setRefund] = useState<RefundFlat & { [key: string]: any }>(initialRefund);
   const [processing, setProcessing] = useState(false);
   const [reason, setReason] = useState('');
@@ -1198,14 +1185,39 @@ export default function AdminViewRefundDetails() {
                         {!(String(refund.status || '').toLowerCase() === 'approved' && String(refund.refund_payment_status || '').toLowerCase().trim() === 'completed') && (
                           <Button
                             disabled={processing || !(st === 'approved' || st === 'dispute')}
-                            onClick={() => {
+                            onClick={async () => {
                               const st = String(refund.status || '').toLowerCase();
                               if (st.includes('negotiation')) {
                                 setShowConfirmModal(true);
                                 return;
                               }
                               if (st === 'dispute') {
-                                navigate(`/admin/view-refund/review-dispute/${refund.refund}`);
+                                try {
+                                  setProcessing(true);
+                                  // Fetch dispute by refund_id
+                                  const listRes = await AxiosInstance.get('/disputes/', {
+                                    params: { refund_id: String(refund.refund) },
+                                    headers: { 'X-User-Id': String(user?.id || '') }
+                                  });
+                                  const disputes = Array.isArray(listRes?.data) ? listRes.data : [];
+                                  const first = disputes[0];
+                                  if (!first || !first.id) {
+                                    toast({ title: 'No dispute found', description: 'Cannot start review without an existing dispute.', variant: 'destructive' });
+                                    setProcessing(false);
+                                    return;
+                                  }
+                                  // Start review to set dispute.status = under_review
+                                  await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, {
+                                    headers: { 'X-User-Id': String(user?.id || '') }
+                                  });
+                                  toast({ title: 'Review started', description: 'Dispute marked under review.' });
+                                  navigate(`/admin/view-refund/review-dispute/${refund.refund}`);
+                                } catch (err) {
+                                  console.error('Start review error', err);
+                                  toast({ title: 'Failed to start review', description: String(err), variant: 'destructive' });
+                                } finally {
+                                  setProcessing(false);
+                                }
                                 return;
                               }
                               navigate(`/admin/view_refund/process-refund/${refund.refund}`);
@@ -1214,7 +1226,7 @@ export default function AdminViewRefundDetails() {
                           >
                             {st === 'dispute' ? (
                               <>
-                                <ShieldAlert className="w-4 h-4 mr-2" /> Review and process dispute
+                                <ShieldAlert className="w-4 h-4 mr-2" /> Start Review
                               </>
                             ) : (
                               <>

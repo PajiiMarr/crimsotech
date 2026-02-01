@@ -79,6 +79,8 @@ function AdminProcessingRefundUI({
   // Get requested amount
   const getRequestedAmount = (refund: any) => {
     if (!refund) return 0;
+    // Prefer admin-approved amount when present
+    if (refund.approved_refund_amount != null) return Number(refund.approved_refund_amount);
     if (refund.total_refund_amount != null) return Number(refund.total_refund_amount);
     const itemsTotal = (refund.order_items || []).reduce((sum: number, it: any) => {
       const t = (it.total != null) ? Number(it.total) : (it.price != null ? Number(it.price) * Number(it.checkout_quantity || 1) : 0);
@@ -106,8 +108,8 @@ function AdminProcessingRefundUI({
   // Determine shop id to send with admin requests: prefer explicit prop, else derive from refund data
   const effectiveShopId = shopId || refund?.shop?.id || refund?.order_info?.shop_id || '';
 
-  // Use authoritative DB-stored total_refund_amount only. If missing, show empty/— in UI.
-  const displayedAmount = refund?.total_refund_amount != null ? Number(refund.total_refund_amount) : null;
+  // Display the admin-approved amount if available, otherwise fall back to stored total_refund_amount
+  const displayedAmount = getRequestedAmount(refund) || null;
 
 
   const RefundMethodDetails = () => {
@@ -571,9 +573,11 @@ function AdminProcessingRefundUI({
                 <div className="bg-white/50 p-3 rounded border border-emerald-100">
                   <p className="text-xs font-medium text-emerald-800 mb-1">Final Amount</p>
                   <p className="text-sm font-medium">{formatMoney(displayedAmount)}</p>
-                  {refund?.total_refund_amount != null && (
+                  {refund?.approved_refund_amount != null ? (
+                    <p className="text-xs text-gray-500 mt-1">(amount sourced from <span className="font-medium">approved_refund_amount</span>)</p>
+                  ) : refund?.total_refund_amount != null ? (
                     <p className="text-xs text-gray-500 mt-1">(amount sourced from <span className="font-medium">total_refund_amount</span>)</p>
-                  )} 
+                  ) : null}
                 </div>
 
                 <div className="bg-white/50 p-3 rounded border border-emerald-100">
@@ -651,7 +655,7 @@ function AdminProcessingRefundUI({
         <div className="bg-gray-50 p-3 rounded-lg">
           <p className="text-sm text-gray-600">Refund Amount</p>
           <p className="text-xl font-bold text-green-600">
-            {formatMoney(refund?.total_refund_amount)}
+            {formatMoney(refund?.approved_refund_amount ?? refund?.total_refund_amount ?? displayedAmount)}
           </p>
         </div>
         <div className="bg-gray-50 p-3 rounded-lg">
