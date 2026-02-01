@@ -35,6 +35,7 @@ router.register(r'moderator-riders', ModeratorRiders, basename='moderator-riders
 
 
 router.register(r'rider-status', RiderStatus, basename='rider-status')
+router.register(r'seller-dashboard', SellerDashboard, basename='seller-dashboard')
 router.register(r'seller-products', SellerProducts, basename='seller-products')
 router.register(r'shop-add-product', CustomerShopsAddSeller, basename='shop-add-product')
 router.register(r'customer-products', CustomerProducts, basename='customer-products')
