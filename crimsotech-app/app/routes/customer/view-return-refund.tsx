@@ -1690,10 +1690,7 @@ function CustomerDetailsSection({ refund }: { refund: RefundDetail }) {
                 </span>
               </div>
             </div>
-            <div>
-              <Label className="text-sm text-gray-600">Order Total</Label>
-              <p className="font-medium">{formatCurrency(refund.order_info?.total_amount || 0)}</p>
-            </div>
+           
           </div>
 
           <Separator />

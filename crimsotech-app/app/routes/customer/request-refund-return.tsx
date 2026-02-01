@@ -1034,6 +1034,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
       total_refund_amount: finalRefundAmount, // final amount to be paid to buyer (stored)
       customer_note: additionalDetails || '',
       refund_category: selectedRefundType!.id,
+      final_refund_type: null, // default null; final type will be set when seller approves
       // Add payment method details based on type
       ...(selectedRefundMethod!.type === 'wallet' ? {
         wallet_details: {

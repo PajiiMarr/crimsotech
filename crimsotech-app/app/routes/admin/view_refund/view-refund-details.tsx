@@ -1091,6 +1091,8 @@ export default function AdminViewRefundDetails() {
     }
   };
 
+  const st = String(refund.status || '').toLowerCase();
+
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       <Button variant="ghost" className="mb-4" onClick={() => navigate(-1)}>
@@ -1195,18 +1197,30 @@ export default function AdminViewRefundDetails() {
                                 {/* Hide 'Proceed to process' when refund is already completed */}
                         {!(String(refund.status || '').toLowerCase() === 'approved' && String(refund.refund_payment_status || '').toLowerCase().trim() === 'completed') && (
                           <Button
-                            disabled={processing}
+                            disabled={processing || !(st === 'approved' || st === 'dispute')}
                             onClick={() => {
                               const st = String(refund.status || '').toLowerCase();
                               if (st.includes('negotiation')) {
                                 setShowConfirmModal(true);
                                 return;
                               }
-                              navigate(`/admin/view-refund/process-refund/${refund.refund}`);
+                              if (st === 'dispute') {
+                                navigate(`/admin/view-refund/review-dispute/${refund.refund}`);
+                                return;
+                              }
+                              navigate(`/admin/view_refund/process-refund/${refund.refund}`);
                             }}
                             className="w-full"
                           >
-                            <CheckCircle className="w-4 h-4 mr-2" /> Proceed to process
+                            {st === 'dispute' ? (
+                              <>
+                                <ShieldAlert className="w-4 h-4 mr-2" /> Review and process dispute
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle className="w-4 h-4 mr-2" /> Proceed to process
+                              </>
+                            )}
                           </Button>
                         )}
                       </div>
@@ -1217,8 +1231,12 @@ export default function AdminViewRefundDetails() {
                 <Card>
                   <CardContent>
                     <div className="text-sm text-muted-foreground">Meta</div>
-                    <div className="text-sm">Processed by: {refund.processed_by_username || 'N/A'}</div>
-                    <div className="text-sm">Processed email: {refund.processed_by_email || 'N/A'}</div>
+                    {refund.processed_by_username && (
+                      <div className="text-sm">Processed by: {refund.processed_by_username}</div>
+                    )}
+                    {refund.processed_by_email && (
+                      <div className="text-sm">Processed email: {refund.processed_by_email}</div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
