@@ -1,1391 +1,1535 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
   TextInput,
-  Switch,
+  TouchableOpacity,
+  ScrollView,
   Image,
+  Switch,
+  StyleSheet,
   Dimensions,
-  Alert,
-  Modal,
   ActivityIndicator,
-} from "react-native";
-import { router } from "expo-router";
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+  Alert,
+  Platform,
+} from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
-import AxiosInstance from '../../contexts/axios';
-import { useAuth } from '../../contexts/AuthContext';
 
-const { width } = Dimensions.get("window");
+import { Ionicons } from '@expo/vector-icons';
 
-// --- CONSTANTS ---
-const CONDITION_OPTIONS = [
-  "New",
-  "Like New",
-  "Refurbished",
-  "Used - Excellent",
-  "Used - Good",
-];
+interface Category {
+  id: string;
+  name: string;
+}
 
-export default function AddSellingProductForm() {
-  const { userId } = useAuth();
+interface MediaPreview {
+  uri: string;
+  type: 'image' | 'video';
+}
 
-  // --- Form State ---
-  const [formData, setFormData] = useState({
-    name: "",
-    condition: "",
-    description: "",
-    // Global Price/Qty (used if variations disabled)
-    price: "",
-    comparePrice: "",
-    quantity: "",
-    // Specs
-    length: "",
-    width: "",
-    height: "",
-    weight: "",
-    weightUnit: "g",
-    // Toggles
-    lowStockAlert: false,
-    criticalThreshold: "",
-    enableVariations: false,
-    openForSwap: false,
-    categoryId: "", // Store selected category
-  });
+interface VariantOption {
+  id: string;
+  title: string;
+  imageUri?: string;
+}
 
-  // Media State
-  const [images, setImages] = useState<string[]>([]);
+interface VariantGroup {
+  id: string;
+  title: string;
+  options: VariantOption[];
+}
 
-  // Variation State
-  const [variantOption, setVariantOption] = useState("Color");
-  const [variantInput, setVariantInput] = useState("");
-  const [variants, setVariants] = useState<any[]>([]);
+interface SKUCombination {
+  id: string;
+  option_ids: string[];
+  option_map: Record<string, string>;
+  price: number | '';
+  compare_price?: number | '';
+  quantity: number | '';
+  length?: number | '';
+  width?: number | '';
+  height?: number | '';
+  weight?: number | '';
+  weight_unit?: 'g' | 'kg' | 'lb' | 'oz' | '';
+  sku_code?: string;
+  imageUri?: string;
+  critical_trigger?: number | '';
+  is_active?: boolean;
+  is_refundable?: boolean;
+}
 
-  // UI State
-  const [showConditionModal, setShowConditionModal] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
+interface PredictionCategory {
+  category_id: number;
+  category_name: string;
+  confidence: number;
+}
+
+interface PredictionResult {
+  success: boolean;
+  predicted_category: PredictionCategory;
+  alternative_categories?: PredictionCategory[];
+}
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+export default function CreateProductFormMobile() {
+  const generateId = () => Math.random().toString(36).substring(2) + Date.now().toString(36);
+
+  // Form state
+  const [productName, setProductName] = useState('');
+  const [productDescription, setProductDescription] = useState('');
+  const [productQuantity, setProductQuantity] = useState<string>('');
+  const [productPrice, setProductPrice] = useState<string>('');
+  const [productCondition, setProductCondition] = useState('');
+  const [isRefundable, setIsRefundable] = useState(true);
+  
+  const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
+  const [showVariants, setShowVariants] = useState(false);
+  const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
+  
+  const [enableCriticalTrigger, setEnableCriticalTrigger] = useState(false);
+  const [criticalThreshold, setCriticalThreshold] = useState<string>('');
+  
+  const [productWeight, setProductWeight] = useState<string>('');
+  const [productWeightUnit, setProductWeightUnit] = useState<'g' | 'kg' | 'lb' | 'oz'>('g');
+  const [productLength, setProductLength] = useState<string>('');
+  const [productWidth, setProductWidth] = useState<string>('');
+  const [productHeight, setProductHeight] = useState<string>('');
+  
+  // Prediction state
   const [isPredicting, setIsPredicting] = useState(false);
-  const [predictionResult, setPredictionResult] = useState<any>(null);
+  const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
+  const [showPrediction, setShowPrediction] = useState(false);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('none');
+  
+  const [skuCombinations, setSkuCombinations] = useState<SKUCombination[]>([]);
+  
+  // Mock categories - replace with actual data
+  const globalCategories: Category[] = [
+    { id: '1', name: 'Electronics' },
+    { id: '2', name: 'Clothing' },
+    { id: '3', name: 'Home & Garden' },
+  ];
 
-  // --- Handlers ---
-  const updateField = (key: string, value: any) => {
-    setFormData((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleBack = () => router.back();
-
-  // AI Category Prediction
-  const predictCategory = async () => {
-    if (!formData.name.trim() || !formData.description.trim() || !formData.condition) {
-      Alert.alert("Error", "Please fill in name, description, and condition first");
-      return;
-    }
-
-    setIsPredicting(true);
-    try {
-      const response = await AxiosInstance.post('/customer-products-viewset/predict_category/', {
-        name: formData.name,
-        description: formData.description,
-        quantity: formData.quantity || '1',
-        price: formData.price || '0',
-        condition: formData.condition,
-      });
-
-      if (response.data.success && response.data.predicted_category) {
-        setPredictionResult(response.data);
-        
-        // Auto-select the predicted category
-        setFormData(prev => ({
-          ...prev,
-          categoryId: response.data.predicted_category.category_uuid
-        }));
-
-        Alert.alert(
-          "AI Suggestion",
-          `Category: ${response.data.predicted_category.category_name}\nConfidence: ${(response.data.predicted_category.confidence * 100).toFixed(1)}%`
-        );
-      } else {
-        Alert.alert("Error", "Failed to predict category");
-      }
-    } catch (error: any) {
-      console.error("Prediction error:", error);
-      Alert.alert("Error", error.response?.data?.error || "Failed to predict category");
-    } finally {
-      setIsPredicting(false);
-    }
-  };
-
-  const handleImagePick = async () => {
-    if (images.length >= 9) {
-      Alert.alert("Limit Reached", "You can only upload up to 9 images.");
-      return;
-    }
-
-    // Calculate how many more images can be selected
-    const remainingSlots = 9 - images.length;
-
-    // Request permission
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert("Permission Required", "Please grant permission to access photos.");
-      return;
-    }
-
-    setUploading(true);
-    
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false, // Changed to false for multi-select
-        allowsMultipleSelection: true, // Enable multi-select
-        selectionLimit: remainingSlots, // Limit to remaining slots
-        aspect: [4, 3],
-        quality: 0.8,
-        base64: false,
-        orderedSelection: true,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const selectedImages = result.assets;
-        
-        // Add all selected images to the images array
-        const newImageUris = selectedImages.map(asset => asset.uri);
-        
-        // Check if adding these would exceed the limit
-        if (images.length + newImageUris.length > 9) {
-          Alert.alert(
-            "Too Many Images", 
-            `You can only select up to ${remainingSlots} more images.`
-          );
-          // Add only up to the limit
-          const imagesToAdd = newImageUris.slice(0, remainingSlots);
-          setImages([...images, ...imagesToAdd]);
-        } else {
-          setImages([...images, ...newImageUris]);
-        }
-        
-        console.log('Selected images:', selectedImages.length);
-      }
-    } catch (error) {
-      console.error('Error picking images:', error);
-      Alert.alert("Error", "Failed to pick images. Please try again.");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  // Optional: Add camera functionality
-  const handleTakePhoto = async () => {
-    if (images.length >= 9) {
-      Alert.alert("Limit Reached", "You can only upload up to 9 images.");
-      return;
-    }
-
-    // Request camera permission
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert("Permission Required", "Please grant permission to access camera.");
-      return;
-    }
-
-    setUploading(true);
-    
-    try {
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-        base64: false,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const takenPhoto = result.assets[0];
-        setImages([...images, takenPhoto.uri]);
-      }
-    } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert("Error", "Failed to take photo. Please try again.");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  // Show image source options
-  const showImageSourceOptions = () => {
-    const remainingSlots = 9 - images.length;
-    
-    Alert.alert(
-      "Add Images",
-      `You can select up to ${remainingSlots} more images. Choose source:`,
-      [
-        { 
-          text: "Camera (1 photo)", 
-          onPress: handleTakePhoto 
-        },
-        { 
-          text: `Gallery (${remainingSlots} max)`, 
-          onPress: handleImagePick 
-        },
-        { text: "Cancel", style: "cancel" }
-      ]
+  // Check if prediction fields are valid
+  const arePredictionFieldsValid = useCallback(() => {
+    return (
+      productName.trim().length >= 2 &&
+      productDescription.trim().length >= 10 &&
+      productPrice !== '' && parseFloat(productPrice) > 0 &&
+      productCondition !== '' &&
+      productQuantity !== '' && parseInt(productQuantity) >= 0
     );
+  }, [productName, productDescription, productPrice, productCondition, productQuantity]);
+
+  // Handle media selection
+  const handleSelectMedia = async () => {
+    if (mainMedia.length >= 9) {
+      Alert.alert('Limit Reached', 'Maximum 9 media files allowed');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      allowsMultipleSelection: true,
+      quality: 1,
+    });
+
+    if (!result.canceled) {
+      const newMedia = result.assets.map(asset => ({
+        uri: asset.uri,
+        type: asset.type === 'video' ? 'video' : 'image' as 'image' | 'video',
+      }));
+      
+      const availableSlots = 9 - mainMedia.length;
+      setMainMedia(prev => [...prev, ...newMedia.slice(0, availableSlots)]);
+    }
   };
 
-  const removeImage = (index: number) => {
-    Alert.alert(
-      "Remove Image",
-      "Are you sure you want to remove this image?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Remove", 
-          style: "destructive",
-          onPress: () => {
-            setImages(images.filter((_, i) => i !== index));
-          }
-        }
-      ]
-    );
+  const removeMainMedia = (index: number) => {
+    setMainMedia(prev => prev.filter((_, i) => i !== index));
   };
 
-  const addVariant = () => {
-    if (!variantInput.trim()) return;
-    // Add new variant to the list
-    const newVariant = {
-      id: Date.now().toString(),
-      name: variantInput.trim(),
-      price: "",
-      quantity: "",
-      sku: "",
-      image: null,
+  // Variant handlers
+  const addVariantGroup = () => {
+    setVariantGroups(prev => [
+      ...prev,
+      {
+        id: generateId(),
+        title: 'Color',
+        options: [{ id: generateId(), title: 'Red' }],
+      },
+    ]);
+  };
+
+  const removeVariantGroup = (groupId: string) => {
+    setVariantGroups(prev => prev.filter(group => group.id !== groupId));
+  };
+
+  const updateVariantGroupTitle = (groupId: string, newTitle: string) => {
+    setVariantGroups(prev => prev.map(group => 
+      group.id === groupId ? { ...group, title: newTitle } : group
+    ));
+  };
+
+  const addOption = (groupId: string, title: string) => {
+    const newOption: VariantOption = {
+      id: generateId(),
+      title: title.trim(),
     };
-    setVariants([...variants, newVariant]);
-    setVariantInput("");
+    
+    setVariantGroups(prev => prev.map(group => 
+      group.id === groupId
+        ? { ...group, options: [...group.options, newOption] }
+        : group
+    ));
   };
 
-  const updateVariantField = (id: string, field: string, value: string) => {
-    setVariants((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, [field]: value } : v))
-    );
+  const removeOption = (groupId: string, optionId: string) => {
+    setVariantGroups(prev => prev.map(group => 
+      group.id === groupId
+        ? { ...group, options: group.options.filter(option => option.id !== optionId) }
+        : group
+    ));
   };
 
-  const removeVariant = (id: string) => {
-    setVariants((prev) => prev.filter((v) => v.id !== id));
-  };
+  const [newOptionText, setNewOptionText] = useState<Record<string, string>>({});
 
-  const handleSubmit = async () => {
-    console.log("Form Data:", formData);
-    console.log("Images:", images);
-    console.log("Variants:", variants);
-    console.log("Current userId from context:", userId);
-    
-    // Validate required fields
-    if (!formData.name.trim()) {
-      Alert.alert("Error", "Please enter product name");
-      return;
-    }
-    
-    if (!formData.condition) {
-      Alert.alert("Error", "Please select product condition");
-      return;
-    }
-    
-    if (images.length === 0) {
-      Alert.alert("Error", "Please add at least one product image");
+  // Generate SKU combinations
+  const generateSkuCombinations = useCallback(() => {
+    if (variantGroups.length === 0) {
+      setSkuCombinations([]);
       return;
     }
 
-    if (!formData.price && !formData.enableVariations) {
-      Alert.alert("Error", "Please enter product price");
-      return;
-    }
-
-    if (!formData.quantity && !formData.enableVariations) {
-      Alert.alert("Error", "Please enter product quantity");
-      return;
-    }
+    const arrays = variantGroups.map(g => g.options.map(o => ({ id: o.id, title: o.title })));
+    let combos: any[] = [];
     
-    // Validate critical threshold if low stock alert is enabled
-    if (formData.lowStockAlert && !formData.criticalThreshold) {
-      Alert.alert("Error", "Please set critical threshold for low stock alert");
-      return;
-    }
-    
-    // Validate variants if enabled
-    if (formData.enableVariations && variants.length === 0) {
-      Alert.alert("Error", "Please add at least one variant");
-      return;
-    }
-    
-    console.log("All validations passed, setting isSubmitting to true");
-    setIsSubmitting(true);
-    
-    try {
-      // Validate user ID
-      console.log("Checking userId:", userId, "Type:", typeof userId);
-      
-      if (!userId) {
-        console.log("ERROR: userId is empty/null");
-        Alert.alert("Error", "User ID not found. Please log in again.");
-        setIsSubmitting(false);
-        return;
-      }
-
-      console.log("Starting product creation with userId:", userId);
-      
-      // Create FormData
-      const form = new FormData();
-      
-      // Add basic fields
-      form.append('name', formData.name.trim());
-      form.append('description', formData.description.trim());
-      form.append('condition', formData.condition);
-      form.append('quantity', String(formData.quantity || '0'));
-      form.append('price', String(formData.price || '0'));
-      
-      if (formData.comparePrice) {
-        form.append('compare_price', String(formData.comparePrice));
-      }
-
-      // Add dimensions if provided
-      if (formData.length) form.append('length', String(formData.length));
-      if (formData.width) form.append('width', String(formData.width));
-      if (formData.height) form.append('height', String(formData.height));
-      if (formData.weight) form.append('weight', String(formData.weight));
-      if (formData.weightUnit) form.append('weight_unit', formData.weightUnit);
-
-      // Add critical threshold if enabled
-      if (formData.lowStockAlert && formData.criticalThreshold) {
-        form.append('critical_trigger', String(formData.criticalThreshold));
-      }
-
-      // Add category if predicted
-      if (formData.categoryId) {
-        form.append('category_admin_id', formData.categoryId);
-      }
-
-      // Add images - using proper FormData image handling
-      for (let i = 0; i < images.length; i++) {
-        const uri = images[i];
-        const filename = `product_${i}_${Date.now()}.jpg`;
-        
-        // For Expo, image URIs from ImagePicker are already accessible
-        form.append('media_files', {
-          uri: uri,
-          type: 'image/jpeg',
-          name: filename,
-        } as any);
-      }
-
-      // Add variants if enabled
-      if (formData.enableVariations && variants.length > 0) {
-        form.append('variants', JSON.stringify(
-          variants.map(v => ({
-            name: v.name,
-            price: v.price || formData.price,
-            quantity: v.quantity || formData.quantity,
-            sku: v.sku
-          }))
-        ));
-      }
-
-      console.log("Submitting form data...");
-      console.log("Form data keys:", Object.keys(form) );
-
-      // Make API call
-      const response = await AxiosInstance.post(
-        '/customer-products-viewset/create_product/',
-        form,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-            'X-User-Id': userId,
-          }
-        }
-      );
-
-      console.log("Response received:", response.data);
-
-      if (response.data.success) {
-        console.log("Product created successfully!");
-        Alert.alert("Success", "Product created successfully!", [
-          {
-            text: "OK",
-            onPress: () => {
-              console.log("Navigating back...");
-              router.back();
-            }
-          }
-        ]);
+    arrays.forEach((arr, idx) => {
+      if (idx === 0) {
+        combos = arr.map((a) => ({
+          option_ids: [a.id],
+          option_map: { [variantGroups[0].id]: a.id },
+          price: productPrice || '',
+          quantity: productQuantity || '',
+        }));
       } else {
-        const errorMsg = response.data.message || response.data.error || "Failed to create product";
-        console.error("API returned error:", errorMsg);
-        Alert.alert("Error", errorMsg);
+        const groupId = variantGroups[idx].id;
+        const newCombos: any[] = [];
+        combos.forEach(existing => {
+          arr.forEach((a) => {
+            newCombos.push({
+              option_ids: [...existing.option_ids, a.id],
+              option_map: { ...existing.option_map, [groupId]: a.id },
+              price: existing.price ?? productPrice ?? '',
+              quantity: existing.quantity ?? productQuantity ?? '',
+            });
+          });
+        });
+        combos = newCombos;
       }
-    } catch (error: any) {
-      console.error("Product creation error:", error);
-      console.error("Error response:", error.response?.data);
+    });
+
+    setSkuCombinations(combos.map(c => ({
+      id: generateId(),
+      option_ids: c.option_ids,
+      option_map: c.option_map,
+      price: c.price,
+      quantity: c.quantity || 0,
+      is_active: true,
+      is_refundable: isRefundable,
+    })));
+  }, [variantGroups, productPrice, productQuantity, isRefundable]);
+
+  useEffect(() => {
+    generateSkuCombinations();
+  }, [variantGroups, generateSkuCombinations]);
+
+  const handleManualPredict = () => {
+    if (arePredictionFieldsValid() && !isPredicting) {
+      setIsPredicting(true);
+      setShowPrediction(true);
       
-      let message = "Failed to create product";
-      
-      if (error.response?.data?.error) {
-        message = error.response.data.error;
-      } else if (error.response?.data?.details) {
-        message = JSON.stringify(error.response.data.details);
-      } else if (error.message) {
-        message = error.message;
-      }
-      
-      Alert.alert("Error", message);
-    } finally {
-      setIsSubmitting(false);
+      // Simulate API call
+      setTimeout(() => {
+        setPredictionResult({
+          success: true,
+          predicted_category: {
+            category_id: 1,
+            category_name: 'Electronics',
+            confidence: 0.95,
+          },
+          alternative_categories: [
+            { category_id: 2, category_name: 'Clothing', confidence: 0.03 },
+          ],
+        });
+        setSelectedCategoryId('1');
+        setIsPredicting(false);
+      }, 2000);
     }
   };
 
-  // --- RENDER HELPERS ---
-  const renderConditionModal = () => (
-    <Modal visible={showConditionModal} transparent animationType="fade">
-      <TouchableOpacity
-        style={styles.modalOverlay}
-        activeOpacity={1}
-        onPress={() => setShowConditionModal(false)}
-      >
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Select Condition</Text>
-          {CONDITION_OPTIONS.map((item) => (
-            <TouchableOpacity
-              key={item}
-              style={styles.modalOption}
-              onPress={() => {
-                updateField("condition", item);
-                setShowConditionModal(false);
-              }}
-            >
-              <Text
-                style={[
-                  styles.modalOptionText,
-                  formData.condition === item && styles.selectedOptionText,
-                ]}
-              >
-                {item}
-              </Text>
-              {formData.condition === item && (
-                <Ionicons name="checkmark" size={20} color="#FF6B00" />
-              )}
-            </TouchableOpacity>
-          ))}
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  );
+  const handleSubmit = () => {
+    Alert.alert('Success', 'Product created successfully!');
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#111" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create New Product</Text>
-        <View style={{ width: 24 }} />
-      </View>
-
-      <ScrollView
-        style={styles.content}
-        contentContainerStyle={{ paddingBottom: 120 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Step 1: AI Category Prediction */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <MaterialIcons name="auto-awesome" size={18} color="#8B5CF6" />
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      {/* Step 1: AI Category Prediction */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.titleRow}>
+            <Ionicons name="sparkles" size={20} color="#9333ea" />
             <Text style={styles.cardTitle}>Step 1: AI Category Prediction</Text>
           </View>
-          <Text style={styles.cardSubtitle}>
-            Fill in basic details. Our AI will suggest the best category.
+          <Text style={styles.cardDescription}>
+            Fill in these basic details first. Our AI will suggest the best category for your product.
           </Text>
+        </View>
 
+        <View style={styles.cardContent}>
           {/* Product Name */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              Product Name <Text style={styles.required}>*</Text>
-            </Text>
+            <Text style={styles.label}>Product Name *</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, showPrediction && predictionResult && styles.inputSuccess]}
+              value={productName}
+              onChangeText={setProductName}
               placeholder="Enter product name"
-              value={formData.name}
-              onChangeText={(t) => updateField("name", t)}
+              placeholderTextColor="#9ca3af"
             />
           </View>
 
-          <View style={styles.row}>
-            {/* Condition Dropdown */}
-            <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-              <Text style={styles.label}>
-                Condition <Text style={styles.required}>*</Text>
-              </Text>
-              <TouchableOpacity
-                style={styles.dropdownInput}
-                onPress={() => setShowConditionModal(true)}
+          {/* Condition */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Condition *</Text>
+            <View style={[styles.pickerContainer, showPrediction && predictionResult && styles.inputSuccess]}>
+              <Picker
+                selectedValue={productCondition}
+                onValueChange={setProductCondition}
+                style={styles.picker}
               >
-                <Text
-                  style={{
-                    color: formData.condition ? "#000" : "#9CA3AF",
-                    fontSize: 13,
-                  }}
-                  numberOfLines={1}
-                >
-                  {formData.condition || "Select"}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color="#6B7280" />
-              </TouchableOpacity>
+                <Picker.Item label="Select condition" value="" />
+                <Picker.Item label="Like New" value="Like New" />
+                <Picker.Item label="New" value="New" />
+                <Picker.Item label="Refurbished" value="Refurbished" />
+                <Picker.Item label="Used - Excellent" value="Used - Excellent" />
+                <Picker.Item label="Used - Good" value="Used - Good" />
+              </Picker>
             </View>
+          </View>
 
-            {/* Quantity (Moved to Step 1 per request) */}
-            <View style={[styles.inputGroup, { flex: 1 }]}>
-              <Text style={styles.label}>
-                Quantity <Text style={styles.required}>*</Text>
-              </Text>
+          {/* Quantity and Price in row */}
+          <View style={styles.row}>
+            <View style={[styles.inputGroup, styles.flex1, styles.marginRight]}>
+              <Text style={styles.label}>Quantity *</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, showPrediction && predictionResult && styles.inputSuccess]}
+                value={productQuantity}
+                onChangeText={setProductQuantity}
                 placeholder="0"
                 keyboardType="numeric"
-                value={formData.quantity}
-                onChangeText={(t) => updateField("quantity", t)}
-                // Disable if using variations? Usually global qty is ignored if variations exist
-                editable={!formData.enableVariations}
-                placeholderTextColor={
-                  formData.enableVariations ? "#CCC" : "#999"
-                }
+                placeholderTextColor="#9ca3af"
+              />
+            </View>
+
+            <View style={[styles.inputGroup, styles.flex1]}>
+              <Text style={styles.label}>Price *</Text>
+              <TextInput
+                style={[styles.input, showPrediction && predictionResult && styles.inputSuccess]}
+                value={productPrice}
+                onChangeText={setProductPrice}
+                placeholder="0.00"
+                keyboardType="decimal-pad"
+                placeholderTextColor="#9ca3af"
               />
             </View>
           </View>
-          {formData.enableVariations && (
-            <Text style={styles.infoText}>
-              * Quantity is managed per variant below.
-            </Text>
-          )}
 
           {/* Description */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              Description <Text style={styles.required}>*</Text>
-            </Text>
+            <Text style={styles.label}>Description *</Text>
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[styles.textArea, showPrediction && predictionResult && styles.inputSuccess]}
+              value={productDescription}
+              onChangeText={setProductDescription}
               placeholder="Enter detailed product description"
               multiline
               numberOfLines={4}
               textAlignVertical="top"
-              value={formData.description}
-              onChangeText={(t) => updateField("description", t)}
+              placeholderTextColor="#9ca3af"
             />
           </View>
 
-          <TouchableOpacity 
-            style={[styles.aiButton, (isPredicting || !formData.name.trim() || !formData.description.trim()) && styles.disabledButton]}
-            onPress={predictCategory}
-            disabled={isPredicting || !formData.name.trim() || !formData.description.trim()}
+          {/* Predict Button */}
+          <TouchableOpacity
+            style={[styles.button, (!arePredictionFieldsValid() || isPredicting) && styles.buttonDisabled]}
+            onPress={handleManualPredict}
+            disabled={!arePredictionFieldsValid() || isPredicting}
           >
             {isPredicting ? (
-              <ActivityIndicator color="#4B5563" />
+              <>
+                <ActivityIndicator color="#fff" size="small" />
+                <Text style={styles.buttonText}>Analyzing...</Text>
+              </>
             ) : (
               <>
-                <MaterialIcons name="auto-awesome" size={16} color="#4B5563" />
-                <Text style={styles.aiButtonText}>Get AI Category Suggestion</Text>
+                <Ionicons name="sparkles" size={16} color="#fff" />
+                <Text style={styles.buttonText}>Get AI Category Suggestion</Text>
               </>
             )}
           </TouchableOpacity>
 
-          {/* AI Prediction Result */}
-          {predictionResult && predictionResult.predicted_category && (
-            <View style={styles.predictionResultCard}>
-              <Text style={styles.predictionTitle}>Suggested Category:</Text>
-              <Text style={styles.predictionCategory}>{predictionResult.predicted_category.category_name}</Text>
-              <Text style={styles.confidenceText}>
-                Confidence: {(predictionResult.predicted_category.confidence * 100).toFixed(1)}%
-              </Text>
+          {/* Prediction Result */}
+          {showPrediction && predictionResult && (
+            <View style={styles.predictionCard}>
+              <View style={styles.predictionHeader}>
+                <Ionicons name="sparkles" size={20} color="#9333ea" />
+                <Text style={styles.predictionTitle}>AI Category Suggestion</Text>
+              </View>
+
+              <View style={styles.predictionResult}>
+                <View style={styles.predictionContent}>
+                  <Text style={styles.predictedCategory}>
+                    {predictionResult.predicted_category.category_name}
+                  </Text>
+                  <View style={styles.confidenceBadge}>
+                    <Text style={styles.confidenceText}>
+                      {Math.round(predictionResult.predicted_category.confidence * 100)}% confidence
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.selectButton}
+                  onPress={() => setSelectedCategoryId(predictionResult.predicted_category.category_id.toString())}
+                >
+                  <Text style={styles.selectButtonText}>Select</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Manual Category Selection */}
+              <View style={styles.manualSelection}>
+                <Text style={styles.sectionSubtitle}>Prefer a different category?</Text>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={selectedCategoryId}
+                    onValueChange={setSelectedCategoryId}
+                    style={styles.picker}
+                  >
+                    <Picker.Item label="No Category (Not Recommended)" value="none" />
+                    {globalCategories.map((category) => (
+                      <Picker.Item key={category.id} label={category.name} value={category.id} />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
             </View>
           )}
         </View>
+      </View>
 
-        {/* Step 2: Product Media */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardTitle}>Step 2: Product Media</Text>
-            <View style={styles.counterContainer}>
-              <Text style={styles.counterText}>{images.length}/9</Text>
-              {images.length < 9 && (
-                <Text style={styles.remainingText}>
-                  {9 - images.length} remaining
-                </Text>
-              )}
+      {/* Step 2: Product Media */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Step 2: Product Media</Text>
+          <Text style={styles.cardDescription}>
+            Upload main product images and videos (max 9 files)
+          </Text>
+        </View>
+
+        <View style={styles.cardContent}>
+          <View style={styles.mediaCountRow}>
+            <Text style={styles.mediaHint}>* First image/video will be the cover</Text>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{mainMedia.length}/9</Text>
             </View>
           </View>
-          <Text style={styles.cardSubtitle}>
-            Upload main product images. You can select multiple at once from gallery.
-          </Text>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.imageScroll}
-            contentContainerStyle={styles.imageScrollContent}
-          >
-            {/* Add Image Button */}
-            <TouchableOpacity
-              style={[
-                styles.addPictureBox,
-                (uploading || images.length >= 9) && styles.disabledButton
-              ]}
-              onPress={showImageSourceOptions}
-              disabled={uploading || images.length >= 9}
-            >
-              {uploading ? (
-                <>
-                  <Ionicons name="cloud-upload-outline" size={28} color="#6B7280" />
-                  <Text style={styles.addPictureText}>Uploading...</Text>
-                </>
-              ) : images.length >= 9 ? (
-                <>
-                  <Ionicons name="checkmark-circle" size={28} color="#10B981" />
-                  <Text style={styles.addPictureText}>Max Reached</Text>
-                </>
-              ) : (
-                <>
-                  <Ionicons name="add-circle-outline" size={32} color="#FF6B00" />
-                  <Text style={styles.addPictureText}>Add Images</Text>
-                  <Text style={styles.slotText}>
-                    {9 - images.length} slot{9 - images.length !== 1 ? 's' : ''} left
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            {/* Selected Images */}
-            {images.map((uri, index) => (
-              <View key={index} style={styles.imagePreviewWrapper}>
-                <Image 
-                  source={{ uri }} 
-                  style={styles.imagePreview}
-                  resizeMode="cover"
-                />
-                <View style={styles.imageNumberBadge}>
-                  <Text style={styles.imageNumberText}>{index + 1}</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.removeImageBtn}
-                  onPress={() => removeImage(index)}
-                >
-                  <Ionicons name="close" size={14} color="#FFF" />
-                </TouchableOpacity>
+          <View style={styles.mediaGrid}>
+            {mainMedia.map((item, index) => (
+              <View key={index} style={styles.mediaItem}>
+                <Image source={{ uri: item.uri }} style={styles.mediaImage} />
                 {index === 0 && (
                   <View style={styles.coverBadge}>
                     <Text style={styles.coverBadgeText}>Cover</Text>
                   </View>
                 )}
+                <TouchableOpacity
+                  style={styles.removeButton}
+                  onPress={() => removeMainMedia(index)}
+                >
+                  <Ionicons name="close" size={16} color="#fff" />
+                </TouchableOpacity>
               </View>
             ))}
-          </ScrollView>
 
-         
-          
-          {/* Selected images info */}
-          {images.length > 0 && images.length < 9 && (
-            <View style={styles.uploadInfo}>
-              <Text style={styles.uploadInfoText}>
-                You can add {9 - images.length} more image{9 - images.length !== 1 ? 's' : ''}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Step 3: Variations */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardTitle}>Step 3: Variations (Optional)</Text>
-            <Switch
-              trackColor={{ false: "#E5E7EB", true: "#FF6B00" }}
-              thumbColor={"#FFF"}
-              value={formData.enableVariations}
-              onValueChange={(v) => updateField("enableVariations", v)}
-            />
-          </View>
-          <Text style={styles.cardSubtitle}>
-            Enable this to add variant groups (e.g. Size, Color).
-          </Text>
-
-          {formData.enableVariations && (
-            <View style={styles.variationSection}>
-              {/* Option Generator */}
-              <View style={styles.variantGenerator}>
-                <Text style={styles.label}>Option Name</Text>
-                <TextInput
-                  style={[styles.input, { marginBottom: 10 }]}
-                  value={variantOption}
-                  onChangeText={setVariantOption}
-                  placeholder="e.g. Color"
-                />
-
-                <Text style={styles.label}>Add Option Value</Text>
-                <View style={styles.row}>
-                  <TextInput
-                    style={[styles.input, { flex: 1, marginRight: 8 }]}
-                    value={variantInput}
-                    onChangeText={setVariantInput}
-                    placeholder="e.g. Red, Blue..."
-                    onSubmitEditing={addVariant}
-                  />
-                  <TouchableOpacity
-                    style={styles.addButton}
-                    onPress={addVariant}
-                  >
-                    <Text style={styles.addButtonText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Generated Combinations List */}
-              {variants.length > 0 && (
-                <View style={{ marginTop: 15 }}>
-                  <Text style={styles.label}>Generated Combinations</Text>
-                  {variants.map((variant) => (
-                    <View key={variant.id} style={styles.variantCard}>
-                      <View style={styles.variantHeader}>
-                        <View style={styles.variantBadge}>
-                          <Text style={styles.variantName}>{variant.name}</Text>
-                        </View>
-                        <TouchableOpacity
-                          onPress={() => removeVariant(variant.id)}
-                        >
-                          <Ionicons
-                            name="trash-outline"
-                            size={18}
-                            color="#EF4444"
-                          />
-                        </TouchableOpacity>
-                      </View>
-
-                      <View style={styles.row}>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                          <Text style={styles.smallLabel}>Price</Text>
-                          <TextInput
-                            style={styles.smallInput}
-                            placeholder="0.00"
-                            keyboardType="numeric"
-                            value={variant.price}
-                            onChangeText={(t) =>
-                              updateVariantField(variant.id, "price", t)
-                            }
-                          />
-                        </View>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                          <Text style={styles.smallLabel}>Qty</Text>
-                          <TextInput
-                            style={styles.smallInput}
-                            placeholder="0"
-                            keyboardType="numeric"
-                            value={variant.quantity}
-                            onChangeText={(t) =>
-                              updateVariantField(variant.id, "quantity", t)
-                            }
-                          />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.smallLabel}>SKU</Text>
-                          <TextInput
-                            style={styles.smallInput}
-                            placeholder="Optional"
-                            value={variant.sku}
-                            onChangeText={(t) =>
-                              updateVariantField(variant.id, "sku", t)
-                            }
-                          />
-                        </View>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* Global Dimensions (Always shown per image, even if logic suggests otherwise sometimes) */}
-          <Text style={[styles.label, { marginTop: 15 }]}>
-            Package Dimensions & Weight
-          </Text>
-          <View style={styles.row}>
-            <TextInput
-              style={[styles.input, { flex: 1, marginRight: 8 }]}
-              placeholder="L (cm)"
-              keyboardType="numeric"
-              onChangeText={(t) => updateField("length", t)}
-            />
-            <TextInput
-              style={[styles.input, { flex: 1, marginRight: 8 }]}
-              placeholder="W (cm)"
-              keyboardType="numeric"
-              onChangeText={(t) => updateField("width", t)}
-            />
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              placeholder="H (cm)"
-              keyboardType="numeric"
-              onChangeText={(t) => updateField("height", t)}
-            />
-          </View>
-          <View style={[styles.row, { marginTop: 8 }]}>
-            <TextInput
-              style={[styles.input, { flex: 2, marginRight: 8 }]}
-              placeholder="Weight"
-              keyboardType="numeric"
-              onChangeText={(t) => updateField("weight", t)}
-            />
-            <View style={[styles.unitBox, { flex: 1 }]}>
-              <Text>g</Text>
-            </View>
+            {mainMedia.length < 9 && (
+              <TouchableOpacity style={styles.uploadBox} onPress={handleSelectMedia}>
+                <Ionicons name="cloud-upload-outline" size={32} color="#6b7280" />
+                <Text style={styles.uploadText}>Add Media</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
-
-        {/* Step 4: Pricing & Stock (CONDITIONAL) */}
-        {/* Only show this if Variations are DISABLED */}
-        {!formData.enableVariations && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Step 4: Pricing</Text>
-            <View style={styles.row}>
-              <View style={[styles.inputGroup, { flex: 1, marginRight: 10 }]}>
-                <Text style={styles.label}>
-                  Price <Text style={styles.required}>*</Text>
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0.00"
-                  keyboardType="numeric"
-                  value={formData.price}
-                  onChangeText={(t) => updateField("price", t)}
-                />
-              </View>
-              <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.label}>Compare Price</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0.00"
-                  keyboardType="numeric"
-                  value={formData.comparePrice}
-                  onChangeText={(t) => updateField("comparePrice", t)}
-                />
-                <Text style={styles.helperText}>Original price</Text>
-              </View>
-            </View>
-
-            <View style={styles.divider} />
-
-            {/* Low Stock Alert with Threshold */}
-            <View style={styles.lowStockSection}>
-              <View style={styles.rowBetween}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={styles.label}>Critical Stock Alert</Text>
-                  <Text style={styles.helperText}>
-                    Receive notification when stock is low
-                  </Text>
-                </View>
-                <Switch
-                  trackColor={{ false: "#E5E7EB", true: "#FF6B00" }}
-                  thumbColor={"#FFF"}
-                  value={formData.lowStockAlert}
-                  onValueChange={(v) => updateField("lowStockAlert", v)}
-                />
-              </View>
-
-              {/* Critical Threshold Input - Only show when lowStockAlert is ON */}
-              {formData.lowStockAlert && (
-                <View style={[styles.inputGroup, { marginTop: 16 }]}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.label}>Critical Threshold</Text>
-                    <Text style={styles.unitLabel}>units</Text>
-                  </View>
-                  <View style={styles.thresholdContainer}>
-                    <TextInput
-                      style={styles.thresholdInput}
-                      placeholder="e.g., 5"
-                      keyboardType="numeric"
-                      placeholderTextColor="#9CA3AF"
-                      value={formData.criticalThreshold || ""}
-                      onChangeText={(t) => updateField("criticalThreshold", t)}
-                    />
-                    <View style={styles.thresholdHelper}>
-                      <Ionicons name="information-circle-outline" size={16} color="#6B7280" />
-                      <Text style={styles.thresholdHelperText}>
-                        Alert when stock reaches this level
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              )}
-            </View>
-          </View>
-        )}
-
-        {/* Step 5: Swap Options */}
-        <View style={styles.card}>
-          <View style={styles.rowBetween}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={styles.cardTitle}>Step 5: Swap Options</Text>
-              <Text style={styles.cardSubtitle}>
-                Allow others to offer items in exchange.
-              </Text>
-            </View>
-            <Switch
-              trackColor={{ false: "#E5E7EB", true: "#FF6B00" }}
-              thumbColor={"#FFF"}
-              value={formData.openForSwap}
-              onValueChange={(v) => updateField("openForSwap", v)}
-            />
-          </View>
-        </View>
-      </ScrollView>
-
-      {/* Footer */}
-      <View style={styles.footer}>
-        <TouchableOpacity 
-          style={[styles.submitButton, isSubmitting && styles.disabledButton]} 
-          onPress={handleSubmit}
-          disabled={isSubmitting}
-        >
-          {isSubmitting ? (
-            <ActivityIndicator color="#FFF" />
-          ) : (
-            <Text style={styles.submitButtonText}>Create Product</Text>
-          )}
-        </TouchableOpacity>
       </View>
 
-      {renderConditionModal()}
-    </SafeAreaView>
+      {/* Step 3: Variations */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Step 3: Variations (Optional)</Text>
+          <Text style={styles.cardDescription}>
+            Define product variants like size or color
+          </Text>
+        </View>
+
+        <View style={styles.cardContent}>
+          <View style={styles.switchRow}>
+            <View style={styles.flex1}>
+              <Text style={styles.switchLabel}>Enable Product Variations</Text>
+              <Text style={styles.switchDescription}>
+                Add variant groups (e.g., Size, Color)
+              </Text>
+            </View>
+            <Switch
+              value={showVariants}
+              onValueChange={(checked) => {
+                setShowVariants(checked);
+                if (checked && variantGroups.length === 0) {
+                  setVariantGroups([{
+                    id: generateId(),
+                    title: 'Size',
+                    options: [{ id: generateId(), title: 'Small' }],
+                  }]);
+                }
+              }}
+            />
+          </View>
+
+          {showVariants && (
+            <View style={styles.variantSection}>
+              {variantGroups.map((group) => (
+                <View key={group.id} style={styles.variantGroup}>
+                  <View style={styles.variantHeader}>
+                    <TextInput
+                      style={styles.variantInput}
+                      value={group.title}
+                      onChangeText={(text) => updateVariantGroupTitle(group.id, text)}
+                      placeholder="e.g., Size, Color"
+                      placeholderTextColor="#9ca3af"
+                    />
+                    <TouchableOpacity
+                      onPress={() => removeVariantGroup(group.id)}
+                      disabled={variantGroups.length === 1}
+                    >
+                      <Ionicons name="close-circle" size={24} color={variantGroups.length === 1 ? '#d1d5db' : '#ef4444'} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.optionsContainer}>
+                    {group.options.map((option) => (
+                      <View key={option.id} style={styles.optionChip}>
+                        <Text style={styles.optionText}>{option.title}</Text>
+                        <TouchableOpacity onPress={() => removeOption(group.id, option.id)}>
+                          <Ionicons name="close" size={16} color="#6b7280" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    <TextInput
+                      style={styles.optionInput}
+                      placeholder="Type and press enter..."
+                      placeholderTextColor="#9ca3af"
+                      value={newOptionText[group.id] || ''}
+                      onChangeText={(text) => setNewOptionText(prev => ({ ...prev, [group.id]: text }))}
+                      onSubmitEditing={() => {
+                        const text = newOptionText[group.id];
+                        if (text?.trim()) {
+                          addOption(group.id, text.trim());
+                          setNewOptionText(prev => ({ ...prev, [group.id]: '' }));
+                        }
+                      }}
+                    />
+                  </View>
+                </View>
+              ))}
+
+              <TouchableOpacity style={styles.addButton} onPress={addVariantGroup}>
+                <Ionicons name="add" size={20} color="#6b7280" />
+                <Text style={styles.addButtonText}>Add more option type</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Dimensions for non-variant products */}
+          {!showVariants && (
+            <View style={styles.dimensionsSection}>
+              <Text style={styles.sectionTitle}>Product Dimensions & Weight</Text>
+              
+              <View style={styles.row}>
+                <View style={[styles.inputGroup, styles.flex1, styles.marginRight]}>
+                  <Text style={styles.label}>Length (cm)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={productLength}
+                    onChangeText={setProductLength}
+                    placeholder="0.0"
+                    keyboardType="decimal-pad"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+                <View style={[styles.inputGroup, styles.flex1]}>
+                  <Text style={styles.label}>Width (cm)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={productWidth}
+                    onChangeText={setProductWidth}
+                    placeholder="0.0"
+                    keyboardType="decimal-pad"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.row}>
+                <View style={[styles.inputGroup, styles.flex1, styles.marginRight]}>
+                  <Text style={styles.label}>Height (cm)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={productHeight}
+                    onChangeText={setProductHeight}
+                    placeholder="0.0"
+                    keyboardType="decimal-pad"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+                <View style={[styles.inputGroup, styles.flex1]}>
+                  <Text style={styles.label}>Weight</Text>
+                  <View style={styles.row}>
+                    <TextInput
+                      style={[styles.input, styles.flex1, styles.marginRight]}
+                      value={productWeight}
+                      onChangeText={setProductWeight}
+                      placeholder="0.00"
+                      keyboardType="decimal-pad"
+                      placeholderTextColor="#9ca3af"
+                    />
+                    <View style={styles.unitPicker}>
+                      <Picker
+                        selectedValue={productWeightUnit}
+                        onValueChange={(value) => setProductWeightUnit(value as any)}
+                        style={styles.picker}
+                      >
+                        <Picker.Item label="g" value="g" />
+                        <Picker.Item label="kg" value="kg" />
+                        <Picker.Item label="lb" value="lb" />
+                        <Picker.Item label="oz" value="oz" />
+                      </Picker>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* Step 4: Refundable Option (for non-variant products) */}
+      {!showVariants && (
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Step 4: Refund Options</Text>
+            <Text style={styles.cardDescription}>
+              Configure refund eligibility for this product
+            </Text>
+          </View>
+
+          <View style={styles.cardContent}>
+            <View style={styles.switchRow}>
+              <View style={styles.flex1}>
+                <Text style={styles.switchLabel}>Refundable</Text>
+                <Text style={styles.switchDescription}>
+                  Whether this product is eligible for refunds
+                </Text>
+              </View>
+              <Switch value={isRefundable} onValueChange={setIsRefundable} />
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Step 5: Critical Stock Alert (for non-variant products) */}
+      {!showVariants && (
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Step 5: Stock Alerts</Text>
+            <Text style={styles.cardDescription}>
+              Set up low stock notifications
+            </Text>
+          </View>
+
+          <View style={styles.cardContent}>
+            <View style={styles.switchRow}>
+              <View style={styles.flex1}>
+                <Text style={styles.switchLabel}>Critical Stock Trigger ⚠️</Text>
+                <Text style={styles.switchDescription}>
+                  Receive notification when stock is low
+                </Text>
+              </View>
+              <Switch value={enableCriticalTrigger} onValueChange={setEnableCriticalTrigger} />
+            </View>
+
+            {enableCriticalTrigger && (
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Critical Threshold</Text>
+                <TextInput
+                  style={styles.input}
+                  value={criticalThreshold}
+                  onChangeText={setCriticalThreshold}
+                  placeholder="e.g., 5"
+                  keyboardType="numeric"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* SKU Combinations (for variant products) */}
+      {showVariants && skuCombinations.length > 0 && (
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Generated Combinations</Text>
+            <Text style={styles.cardDescription}>
+              All combinations from your variant choices
+            </Text>
+          </View>
+
+          <View style={styles.cardContent}>
+            {skuCombinations.map((sku, index) => (
+              <View key={sku.id} style={styles.skuCard}>
+                <View style={styles.skuCardHeader}>
+                  <Text style={styles.skuCardTitle}>
+                    Combination {index + 1}: {variantGroups.map((g) => 
+                      g.options.find(o => o.id === sku.option_map[g.id])?.title
+                    ).join(' / ')}
+                  </Text>
+                  <View style={styles.activeSwitchContainer}>
+                    <Text style={styles.activeSwitchLabel}>Active</Text>
+                    <Switch
+                      value={sku.is_active ?? true}
+                      onValueChange={(checked) => {
+                        setSkuCombinations(prev => prev.map(s => 
+                          s.id === sku.id ? { ...s, is_active: checked } : s
+                        ));
+                      }}
+                    />
+                  </View>
+                </View>
+
+                {/* Image Upload Section */}
+                <View style={styles.skuImageSection}>
+                  <Text style={styles.skuSectionTitle}>Product Image</Text>
+                  <TouchableOpacity 
+                    style={styles.skuImageUpload}
+                    onPress={async () => {
+                      const result = await ImagePicker.launchImageLibraryAsync({
+                        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                        allowsEditing: true,
+                        quality: 1,
+                      });
+                      
+                      if (!result.canceled) {
+                        setSkuCombinations(prev => prev.map(s => 
+                          s.id === sku.id ? { ...s, imageUri: result.assets[0].uri } : s
+                        ));
+                      }
+                    }}
+                  >
+                    {sku.imageUri ? (
+                      <Image source={{ uri: sku.imageUri }} style={styles.skuImage} />
+                    ) : (
+                      <View style={styles.skuImagePlaceholder}>
+                        <Ionicons name="image-outline" size={32} color="#9ca3af" />
+                        <Text style={styles.uploadImageText}>Tap to upload</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  {sku.imageUri && (
+                    <TouchableOpacity
+                      style={styles.removeImageButton}
+                      onPress={() => {
+                        setSkuCombinations(prev => prev.map(s => 
+                          s.id === sku.id ? { ...s, imageUri: undefined } : s
+                        ));
+                      }}
+                    >
+                      <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                      <Text style={styles.removeImageText}>Remove Image</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Variant Info (Read-only) */}
+                <View style={styles.variantInfoSection}>
+                  <Text style={styles.skuSectionTitle}>Variant Information</Text>
+                  <View style={styles.threeColumnGrid}>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Size</Text>
+                      <Text style={styles.gridValue}>
+                        {variantGroups.find(g => g.title.toLowerCase().includes('size'))?.options.find(o => o.id === sku.option_map[variantGroups.find(g => g.title.toLowerCase().includes('size'))?.id || ''])?.title || 'N/A'}
+                      </Text>
+                    </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Color</Text>
+                      <Text style={styles.gridValue}>
+                        {variantGroups.find(g => g.title.toLowerCase().includes('color'))?.options.find(o => o.id === sku.option_map[variantGroups.find(g => g.title.toLowerCase().includes('color'))?.id || ''])?.title || 'N/A'}
+                      </Text>
+                    </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>SKU Code</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.sku_code || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, sku_code: text } : s
+                          ));
+                        }}
+                        placeholder="Enter SKU"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                  </View>
+                </View>
+
+                {/* Pricing Section */}
+                <View style={styles.section}>
+                  <Text style={styles.skuSectionTitle}>Pricing & Stock</Text>
+                  <View style={styles.threeColumnGrid}>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Price *</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.price?.toString() || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, price: parseFloat(text) || '' } : s
+                          ));
+                        }}
+                        placeholder="0.00"
+                        keyboardType="decimal-pad"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Compare Price</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.compare_price?.toString() || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, compare_price: parseFloat(text) || '' } : s
+                          ));
+                        }}
+                        placeholder="0.00"
+                        keyboardType="decimal-pad"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Quantity *</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.quantity?.toString() || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, quantity: parseInt(text) || '' } : s
+                          ));
+                        }}
+                        placeholder="0"
+                        keyboardType="numeric"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                  </View>
+                </View>
+
+                {/* Critical Stock Section */}
+                <View style={styles.section}>
+                  <Text style={styles.skuSectionTitle}>Stock Alert</Text>
+                  <View style={styles.threeColumnGrid}>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Critical Threshold</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.critical_trigger?.toString() || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, critical_trigger: parseInt(text) || '' } : s
+                          ));
+                        }}
+                        placeholder="5"
+                        keyboardType="numeric"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Refundable</Text>
+                      <Switch
+                        value={sku.is_refundable ?? false}
+                        onValueChange={(checked) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, is_refundable: checked } : s
+                          ));
+                        }}
+                      />
+                    </View>
+                  </View>
+                </View>
+
+                {/* Dimensions Section */}
+                <View style={styles.section}>
+                  <Text style={styles.skuSectionTitle}>Dimensions (cm)</Text>
+                  <View style={styles.threeColumnGrid}>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Length</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.length?.toString() || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, length: parseFloat(text) || '' } : s
+                          ));
+                        }}
+                        placeholder="0.0"
+                        keyboardType="decimal-pad"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Width</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.width?.toString() || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, width: parseFloat(text) || '' } : s
+                          ));
+                        }}
+                        placeholder="0.0"
+                        keyboardType="decimal-pad"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Height</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.height?.toString() || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, height: parseFloat(text) || '' } : s
+                          ));
+                        }}
+                        placeholder="0.0"
+                        keyboardType="decimal-pad"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                  </View>
+                </View>
+
+                {/* Weight Section */}
+                <View style={styles.section}>
+                  <Text style={styles.skuSectionTitle}>Weight</Text>
+                  <View style={styles.threeColumnGrid}>
+                    <View style={[styles.gridItem, styles.gridItemWide]}>
+                      <Text style={styles.gridLabel}>Weight Value</Text>
+                      <TextInput
+                        style={styles.gridInput}
+                        value={sku.weight?.toString() || ''}
+                        onChangeText={(text) => {
+                          setSkuCombinations(prev => prev.map(s => 
+                            s.id === sku.id ? { ...s, weight: parseFloat(text) || '' } : s
+                          ));
+                        }}
+                        placeholder="0.00"
+                        keyboardType="decimal-pad"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Unit</Text>
+                      <View style={styles.gridPickerContainer}>
+                        <Picker
+                          selectedValue={sku.weight_unit || ''}
+                          onValueChange={(value) => {
+                            setSkuCombinations(prev => prev.map(s => 
+                              s.id === sku.id ? { ...s, weight_unit: value as any } : s
+                            ));
+                          }}
+                          style={styles.gridPicker}
+                        >
+                          <Picker.Item label="Unit" value="" />
+                          <Picker.Item label="g" value="g" />
+                          <Picker.Item label="kg" value="kg" />
+                          <Picker.Item label="lb" value="lb" />
+                          <Picker.Item label="oz" value="oz" />
+                        </Picker>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Submit Button */}
+      <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
+        <Text style={styles.submitButtonText}>Create Product</Text>
+      </TouchableOpacity>
+
+      <View style={styles.bottomSpacer} />
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F3F4F6" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: "#FFF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
+  container: {
+    flex: 1,
+    backgroundColor: '#f9fafb',
   },
-  backButton: { padding: 4 },
-  headerTitle: { fontSize: 18, fontWeight: "700", color: "#111827" },
-  content: { padding: 16 },
-
-  // Card
   card: {
-    backgroundColor: "#FFF",
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: 16,
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
   },
-  cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
-  cardHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  cardHeader: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 4,
   },
   cardTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#1F2937",
-    marginLeft: 6,
-  },
-  cardSubtitle: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginBottom: 16,
-    marginTop: 2,
-  },
-  counterContainer: {
-    alignItems: 'flex-end',
-  },
-  counterText: {
-    fontSize: 12,
-    color: "#9CA3AF",
-    backgroundColor: "#F3F4F6",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  remainingText: {
-    fontSize: 10,
-    color: '#10B981',
-    marginTop: 2,
-  },
-
-  // Inputs
-  inputGroup: { marginBottom: 16 },
-  label: { fontSize: 14, fontWeight: "600", color: "#374151", marginBottom: 6 },
-  required: { color: "#EF4444" },
-  input: {
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: "#111",
-    backgroundColor: "#FFF",
-  },
-  smallInput: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontSize: 13,
-    backgroundColor: "#F9FAFB",
-  },
-  smallLabel: { fontSize: 11, color: "#6B7280", marginBottom: 4 },
-  textArea: { height: 100, textAlignVertical: "top" },
-  dropdownInput: {
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: "#FFF",
-  },
-  helperText: { fontSize: 11, color: "#9CA3AF", marginTop: 4 },
-  infoText: {
-    fontSize: 11,
-    color: "#F59E0B",
-    marginTop: -10,
-    marginBottom: 16,
-    fontStyle: "italic",
-  },
-
-  // Media
-  imageScroll: { flexDirection: "row", marginTop: 4 },
-  imageScrollContent: { paddingRight: 16 },
-  addPictureBox: {
-    width: 100,
-    height: 100,
-    borderWidth: 2,
-    borderColor: "#D1D5DB",
-    borderStyle: "dashed",
-    borderRadius: 8,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-    backgroundColor: "#F9FAFB",
-  },
-  addPictureText: { 
-    fontSize: 12, 
-    color: "#6B7280", 
-    marginTop: 6,
-    fontWeight: "500",
-  },
-  slotText: {
-    fontSize: 10,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-  imagePreviewWrapper: { 
-    marginRight: 12, 
-    position: "relative" 
-  },
-  imagePreview: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-    backgroundColor: "#EEE",
-  },
-  removeImageBtn: {
-    position: "absolute",
-    top: -6,
-    right: -6,
-    backgroundColor: "#EF4444",
-    borderRadius: 12,
-    width: 24,
-    height: 24,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "#FFF",
-  },
-  imageNumberBadge: {
-    position: 'absolute',
-    top: -8,
-    left: -8,
-    backgroundColor: '#3B82F6',
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#FFF',
-  },
-  imageNumberText: {
-    color: '#FFF',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  coverBadge: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: "rgba(0,0,0,0.7)",
-    paddingVertical: 4,
-    alignItems: "center",
-    borderBottomLeftRadius: 8,
-    borderBottomRightRadius: 8,
-  },
-  coverBadgeText: { 
-    color: "#FFF", 
-    fontSize: 10, 
-    fontWeight: "700" 
-  },
-  uploadTips: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: "#F9FAFB",
-    borderRadius: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: "#3B82F6",
-  },
-  uploadTipHeader: {
-    fontSize: 12,
+    fontSize: 18,
     fontWeight: '600',
-    color: '#374151',
-    marginBottom: 4,
+    color: '#111827',
   },
-  uploadTipText: {
-    fontSize: 11,
-    color: "#6B7280",
-    marginBottom: 2,
-  },
-  uploadInfo: {
-    marginTop: 12,
-    padding: 8,
-    backgroundColor: '#ECFDF5',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#D1FAE5',
-  },
-  uploadInfoText: {
-    fontSize: 11,
-    color: '#065F46',
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-
-  // Variants
-  variationSection: {
-    backgroundColor: "#F9FAFB",
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  variantGenerator: {
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
-  },
-  addButton: {
-    backgroundColor: "#FF6B00",
-    paddingHorizontal: 16,
-    justifyContent: "center",
-    borderRadius: 8,
-    height: 40,
-  },
-  addButtonText: { color: "#FFF", fontWeight: "600" },
-  variantCard: {
-    backgroundColor: "#FFF",
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  variantHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  variantBadge: {
-    backgroundColor: "#EFF6FF",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "#DBEAFE",
-  },
-  variantName: { color: "#2563EB", fontSize: 13, fontWeight: "600" },
-
-  // Specialized
-  aiButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 8,
-    backgroundColor: "#F9FAFB",
+  cardDescription: {
+    fontSize: 14,
+    color: '#6b7280',
     marginTop: 4,
   },
-  aiButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#4B5563",
-    marginLeft: 6,
+  cardContent: {
+    padding: 16,
   },
-  predictionResultCard: {
-    backgroundColor: "#F0F9FF",
-    borderWidth: 1,
-    borderColor: "#BAE6FD",
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 12,
+  inputGroup: {
+    marginBottom: 16,
   },
-  predictionTitle: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#0C4A6E",
-    marginBottom: 4,
-  },
-  predictionCategory: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0369A1",
+  label: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
     marginBottom: 6,
   },
-  confidenceText: {
-    fontSize: 11,
-    color: "#0C4A6E",
-    fontStyle: "italic",
-  },
-  row: { flexDirection: "row", alignItems: "center" },
-  rowBetween: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  unitBox: {
+  input: {
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: '#d1d5db',
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#F9FAFB",
-    alignItems: "center",
-    justifyContent: "center",
+    fontSize: 14,
+    color: '#111827',
+    backgroundColor: '#fff',
   },
-  divider: { height: 1, backgroundColor: "#F3F4F6", marginVertical: 12 },
-
-  // Low Stock Alert Styles
-  lowStockSection: {
-    marginTop: 8,
+  inputSuccess: {
+    borderColor: '#10b981',
   },
-  unitLabel: {
-    fontSize: 12,
-    color: "#6B7280",
-    fontWeight: "500",
-  },
-  thresholdContainer: {
-    marginTop: 8,
-  },
-  thresholdInput: {
+  textArea: {
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: '#d1d5db',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingVertical: 10,
     fontSize: 14,
-    color: "#111",
-    backgroundColor: "#FFF",
-    width: "100%",
+    color: '#111827',
+    backgroundColor: '#fff',
+    minHeight: 100,
   },
-  thresholdHelper: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 8,
-    padding: 8,
-    backgroundColor: "#F3F4F6",
-    borderRadius: 6,
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
-  thresholdHelperText: {
-    fontSize: 11,
-    color: "#6B7280",
-    marginLeft: 6,
+  picker: {
+    height: 50,
+  },
+  row: {
+    flexDirection: 'row',
+  },
+  flex1: {
     flex: 1,
   },
-
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
+  marginRight: {
+    marginRight: 8,
   },
-  modalContent: {
-    width: width * 0.8,
-    backgroundColor: "#FFF",
-    borderRadius: 12,
-    padding: 20,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 15,
-    textAlign: "center",
-  },
-  modalOption: {
+  button: {
+    backgroundColor: '#9333ea',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-    flexDirection: "row",
-    justifyContent: "space-between",
+    borderRadius: 8,
+    marginTop: 8,
   },
-  modalOptionText: { fontSize: 16, color: "#333" },
-  selectedOptionText: { color: "#FF6B00", fontWeight: "700" },
-
-  // Footer
-  footer: {
-    position: "absolute",
+  buttonDisabled: {
+    backgroundColor: '#d1d5db',
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  predictionCard: {
+    backgroundColor: '#f3f4f6',
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 16,
+  },
+  predictionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  predictionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  predictionResult: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  predictionContent: {
+    marginBottom: 8,
+  },
+  predictedCategory: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  confidenceBadge: {
+    backgroundColor: '#d1fae5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+  },
+  confidenceText: {
+    fontSize: 12,
+    color: '#065f46',
+    fontWeight: '500',
+  },
+  selectButton: {
+    backgroundColor: '#10b981',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  selectButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  manualSelection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  mediaCountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  mediaHint: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  badge: {
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  badgeText: {
+    fontSize: 12,
+    color: '#374151',
+  },
+  mediaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  mediaItem: {
+    width: (SCREEN_WIDTH - 64) / 3,
+    aspectRatio: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  mediaImage: {
+    width: '100%',
+    height: '100%',
+  },
+  coverBadge: {
+    position: 'absolute',
     bottom: 0,
     left: 0,
-    right: 0,
-    backgroundColor: "#FFF",
-    padding: 16,
-    paddingBottom: 24,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  coverBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  removeButton: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#ef4444',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadBox: {
+    width: (SCREEN_WIDTH - 64) / 3,
+    aspectRatio: 1,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadText: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 4,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  switchLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111827',
+  },
+  switchDescription: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  variantSection: {
+    marginTop: 16,
+  },
+  variantGroup: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  variantHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  variantInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#111827',
+    backgroundColor: '#fff',
+  },
+  optionsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 8,
+  },
+  optionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  optionText: {
+    fontSize: 13,
+    color: '#111827',
+  },
+  optionInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#111827',
+    minWidth: 100,
+  },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  addButtonText: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  dimensionsSection: {
+    marginTop: 16,
+    paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    elevation: 10,
+    borderTopColor: '#e5e7eb',
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  unitPicker: {
+    width: 80,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  skuCard: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  skuCardHeader: {
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  skuCardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  activeSwitchContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+  },
+  activeSwitchLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+  },
+  skuImageSection: {
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  skuSectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 12,
+  },
+  skuImageUpload: {
+    width: 120,
+    height: 120,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: '#d1d5db',
+    alignSelf: 'center',
+  },
+  skuImage: {
+    width: '100%',
+    height: '100%',
+  },
+  skuImagePlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#f9fafb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadImageText: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 4,
+  },
+  removeImageButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 8,
+  },
+  removeImageText: {
+    fontSize: 12,
+    color: '#ef4444',
+    fontWeight: '500',
+  },
+  variantInfoSection: {
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  section: {
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  threeColumnGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  gridItem: {
+    width: (SCREEN_WIDTH - 80) / 3,
+    minWidth: 100,
+  },
+  gridItemWide: {
+    width: ((SCREEN_WIDTH - 80) / 3) * 2 + 12,
+  },
+  gridLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginBottom: 6,
+  },
+  gridValue: {
+    fontSize: 14,
+    color: '#111827',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  gridInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: '#111827',
+    backgroundColor: '#fff',
+  },
+  gridPickerContainer: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 6,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  gridPicker: {
+    height: 40,
+  },
+  skuHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  skuTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    flex: 1,
   },
   submitButton: {
-    backgroundColor: "#FF6B00",
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: "center",
+    backgroundColor: '#9333ea',
+    marginHorizontal: 16,
+    marginTop: 24,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
   },
-  submitButtonText: { color: "#FFF", fontSize: 16, fontWeight: "700" },
+  submitButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  bottomSpacer: {
+    height: 32,
+  },
 });
