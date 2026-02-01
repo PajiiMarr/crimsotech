@@ -6,7 +6,7 @@ import re
 import time
 from django.utils.text import slugify
 from django.shortcuts import render
-from django.db.models import Prefetch, DecimalField
+from django.db.models import Prefetch, DecimalField, IntegerField
 from django.db.models.functions import TruncMonth, Coalesce
 from django.db import transaction
 from decimal import Decimal
@@ -13421,6 +13421,426 @@ class CustomerShopsAddSeller(viewsets.ViewSet):
                 'success': False,
                 'message': 'Shop not found'
             }, status=status.HTTP_404_NOT_FOUND)
+
+class SellerDashboard(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_dashboard(self, request):
+        """Get comprehensive dashboard data for seller"""
+        try:
+            # Get parameters with defaults
+            shop_id = request.query_params.get('shop_id')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            range_type = request.query_params.get('range_type', 'monthly')
+            
+            if not shop_id:
+                return Response(
+                    {'error': 'shop_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return Response(
+                    {'error': 'Shop not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Parse dates
+            if start_date:
+                start_date = timezone.datetime.fromisoformat(start_date).date()
+            else:
+                start_date = timezone.now().date() - timedelta(days=30)
+            
+            if end_date:
+                end_date = timezone.datetime.fromisoformat(end_date).date()
+            else:
+                end_date = timezone.now().date()
+            
+            # Calculate date range for period comparison
+            previous_start_date, previous_end_date = self._get_previous_period_dates(
+                start_date, end_date, range_type
+            )
+            
+            # Build response data
+            data = {
+                'success': True,
+                'date_range': {
+                    'start_date': start_date.isoformat(),
+                    'end_date': end_date.isoformat(),
+                    'range_type': range_type,
+                },
+                'summary': self._get_summary_data(shop, start_date, end_date, previous_start_date, previous_end_date),
+                'latest_orders': self._get_latest_orders(shop, start_date, end_date),
+                'low_stock': self._get_low_stock_data(shop),
+                'refunds': self._get_refund_data(shop, start_date, end_date),
+                'shop_performance': self._get_shop_performance_data(shop, start_date, end_date),
+                'reports': self._get_report_data(shop),
+            }
+            
+            return Response(data)
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_previous_period_dates(self, start_date, end_date, range_type):
+        """Calculate previous period dates for comparison"""
+        period_days = (end_date - start_date).days + 1
+        
+        if range_type == 'daily':
+            previous_start_date = start_date - timedelta(days=1)
+            previous_end_date = end_date - timedelta(days=1)
+        elif range_type == 'weekly':
+            previous_start_date = start_date - timedelta(days=7)
+            previous_end_date = end_date - timedelta(days=7)
+        elif range_type == 'monthly':
+            previous_start_date = start_date - timedelta(days=30)
+            previous_end_date = end_date - timedelta(days=30)
+        elif range_type == 'yearly':
+            previous_start_date = start_date - timedelta(days=365)
+            previous_end_date = end_date - timedelta(days=365)
+        else:
+            # For custom ranges, use same length as current period
+            previous_start_date = start_date - timedelta(days=period_days)
+            previous_end_date = end_date - timedelta(days=period_days)
+        
+        return previous_start_date, previous_end_date
+    
+    def _get_summary_data(self, shop, start_date, end_date, previous_start_date, previous_end_date):
+        """Get summary statistics for the dashboard cards"""
+        
+        # Current period data
+        current_period_orders = Order.objects.filter(
+            shipping_address__user__customer__owned_shops=shop,
+            created_at__date__range=[start_date, end_date],
+            status__in=['delivered', 'shipped', 'processing', 'pending']
+        )
+        
+        current_period_sales = current_period_orders.filter(
+            status='delivered'
+        ).aggregate(
+            total_sales=Sum('total_amount')
+        )['total_sales'] or Decimal('0.00')
+        
+        current_period_order_count = current_period_orders.count()
+        
+        # Previous period data for comparison
+        previous_period_orders = Order.objects.filter(
+            shipping_address__user__customer__owned_shops=shop,
+            created_at__date__range=[previous_start_date, previous_end_date],
+            status__in=['delivered', 'shipped', 'processing', 'pending']
+        )
+        
+        previous_period_sales = previous_period_orders.filter(
+            status='delivered'
+        ).aggregate(
+            total_sales=Sum('total_amount')
+        )['total_sales'] or Decimal('0.00')
+        
+        previous_period_order_count = previous_period_orders.count()
+        
+        # Calculate percentage changes
+        sales_change = 0
+        if previous_period_sales > 0:
+            sales_change = ((current_period_sales - previous_period_sales) / previous_period_sales) * 100
+        
+        orders_change = 0
+        if previous_period_order_count > 0:
+            orders_change = ((current_period_order_count - previous_period_order_count) / previous_period_order_count) * 100
+        
+        # Low stock products count
+        low_stock_count = Product.objects.filter(
+            shop=shop,
+            upload_status='published',
+            is_removed=False
+        ).annotate(
+            # Check both product quantity and SKU quantities
+            total_quantity=Case(
+                When(skus__isnull=True, then=F('quantity')),
+                default=F('skus__quantity'),
+                output_field=IntegerField()
+            ),
+            critical_level=Case(
+                When(skus__isnull=True, then=F('critical_stock')),
+                default=F('skus__critical_trigger'),
+                output_field=IntegerField()
+            )
+        ).filter(
+            Q(total_quantity__lte=F('critical_level')) & 
+            Q(critical_level__isnull=False) &
+            Q(total_quantity__gt=0)
+        ).distinct().count()
+        
+        # Previous period low stock for comparison
+        previous_low_stock_count = Product.objects.filter(
+            shop=shop,
+            upload_status='published',
+            is_removed=False
+        ).count()  # Simplified - in reality you'd need historical data
+        
+        low_stock_change = 0
+        
+        # Refund requests count
+        refund_requests = Refund.objects.filter(
+            order_id__shipping_address__user__customer__owned_shops=shop,
+            requested_at__date__range=[start_date, end_date],
+            status__in=['pending', 'negotiation', 'dispute']
+        ).count()
+        
+        # Previous period refunds
+        previous_refunds = Refund.objects.filter(
+            order_id__shipping_address__user__customer__owned_shops=shop,
+            requested_at__date__range=[previous_start_date, previous_end_date],
+            status__in=['pending', 'negotiation', 'dispute']
+        ).count()
+        
+        refund_change = refund_requests - previous_refunds
+        
+        # Draft products count
+        draft_count = Product.objects.filter(
+            shop=shop,
+            upload_status='draft',
+            is_removed=False
+        ).count()
+        
+        return {
+            'period_sales': float(current_period_sales),
+            'period_orders': current_period_order_count,
+            'low_stock_count': low_stock_count,
+            'refund_requests': refund_requests,
+            'sales_change': round(sales_change, 1),
+            'orders_change': round(orders_change, 1),
+            'low_stock_change': low_stock_change,
+            'refund_change': refund_change,
+            'draft_count': draft_count,
+            'date_range_days': (end_date - start_date).days + 1,
+        }
+    
+    def _get_latest_orders(self, shop, start_date, end_date, limit=5):
+        """Get latest 5 orders for the shop"""
+        orders = Order.objects.filter(
+            shipping_address__user__customer__owned_shops=shop,
+            created_at__date__range=[start_date, end_date]
+        ).select_related(
+            'shipping_address__user__customer'
+        ).order_by('-created_at')[:limit]
+        
+        return [
+            {
+                'id': str(order.order),
+                'order_id': str(order.order),
+                'customer_name': order.shipping_address.recipient_name if order.shipping_address else 'Unknown',
+                'customer_email': order.shipping_address.user.email if order.shipping_address and order.shipping_address.user else 'N/A',
+                'status': order.status,
+                'total_amount': float(order.total_amount),
+                'created_at': order.created_at.isoformat(),
+            }
+            for order in orders
+        ]
+    
+    def _get_low_stock_data(self, shop, limit=5):
+        """Get low stock products with SKU information"""
+        # Get products with low stock
+        low_stock_products = Product.objects.filter(
+            shop=shop,
+            upload_status='published',
+            is_removed=False
+        ).annotate(
+            total_quantity=Case(
+                When(skus__isnull=True, then=F('quantity')),
+                default=F('skus__quantity'),
+                output_field=IntegerField()
+            ),
+            critical_level=Case(
+                When(skus__isnull=True, then=F('critical_stock')),
+                default=F('skus__critical_trigger'),
+                output_field=IntegerField()
+            )
+        ).filter(
+            Q(total_quantity__lte=F('critical_level')) & 
+            Q(critical_level__isnull=False) &
+            Q(total_quantity__gt=0)
+        ).prefetch_related('skus')[:limit]
+        
+        low_stock_items = []
+        for product in low_stock_products:
+            # Get the lowest stock SKU or use product data
+            if product.skus.exists():
+                for sku in product.skus.all():
+                    if sku.quantity <= (sku.critical_trigger or 0) and sku.quantity > 0:
+                        low_stock_items.append({
+                            'id': str(sku.id),
+                            'product_id': str(product.id),
+                            'product_name': product.name,
+                            'quantity': sku.quantity,
+                            'critical_stock': sku.critical_trigger,
+                            'sku_code': sku.sku_code,
+                        })
+                        break
+            else:
+                # Product without SKUs
+                if product.quantity <= (product.critical_stock or 0) and product.quantity > 0:
+                    low_stock_items.append({
+                        'id': str(product.id),
+                        'product_id': str(product.id),
+                        'product_name': product.name,
+                        'quantity': product.quantity,
+                        'critical_stock': product.critical_stock,
+                        'sku_code': None,
+                    })
+        
+        return low_stock_items[:limit]
+    
+    def _get_refund_data(self, shop, start_date, end_date, limit=3):
+        """Get refund and dispute data"""
+        refunds = Refund.objects.filter(
+            order_id__shipping_address__user__customer__owned_shops=shop,
+            requested_at__date__range=[start_date, end_date]
+        ).select_related('order_id').order_by('-requested_at')[:limit]
+        
+        pending_count = Refund.objects.filter(
+            order_id__shipping_address__user__customer__owned_shops=shop,
+            status='pending'
+        ).count()
+        
+        disputes_count = Refund.objects.filter(
+            order_id__shipping_address__user__customer__owned_shops=shop,
+            status='dispute'
+        ).count()
+        
+        total_count = Refund.objects.filter(
+            order_id__shipping_address__user__customer__owned_shops=shop,
+        ).count()
+        
+        latest_refunds = [
+            {
+                'id': str(refund.refund_id),
+                'reason': refund.reason,
+                # Use total_refund_amount instead of requested_amount
+                'requested_amount': float(refund.total_refund_amount or 0),
+                'status': refund.status,
+                'order_id': str(refund.order_id.order),
+                'customer_note': refund.customer_note,
+                'requested_at': refund.requested_at.isoformat(),
+            }
+            for refund in refunds
+        ]
+        
+        return {
+            'pending_count': pending_count,
+            'disputes_count': disputes_count,
+            'total_count': total_count,
+            'latest': latest_refunds,
+        }
+    
+    def _get_shop_performance_data(self, shop, start_date, end_date):
+        """Get shop performance metrics"""
+        # Average rating
+        reviews = Review.objects.filter(shop=shop)
+        average_rating = reviews.aggregate(avg_rating=Avg('rating'))['avg_rating'] or 0
+        
+        # Recent reviews (last 30 days)
+        recent_reviews = Review.objects.filter(
+            shop=shop,
+            created_at__date__range=[start_date, end_date]
+        ).count()
+        
+        # Total followers
+        total_followers = ShopFollow.objects.filter(shop=shop).count()
+        
+        # New followers (last 30 days)
+        new_followers = ShopFollow.objects.filter(
+            shop=shop,
+            followed_at__date__range=[start_date, end_date]
+        ).count()
+        
+        # Product counts
+        total_products = Product.objects.filter(shop=shop).count()
+        active_products = Product.objects.filter(
+            shop=shop,
+            upload_status='published',
+            is_removed=False
+        ).count()
+        draft_products = Product.objects.filter(
+            shop=shop,
+            upload_status='draft',
+            is_removed=False
+        ).count()
+        
+        return {
+            'average_rating': round(float(average_rating), 1),
+            'total_reviews': reviews.count(),
+            'recent_reviews': recent_reviews,
+            'total_followers': total_followers,
+            'new_followers': new_followers,
+            'total_products': total_products,
+            'active_products': active_products,
+            'draft_products': draft_products,
+        }
+    
+    def _get_report_data(self, shop):
+        """Get report and notification data"""
+        # Active reports against shop
+        active_reports = Report.objects.filter(
+            reported_shop=shop,
+            status__in=['pending', 'under_review']
+        ).count()
+        
+        total_reports = Report.objects.filter(reported_shop=shop).count()
+        
+        # Latest notifications for the shop owner
+        if shop.customer and shop.customer.customer:
+            user = shop.customer.customer
+            notifications = Notification.objects.filter(
+                user=user,
+                created_at__gte=timezone.now() - timedelta(days=7)
+            ).order_by('-created_at')[:3]
+            
+            latest_notifications = [
+                {
+                    'id': str(notification.id),
+                    'title': notification.title,
+                    'message': notification.message,
+                    'type': notification.type,
+                    'time': self._get_time_ago(notification.created_at),
+                    'is_read': notification.is_read,
+                }
+                for notification in notifications
+            ]
+        else:
+            latest_notifications = []
+        
+        return {
+            'active_count': active_reports,
+            'total_count': total_reports,
+            'latest_notifications': latest_notifications,
+        }
+    
+    def _get_time_ago(self, date):
+        """Convert datetime to human-readable time ago"""
+        now = timezone.now()
+        diff = now - date
+        
+        if diff.days > 365:
+            years = diff.days // 365
+            return f"{years} year{'s' if years > 1 else ''} ago"
+        elif diff.days > 30:
+            months = diff.days // 30
+            return f"{months} month{'s' if months > 1 else ''} ago"
+        elif diff.days > 0:
+            return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+        elif diff.seconds > 3600:
+            hours = diff.seconds // 3600
+            return f"{hours} hour{'s' if hours > 1 else ''} ago"
+        elif diff.seconds > 60:
+            minutes = diff.seconds // 60
+            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+        else:
+            return "Just now"
 
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer

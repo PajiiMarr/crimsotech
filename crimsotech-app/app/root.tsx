@@ -27,7 +27,7 @@ export const links: Route.LinksFunction = () => [
   },
   {
     rel: "icon",
-    href: "crimsonity.png",
+    href: "Crimsotech.png",
     crossOrigin: "anonymous",
   },
   {
