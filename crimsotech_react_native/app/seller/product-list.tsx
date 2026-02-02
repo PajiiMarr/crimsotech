@@ -123,17 +123,13 @@ export default function PersonalListingPage() {
         }
       />
 
-            {/* ADD THIS FAB BUTTON AT THE END, JUST BEFORE THE CLOSING SafeAreaView */}
+      {/* FAB BUTTON */}
       <TouchableOpacity 
         style={styles.fab} 
         activeOpacity={0.8}
         onPress={() => router.push('./createproducts')}
-        // OR if that doesn't work, try:
-        // onPress={() => router.push('createproducts')}
-        // OR if using file-based routing with Expo Router:
-        // onPress={() => router.push('/(app)/createproducts')}
       >
-        <Plus name="plus" color="#fff" size={28} />
+        <Plus color="#fff" size={28} />
       </TouchableOpacity>
     </SafeAreaView>
   );
@@ -201,7 +197,6 @@ const styles = StyleSheet.create({
     borderRadius: 15, 
     justifyContent: 'center', 
     alignItems: 'center',
-    backdropFilter: 'blur(4px)'
   },
 
   details: { padding: 12 },

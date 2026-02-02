@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { 
   SafeAreaView, View, Text, StyleSheet, FlatList, 
-  TouchableOpacity, Modal, TextInput, ScrollView, Alert 
+  TouchableOpacity, Alert, useWindowDimensions 
 } from 'react-native';
-import { MapPin, Phone, User, Plus, Trash2, Edit3, X, CheckCircle2 } from 'lucide-react-native';
-import { Stack } from 'expo-router';
+import { MapPin, Phone, User, Plus, Trash2, Edit3 } from 'lucide-react-native';
+import { Stack, useRouter } from 'expo-router';
 
 const INITIAL_ADDRESSES = [
   { 
@@ -32,8 +32,13 @@ const INITIAL_ADDRESSES = [
 ];
 
 export default function SellerAddressPage() {
+  const router = useRouter();
+  const { width } = useWindowDimensions(); // Hook for responsiveness
   const [addresses, setAddresses] = useState(INITIAL_ADDRESSES);
-  const [modalVisible, setModalVisible] = useState(false);
+
+  // Responsive constants
+  const isTablet = width > 768;
+  const numColumns = isTablet ? 2 : 1;
 
   const deleteAddress = (id: string) => {
     Alert.alert("Delete Address", "Are you sure you want to remove this pickup location?", [
@@ -43,13 +48,17 @@ export default function SellerAddressPage() {
   };
 
   const renderAddress = ({ item }: { item: typeof INITIAL_ADDRESSES[0] }) => (
-    <View style={[styles.card, item.isDefault && styles.defaultCard]}>
+    <View style={[
+      styles.card, 
+      item.isDefault && styles.defaultCard,
+      isTablet && { width: (width / 2) - 24 } // Adjust width for 2 columns
+    ]}>
       <View style={styles.cardHeader}>
         <View style={styles.labelRow}>
-          <Text style={styles.addressLabel}>{item.label}</Text>
+          <Text style={styles.addressLabel} numberOfLines={1}>{item.label}</Text>
           {item.isDefault && (
             <View style={styles.defaultBadge}>
-              <Text style={styles.defaultText}>PRIMARY PICKUP</Text>
+              <Text style={styles.defaultText}>PRIMARY</Text>
             </View>
           )}
         </View>
@@ -68,7 +77,7 @@ export default function SellerAddressPage() {
       <View style={styles.contactInfo}>
         <View style={styles.infoRow}>
           <User color="#94A3B8" size={14} />
-          <Text style={styles.infoText}>{item.name}</Text>
+          <Text style={styles.infoText} numberOfLines={1}>{item.name}</Text>
         </View>
         <View style={styles.infoRow}>
           <Phone color="#94A3B8" size={14} />
@@ -96,63 +105,32 @@ export default function SellerAddressPage() {
         headerTitleStyle: { fontWeight: '800', color: '#0F172A' }
       }} />
 
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.subHeader}>Manage warehouse collection points</Text>
+      <View style={[styles.header, { paddingHorizontal: width > 1024 ? '10%' : 20 }]}>
+        <View style={{ flex: 1, marginRight: 10 }}>
+          <Text style={styles.subHeader} numberOfLines={1}>Warehouse collection points</Text>
         </View>
-        <TouchableOpacity style={styles.addBtn} onPress={() => setModalVisible(true)}>
+        <TouchableOpacity 
+          style={styles.addBtn} 
+          onPress={() => router.push('/seller/create-address')}
+        >
           <Plus color="#fff" size={18} />
-          <Text style={styles.addBtnText}>Add New</Text>
+          {width > 380 && <Text style={styles.addBtnText}>Add New</Text>}
         </TouchableOpacity>
       </View>
 
       <FlatList
+        key={numColumns} // Re-render when switching columns
         data={addresses}
         renderItem={renderAddress}
         keyExtractor={item => item.id}
-        contentContainerStyle={styles.listContent}
+        numColumns={numColumns}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingHorizontal: width > 1024 ? '10%' : 16 }
+        ]}
+        columnWrapperStyle={isTablet ? styles.columnWrapper : null}
         showsVerticalScrollIndicator={false}
       />
-
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>New Location</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <X color="#0F172A" size={24} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.label}>Location Label</Text>
-              <TextInput style={styles.input} placeholder="e.g. Main Warehouse" placeholderTextColor="#94A3B8" />
-
-              <View style={styles.row}>
-                <View style={{ flex: 1, marginRight: 10 }}>
-                  <Text style={styles.label}>Contact Name</Text>
-                  <TextInput style={styles.input} placeholder="Full Name" placeholderTextColor="#94A3B8" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Mobile Number</Text>
-                  <TextInput style={styles.input} placeholder="09XX..." keyboardType="phone-pad" placeholderTextColor="#94A3B8" />
-                </View>
-              </View>
-
-              <Text style={styles.label}>Street / Building Details</Text>
-              <TextInput style={styles.input} placeholder="Unit/House No., Street" placeholderTextColor="#94A3B8" />
-
-              <Text style={styles.label}>Barangay / City / Region</Text>
-              <TextInput style={styles.input} placeholder="Address Line 2" placeholderTextColor="#94A3B8" />
-
-              <TouchableOpacity style={styles.submitBtn} onPress={() => setModalVisible(false)}>
-                <CheckCircle2 color="#fff" size={20} style={{ marginRight: 8 }} />
-                <Text style={styles.submitBtnText}>Save Location</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -160,7 +138,6 @@ export default function SellerAddressPage() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAFA' },
   header: { 
-    paddingHorizontal: 20, 
     paddingVertical: 15,
     backgroundColor: '#fff', 
     flexDirection: 'row', 
@@ -173,12 +150,16 @@ const styles = StyleSheet.create({
   addBtn: { backgroundColor: '#0F172A', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
   addBtnText: { color: '#fff', fontWeight: '700', marginLeft: 6, fontSize: 13 },
 
-  listContent: { padding: 16 },
+  listContent: { paddingVertical: 16 },
+  columnWrapper: { justifyContent: 'space-between' },
+  
   card: { 
+    flex: 1, // Allows card to grow in grid
     backgroundColor: '#fff', 
     borderRadius: 20, 
     padding: 20, 
     marginBottom: 16, 
+    marginHorizontal: 4, // Added for grid spacing
     borderWidth: 1, 
     borderColor: '#E2E8F0',
     shadowColor: '#000',
@@ -188,29 +169,27 @@ const styles = StyleSheet.create({
   },
   defaultCard: { borderColor: '#0F172A', borderWidth: 2 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  addressLabel: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
-  defaultBadge: { backgroundColor: '#0F172A', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 },
-  defaultText: { color: '#fff', fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
-  actionIcons: { flexDirection: 'row' },
-  iconBtn: { marginLeft: 16 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  addressLabel: { fontSize: 15, fontWeight: '800', color: '#0F172A', flexShrink: 1 },
+  defaultBadge: { backgroundColor: '#0F172A', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  defaultText: { color: '#fff', fontSize: 8, fontWeight: '900', letterSpacing: 0.5 },
+  actionIcons: { flexDirection: 'row', alignItems: 'center' },
+  iconBtn: { marginLeft: 12 },
 
-  contactInfo: { flexDirection: 'row', marginBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', paddingBottom: 16 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', marginRight: 24 },
+  contactInfo: { 
+    flexDirection: 'row', 
+    flexWrap: 'wrap', // Responsive wrapping
+    marginBottom: 16, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#F1F5F9', 
+    paddingBottom: 16,
+    gap: 12
+  },
+  infoRow: { flexDirection: 'row', alignItems: 'center' },
   infoText: { fontSize: 13, color: '#1E293B', marginLeft: 8, fontWeight: '600' },
 
   addressBody: { flexDirection: 'row' },
   addressDetails: { marginLeft: 12, flex: 1 },
   mainAddress: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
   subAddress: { fontSize: 13, color: '#64748B', marginTop: 4, lineHeight: 18 },
-
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, maxHeight: '90%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  modalTitle: { fontSize: 22, fontWeight: '900', color: '#0F172A' },
-  label: { fontSize: 11, fontWeight: '800', color: '#94A3B8', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 },
-  input: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, fontSize: 14, color: '#0F172A', marginBottom: 16, fontWeight: '600' },
-  row: { flexDirection: 'row' },
-  submitBtn: { backgroundColor: '#0F172A', height: 60, borderRadius: 18, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10 },
-  submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' }
 });

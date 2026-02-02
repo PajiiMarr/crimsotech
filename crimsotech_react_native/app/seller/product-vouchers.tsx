@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { 
   SafeAreaView, View, Text, StyleSheet, FlatList, 
-  TouchableOpacity, Modal, TextInput, Image, ScrollView} from 'react-native';
-import { Stack } from 'expo-router';
-import { Tag, Package, Plus, X, Search, ChevronRight, Percent, CircleDollarSign } from 'lucide-react-native';
+  TouchableOpacity, TextInput, Image 
+} from 'react-native';
+import { Stack, useRouter } from 'expo-router';
+import { Tag, Plus, Search, ChevronRight } from 'lucide-react-native';
 
 const INITIAL_PRODUCT_VOUCHERS = [
   { 
@@ -42,8 +43,8 @@ const INITIAL_PRODUCT_VOUCHERS = [
 ];
 
 export default function ProductVoucherPage() {
+  const router = useRouter();
   const [vouchers] = useState(INITIAL_PRODUCT_VOUCHERS);
-  const [isModalVisible, setModalVisible] = useState(false);
 
   const renderVoucher = ({ item }: { item: typeof INITIAL_PRODUCT_VOUCHERS[0] }) => {
     const isFull = item.claimed >= item.total;
@@ -103,7 +104,10 @@ export default function ProductVoucherPage() {
             placeholderTextColor="#94A3B8"
           />
         </View>
-        <TouchableOpacity style={styles.addBtn} onPress={() => setModalVisible(true)}>
+        <TouchableOpacity 
+          style={styles.addBtn} 
+          onPress={() => router.push('/seller/create-product-vouchers')}
+        >
           <Plus color="#fff" size={22} />
         </TouchableOpacity>
       </View>
@@ -115,59 +119,6 @@ export default function ProductVoucherPage() {
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
       />
-
-      {/* CREATE MODAL */}
-      <Modal visible={isModalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>New Product Voucher</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <X color="#0F172A" size={24} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.label}>Target Product</Text>
-              <TouchableOpacity style={styles.productPicker}>
-                <Package color="#0F172A" size={20} />
-                <Text style={styles.pickerText}>Select from Inventory</Text>
-                <ChevronRight color="#94A3B8" size={18} />
-              </TouchableOpacity>
-
-              <Text style={styles.label}>Voucher Code</Text>
-              <TextInput style={styles.input} placeholder="e.g. M2SAVE1500" autoCapitalize="characters" />
-
-              <View style={styles.row}>
-                <View style={{ flex: 1.2, marginRight: 10 }}>
-                  <Text style={styles.label}>Type</Text>
-                  <View style={styles.typeToggle}>
-                    <TouchableOpacity style={[styles.typeBtn, styles.activeType]}>
-                      <CircleDollarSign size={14} color="#fff" />
-                      <Text style={styles.activeTypeText}>Fixed</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.typeBtn}>
-                      <Percent size={14} color="#64748B" />
-                      <Text style={styles.inactiveTypeText}>%</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Amount</Text>
-                  <TextInput style={styles.input} placeholder="0.00" keyboardType="numeric" />
-                </View>
-              </View>
-
-              <Text style={styles.label}>Total Units Available</Text>
-              <TextInput style={styles.input} placeholder="e.g. 50" keyboardType="numeric" />
-
-              <TouchableOpacity style={styles.submitBtn} onPress={() => setModalVisible(false)}>
-                <Text style={styles.submitBtnText}>Create Discount</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -241,22 +192,4 @@ const styles = StyleSheet.create({
   usageValue: { fontSize: 10, fontWeight: '800', color: '#0F172A' },
   progressBg: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#0F172A' },
-
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, maxHeight: '85%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  modalTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A' },
-  label: { fontSize: 11, fontWeight: '800', color: '#94A3B8', marginBottom: 8, marginTop: 16, textTransform: 'uppercase', letterSpacing: 1 },
-  productPicker: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0' },
-  pickerText: { flex: 1, marginLeft: 12, color: '#0F172A', fontSize: 14, fontWeight: '600' },
-  input: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, fontSize: 14, fontWeight: '600', color: '#0F172A' },
-  row: { flexDirection: 'row' },
-  typeToggle: { flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 14, padding: 4 },
-  typeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 10 },
-  activeType: { backgroundColor: '#0F172A' },
-  activeTypeText: { marginLeft: 6, fontSize: 12, fontWeight: '700', color: '#fff' },
-  inactiveTypeText: { marginLeft: 6, fontSize: 12, fontWeight: '600', color: '#64748B' },
-  submitBtn: { backgroundColor: '#0F172A', height: 60, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginTop: 32 },
-  submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' }
 });
