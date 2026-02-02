@@ -13,7 +13,3 @@ jobs:
         run: |
           docker login -u pajiimarr -p ${{ secrets.DOCKER_HUB_TOKEN }}
           docker push pajiimarr/crimsotech_django:latest
-
-      - name: Trigger Render Deploy
-        run: |
-          curl -X POST "https://api.render.com/deploy/srv-d5q5fsh5pdvs738u0f9g?key=${{ secrets.RENDER_DEPLOY_HOOK }}"

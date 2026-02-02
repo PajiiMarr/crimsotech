@@ -33,6 +33,6 @@ RUN useradd --create-home --shell /bin/bash appuser && \
 USER appuser
 
 # Port will be set via environment variable in Render
-EXPOSE ${PORT:-10000}
+EXPOSE ${PORT:-8000}
 
 ENTRYPOINT ["/app/entrypoint.sh"]
