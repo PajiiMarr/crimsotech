@@ -30,49 +30,49 @@ class Command(BaseCommand):
                 # Create categories
                 categories = self.create_categories(shops, admin_user)
                 
-                # Create products matching frontend data
-                products = self.create_products(customers, shops, categories, admin_user)
+                # # Create products matching frontend data
+                # products = self.create_products(customers, shops, categories, admin_user)
 
-                self.create_engagement_data()
+                # self.create_engagement_data()
                 
-                # Create boosts and boost plans
-                self.create_boosts_and_plans(products, shops, customers, admin_user)
+                # # Create boosts and boost plans
+                # self.create_boosts_and_plans(products, shops, customers, admin_user)
                 
-                # Create shop follows (followers)
-                self.create_shop_follows(shops, customers)
+                # # Create shop follows (followers)
+                # self.create_shop_follows(shops, customers)
                 
-                # Create reviews for shops and products
-                self.create_reviews(products, shops, customers)
+                # # Create reviews for shops and products
+                # self.create_reviews(products, shops, customers)
                 
-                # Create additional data
-                self.create_additional_data(products, customers, shops)
+                # # Create additional data
+                # self.create_additional_data(products, customers, shops)
                 
-                # Create customer activities
-                self.create_customer_activities(products, customers)
+                # # Create customer activities
+                # self.create_customer_activities(products, customers)
                 
-                # Create comprehensive boost analytics data
-                # self.create_boost_analytics_data(products, shops, customers, admin_user)
+                # # Create comprehensive boost analytics data
+                # # self.create_boost_analytics_data(products, shops, customers, admin_user)
 
-                # Create order data
-                self.create_order_data(products, customers, shops, admin_user)
+                # # Create order data
+                # self.create_order_data(products, customers, shops, admin_user)
 
-                # Create checkout data
-                self.create_checkout_data(products, customers, shops, admin_user)
+                # # Create checkout data
+                # self.create_checkout_data(products, customers, shops, admin_user)
                 
-                # Create checkout analytics data
-                self.create_order_analytics_data()
+                # # Create checkout analytics data
+                # self.create_order_analytics_data()
 
-                # Create rider data
-                self.create_rider_data(products, customers, shops, admin_user)
+                # # Create rider data
+                # self.create_rider_data(products, customers, shops, admin_user)
                 
-                # CREATE REFUND DATA
-                # self.create_refund_data(products, customers, shops, admin_user)
+                # # CREATE REFUND DATA
+                # # self.create_refund_data(products, customers, shops, admin_user)
                 
-                # CREATE REFUND ANALYTICS DATA
-                # self.create_refund_analytics_data()
+                # # CREATE REFUND ANALYTICS DATA
+                # # self.create_refund_analytics_data()
                 
-                # CREATE REPORT DATA - ADD ALL REPORT FUNCTIONS HERE
-                self.create_report_data(products, customers, shops, admin_user)
+                # # CREATE REPORT DATA - ADD ALL REPORT FUNCTIONS HERE
+                # self.create_report_data(products, customers, shops, admin_user)
                 
                 self.stdout.write(self.style.SUCCESS("✅ Comprehensive shop data seeded successfully!"))
                 
@@ -234,16 +234,16 @@ class Command(BaseCommand):
     def create_categories(self, shops, admin_user):
         """Create product categories"""
         categories_data = [
-            'Smartphones & Tablets',
-            'Laptops & Computers',
-            'Audio & Headphones',
             'Cameras & Photography',
-            'Gaming Consoles & Accessories',
-            'Smartwatches & Wearables',
-            'TVs & Monitors',
-            'Computer Accessories',
-            'Home Electronics',
             'Mobile Accessories',
+            'Mobile Phones',
+            'Desktop and Laptops',
+            'Audio Devices',
+            'Controllers',
+            'Wearables',
+            'Televisions',
+            'Storage Devices',
+            'Home Appliances',
         ]
         
         categories = []
@@ -254,7 +254,6 @@ class Command(BaseCommand):
             if not existing_category:
                 category = Category.objects.create(
                     name=name,
-                    shop=shops[0] if shops else None,
                     user=admin_user
                 )
                 categories.append(category)
