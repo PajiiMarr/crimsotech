@@ -1,50 +1,128 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { 
   SafeAreaView, View, Text, StyleSheet, FlatList, 
-  TouchableOpacity, Image, TextInput, ScrollView 
+  TouchableOpacity, Image, TextInput, ScrollView, ActivityIndicator 
 } from 'react-native';
-import { Package, Truck, Search, Copy, Clock } from 'lucide-react-native';
+import { Package, Truck, Search, Copy, Clock, AlertCircle } from 'lucide-react-native';
 // 1. Import Stack for the centered header fix
-import { Stack } from 'expo-router';
+import { Stack, useFocusEffect } from 'expo-router';
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
-const MOCK_ORDERS = [
-  { 
-    id: 'ORD-99210', 
-    customer: 'Maria Clara', 
-    item: 'MacBook Air M2 (8GB/256GB)', 
-    itemImg: 'https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?w=200',
-    total: 48500, 
-    status: 'To Ship', 
-    date: 'Today, 10:30 AM',
-    courier: 'J&T Express'
-  },
-  { 
-    id: 'ORD-99205', 
-    customer: 'Rizal Mercado', 
-    item: 'Logitech MX Master 3S', 
-    itemImg: 'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=200',
-    total: 4200, 
-    status: 'Pending', 
-    date: 'Yesterday',
-    courier: 'Lalamove'
-  },
-  { 
-    id: 'ORD-99190', 
-    customer: 'Juan Luna', 
-    item: 'Keychron K2 Keyboard', 
-    itemImg: 'https://images.unsplash.com/photo-1595225476474-87563907a212?w=200',
-    total: 3200, 
-    status: 'Completed', 
-    date: 'Jan 20, 2026',
-    courier: 'Flash Express'
-  },
-];
+const FALLBACK_IMAGE = 'https://via.placeholder.com/200x200?text=No+Image';
+
+type OrderItem = {
+  id: string;
+  customer: string;
+  item: string;
+  itemImg: string;
+  total: number;
+  status: 'Pending' | 'To Ship' | 'Completed' | 'Cancelled';
+  date: string;
+  courier: string;
+};
 
 const TABS = ['All', 'Pending', 'To Ship', 'Completed'];
 
 export default function SellerOrdersPage() {
+  const { userId, shopId } = useAuth();
   const [activeTab, setActiveTab] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [orders, setOrders] = useState<OrderItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const mapStatus = (status?: string): OrderItem['status'] => {
+    switch ((status || '').toLowerCase()) {
+      case 'completed':
+        return 'Completed';
+      case 'cancelled':
+        return 'Cancelled';
+      case 'to_ship':
+      case 'ready_for_pickup':
+      case 'shipped':
+      case 'in_transit':
+      case 'out_for_delivery':
+        return 'To Ship';
+      case 'pending_shipment':
+      case 'arrange_shipment':
+      default:
+        return 'Pending';
+    }
+  };
+
+  const formatDate = (iso?: string) => {
+    if (!iso) return '—';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const fetchOrders = useCallback(async () => {
+    if (!shopId) {
+      setError('Shop not found. Please select a shop.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await AxiosInstance.get('/seller-order-list/order_list/', {
+        params: { shop_id: shopId },
+        headers: {
+          'X-User-Id': userId || '',
+          'X-Shop-Id': shopId || '',
+        }
+      });
+
+      const apiOrders = response.data?.data || [];
+      const mapped: OrderItem[] = apiOrders.map((order: any) => {
+        const firstItem = order.items?.[0];
+        const product = firstItem?.cart_item?.product;
+        return {
+          id: order.order_id || order.id || '—',
+          customer: order.user?.first_name || order.user?.username || 'Unknown Customer',
+          item: product?.name || 'Order Item',
+          itemImg: product?.image || product?.thumbnail || FALLBACK_IMAGE,
+          total: Number(order.total_amount || 0),
+          status: mapStatus(order.status),
+          date: formatDate(order.created_at),
+          courier: order.shipping_method || 'Standard Shipping'
+        };
+      });
+
+      setOrders(mapped);
+    } catch (err: any) {
+      console.error('Failed to load orders:', err);
+      setError(err?.response?.data?.message || 'Failed to load orders.');
+    } finally {
+      setLoading(false);
+    }
+  }, [shopId, userId]);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchOrders();
+    }, [fetchOrders])
+  );
+
+  const filteredOrders = useMemo(() => {
+    const query = searchQuery.toLowerCase();
+    return orders.filter((o) => {
+      const matchesTab = activeTab === 'All' || o.status === activeTab;
+      const matchesQuery =
+        o.id.toLowerCase().includes(query) ||
+        o.customer.toLowerCase().includes(query) ||
+        o.item.toLowerCase().includes(query);
+      return matchesTab && matchesQuery;
+    });
+  }, [orders, activeTab, searchQuery]);
 
   const getStatusStyle = (status: string) => {
     switch (status) {
@@ -55,7 +133,7 @@ export default function SellerOrdersPage() {
     }
   };
 
-  const renderOrder = ({ item }: { item: typeof MOCK_ORDERS[0] }) => {
+  const renderOrder = ({ item }: { item: OrderItem }) => {
     const statusStyle = getStatusStyle(item.status);
     
     return (
@@ -153,15 +231,24 @@ export default function SellerOrdersPage() {
       </View>
 
       <FlatList
-        data={MOCK_ORDERS.filter(o => activeTab === 'All' || o.status === activeTab)}
+        data={filteredOrders}
         renderItem={renderOrder}
         keyExtractor={item => item.id}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <Package size={48} color="#CBD5E1" />
-            <Text style={styles.emptyText}>No orders found</Text>
+            {loading ? (
+              <>
+                <ActivityIndicator size="small" color="#0F172A" />
+                <Text style={styles.emptyText}>Loading orders...</Text>
+              </>
+            ) : (
+              <>
+                <AlertCircle size={48} color="#CBD5E1" />
+                <Text style={styles.emptyText}>{error || 'No orders found'}</Text>
+              </>
+            )}
           </View>
         }
       />

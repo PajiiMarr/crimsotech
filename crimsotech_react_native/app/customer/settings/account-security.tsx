@@ -31,7 +31,9 @@ export default function AccountSecurityPage() {
     try {
       setLoading(true);
       // Fetch user profile data
-      const response = await AxiosInstance.get('/api/customer/profile/');
+      const response = await AxiosInstance.get('/profile/', {
+        headers: { 'X-User-Id': String(userId || '') },
+      });
       if (response.data?.profile?.user) {
         setProfileData(response.data.profile.user);
       }

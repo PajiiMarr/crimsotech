@@ -104,3 +104,5 @@ crimsotech_react_native/app-example
 crimsotech_react_native/ios/
 crimsotech_react_native/android/
 crimsotech_react_native/.env
+
+crimsotech_django/backend/backend/settings.py

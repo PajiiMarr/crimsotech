@@ -1,53 +1,115 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { 
   SafeAreaView, View, Text, StyleSheet, FlatList, 
-  TouchableOpacity, Alert, useWindowDimensions 
+  TouchableOpacity, Alert, useWindowDimensions, ActivityIndicator 
 } from 'react-native';
 import { MapPin, Phone, User, Plus, Trash2, Edit3 } from 'lucide-react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useFocusEffect } from 'expo-router';
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
-const INITIAL_ADDRESSES = [
-  { 
-    id: '1', 
-    label: 'Main Warehouse (Pickup)', 
-    name: 'Juan Dela Cruz', 
-    phone: '0917 123 4567', 
-    details: 'Unit 402, Tech Tower, 123 Ayala Ave.', 
-    barangay: 'Bel-Air', 
-    city: 'Makati City', 
-    region: 'Metro Manila', 
-    isDefault: true 
-  },
-  { 
-    id: '2', 
-    label: 'Home Office', 
-    name: 'Juan Dela Cruz', 
-    phone: '0918 987 6543', 
-    details: 'Bldg 5, Green Residences', 
-    barangay: 'Taft Ave', 
-    city: 'Manila', 
-    region: 'Metro Manila', 
-    isDefault: false 
-  },
-];
+type AddressItem = {
+  id: string;
+  label: string;
+  name: string;
+  phone: string;
+  details: string;
+  barangay: string;
+  city: string;
+  region: string;
+  isDefault: boolean;
+};
 
 export default function SellerAddressPage() {
   const router = useRouter();
   const { width } = useWindowDimensions(); // Hook for responsiveness
-  const [addresses, setAddresses] = useState(INITIAL_ADDRESSES);
+  const { userId, shopId } = useAuth();
+  const [addresses, setAddresses] = useState<AddressItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Responsive constants
   const isTablet = width > 768;
   const numColumns = isTablet ? 2 : 1;
 
+  const fetchAddresses = useCallback(async () => {
+    if (!userId) {
+      setError('User not found. Please login again.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await AxiosInstance.get('/return-address/', {
+        params: shopId ? { shop_id: shopId } : undefined,
+        headers: {
+          'X-User-Id': userId || '',
+          'X-Shop-Id': shopId || ''
+        }
+      });
+
+      const apiAddresses = response.data || [];
+      const mapped: AddressItem[] = apiAddresses.map((addr: any, index: number) => {
+        return {
+          id: String(addr.id),
+          label: addr.notes || `Return Address ${index + 1}`,
+          name: addr.recipient_name || '—',
+          phone: addr.contact_number || '—',
+          details: addr.street || '—',
+          barangay: addr.barangay || '—',
+          city: addr.city || '—',
+          region: addr.province || '—',
+          isDefault: index === 0
+        };
+      });
+
+      setAddresses(mapped);
+    } catch (err: any) {
+      console.error('Failed to load addresses:', err);
+      setError(err?.response?.data?.error || 'Failed to load addresses.');
+    } finally {
+      setLoading(false);
+    }
+  }, [userId, shopId]);
+
+  useEffect(() => {
+    fetchAddresses();
+  }, [fetchAddresses]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchAddresses();
+    }, [fetchAddresses])
+  );
+
   const deleteAddress = (id: string) => {
     Alert.alert("Delete Address", "Are you sure you want to remove this pickup location?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => setAddresses(addresses.filter(a => a.id !== id)) }
+      { 
+        text: "Delete", 
+        style: "destructive", 
+        onPress: async () => {
+          if (!userId) return;
+          try {
+            await AxiosInstance.delete(`/return-address/${id}/`, {
+              headers: {
+                'X-User-Id': userId || '',
+                'X-Shop-Id': shopId || ''
+              }
+            });
+            setAddresses((prev) => prev.filter(a => a.id !== id));
+          } catch (err) {
+            console.error('Failed to delete address:', err);
+          }
+        } 
+      }
     ]);
   };
 
-  const renderAddress = ({ item }: { item: typeof INITIAL_ADDRESSES[0] }) => (
+  const renderAddress = ({ item }: { item: AddressItem }) => (
     <View style={[
       styles.card, 
       item.isDefault && styles.defaultCard,
@@ -130,6 +192,18 @@ export default function SellerAddressPage() {
         ]}
         columnWrapperStyle={isTablet ? styles.columnWrapper : null}
         showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            {loading ? (
+              <>
+                <ActivityIndicator size="small" color="#0F172A" />
+                <Text style={styles.emptyText}>Loading addresses...</Text>
+              </>
+            ) : (
+              <Text style={styles.emptyText}>{error || 'No addresses found'}</Text>
+            )}
+          </View>
+        }
       />
     </SafeAreaView>
   );
@@ -192,4 +266,6 @@ const styles = StyleSheet.create({
   addressDetails: { marginLeft: 12, flex: 1 },
   mainAddress: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
   subAddress: { fontSize: 13, color: '#64748B', marginTop: 4, lineHeight: 18 },
+  emptyState: { padding: 32, alignItems: 'center' },
+  emptyText: { color: '#94A3B8', fontWeight: '600', marginTop: 8 }
 });

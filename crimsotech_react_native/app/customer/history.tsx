@@ -1,42 +1,99 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, FlatList, Platform } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, FlatList, Platform, ActivityIndicator } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useAuth } from '../../contexts/AuthContext';
+import AxiosInstance from '../../contexts/axios';
+
+interface PurchaseOrder {
+  order_id: string;
+  status: string;
+  total_amount: string;
+  payment_method?: string | null;
+  created_at: string;
+}
 
 export default function SubscriptionHistory() {
-  // Enhanced Mock Data
-  const historyData = [
-    {
-      id: 'INV-88291',
-      plan: 'Pro Plan',
-      date: 'Jan 12, 2026',
-      time: '02:45 PM',
-      amount: '1,188.00',
-      method: 'GCash',
-      status: 'Success',
-      refNo: '992011283'
-    },
-    {
-      id: 'INV-77102',
-      plan: 'Basic Plan',
-      date: 'Dec 12, 2025',
-      time: '10:15 AM',
-      amount: '588.00',
-      method: 'GCash',
-      status: 'Success',
-      refNo: '881022394'
-    },
-    {
-      id: 'INV-66503',
-      plan: 'Pro Plan',
-      date: 'Nov 10, 2025',
-      time: '11:20 PM',
-      amount: '1,188.00',
-      method: 'Visa **** 4242',
-      status: 'Failed',
-      refNo: 'N/A'
-    },
-  ];
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+
+  useEffect(() => {
+    if (user?.id) {
+      fetchHistory();
+    }
+  }, [user?.id]);
+
+  const fetchHistory = async () => {
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await AxiosInstance.get('/purchases-buyer/user_purchases/', {
+        headers: { 'X-User-Id': String(user.id) },
+      });
+
+      const list = response.data?.purchases || [];
+      setOrders(list);
+    } catch (error) {
+      console.error('Error fetching billing history:', error);
+      setOrders([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchHistory();
+  };
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+
+  const formatTime = (dateStr: string) => {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatCurrency = (amount: string | number) => {
+    const num = Number(amount);
+    if (Number.isNaN(num)) return '₱0.00';
+    return `₱${num.toFixed(2)}`;
+  };
+
+  const historyData = useMemo(() => {
+    return orders.map((order) => {
+      const shortId = order.order_id?.slice(0, 8) || 'ORDER';
+      const status = order.status === 'completed' || order.status === 'delivered'
+        ? 'Success'
+        : order.status === 'cancelled' || order.status === 'refunded'
+        ? 'Failed'
+        : 'Pending';
+
+      return {
+        id: order.order_id || shortId,
+        title: `Order #${shortId}`,
+        date: formatDate(order.created_at),
+        time: formatTime(order.created_at),
+        amount: formatCurrency(order.total_amount),
+        method: order.payment_method || 'N/A',
+        status,
+        refNo: order.order_id || 'N/A',
+      };
+    });
+  }, [orders]);
+
+  const totalSpent = useMemo(() => {
+    return orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
+  }, [orders]);
 
   const getStatusConfig = (status: string) => {
     switch (status) {
@@ -46,7 +103,7 @@ export default function SubscriptionHistory() {
     }
   };
 
-  const HistoryItem = ({ item }: { item: typeof historyData[0] }) => {
+  const HistoryItem = ({ item }: { item: typeof historyData[number] }) => {
     const config = getStatusConfig(item.status);
     
     return (
@@ -68,10 +125,10 @@ export default function SubscriptionHistory() {
             <MaterialCommunityIcons name="crown-outline" size={24} color="#4B5563" />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.planTitle}>{item.plan}</Text>
+            <Text style={styles.planTitle}>{item.title}</Text>
             <Text style={styles.metaText}>{item.date} at {item.time}</Text>
           </View>
-          <Text style={styles.amountText}>₱{item.amount}</Text>
+          <Text style={styles.amountText}>{item.amount}</Text>
         </View>
 
         <View style={styles.cardFooter}>
@@ -104,7 +161,13 @@ export default function SubscriptionHistory() {
         </TouchableOpacity>
       </View>
 
-      <FlatList
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#2563EB" />
+          <Text style={styles.loadingText}>Loading history...</Text>
+        </View>
+      ) : (
+        <FlatList
         data={historyData}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
@@ -112,7 +175,7 @@ export default function SubscriptionHistory() {
           <View style={styles.summaryBox}>
             <View>
               <Text style={styles.summaryLabel}>Total Spending</Text>
-              <Text style={styles.summaryAmount}>₱2,964.00</Text>
+              <Text style={styles.summaryAmount}>{formatCurrency(totalSpent)}</Text>
             </View>
             <View style={styles.summaryDivider} />
             <View>
@@ -123,7 +186,15 @@ export default function SubscriptionHistory() {
         }
         renderItem={({ item }) => <HistoryItem item={item} />}
         showsVerticalScrollIndicator={false}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>No billing history yet.</Text>
+          </View>
+        }
       />
+      )}
     </SafeAreaView>
   );
 }
@@ -163,6 +234,10 @@ const styles = StyleSheet.create({
   summaryDivider: { width: 1, height: 30, backgroundColor: '#374151' },
 
   listContent: { padding: 16 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  loadingText: { marginTop: 10, color: '#6B7280' },
+  emptyState: { alignItems: 'center', paddingVertical: 40 },
+  emptyText: { color: '#6B7280' },
   
   // Detailed Card Style
   historyCard: { 

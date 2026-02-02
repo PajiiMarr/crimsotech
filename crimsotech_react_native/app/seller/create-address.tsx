@@ -1,17 +1,62 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   SafeAreaView, View, Text, StyleSheet, TextInput, 
   ScrollView, TouchableOpacity 
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { CheckCircle2 } from 'lucide-react-native';
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function CreateAddress() {
   const router = useRouter();
+  const { userId, shopId } = useAuth();
 
-  const handleSave = () => {
-    // Logic to save address goes here
-    router.back();
+  const [label, setLabel] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [contactNumber, setContactNumber] = useState('');
+  const [street, setStreet] = useState('');
+  const [barangay, setBarangay] = useState('');
+  const [city, setCity] = useState('');
+  const [province, setProvince] = useState('');
+  const [country, setCountry] = useState('Philippines');
+  const [zipCode, setZipCode] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!userId || !shopId) return;
+
+    try {
+      setSaving(true);
+      await AxiosInstance.post(
+        '/return-address/',
+        {
+          recipient_name: recipientName,
+          contact_number: contactNumber,
+          country,
+          province,
+          city,
+          barangay,
+          street,
+          zip_code: zipCode,
+          notes: label,
+          shop_id: shopId
+        },
+        {
+          headers: {
+            'X-User-Id': userId || '',
+            'X-Shop-Id': shopId || '',
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      router.back();
+    } catch (err) {
+      console.error('Failed to save address:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -32,6 +77,8 @@ export default function CreateAddress() {
             style={styles.input} 
             placeholder="e.g. Main Warehouse" 
             placeholderTextColor="#94A3B8" 
+            value={label}
+            onChangeText={setLabel}
           />
 
           <View style={styles.row}>
@@ -41,6 +88,8 @@ export default function CreateAddress() {
                 style={styles.input} 
                 placeholder="Full Name" 
                 placeholderTextColor="#94A3B8" 
+                value={recipientName}
+                onChangeText={setRecipientName}
               />
             </View>
             <View style={{ flex: 1 }}>
@@ -50,6 +99,8 @@ export default function CreateAddress() {
                 placeholder="09XX..." 
                 keyboardType="phone-pad" 
                 placeholderTextColor="#94A3B8" 
+                value={contactNumber}
+                onChangeText={setContactNumber}
               />
             </View>
           </View>
@@ -59,21 +110,62 @@ export default function CreateAddress() {
             style={styles.input} 
             placeholder="Unit/House No., Street" 
             placeholderTextColor="#94A3B8" 
+            value={street}
+            onChangeText={setStreet}
           />
 
-          <Text style={styles.label}>Barangay / City / Region</Text>
+          <Text style={styles.label}>Barangay</Text>
           <TextInput 
             style={styles.input} 
-            placeholder="Address Line 2" 
+            placeholder="Barangay" 
             placeholderTextColor="#94A3B8" 
+            value={barangay}
+            onChangeText={setBarangay}
+          />
+
+          <Text style={styles.label}>City</Text>
+          <TextInput 
+            style={styles.input} 
+            placeholder="City" 
+            placeholderTextColor="#94A3B8" 
+            value={city}
+            onChangeText={setCity}
+          />
+
+          <Text style={styles.label}>Province / Region</Text>
+          <TextInput 
+            style={styles.input} 
+            placeholder="Province or Region" 
+            placeholderTextColor="#94A3B8" 
+            value={province}
+            onChangeText={setProvince}
+          />
+
+          <Text style={styles.label}>Country</Text>
+          <TextInput 
+            style={styles.input} 
+            placeholder="Country" 
+            placeholderTextColor="#94A3B8" 
+            value={country}
+            onChangeText={setCountry}
+          />
+
+          <Text style={styles.label}>ZIP Code</Text>
+          <TextInput 
+            style={styles.input} 
+            placeholder="ZIP" 
+            placeholderTextColor="#94A3B8" 
+            keyboardType="numeric"
+            value={zipCode}
+            onChangeText={setZipCode}
           />
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.submitBtn} onPress={handleSave}>
+        <TouchableOpacity style={styles.submitBtn} onPress={handleSave} disabled={saving}>
           <CheckCircle2 color="#fff" size={20} style={{ marginRight: 8 }} />
-          <Text style={styles.submitBtnText}>Save Location</Text>
+          <Text style={styles.submitBtnText}>{saving ? 'Saving...' : 'Save Location'}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

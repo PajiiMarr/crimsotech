@@ -1,24 +1,83 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, TextInput } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, TextInput, ActivityIndicator } from 'react-native';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { Stack } from 'expo-router'; // Import Stack to control the header
+import { Stack, useFocusEffect } from 'expo-router'; // Import Stack to control the header
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
+
+const FALLBACK_IMAGE = 'https://via.placeholder.com/100?text=No+Image';
+
+type ProductItem = {
+  id: string;
+  name: string;
+  price: number;
+  stock: number;
+  sales: number;
+  image: string;
+  status: 'Live' | 'Sold Out' | 'Violation';
+};
 
 export default function MyProducts() {
+  const { userId } = useAuth();
   const [activeTab, setActiveTab] = useState('Live');
   const [searchQuery, setSearchQuery] = useState('');
+  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock Data
-  const products = [
-    {
-      id: '2',
-      name: 'Mechanical Keyboard - RGB Backlit',
-      price: '₱2,499',
-      stock: 0,
-      sales: 12,
-      image: 'https://via.placeholder.com/100',
-      status: 'Sold Out'
+  const fetchProducts = useCallback(async () => {
+    if (!userId) {
+      setError('User not found. Please login again.');
+      setLoading(false);
+      return;
     }
-  ];
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await AxiosInstance.get('/seller-products/', {
+        params: { customer_id: userId },
+        headers: { 'X-User-Id': userId || '' }
+      });
+
+      const apiProducts = response.data?.products || [];
+      const mapped: ProductItem[] = apiProducts.map((product: any) => {
+        const stock = Number(product.quantity || 0);
+        const status: ProductItem['status'] = stock <= 0 ? 'Sold Out' : 'Live';
+        return {
+          id: String(product.id),
+          name: product.name || 'Unnamed Product',
+          price: Number(product.price || 0),
+          stock,
+          sales: Number(product.sales || 0),
+          image: product.image || product.thumbnail || FALLBACK_IMAGE,
+          status
+        };
+      });
+
+      setProducts(mapped);
+    } catch (err: any) {
+      console.error('Failed to load products:', err);
+      setError(err?.response?.data?.message || 'Failed to load products.');
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchProducts();
+    }, [fetchProducts])
+  );
+
+  const filteredProducts = useMemo(() => {
+    return products.filter(p => {
+      const matchesTab = activeTab === 'All' || p.status === activeTab;
+      const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesTab && matchesSearch;
+    });
+  }, [products, activeTab, searchQuery]);
 
   const renderProductItem = ({ item }: any) => (
     <View style={styles.productCard}>
@@ -26,7 +85,7 @@ export default function MyProducts() {
         <Image source={{ uri: item.image }} style={styles.productImage} />
         <View style={styles.details}>
           <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
-          <Text style={styles.productPrice}>{item.price}</Text>
+          <Text style={styles.productPrice}>₱{item.price.toLocaleString()}</Text>
           <View style={styles.statsRow}>
             <Text style={styles.statsText}>Stock: {item.stock}</Text>
             <View style={styles.statDivider} />
@@ -93,15 +152,19 @@ export default function MyProducts() {
       </View>
 
       <FlatList
-        data={products.filter(p => activeTab === 'All' || p.status === activeTab)}
+        data={filteredProducts}
         keyExtractor={(item) => item.id}
         renderItem={renderProductItem}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons name="package-variant" size={60} color="#DDD" />
-            <Text style={styles.emptyText}>No products found</Text>
+            {loading ? (
+              <ActivityIndicator size="small" color="#EE4D2D" />
+            ) : (
+              <MaterialCommunityIcons name="package-variant" size={60} color="#DDD" />
+            )}
+            <Text style={styles.emptyText}>{loading ? 'Loading products...' : (error || 'No products found')}</Text>
           </View>
         }
       />

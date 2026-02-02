@@ -1,6 +1,6 @@
 // app/customer/components/customerLayout.tsx
 import React, { ReactNode } from 'react';
-import { View, StyleSheet, ScrollView, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, Platform, RefreshControlProps } from 'react-native';
 import CustomerHeader from './includes/customerHeader';
 import BottomTab from './includes/bottomTab';
 import { FilterModalProvider } from './includes/FilterModalContext';
@@ -8,9 +8,10 @@ import { FilterModalProvider } from './includes/FilterModalContext';
 interface CustomerLayoutProps {
   children: ReactNode;
   disableScroll?: boolean;
+  refreshControl?: React.ReactElement<RefreshControlProps> | null;
 }
 
-export default function CustomerLayout({ children, disableScroll = false }: CustomerLayoutProps) {
+export default function CustomerLayout({ children, disableScroll = false, refreshControl = null }: CustomerLayoutProps) {
   return (
     <FilterModalProvider>
       <View style={styles.container}>
@@ -22,7 +23,7 @@ export default function CustomerLayout({ children, disableScroll = false }: Cust
             <View style={{ height: Platform.OS === 'ios' ? 40 : 24, backgroundColor: '#F8F9FA' }} />
           </View>
         ) : (
-          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.content} showsVerticalScrollIndicator={false} refreshControl={refreshControl || undefined}>
             {children}
             {/* Bottom padding to prevent overlap with tab - reduced and colored to match page */}
             <View style={{ height: Platform.OS === 'ios' ? 40 : 24, backgroundColor: '#F8F9FA' }} />

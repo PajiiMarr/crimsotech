@@ -17,30 +17,39 @@ import { useLocalSearchParams, router } from 'expo-router';
 import RoleGuard from '../../guards/RoleGuard';
 import AxiosInstance from '../../../contexts/axios';
 import { useAuth } from '../../../contexts/AuthContext';
-import { useFilterModal, useFilterModalSafe } from './FilterModalContext';
+import { FilterModalProvider, useFilterModal, useFilterModalSafe } from './FilterModalContext';
 
 interface SearchBarProps {
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   onFocus?: () => void;
   onPressFilter?: () => void;
+  onPressSearch?: () => void;
+  disableInput?: boolean;
 }
 
-export function SearchBar({ searchQuery, setSearchQuery, onFocus, onPressFilter }: SearchBarProps) {
+export function SearchBar({ searchQuery, setSearchQuery, onFocus, onPressFilter, onPressSearch, disableInput }: SearchBarProps) {
   const modal = useFilterModalSafe();
 
   return (
     <View style={styles.searchContainer}>
-      <View style={styles.searchInputContainer}>
+      <TouchableOpacity
+        style={styles.searchInputContainer}
+        activeOpacity={0.7}
+        onPress={onPressSearch}
+      >
         <Ionicons name="search" size={20} color="#999" />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search products..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onFocus={onFocus}
-          returnKeyType="search"
-        />
+        <View style={styles.searchInputWrapper} pointerEvents={disableInput ? 'none' : 'auto'}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search products..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onFocus={onFocus}
+            editable={!disableInput}
+            returnKeyType="search"
+          />
+        </View>
         {searchQuery.length > 0 && (
           <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
             <Ionicons name="close-circle" size={20} color="#999" />
@@ -52,7 +61,7 @@ export function SearchBar({ searchQuery, setSearchQuery, onFocus, onPressFilter 
         >
           <MaterialIcons name="filter-list" size={20} color="#666" />
         </TouchableOpacity>
-      </View>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -197,32 +206,32 @@ export default function SearchPage() {
 
   return (
     <RoleGuard allowedRoles={["customer"]}>
-      <View style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
-        <SearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} onFocus={() => router.push('/customer/includes/search')} onPressFilter={() => openFilter()} />
+      <FilterModalProvider>
+        <View style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
+          <SearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} onFocus={() => router.push('/customer/includes/search')} onPressFilter={() => openFilter()} />
 
-
-
-        {/* Results */}
-        <View style={styles.resultsContainer}>
-          {filteredProducts.length > 0 ? (
-            <FlatList
-              data={filteredProducts}
-              renderItem={({ item }) => (
-                <CompactProductCard product={item} onPress={() => router.push({ pathname: '/customer/view-product', params: { productId: item.id } })} />
-              )}
-              keyExtractor={(item) => item.id}
-              numColumns={2}
-              columnWrapperStyle={styles.productGrid}
-              contentContainerStyle={styles.productGridContent}
-            />
-          ) : (
-            <View style={styles.emptyContainer}>
-              <MaterialIcons name="inventory" size={48} color="#E0E0E0" />
-              <Text style={styles.emptyText}>No products match your filters</Text>
-            </View>
-          )}
+          {/* Results */}
+          <View style={styles.resultsContainer}>
+            {filteredProducts.length > 0 ? (
+              <FlatList
+                data={filteredProducts}
+                renderItem={({ item }) => (
+                  <CompactProductCard product={item} onPress={() => router.push({ pathname: '/customer/view-product', params: { productId: item.id } })} />
+                )}
+                keyExtractor={(item) => item.id}
+                numColumns={2}
+                columnWrapperStyle={styles.productGrid}
+                contentContainerStyle={styles.productGridContent}
+              />
+            ) : (
+              <View style={styles.emptyContainer}>
+                <MaterialIcons name="inventory" size={48} color="#E0E0E0" />
+                <Text style={styles.emptyText}>No products match your filters</Text>
+              </View>
+            )}
+          </View>
         </View>
-      </View>
+      </FilterModalProvider>
     </RoleGuard>
   );
 }
@@ -230,7 +239,8 @@ export default function SearchPage() {
 const styles = StyleSheet.create({
   searchContainer: { paddingHorizontal: 3, paddingVertical: 12, backgroundColor: '#fff' },
   searchInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F5F5', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
-  searchInput: { flex: 1, fontSize: 16, color: '#333', padding: 0 },
+  searchInputWrapper: { flex: 1 },
+  searchInput: { fontSize: 16, color: '#333', padding: 0 },
   clearButton: { padding: 4 },
   filterButton: { marginLeft: 8, padding: 4 },
 

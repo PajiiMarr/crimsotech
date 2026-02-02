@@ -279,7 +279,9 @@ useEffect(() => {
   if (loading) {
     return (
       <RoleGuard allowedRoles={['customer']}>
-        <CustomerLayout>
+        <CustomerLayout refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#6366F1" />
             <Text style={styles.loadingText}>Loading products...</Text>
@@ -291,7 +293,9 @@ useEffect(() => {
 
   return (
     <RoleGuard allowedRoles={['customer']}>
-      <CustomerLayout>
+      <CustomerLayout refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }>
         {/* Categories */}
         <View style={styles.categoriesSection}>
           <Text style={styles.sectionTitle}>Categories</Text>

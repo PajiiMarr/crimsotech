@@ -1,10 +1,48 @@
 // app/seller/dashboard.tsx
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
 import { Package, Gift, ShoppingCart, MapPin, Store, Tag, TrendingUp, Wallet, Eye } from 'lucide-react-native';
 import { router, Stack } from 'expo-router';
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
+
+type DashboardStats = {
+  balance: number;
+  orders: number;
+  views: number;
+};
 
 export default function Dashboard() {
+  const { userId, shopId } = useAuth();
+  const [stats, setStats] = useState<DashboardStats>({ balance: 0, orders: 0, views: 0 });
+
+  useEffect(() => {
+    const fetchDashboard = async () => {
+      if (!shopId) return;
+      try {
+        const response = await AxiosInstance.get('/seller-dashboard/get_dashboard/', {
+          params: { shop_id: shopId },
+          headers: {
+            'X-User-Id': userId || '',
+            'X-Shop-Id': shopId || '',
+          }
+        });
+
+        const summary = response.data?.summary || {};
+        const shopPerformance = response.data?.shop_performance || {};
+
+        setStats({
+          balance: Number(summary.period_sales || 0),
+          orders: Number(summary.period_orders || 0),
+          views: Number(shopPerformance.total_followers || 0)
+        });
+      } catch (err) {
+        console.error('Failed to load dashboard stats:', err);
+      }
+    };
+
+    fetchDashboard();
+  }, [shopId, userId]);
   const dashboardItems = [
     { title: 'Product List', Icon: Package, route: '/seller/product-list', color: '#E0F2FE' },
     { title: 'Orders', Icon: ShoppingCart, route: '/seller/orders', badge: 2, color: '#FEF3C7' },
@@ -29,18 +67,18 @@ export default function Dashboard() {
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
             <Wallet size={16} color="#7C3AED" />
-            <Text style={styles.statVal}>₱12,450</Text>
+            <Text style={styles.statVal}>₱{stats.balance.toLocaleString()}</Text>
             <Text style={styles.statLab}>Balance</Text>
           </View>
           <View style={styles.statBox}>
             <TrendingUp size={16} color="#10B981" />
-            <Text style={styles.statVal}>24</Text>
+            <Text style={styles.statVal}>{stats.orders}</Text>
             <Text style={styles.statLab}>Orders</Text>
           </View>
           <View style={styles.statBox}>
             <Eye size={16} color="#0EA5E9" />
-            <Text style={styles.statVal}>1.2k</Text>
-            <Text style={styles.statLab}>Views</Text>
+            <Text style={styles.statVal}>{stats.views}</Text>
+            <Text style={styles.statLab}>Followers</Text>
           </View>
         </View>
 

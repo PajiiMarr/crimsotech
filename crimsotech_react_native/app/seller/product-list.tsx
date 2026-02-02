@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { 
   SafeAreaView, 
   View, 
@@ -8,31 +8,51 @@ import {
   Image, 
   TouchableOpacity, 
   Dimensions,
-  TextInput
+  TextInput,
+  ActivityIndicator
 } from 'react-native';
-import { router, Stack } from 'expo-router';
+import { router, Stack, useFocusEffect } from 'expo-router';
 import { Search, Plus, Edit3, X, Eye, Package, AlertCircle } from 'lucide-react-native';
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const { width } = Dimensions.get('window');
 const GAP = 12;
 const PADDING = 16;
 const CARD_WIDTH = (width - (PADDING * 2) - GAP) / 2;
 
-const TECH_INVENTORY = [
-  { id: '1', title: 'MacBook Air M2 (8GB/256GB)', price: 48500, stock: 1, status: 'ACTIVE', sales: 0, image: 'https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?auto=format&fit=crop&w=400&q=80' },
-  { id: '2', title: 'Keychron K2 Mechanical Keyboard', price: 3200, stock: 5, status: 'LOW STOCK', sales: 12, image: 'https://images.unsplash.com/photo-1595225476474-87563907a212?auto=format&fit=crop&w=400&q=80' },
-  { id: '3', title: 'Sony WH-1000XM4 (Used)', price: 12500, stock: 0, status: 'OUT OF STOCK', sales: 3, image: 'https://images.unsplash.com/photo-1613040809024-b4ef7ba99bc3?auto=format&fit=crop&w=400&q=80' },
-  { id: '4', title: '27" LG 4K Monitor', price: 15900, stock: 2, status: 'ACTIVE', sales: 1, image: 'https://images.unsplash.com/photo-1527443224154-c4a3942d3acf?auto=format&fit=crop&w=400&q=80' },
-  { id: '5', title: 'Logitech MX Master 3S', price: 4200, stock: 8, status: 'ACTIVE', sales: 25, image: 'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?auto=format&fit=crop&w=400&q=80' },
-  { id: '6', title: 'iPhone 13 Pro 128GB Gold', price: 31000, stock: 1, status: 'ACTIVE', sales: 0, image: 'https://images.unsplash.com/photo-1632661674596-df8be070a5c5?auto=format&fit=crop&w=400&q=80' },
-];
+const FALLBACK_IMAGE = 'https://via.placeholder.com/400x300?text=No+Image';
+
+const buildImageUrl = (url?: string | null) => {
+  if (!url) return FALLBACK_IMAGE;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  const base = (AxiosInstance.defaults.baseURL || '').replace(/\/$/, '');
+  if (!base) return url;
+  if (url.startsWith('/')) return `${base}${url}`;
+  return `${base}/${url}`;
+};
+
+type ProductItem = {
+  id: string;
+  title: string;
+  price: number;
+  stock: number;
+  status: 'ACTIVE' | 'LOW STOCK' | 'OUT OF STOCK';
+  sales: number;
+  image: string;
+};
 
 export default function PersonalListingPage() {
+  const { userId, shopId } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
+  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const filteredProducts = TECH_INVENTORY.filter(item => 
-    item.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredProducts = useMemo(() => {
+    return products.filter(item => item.title.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [products, searchQuery]);
 
   const getStatusStyle = (status: string) => {
     switch (status) {
@@ -43,10 +63,76 @@ export default function PersonalListingPage() {
     }
   };
 
-  const renderProduct = ({ item }: { item: typeof TECH_INVENTORY[0] }) => {
+  const fetchProducts = useCallback(async () => {
+    if (!userId) {
+      setError('User not found. Please login again.');
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    try {
+      setError(null);
+      if (!refreshing) setLoading(true);
+
+      const response = await AxiosInstance.get('/seller-products/', {
+        params: { customer_id: userId },
+        headers: {
+          'X-User-Id': userId || '',
+          'X-Shop-Id': shopId || ''
+        }
+      });
+
+      const apiProducts = response.data?.products || [];
+      const mapped: ProductItem[] = apiProducts.map((product: any) => {
+        const stock = Number(product.quantity || 0);
+        let status: ProductItem['status'] = 'ACTIVE';
+        if (stock <= 0) status = 'OUT OF STOCK';
+        else if (stock <= 2) status = 'LOW STOCK';
+
+        const primaryUrl = product.primary_image?.url;
+        const mediaUrl = Array.isArray(product.media_files) && product.media_files.length > 0
+          ? (product.media_files[0].file_url || product.media_files[0].file_data)
+          : undefined;
+
+        return {
+          id: String(product.id),
+          title: product.name || 'Unnamed Product',
+          price: Number(product.price || 0),
+          stock,
+          status,
+          sales: Number(product.sales || 0),
+          image: buildImageUrl(primaryUrl || mediaUrl || product.image || product.thumbnail || product.image_url)
+        };
+      });
+
+      setProducts(mapped);
+    } catch (err: any) {
+      console.error('Failed to load seller products:', err);
+      setError(err?.response?.data?.message || 'Failed to load products.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [userId, refreshing]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchProducts();
+    }, [fetchProducts])
+  );
+
+  const renderProduct = ({ item }: { item: ProductItem }) => {
     const statusStyle = getStatusStyle(item.status);
     return (
-      <TouchableOpacity style={styles.card} activeOpacity={0.9}>
+      <TouchableOpacity 
+        style={styles.card} 
+        activeOpacity={0.9}
+        onPress={() => router.push({
+          pathname: '/customer/view-product',
+          params: { productId: item.id, source: 'seller', userId: userId || '' }
+        })}
+      >
         <View style={styles.imageContainer}>
           <Image source={{ uri: item.image }} style={[styles.image, item.stock === 0 && styles.imageDimmed]} />
           <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
@@ -117,17 +203,26 @@ export default function PersonalListingPage() {
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <AlertCircle size={48} color="#CBD5E1" />
-            <Text style={styles.emptyText}>No products found</Text>
+            {loading ? (
+              <>
+                <ActivityIndicator size="small" color="#0F172A" />
+                <Text style={styles.emptyText}>Loading products...</Text>
+              </>
+            ) : (
+              <>
+                <AlertCircle size={48} color="#CBD5E1" />
+                <Text style={styles.emptyText}>{error || 'No products found'}</Text>
+              </>
+            )}
           </View>
         }
       />
 
-      {/* FAB BUTTON */}
+            {/* ADD THIS FAB BUTTON AT THE END, JUST BEFORE THE CLOSING SafeAreaView */}
       <TouchableOpacity 
         style={styles.fab} 
         activeOpacity={0.8}
-        onPress={() => router.push('./createproducts')}
+        onPress={() => router.push('/customer/create/add-selling-product-form')}
       >
         <Plus color="#fff" size={28} />
       </TouchableOpacity>
@@ -197,6 +292,7 @@ const styles = StyleSheet.create({
     borderRadius: 15, 
     justifyContent: 'center', 
     alignItems: 'center',
+    backdropFilter: 'blur(4px)'
   },
 
   details: { padding: 12 },

@@ -13,9 +13,10 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
+import AxiosInstance from '../../contexts/axios';
 
 export default function AccountProfilePage() {
-  const { userRole } = useAuth();
+  const { user, userRole } = useAuth();
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState({
@@ -27,20 +28,39 @@ export default function AccountProfilePage() {
 
   useEffect(() => {
     const loadProfile = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
-      // Simulating data mapping from your User model
-      const mockUser = {
-        first_name: 'Nesty', middle_name: '', last_name: 'Omongos',
-        email: 'nesty@example.com', contact_number: '9651429505',
-        date_of_birth: '1998-10-21', sex: 'Male',
-        street: 'Hawaii Drive', barangay: 'Lepeng',
-        city: 'Zamboanga City', province: 'Zamboanga Del Sur', zip_code: '7000',
-      };
-      setFormData(mockUser);
-      setLoading(false);
+      try {
+        const response = await AxiosInstance.get('/profile/', {
+          headers: { 'X-User-Id': String(user.id) },
+        });
+        const userProfile = response.data?.profile?.user || response.data?.user || response.data || {};
+        setFormData({
+          first_name: userProfile.first_name || '',
+          middle_name: userProfile.middle_name || '',
+          last_name: userProfile.last_name || '',
+          email: userProfile.email || '',
+          contact_number: userProfile.contact_number || '',
+          date_of_birth: userProfile.date_of_birth || '',
+          sex: userProfile.sex || '',
+          street: userProfile.street || '',
+          barangay: userProfile.barangay || '',
+          city: userProfile.city || '',
+          province: userProfile.province || '',
+          zip_code: userProfile.zip_code || '',
+        });
+      } catch (error) {
+        console.error('Error loading profile:', error);
+      } finally {
+        setLoading(false);
+      }
     };
     loadProfile();
-  }, []);
+  }, [user?.id]);
 
   const ProfileRow = ({ label, value, field }: any) => (
     <View style={styles.row}>
@@ -66,7 +86,7 @@ export default function AccountProfilePage() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Profile</Text>
         <TouchableOpacity onPress={() => setIsEditing(!isEditing)}>
-          <Text style={styles.editBtn}>{isEditing ? "Save" : "Edit"}</Text>
+          <Text style={styles.editBtn}>{isEditing ? "Done" : "Edit"}</Text>
         </TouchableOpacity>
       </View>
 

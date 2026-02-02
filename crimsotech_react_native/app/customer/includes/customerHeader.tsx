@@ -14,7 +14,12 @@ export default function CustomerHeader() {
         <View style={styles.topBar}>
           {/* ================= SEARCH BAR ================= */}
           <View style={styles.searchWrapper}>
-            <SearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} onFocus={() => router.push('/customer/includes/search')} />
+            <SearchBar 
+              searchQuery={searchQuery} 
+              setSearchQuery={setSearchQuery} 
+              onPressSearch={() => router.push('/customer/includes/search')}
+              disableInput
+            />
           </View>
 
           {/* ================= ICONS ================= */}
