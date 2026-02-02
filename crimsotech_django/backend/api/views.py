@@ -56,7 +56,20 @@ import json
 
 # Initialize classifier once (Django will cache this)
 MODEL_PATH = os.path.join('model', 'electronics_classifier3.keras')
-classifier = ElectronicsClassifier(MODEL_PATH)
+
+# Remove this line:
+# classifier = ElectronicsClassifier(MODEL_PATH)
+
+# Add lazy loading instead:
+_classifier = None
+
+def get_classifier():
+    """Lazy load the classifier only when needed"""
+    global _classifier
+    if _classifier is None:
+        _classifier = ElectronicsClassifier(MODEL_PATH)
+    return _classifier
+
 
 @csrf_exempt
 def predict_image(request):
@@ -72,6 +85,9 @@ def predict_image(request):
         file_path = os.path.join('temp_uploads', filename)
         
         try:
+            # Get classifier lazily (won't load until first request)
+            classifier = get_classifier()
+            
             # Make prediction
             result = classifier.predict(file_path)
             
@@ -97,12 +113,13 @@ def predict_image(request):
         'error': 'No image provided'
     }, status=400)
 
+
 def get_classes(request):
     """API endpoint to get available classes"""
+    classifier = get_classifier()
     return JsonResponse({
         'classes': classifier.class_names
     })
-
 
 
 class Landing(viewsets.ViewSet):
