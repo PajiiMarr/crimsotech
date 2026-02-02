@@ -3,9 +3,11 @@ set -ex
 
 echo ">>> entrypoint: starting (pid $$)"
 
-# Test Django can start
-echo ">>> entrypoint: testing Django"
-python manage.py check --deploy
+echo ">>> seeding data"
+python manage.py seed_data
+
+echo ">>> migrating tables..."
+python manage.py migrate --noinput
 
 # Collect static files
 echo ">>> entrypoint: collecting static files"
