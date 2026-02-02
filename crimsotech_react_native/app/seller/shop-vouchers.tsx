@@ -1,53 +1,23 @@
 import React, { useState } from 'react';
 import { 
   SafeAreaView, View, Text, StyleSheet, FlatList, 
-  TouchableOpacity, Modal, TextInput, ScrollView, Dimensions 
+  TouchableOpacity, Dimensions 
 } from 'react-native';
-import { Stack } from 'expo-router';
-import { Plus, Calendar, Users, Tag, X, Info } from 'lucide-react-native';
+import { Stack, useRouter } from 'expo-router'; // 1. Import useRouter
+import { Plus, Users, Tag, Info } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 44) / 2;
 
 const INITIAL_VOUCHERS = [
-  { 
-    id: '1', 
-    code: 'NEWTECH2026', 
-    type: 'FIXED', 
-    value: 500, 
-    minSpend: 5000, 
-    usageLimit: 100, 
-    used: 45, 
-    expiry: 'Feb 28, 2026',
-    status: 'ACTIVE'
-  },
-  { 
-    id: '2', 
-    code: 'REUSED10', 
-    type: 'PERCENTAGE', 
-    value: 10, 
-    minSpend: 1000, 
-    usageLimit: 50, 
-    used: 50, 
-    expiry: 'Expired',
-    status: 'EXPIRED'
-  },
-  { 
-    id: '3', 
-    code: 'LAPTOPOFF', 
-    type: 'FIXED', 
-    value: 1500, 
-    minSpend: 25000, 
-    usageLimit: 20, 
-    used: 2, 
-    expiry: 'Jun 01, 2026',
-    status: 'ACTIVE'
-  },
+  { id: '1', code: 'NEWTECH2026', type: 'FIXED', value: 500, minSpend: 5000, usageLimit: 100, used: 45, expiry: 'Feb 28, 2026', status: 'ACTIVE' },
+  { id: '2', code: 'REUSED10', type: 'PERCENTAGE', value: 10, minSpend: 1000, usageLimit: 50, used: 50, expiry: 'Expired', status: 'EXPIRED' },
+  { id: '3', code: 'LAPTOPOFF', type: 'FIXED', value: 1500, minSpend: 25000, usageLimit: 20, used: 2, expiry: 'Jun 01, 2026', status: 'ACTIVE' },
 ];
 
 export default function ShopVoucherPage() {
+  const router = useRouter(); // 2. Initialize router
   const [vouchers] = useState(INITIAL_VOUCHERS);
-  const [modalVisible, setModalVisible] = useState(false);
 
   const renderVoucher = ({ item }: { item: typeof INITIAL_VOUCHERS[0] }) => {
     const isExpired = item.status === 'EXPIRED' || item.used >= item.usageLimit;
@@ -58,7 +28,6 @@ export default function ShopVoucherPage() {
         style={[styles.voucherCard, isExpired && styles.expiredCard]} 
         activeOpacity={0.9}
       >
-        {/* TOP SECTION - MONOCHROME */}
         <View style={[styles.cardTop, isExpired ? styles.expiredBg : styles.activeBg]}>
           <Text style={[styles.discountValue, isExpired && styles.expiredTextMain]}>
             {item.type === 'FIXED' ? `₱${item.value}` : `${item.value}%`}
@@ -66,14 +35,12 @@ export default function ShopVoucherPage() {
           <Text style={[styles.discountLabel, isExpired && styles.expiredTextMain]}>DISCOUNT</Text>
         </View>
 
-        {/* TICKET DIVIDER */}
         <View style={styles.dividerContainer}>
           <View style={styles.leftCutout} />
           <View style={styles.dashedLine} />
           <View style={styles.rightCutout} />
         </View>
 
-        {/* BOTTOM SECTION */}
         <View style={styles.cardBottom}>
           <View style={styles.codeRow}>
             <Tag size={12} color={isExpired ? "#94A3B8" : "#0F172A"} />
@@ -118,7 +85,12 @@ export default function ShopVoucherPage() {
           <Info size={16} color="#64748B" />
           <Text style={styles.infoText}>Active vouchers are shown at checkout.</Text>
         </View>
-        <TouchableOpacity style={styles.createBtn} onPress={() => setModalVisible(true)}>
+        
+        {/* 3. Navigation Action */}
+        <TouchableOpacity 
+          style={styles.createBtn} 
+          onPress={() => router.push('/seller/create-shop-vouchers')}
+        >
           <Plus color="#fff" size={18} />
           <Text style={styles.createBtnText}>Create New</Text>
         </TouchableOpacity>
@@ -133,54 +105,6 @@ export default function ShopVoucherPage() {
         columnWrapperStyle={styles.columnWrapper}
         showsVerticalScrollIndicator={false}
       />
-
-      {/* CREATE MODAL */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>New Voucher</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <X color="#0F172A" size={24} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.label}>Voucher Code</Text>
-              <TextInput 
-                style={styles.input} 
-                placeholder="e.g. TECHPOWER500" 
-                autoCapitalize="characters" 
-                placeholderTextColor="#94A3B8"
-              />
-
-              <View style={styles.inputGrid}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Value</Text>
-                  <TextInput style={styles.input} placeholder="500" keyboardType="numeric" placeholderTextColor="#94A3B8" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Min. Spend</Text>
-                  <TextInput style={styles.input} placeholder="1000" keyboardType="numeric" placeholderTextColor="#94A3B8" />
-                </View>
-              </View>
-
-              <Text style={styles.label}>Usage Limit</Text>
-              <TextInput style={styles.input} placeholder="Number of claims allowed" keyboardType="numeric" placeholderTextColor="#94A3B8" />
-
-              <Text style={styles.label}>Expiration</Text>
-              <TouchableOpacity style={styles.dateSelector}>
-                <Calendar size={18} color="#0F172A" />
-                <Text style={styles.datePlaceholder}>Select Expiry Date</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.publishBtn} onPress={() => setModalVisible(false)}>
-                <Text style={styles.publishBtnText}>Publish Voucher</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -211,7 +135,7 @@ const styles = StyleSheet.create({
   },
   expiredCard: { opacity: 0.6 },
   cardTop: { paddingVertical: 18, alignItems: 'center' },
-  activeBg: { backgroundColor: '#F8FAFC' }, // Light neutral instead of purple
+  activeBg: { backgroundColor: '#F8FAFC' },
   expiredBg: { backgroundColor: '#F1F5F9' },
   discountValue: { fontSize: 24, fontWeight: '900', color: '#0F172A' },
   discountLabel: { fontSize: 10, fontWeight: '800', color: '#64748B', letterSpacing: 1 },
@@ -234,16 +158,4 @@ const styles = StyleSheet.create({
   usageRow: { flexDirection: 'row', alignItems: 'center' },
   usageText: { fontSize: 10, color: '#64748B', marginLeft: 4, fontWeight: '700' },
   expiryText: { fontSize: 10, color: '#94A3B8', marginLeft: 4 },
-
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, maxHeight: '85%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  modalTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A' },
-  label: { fontSize: 11, fontWeight: '800', color: '#94A3B8', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 },
-  input: { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, fontSize: 14, color: '#0F172A', marginBottom: 16, fontWeight: '600' },
-  inputGrid: { flexDirection: 'row', gap: 12 },
-  dateSelector: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 16, padding: 16, marginBottom: 24 },
-  datePlaceholder: { marginLeft: 10, color: '#0F172A', fontWeight: '600' },
-  publishBtn: { backgroundColor: '#0F172A', height: 60, borderRadius: 18, justifyContent: 'center', alignItems: 'center', elevation: 4, shadowColor: '#0F172A', shadowOpacity: 0.2 },
-  publishBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' }
 });
