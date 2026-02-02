@@ -33,6 +33,7 @@ ALLOWED_HOSTS = [
     "192.168.254.105",   # your PC LAN IP for mobile
     ".ngrok-free.app",
     "10.55.244.79",
+    ".ondigitalocean.app",
 ]
 
 # Application definition
