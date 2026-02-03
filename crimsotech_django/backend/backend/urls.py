@@ -80,11 +80,6 @@ urlpatterns = [
     path('api/shops/<uuid:shop_id>/', ViewShopAPIView.as_view(), name='view-shop'),
     path('api/profile/', ProfileView.as_view(), name='profile'),
 
-    
-  
-
-    
-
     # GET all items (no item_id in URL)
     path('api/view-cart/', CartListView.as_view(), name='view-cart'),
     

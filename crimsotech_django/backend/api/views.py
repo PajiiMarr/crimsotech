@@ -1,7 +1,6 @@
 from asyncio.log import logger
 from email import parser
 from django.http import JsonResponse
-import json
 import re
 import time
 from django.utils.text import slugify
@@ -25,7 +24,6 @@ from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 from django.contrib.auth.hashers import check_password
 import hashlib
-import os
 from django.db.models import Count, Avg, Sum, Q, F, Case, When, Value, Exists, OuterRef
 from datetime import datetime, time, timedelta
 from django.utils import timezone
@@ -47,8 +45,6 @@ from .models import (
 )
 
 # views.py
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.core.files.storage import FileSystemStorage
 import os
 from .utils.model_handler import ElectronicsClassifier
@@ -151,18 +147,13 @@ class Landing(viewsets.ViewSet):
             )
             avg_rating = avg_rating_result['avg_rating'] if avg_rating_result['avg_rating'] else 4.8
             
-            # 2. CATEGORIES (strictly respects model relationships)
-            categories_with_products = Category.objects.filter(
-                products__upload_status='published',
-                products__is_removed=False
-            ).annotate(
+            # Show all categories, even without products
+            categories_with_products = Category.objects.annotate(
                 product_count=Count('products', filter=Q(
                     products__upload_status='published',
                     products__is_removed=False
                 ))
-            ).filter(
-                product_count__gt=0
-            ).distinct().order_by('-product_count')[:10]
+            ).order_by('-product_count')[:10]
             
             # 3. FEATURED PRODUCTS (respects all model constraints)
             # Featured products (include all published products regardless of stock;

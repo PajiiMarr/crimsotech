@@ -23,8 +23,7 @@ if local_env.exists():
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = env.str('SECRET_KEY', default='unsafe-dev-key')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = env.bool('DEBUG', default=False)  # ✅ Read from environment
 
 ALLOWED_HOSTS = [
     "localhost",
