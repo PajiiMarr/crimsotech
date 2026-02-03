@@ -32,6 +32,7 @@ ALLOWED_HOSTS = [
     "192.168.254.105",   # your PC LAN IP for mobile
     ".ngrok-free.app",
     "10.55.244.79",
+    "192.168.1.21",
     ".ondigitalocean.app",
 ]
 
@@ -101,31 +102,31 @@ TEMPLATES = [
 WSGI_APPLICATION = 'backend.wsgi.application'
 
 # Database configuration following the Medium article pattern
-db_url = env.str("DATABASE_URL", default="")
-if db_url:
-    # Parse database URL with SSL requirements for Supabase/cloud databases
-    db_config = dj_database_url.parse(db_url, conn_max_age=600)
-    # Add SSL requirement if using Supabase or other cloud providers
-    if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
-        db_config["OPTIONS"] = {
-            "sslmode": "require",
-        }
-    DATABASES = {
-        "default": db_config,
-    }
-else:
+#db_url = env.str("DATABASE_URL", default="")
+#if db_url:
+#    # Parse database URL with SSL requirements for Supabase/cloud databases
+#    db_config = dj_database_url.parse(db_url, conn_max_age=600)
+#    # Add SSL requirement if using Supabase or other cloud providers
+#    if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
+#        db_config["OPTIONS"] = {
+#            "sslmode": "require",
+#        }
+#    DATABASES = {
+#        "default": db_config,
+#    }
+#else:
     # Fallback to individual environment variables (for local development)
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": env.str("POSTGRES_DB", default=""),
-            "USER": env.str("POSTGRES_USER", default=""),
-            "PASSWORD": env.str("POSTGRES_PASSWORD", default=""),
-            "HOST": env.str("POSTGRES_HOST", default="127.0.0.1"),
-            "PORT": env.str("POSTGRES_PORT", default="5432"),
-            "CONN_MAX_AGE": 600,  # Connection pooling
-        }
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "crimsotech_database",
+        "USER": "postgres",
+        "PASSWORD": " ",
+        "HOST": "127.0.0.1",
+        "PORT": "5432",
+        "CONN_MAX_AGE": 600,  # Connection pooling
     }
+}
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

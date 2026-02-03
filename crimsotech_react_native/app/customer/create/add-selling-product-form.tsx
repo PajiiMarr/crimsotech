@@ -17,6 +17,9 @@ import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
 
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import AxiosInstance from '../../../contexts/axios';
+import { useAuth } from '../../../contexts/AuthContext';
 
 interface Category {
   id: string;
@@ -63,6 +66,7 @@ interface PredictionCategory {
   category_id: number;
   category_name: string;
   confidence: number;
+  category_uuid?: string | null;
 }
 
 interface PredictionResult {
@@ -74,6 +78,8 @@ interface PredictionResult {
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function CreateProductFormMobile() {
+  const router = useRouter();
+  const { userId, shopId } = useAuth();
   const generateId = () => Math.random().toString(36).substring(2) + Date.now().toString(36);
 
   // Form state
@@ -105,12 +111,32 @@ export default function CreateProductFormMobile() {
   
   const [skuCombinations, setSkuCombinations] = useState<SKUCombination[]>([]);
   
-  // Mock categories - replace with actual data
-  const globalCategories: Category[] = [
-    { id: '1', name: 'Electronics' },
-    { id: '2', name: 'Clothing' },
-    { id: '3', name: 'Home & Garden' },
-  ];
+  const [globalCategories, setGlobalCategories] = useState<Category[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const response = await AxiosInstance.get('/seller-products/global-categories/', {
+          headers: {
+            'X-User-Id': userId || '',
+            'X-Shop-Id': shopId || ''
+          }
+        });
+
+        const categories = response.data?.categories || [];
+        const mapped = categories.map((c: any) => ({
+          id: String(c.id || c.uuid),
+          name: c.name
+        }));
+        setGlobalCategories(mapped);
+      } catch (err) {
+        console.error('Failed to load categories:', err);
+      }
+    };
+
+    fetchCategories();
+  }, [userId, shopId]);
 
   // Check if prediction fields are valid
   const arePredictionFieldsValid = useCallback(() => {
@@ -246,32 +272,171 @@ export default function CreateProductFormMobile() {
     generateSkuCombinations();
   }, [variantGroups, generateSkuCombinations]);
 
-  const handleManualPredict = () => {
-    if (arePredictionFieldsValid() && !isPredicting) {
-      setIsPredicting(true);
-      setShowPrediction(true);
-      
-      // Simulate API call
-      setTimeout(() => {
+  const handleManualPredict = async () => {
+    if (!arePredictionFieldsValid() || isPredicting) return;
+
+    setIsPredicting(true);
+    setShowPrediction(true);
+
+    try {
+      const response = await AxiosInstance.post(
+        '/seller-products/global-categories/predict/',
+        {
+          name: productName,
+          description: productDescription,
+          quantity: parseInt(productQuantity, 10) || 0,
+          price: parseFloat(productPrice) || 0,
+          condition: productCondition,
+        },
+        {
+          headers: {
+            'X-User-Id': userId || '',
+            'X-Shop-Id': shopId || ''
+          }
+        }
+      );
+
+      const data = response.data;
+      if (data?.success && data?.predicted_category) {
         setPredictionResult({
           success: true,
           predicted_category: {
-            category_id: 1,
-            category_name: 'Electronics',
-            confidence: 0.95,
+            category_id: data.predicted_category.category_id,
+            category_name: data.predicted_category.category_name,
+            confidence: data.predicted_category.confidence,
+            category_uuid: data.predicted_category.category_uuid || null,
           },
-          alternative_categories: [
-            { category_id: 2, category_name: 'Clothing', confidence: 0.03 },
-          ],
+          alternative_categories: (data.alternative_categories || []).map((c: any) => ({
+            category_id: c.category_id,
+            category_name: c.category_name,
+            confidence: c.confidence,
+            category_uuid: c.category_uuid || null,
+          }))
         });
-        setSelectedCategoryId('1');
-        setIsPredicting(false);
-      }, 2000);
+
+        const suggestedId = data.predicted_category.category_uuid || String(data.predicted_category.category_id);
+        if (suggestedId) setSelectedCategoryId(suggestedId);
+
+        if (Array.isArray(data.all_categories)) {
+          setGlobalCategories(data.all_categories.map((c: any) => ({
+            id: String(c.id || c.uuid),
+            name: c.name
+          })));
+        }
+      } else {
+        Alert.alert('Prediction failed', 'Unable to predict category.');
+      }
+    } catch (err: any) {
+      console.error('Prediction error:', err);
+      Alert.alert('Prediction failed', err?.response?.data?.error || 'Unable to predict category.');
+    } finally {
+      setIsPredicting(false);
     }
   };
 
-  const handleSubmit = () => {
-    Alert.alert('Success', 'Product created successfully!');
+  const handleSubmit = async () => {
+    if (!userId || !shopId) {
+      Alert.alert('Error', 'Shop not found. Please select a shop.');
+      return;
+    }
+    if (!productName || !productDescription || !productQuantity || !productPrice || !productCondition) {
+      Alert.alert('Error', 'Please fill in all required fields.');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const formData = new FormData();
+
+      formData.append('name', productName);
+      formData.append('description', productDescription);
+      formData.append('quantity', String(productQuantity));
+      formData.append('price', String(productPrice));
+      formData.append('condition', productCondition);
+      formData.append('shop', shopId);
+      formData.append('customer_id', userId);
+      formData.append('is_refundable', String(isRefundable));
+
+      if (selectedCategoryId && selectedCategoryId !== 'none') {
+        formData.append('category_admin_id', selectedCategoryId);
+      }
+
+      if (enableCriticalTrigger && criticalThreshold) {
+        formData.append('critical_stock', String(criticalThreshold));
+      }
+
+      if (productWeight) {
+        formData.append('weight', String(productWeight));
+        formData.append('weight_unit', String(productWeightUnit));
+      }
+      if (productLength) formData.append('length', String(productLength));
+      if (productWidth) formData.append('width', String(productWidth));
+      if (productHeight) formData.append('height', String(productHeight));
+
+      if (showVariants && variantGroups.length > 0) {
+        const variantsPayload = variantGroups.map(group => ({
+          id: group.id,
+          title: group.title,
+          options: group.options.map(opt => ({ id: opt.id, title: opt.title }))
+        }));
+        formData.append('variants', JSON.stringify(variantsPayload));
+      }
+
+      if (showVariants && skuCombinations.length > 0) {
+        const skusPayload = skuCombinations.map((sku) => ({
+          id: sku.id,
+          option_ids: sku.option_ids,
+          option_map: sku.option_map,
+          price: sku.price || productPrice,
+          compare_price: sku.compare_price || '',
+          quantity: sku.quantity || 0,
+          length: sku.length || '',
+          width: sku.width || '',
+          height: sku.height || '',
+          weight: sku.weight || '',
+          weight_unit: sku.weight_unit || productWeightUnit,
+          sku_code: sku.sku_code || '',
+          critical_trigger: sku.critical_trigger || '',
+          is_refundable: sku.is_refundable ?? isRefundable,
+        }));
+        formData.append('skus', JSON.stringify(skusPayload));
+      }
+
+      mainMedia.forEach((media, index) => {
+        const extension = media.type === 'video' ? 'mp4' : 'jpg';
+        formData.append('media_files', {
+          uri: media.uri,
+          name: `media_${index}.${extension}`,
+          type: media.type === 'video' ? 'video/mp4' : 'image/jpeg',
+        } as any);
+      });
+
+      skuCombinations.forEach((sku) => {
+        if (sku.imageUri) {
+          formData.append(`sku_image_${sku.id}`, {
+            uri: sku.imageUri,
+            name: `sku_${sku.id}.jpg`,
+            type: 'image/jpeg',
+          } as any);
+        }
+      });
+
+      await AxiosInstance.post('/seller-products/', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'X-User-Id': userId || '',
+          'X-Shop-Id': shopId || ''
+        }
+      });
+
+      Alert.alert('Success', 'Product created successfully!');
+      router.back();
+    } catch (err: any) {
+      console.error('Failed to create product:', err);
+      Alert.alert('Error', err?.response?.data?.error || 'Failed to create product.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -402,7 +567,7 @@ export default function CreateProductFormMobile() {
                 </View>
                 <TouchableOpacity
                   style={styles.selectButton}
-                  onPress={() => setSelectedCategoryId(predictionResult.predicted_category.category_id.toString())}
+                  onPress={() => setSelectedCategoryId((predictionResult.predicted_category.category_uuid || predictionResult.predicted_category.category_id.toString()))}
                 >
                   <Text style={styles.selectButtonText}>Select</Text>
                 </TouchableOpacity>
@@ -470,6 +635,23 @@ export default function CreateProductFormMobile() {
                 <Text style={styles.uploadText}>Add Media</Text>
               </TouchableOpacity>
             )}
+          </View>
+
+          {/* Category Selector */}
+          <View style={styles.categorySection}>
+            <Text style={styles.label}>Category *</Text>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={selectedCategoryId}
+                onValueChange={setSelectedCategoryId}
+                style={styles.picker}
+              >
+                <Picker.Item label="Select category" value="none" />
+                {globalCategories.map((category) => (
+                  <Picker.Item key={category.id} label={category.name} value={category.id} />
+                ))}
+              </Picker>
+            </View>
           </View>
         </View>
       </View>
@@ -989,8 +1171,8 @@ export default function CreateProductFormMobile() {
       )}
 
       {/* Submit Button */}
-      <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-        <Text style={styles.submitButtonText}>Create Product</Text>
+      <TouchableOpacity style={styles.submitButton} onPress={handleSubmit} disabled={isSubmitting}>
+        <Text style={styles.submitButtonText}>{isSubmitting ? 'Creating...' : 'Create Product'}</Text>
       </TouchableOpacity>
 
       <View style={styles.bottomSpacer} />
@@ -1206,6 +1388,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  categorySection: {
+    marginTop: 16,
   },
   mediaItem: {
     width: (SCREEN_WIDTH - 64) / 3,

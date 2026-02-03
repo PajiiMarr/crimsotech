@@ -339,7 +339,7 @@ export default function GiftingProductPage() {
       {/* FAB Button */}
       <TouchableOpacity 
         style={styles.fab} 
-        onPress={() => router.push('/customer/create/add-gift')}
+        onPress={() => router.push('/customer/create/add-gift-form')}
       >
         <Ionicons name="add" size={28} color="white" />
       </TouchableOpacity>

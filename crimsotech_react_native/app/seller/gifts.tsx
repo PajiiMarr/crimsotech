@@ -1,44 +1,127 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { 
   SafeAreaView, View, Text, StyleSheet, FlatList, Image, 
-  TouchableOpacity, Dimensions, TextInput, Modal, ScrollView 
+  TouchableOpacity, Dimensions, TextInput, Modal, ScrollView, ActivityIndicator
 } from 'react-native';
 import { Stack } from 'expo-router';
 import { Search, X, Plus, Package, DollarSign, Clock, CheckCircle2 } from 'lucide-react-native';
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 44) / 2;
 
-const INITIAL_GIFTS = [
-  { id: 'g1', title: 'Gaming Mouse Pad (XL)', originalPrice: 850, totalGifts: 10, claimed: 7, endsIn: '2 days', image: 'https://images.unsplash.com/photo-1615663245857-ac93bb7c39e7?w=400' },
-  { id: 'g2', title: 'USB-C Hub 4-in-1', originalPrice: 1200, totalGifts: 5, claimed: 5, endsIn: 'Ended', image: 'https://images.unsplash.com/photo-1625842268584-8f3bf9ffad32?w=400' },
-];
+const FALLBACK_IMAGE = 'https://via.placeholder.com/400x300?text=No+Image';
+
+type GiftItem = {
+  id: string;
+  title: string;
+  originalPrice: number;
+  totalGifts: number;
+  claimed: number;
+  endsIn: string;
+  image: string;
+};
 
 export default function SellerGiftPage() {
-  const [gifts, setGifts] = useState(INITIAL_GIFTS);
+  const { userId, shopId } = useAuth();
+  const [gifts, setGifts] = useState<GiftItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalVisible, setModalVisible] = useState(false);
   const [newGift, setNewGift] = useState({ title: '', price: '', qty: '', duration: '' });
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleAddGift = () => {
-    if (!newGift.title) return;
-    const item = {
-      id: Date.now().toString(),
-      title: newGift.title,
-      originalPrice: parseInt(newGift.price) || 0,
-      totalGifts: parseInt(newGift.qty) || 1,
-      claimed: 0,
-      endsIn: newGift.duration + ' days',
-      image: 'https://images.unsplash.com/photo-1513151233558-d860c5398176?w=400'
-    };
-    setGifts([item, ...gifts]);
-    setModalVisible(false);
-    setNewGift({ title: '', price: '', qty: '', duration: '' });
+  const fetchGifts = useCallback(async () => {
+    if (!userId) {
+      setError('User not found. Please login again.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await AxiosInstance.get('/seller-gift/', {
+        params: { customer_id: userId },
+        headers: {
+          'X-User-Id': userId || '',
+          'X-Shop-Id': shopId || '',
+        }
+      });
+
+      const apiGifts = response.data?.products || [];
+      const mapped: GiftItem[] = apiGifts.map((gift: any) => {
+        const quantity = Number(gift.quantity || 0);
+        return {
+          id: String(gift.id),
+          title: gift.name || 'Gift Item',
+          originalPrice: Number(gift.price || 0),
+          totalGifts: quantity,
+          claimed: 0,
+          endsIn: gift.updated_at ? 'Active' : 'Active',
+          image: gift.image || gift.thumbnail || FALLBACK_IMAGE
+        };
+      });
+
+      setGifts(mapped);
+    } catch (err: any) {
+      console.error('Failed to load gifts:', err);
+      setError(err?.response?.data?.message || 'Failed to load gifts.');
+    } finally {
+      setLoading(false);
+    }
+  }, [userId, shopId]);
+
+  useEffect(() => {
+    fetchGifts();
+  }, [fetchGifts]);
+
+  const handleAddGift = async () => {
+    if (!newGift.title || !userId || !shopId) return;
+
+    try {
+      setSubmitting(true);
+      await AxiosInstance.post(
+        '/seller-gift/',
+        {
+          name: newGift.title,
+          description: `Gift: ${newGift.title}`,
+          quantity: parseInt(newGift.qty, 10) || 1,
+          price: 0,
+          condition: 'new',
+          shop: shopId,
+          customer_id: userId,
+        },
+        {
+          headers: {
+            'X-User-Id': userId || '',
+            'X-Shop-Id': shopId || '',
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      setModalVisible(false);
+      setNewGift({ title: '', price: '', qty: '', duration: '' });
+      await fetchGifts();
+    } catch (err: any) {
+      console.error('Failed to create gift:', err);
+      setError(err?.response?.data?.error || 'Failed to create gift.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const renderGiftItem = ({ item }: { item: typeof INITIAL_GIFTS[0] }) => {
-    const isSoldOut = item.claimed >= item.totalGifts;
-    const progress = (item.claimed / item.totalGifts) * 100;
+  const filteredGifts = useMemo(() => {
+    return gifts.filter(g => g.title.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [gifts, searchQuery]);
+
+  const renderGiftItem = ({ item }: { item: GiftItem }) => {
+    const isSoldOut = item.totalGifts > 0 && item.claimed >= item.totalGifts;
+    const progress = item.totalGifts > 0 ? (item.claimed / item.totalGifts) * 100 : 0;
 
     return (
       <View style={styles.card}>
@@ -95,13 +178,25 @@ export default function SellerGiftPage() {
       </View>
 
       <FlatList
-        data={gifts.filter(g => g.title.toLowerCase().includes(searchQuery.toLowerCase()))}
+        data={filteredGifts}
         renderItem={renderGiftItem}
         keyExtractor={(item) => item.id}
         numColumns={2}
         contentContainerStyle={styles.listContent}
         columnWrapperStyle={styles.columnWrapper}
         showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            {loading ? (
+              <>
+                <ActivityIndicator size="small" color="#0F172A" />
+                <Text style={styles.emptyText}>Loading gifts...</Text>
+              </>
+            ) : (
+              <Text style={styles.emptyText}>{error || 'No gifts found'}</Text>
+            )}
+          </View>
+        }
       />
 
       <Modal visible={isModalVisible} animationType="slide" transparent={true}>
@@ -143,9 +238,11 @@ export default function SellerGiftPage() {
                 </View>
               </View>
 
-              <TouchableOpacity style={styles.submitBtn} onPress={handleAddGift}>
+              <TouchableOpacity style={styles.submitBtn} onPress={handleAddGift} disabled={submitting}>
                 <CheckCircle2 color="#fff" size={20} style={{marginRight: 8}} />
-                <Text style={styles.submitBtnText}>Start Giveaway</Text>
+                <Text style={styles.submitBtnText}>
+                  {submitting ? 'Starting...' : 'Start Giveaway'}
+                </Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -194,5 +291,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, height: 52, fontSize: 14, color: '#0F172A', fontWeight: '600' },
   gridInputs: { flexDirection: 'row', gap: 12 },
   submitBtn: { backgroundColor: '#0F172A', height: 60, borderRadius: 18, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10 },
-  submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' }
+  submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  emptyState: { padding: 32, alignItems: 'center' },
+  emptyText: { color: '#94A3B8', fontWeight: '600', marginTop: 8 }
 });

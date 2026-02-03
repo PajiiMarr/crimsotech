@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   SafeAreaView,
   View,
@@ -8,9 +8,12 @@ import {
   FlatList,
   StatusBar,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useAuth } from '../../contexts/AuthContext';
+import AxiosInstance from '../../contexts/axios';
 
 // --- Theme Colors ---
 const COLORS = {
@@ -25,58 +28,103 @@ const COLORS = {
   discountBg: '#FFF7ED',
 };
 
-// --- Mock Data ---
-const CUSTOMER_VOUCHERS = [
-  {
-    id: '1',
-    brand: 'Platform Wide',
-    title: '₱100 OFF Sitewide',
-    minSpend: 'Min. Spend ₱500',
-    expiry: 'Ending in: 2h 45m',
-    type: 'Discount',
-    status: 'active',
-    isUrgent: true,
-  },
-  {
-    id: '2',
-    brand: 'Free Shipping',
-    title: 'Free Shipping Special',
-    minSpend: 'Min. Spend ₱0',
-    expiry: 'Valid until 15 Feb 2025',
-    type: 'Shipping',
-    status: 'active',
-    isUrgent: false,
-  },
-  {
-    id: '3',
-    brand: 'Samsung Store',
-    title: '15% Off Smartphones',
-    minSpend: 'Min. Spend ₱10,000',
-    expiry: 'Valid until 01 Feb 2025',
-    type: 'Shop',
-    status: 'active',
-    isUrgent: false,
-  },
-];
+type VoucherStatus = 'active' | 'expired' | 'scheduled';
+
+type Voucher = {
+  id: string;
+  name: string;
+  code: string;
+  shopName?: string;
+  discount_type?: string;
+  value?: number;
+  valid_until?: string;
+  status?: VoucherStatus;
+};
 
 export default function MyVouchersPage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('Available');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [vouchers, setVouchers] = useState<Voucher[]>([]);
+  const [voucherCode, setVoucherCode] = useState('');
 
-  const renderVoucher = ({ item }: { item: typeof CUSTOMER_VOUCHERS[0] }) => {
+  useEffect(() => {
+    fetchVouchers();
+  }, [activeTab, user?.id]);
+
+  const fetchVouchers = async (searchText?: string) => {
+    try {
+      setLoading(true);
+      const statusParam = activeTab === 'Available' ? 'active' : activeTab === 'Expired' ? 'expired' : '';
+      const response = await AxiosInstance.get('/admin-vouchers/vouchers_list/', {
+        params: {
+          page: 1,
+          page_size: 50,
+          status: statusParam || undefined,
+          search: searchText || undefined,
+        },
+        headers: {
+          'X-User-Id': String(user?.id || ''),
+        },
+      });
+
+      const list = response.data?.vouchers || [];
+      setVouchers(list);
+    } catch (error) {
+      console.error('Error fetching vouchers:', error);
+      setVouchers([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onApplyCode = () => {
+    fetchVouchers(voucherCode.trim());
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchVouchers(voucherCode.trim());
+  };
+
+  const visibleVouchers = useMemo(() => {
+    if (activeTab === 'Used') return [];
+    if (activeTab === 'Available') return vouchers.filter((v) => v.status === 'active' || v.status === 'scheduled');
+    if (activeTab === 'Expired') return vouchers.filter((v) => v.status === 'expired');
+    return vouchers;
+  }, [activeTab, vouchers]);
+
+  const isUrgent = (validUntil?: string) => {
+    if (!validUntil) return false;
+    const expiry = new Date(validUntil).getTime();
+    return expiry - Date.now() <= 1000 * 60 * 60 * 24;
+  };
+
+  const formatExpiry = (validUntil?: string) => {
+    if (!validUntil) return 'No expiry date';
+    const date = new Date(validUntil).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    return `Valid until ${date}`;
+  };
+
+  const renderVoucher = ({ item }: { item: Voucher }) => {
+    const voucherType = item.discount_type?.toLowerCase() === 'shipping' ? 'Shipping' : 'Discount';
+    const urgent = isUrgent(item.valid_until);
     return (
       <View style={styles.voucherWrapper}>
         <View style={styles.voucherCard}>
           {/* Left Section: Icon/Type */}
           <View style={[
             styles.leftSection, 
-            { backgroundColor: item.type === 'Shipping' ? COLORS.secondary : COLORS.primary }
+            { backgroundColor: voucherType === 'Shipping' ? COLORS.secondary : COLORS.primary }
           ]}>
              <MaterialCommunityIcons 
-              name={item.type === 'Shipping' ? "truck-fast" : "ticket-percent"} 
+              name={voucherType === 'Shipping' ? "truck-fast" : "ticket-percent"} 
               size={32} 
               color="#FFF" 
             />
-            <Text style={styles.typeLabel}>{item.type.toUpperCase()}</Text>
+            <Text style={styles.typeLabel}>{voucherType.toUpperCase()}</Text>
             
             {/* Decorative Semi-circles for Ticket effect */}
             <View style={styles.semiCircleTop} />
@@ -86,9 +134,9 @@ export default function MyVouchersPage() {
           {/* Right Section: Info */}
           <View style={styles.rightSection}>
             <View style={styles.mainInfo}>
-              <Text style={styles.brandText}>{item.brand}</Text>
-              <Text style={styles.titleText}>{item.title}</Text>
-              <Text style={styles.minSpendText}>{item.minSpend}</Text>
+              <Text style={styles.brandText}>{item.shopName || 'Platform Wide'}</Text>
+              <Text style={styles.titleText}>{item.name || 'Voucher'}</Text>
+              <Text style={styles.minSpendText}>Code: {item.code}</Text>
             </View>
 
             <View style={styles.footer}>
@@ -96,10 +144,10 @@ export default function MyVouchersPage() {
                 <Feather 
                   name="clock" 
                   size={12} 
-                  color={item.isUrgent ? COLORS.primary : COLORS.muted} 
+                  color={urgent ? COLORS.primary : COLORS.muted} 
                 />
-                <Text style={[styles.expiryText, item.isUrgent && styles.urgentText]}>
-                  {item.expiry}
+                <Text style={[styles.expiryText, urgent && styles.urgentText]}>
+                  {formatExpiry(item.valid_until)}
                 </Text>
               </View>
               
@@ -135,8 +183,10 @@ export default function MyVouchersPage() {
             placeholder="Enter voucher code" 
             style={styles.input}
             placeholderTextColor={COLORS.muted}
+            value={voucherCode}
+            onChangeText={setVoucherCode}
           />
-          <TouchableOpacity style={styles.applyBtn}>
+          <TouchableOpacity style={styles.applyBtn} onPress={onApplyCode}>
             <Text style={styles.applyBtnText}>Apply</Text>
           </TouchableOpacity>
         </View>
@@ -155,18 +205,34 @@ export default function MyVouchersPage() {
         ))}
       </View>
 
-      <FlatList
-        data={CUSTOMER_VOUCHERS}
-        keyExtractor={(item) => item.id}
-        renderItem={renderVoucher}
-        contentContainerStyle={styles.listPadding}
-        showsVerticalScrollIndicator={false}
-        ListHeaderComponent={
-          <View style={styles.suggestedContainer}>
-            <Text style={styles.suggestedTitle}>Suggested for you</Text>
-          </View>
-        }
-      />
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.loadingText}>Loading vouchers...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={visibleVouchers}
+          keyExtractor={(item) => item.id}
+          renderItem={renderVoucher}
+          contentContainerStyle={styles.listPadding}
+          showsVerticalScrollIndicator={false}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          ListHeaderComponent={
+            <View style={styles.suggestedContainer}>
+              <Text style={styles.suggestedTitle}>Suggested for you</Text>
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>
+                {activeTab === 'Used' ? 'No used vouchers.' : 'No vouchers available.'}
+              </Text>
+            </View>
+          }
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -227,6 +293,10 @@ const styles = StyleSheet.create({
   listPadding: { paddingBottom: 30 },
   suggestedContainer: { paddingHorizontal: 16, paddingTop: 16, marginBottom: 8 },
   suggestedTitle: { fontSize: 15, fontWeight: '700', color: COLORS.dark },
+  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  loadingText: { marginTop: 10, color: COLORS.muted },
+  emptyState: { alignItems: 'center', padding: 24 },
+  emptyText: { color: COLORS.muted },
 
   // Voucher Card UI
   voucherWrapper: {
