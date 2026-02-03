@@ -101,33 +101,31 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'backend.wsgi.application'
 
-# Database configuration following the Medium article pattern
-#db_url = env.str("DATABASE_URL", default="")
-#if db_url:
-#    # Parse database URL with SSL requirements for Supabase/cloud databases
-#    db_config = dj_database_url.parse(db_url, conn_max_age=600)
-#    # Add SSL requirement if using Supabase or other cloud providers
-#    if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
-#        db_config["OPTIONS"] = {
-#            "sslmode": "require",
-#        }
-#    DATABASES = {
-#        "default": db_config,
-#    }
-#else:
-    # Fallback to individual environment variables (for local development)
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": "crimsotech_database",
-        "USER": "postgres",
-        "PASSWORD": " ",
-        "HOST": "127.0.0.1",
-        "PORT": "5432",
-        "CONN_MAX_AGE": 600,  # Connection pooling
+db_url = env.str("DATABASE_URL", default="")
+if db_url:
+    # Parse database URL with SSL requirements for Supabase/cloud databases
+    db_config = dj_database_url.parse(db_url, conn_max_age=600)
+    # Add SSL requirement if using Supabase or other cloud providers
+    if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
+        db_config["OPTIONS"] = {
+            "sslmode": "require",
+        }
+    DATABASES = {
+        "default": db_config,
     }
-}
-
+else:
+    # Fallback to individual environment variables (for local development)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": env.str("POSTGRES_DB", default="crimsotech_database"),
+            "USER": env.str("POSTGRES_USER", default="crimsotech_user"),
+            "PASSWORD": env.str("POSTGRES_PASSWORD", default=""),
+            "HOST": env.str("POSTGRES_HOST", default="127.0.0.1"),
+            "PORT": env.str("POSTGRES_PORT", default="5432"),
+            "CONN_MAX_AGE": 600,
+        }
+    }
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {
