@@ -521,7 +521,7 @@ export default function ProfileScreen() {
           activeOpacity={0.7}
         >
           <LinearGradient
-            colors={effectiveHasShop ? ['#DC2626', '#B91C1C'] : ['#78716C', '#57534E']}
+            colors={effectiveHasShop ? ['#ffffff', '#ffffff'] : ['#ffffff', '#ffffff']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.shopCardGradient}
@@ -531,7 +531,7 @@ export default function ProfileScreen() {
                 <MaterialIcons
                   name="store"
                   size={28}
-                  color="#fff"
+                  color="#78716C"
                 />
               </View>
               <View style={styles.shopCardText}>
@@ -547,7 +547,7 @@ export default function ProfileScreen() {
                   }
                 </Text>
               </View>
-              <MaterialIcons name="arrow-forward" size={24} color="rgba(255,255,255,0.8)" />
+              <MaterialIcons name="arrow-forward" size={24} color="#78716C" />
             </View>
           </LinearGradient>
         </TouchableOpacity>
@@ -565,7 +565,7 @@ export default function ProfileScreen() {
           <TouchableOpacity onPress={() => pushRoute('/customer/purchases')}>
             <View style={styles.viewAllButton}>
               <Text style={styles.viewAllText}>View All</Text>
-              <MaterialIcons name="chevron-right" size={18} color="#F97316" />
+              <MaterialIcons name="chevron-right" size={18} color="#78716C" />
             </View>
           </TouchableOpacity>
         </View>
@@ -908,12 +908,12 @@ const styles = StyleSheet.create({
   shopCardTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#78716C',
     marginBottom: 4,
   },
   shopCardSubtitle: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.85)',
+    color: '#78716C',
   },
 
   // Modern Card Design
@@ -949,13 +949,13 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 8,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#ffffff',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+  
   },
   cardTitle: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '700',
     color: '#111827',
   },
@@ -965,7 +965,7 @@ const styles = StyleSheet.create({
   },
   viewAllText: {
     fontSize: 14,
-    color: '#F97316',
+    color: '#78716C',
     fontWeight: '600',
     marginRight: 4,
   },
