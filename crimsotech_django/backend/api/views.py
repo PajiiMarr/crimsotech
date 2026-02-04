@@ -23999,16 +23999,34 @@ class RefundViewSet(viewsets.ViewSet):
                 return Response({"error": "This refund is not a return item refund"}, 
                                 status=status.HTTP_400_BAD_REQUEST)
             
-            # Get return request
+            # Determine seller action early so we can create a return request if missing for certain actions
+            action = request.data.get('action')  # 'mark_shipped', 'mark_received', 'mark_inspected', 'mark_completed'
+            notes = request.data.get('notes', '')
+
+            # Get return request; if missing, create one for seller-driven status updates (e.g., mark_shipped/mark_received)
             try:
                 return_request = refund.return_request
             except ReturnRequestItem.DoesNotExist:
-                return Response({"error": "No return request found for this refund"}, 
-                                status=status.HTTP_404_NOT_FOUND)
-            
-            action = request.data.get('action')  # 'mark_shipped', 'mark_received', 'mark_inspected', 'mark_completed'
-            notes = request.data.get('notes', '')
-            
+                if action in ['mark_shipped', 'mark_received', 'mark_inspected', 'mark_completed']:
+                    # Create a minimal ReturnRequestItem so seller can progress the return lifecycle
+                    return_request = ReturnRequestItem.objects.create(
+                        refund_id=refund,
+                        return_method=refund.buyer_preferred_refund_method or 'courier',
+                        return_deadline=timezone.now() + timedelta(days=7),
+                        status='received' if action == 'mark_received' else ('shipped' if action == 'mark_shipped' else 'pending')
+                    )
+                    if action == 'mark_shipped':
+                        return_request.shipped_by = user
+                        return_request.shipped_at = timezone.now()
+                    if action == 'mark_received':
+                        return_request.received_at = timezone.now()
+                    # The model does not have created_by; set updated_by instead
+                    return_request.updated_by = user
+                    return_request.save()
+                else:
+                    return Response({"error": "No return request found for this refund"}, 
+                                    status=status.HTTP_404_NOT_FOUND)
+
             if action == 'mark_shipped':
                 return_request.status = 'shipped'
                 return_request.shipped_by = user

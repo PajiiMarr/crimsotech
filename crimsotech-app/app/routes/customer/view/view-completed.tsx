@@ -5,16 +5,20 @@ import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
-import { CheckCircle, Star, RotateCcw, MessageCircle, ShoppingBag } from "lucide-react";
+import { CheckCircle, Star, RotateCcw, ShoppingBag } from "lucide-react";
 
 export default function ViewCompleted({ 
   orderDetails, 
   formatCurrency, 
   formatDate, 
   onReorder,
-  onRateProduct 
+  onRateProduct,
+  onRequestRefund
 }: any) {
   const order = orderDetails.order;
+  const paymentMethod = (order.payment?.method || order.payment_method || '').toString().toLowerCase();
+  const deliveryMethod = (order.shipping?.method || order.delivery_method || '').toString().toLowerCase();
+  const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
   
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -104,11 +108,7 @@ export default function ViewCompleted({
               Buy Again
             </Button>
             
-            <Button variant="outline" size="sm" className="w-full justify-start h-8 text-xs">
-              <MessageCircle className="h-3 w-3 mr-1.5" />
-              Contact Seller
-            </Button>
-            
+
             {/* Only show refund if within return period */}
             {order.items.some((item: any) => item.is_refundable) && (
               <Button
@@ -118,6 +118,19 @@ export default function ViewCompleted({
               >
                 <RotateCcw className="h-3 w-3 mr-1.5" />
                 Report Issue
+              </Button>
+            )}
+
+            {/* For completed pickup + cash orders, show a Request Refund button */}
+            {isPickupCash && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start h-8 text-xs text-orange-600"
+                onClick={() => onRequestRefund && onRequestRefund(order.id)}
+              >
+                <RotateCcw className="h-3 w-3 mr-1.5" />
+                Request Refund
               </Button>
             )}
           </CardContent>

@@ -193,6 +193,9 @@ interface RefundDetails {
     payment_method?: string;
     total_amount?: number | null;
     status?: string;
+    // Some backends return `current_status` or `status_display` instead of `status`
+    current_status?: string;
+    status_display?: string | null;
     delivery_method?: string | null;
     delivery_address_text?: string | null;
     shipping_address?: {
@@ -727,6 +730,8 @@ function normalizeRefund(refundRaw: any): RefundDetails {
       total_amount: (refundRaw as any).order?.total_amount ?? (refundRaw as any).order_total ?? null,
       user_id: (refundRaw as any).requested_by || (refundRaw as any).order?.user_id || null,
       created_at: (refundRaw as any).order?.created_at || null,
+      // Order status can be returned by different backends under different keys; include sensible fallbacks
+      status: (refundRaw as any).order?.status || (refundRaw as any).order_status || (refundRaw as any).order?.current_status || (refundRaw as any).order?.status_display || null,
       payment_method: (refundRaw as any).order?.payment_method || null,
       delivery_method: (refundRaw as any).order?.delivery_method || null,
       shipping_address: {
@@ -735,6 +740,7 @@ function normalizeRefund(refundRaw: any): RefundDetails {
         recipient_phone: (refundRaw as any).order?.shipping_address?.recipient_phone || null,
       },
     },
+
   } as RefundDetails;
 
   return refund;
@@ -873,12 +879,13 @@ function SellerRejectedStatusUI({ refund }: { refund: RefundDetails }) {
   );
 }
 
-function ApprovedStatusUI({ refund }: { refund: RefundDetails }) {
+function ApprovedStatusUI({ refund, onMarkAsReceived, actionLoading }: { refund: RefundDetails; onMarkAsReceived?: () => Promise<void>; actionLoading?: boolean }) {
   const isReturnItem = refund.refund_category === 'return_item';
   const payStatus = String(refund.refund_payment_status || '').toLowerCase();
   const rrTracking = String(refund.return_request?.tracking_number || '').trim();
-  const hasShippingInfo = Boolean(rrTracking) || String(refund.return_request?.status || '').toLowerCase() === 'shipped' || String(refund.return_request?.status || '').toLowerCase() === 'received';
-  const rrStatus = String(refund.return_request?.status || '').toLowerCase();
+  const hasShippingInfo = Boolean(rrTracking) || String(refund.return_request?.status || '').trim().toLowerCase() === 'shipped' || String(refund.return_request?.status || '').trim().toLowerCase() === 'received';
+  const rrStatus = String(refund.return_request?.status || '').trim().toLowerCase();
+  console.debug('[refund-ui] ApprovedStatusUI vars:', { rrStatus, refundStatus: refund.status, refundType: refund.refund_type, refundCategory: refund.refund_category, payStatus: payStatus });
   const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
   const isReturnAcceptedWaitingModeration = isReturnItem && rrStatus === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
   if (isReturnAcceptedWaitingModeration) {
@@ -906,6 +913,78 @@ function ApprovedStatusUI({ refund }: { refund: RefundDetails }) {
               <ProofsDisplaySection refund={refund} />
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Special-case simple message for pickup returns (seller-facing)
+  const orderInfo = refund.order_info || {};
+  const orderStatusLower = String(orderInfo.status || orderInfo.status_display || orderInfo.current_status || (refund as any).order_status || (refund as any).order?.status || '').toLowerCase();
+  const payMethodLower = String(orderInfo.payment_method || (refund as any).order?.payment_method || '').toLowerCase();
+  const deliveryLower = String(orderInfo.delivery_method || (refund as any).order?.delivery_method || '').toLowerCase();
+  // Be tolerant for different payload shapes and representations
+  const isPickupCashCompletedOrder = orderStatusLower.includes('completed') && payMethodLower.includes('cash') && deliveryLower.includes('pickup');
+  console.debug('[refund-ui] seller pickup check', { orderStatusLower, payMethodLower, deliveryLower, isPickupCashCompletedOrder });
+  // Pause here so you can inspect orderInfo, refund and return_request in DevTools when the seller view renders
+  debugger;
+  console.debug('[refund-ui-detailed]', {
+    orderInfo,
+    refundStatusRaw: refund.status,
+    refundCategory: refund.refund_category,
+    refundType: refund.refund_type,
+    rrRaw: refund.return_request,
+    rrStatusRaw: refund.return_request?.status,
+    apiBase: import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+  });
+
+  const isApprovedReturnPickupCompleted = String(refund.status || '').toLowerCase() === 'approved' && (refund.refund_category === 'return_item' || String(refund.refund_type || '').toLowerCase() === 'return') && isPickupCashCompletedOrder;
+
+  // Extra diagnostics: log return_request and the approval flags so we can see mismatches at runtime
+  console.debug('[refund-ui] isApprovedReturnPickupCompleted:', isApprovedReturnPickupCompleted, 'rrStatus:', rrStatus, 'return_request:', refund.return_request);
+  console.debug('[refund-ui] refund.status, refund.refund_category, refund.refund_type:', refund.status, refund.refund_category, refund.refund_type);
+
+  // If the buyer has already returned the item and the return request is approved/received/inspected, show moderation processing UI
+  if (isApprovedReturnPickupCompleted && ['approved','received','inspected','completed'].includes(rrStatus)) {
+    // Pause here to inspect why we took the moderation branch
+    debugger;
+    console.debug('[refund-ui] entering moderation-processing branch', { rrStatus, isApprovedReturnPickupCompleted, refund });
+    return (
+      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+        <div className="flex items-center gap-3">
+          <CheckCircle className="h-5 w-5 text-green-600" />
+          <div>
+            <p className="font-medium text-green-800">Approved</p>
+            <p className="text-sm text-green-700 mt-1">Approved — the buyer has returned the item. The moderation team will review and process the refund payment.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isApprovedReturnPickupCompleted) {
+    // Pause here so you can inspect the variables that led to the fallback branch
+    debugger;
+    console.debug('[refund-ui] entering fallback pickup-approved branch', { rrStatus, isApprovedReturnPickupCompleted, refund });
+    return (
+      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+        <div className="flex items-center gap-3">
+          <CheckCircle className="h-5 w-5 text-green-600" />
+          <div>
+            <p className="font-medium text-green-800">Approved</p>
+            <p className="text-sm text-green-700 mt-1">Approved — waiting for the buyer to return the item. If the buyer does not return the item within the specified return window, the refund may be cancelled.</p>
+          </div>
+        </div>
+        <div className="mt-3 flex justify-end">
+          <Button
+            size="sm"
+            className="bg-green-600 hover:bg-green-700"
+            onClick={() => { if (typeof onMarkAsReceived === 'function') onMarkAsReceived(); }}
+            disabled={actionLoading || String(refund.return_request?.status || '').toLowerCase() === 'received'}
+          >
+            <PackageCheck className="h-4 w-4 mr-2" />
+            {actionLoading ? 'Updating...' : 'Mark as Received'}
+          </Button>
         </div>
       </div>
     );
@@ -3121,7 +3200,7 @@ export default function ViewRefundDetails() {
   // Treat an approved refund with completed payment as "completed" for UI/tab purposes
   const effectiveStatus = (status === 'approved' && paymentStatusLower === 'completed') ? 'completed' : status;
 
-  const derivedStatusForDisplay = ((refund?.refund_category === 'return_item' || (refund as any)?.refund_type === 'return') && refund?.return_request?.status)
+  const derivedStatusForDisplay = ((String(refund.refund_type || '').toLowerCase() === 'return' || String(refund.refund_type || '').toLowerCase() === 'return_item') && refund?.return_request?.status)
     ? String(refund.return_request.status).toLowerCase()
     : effectiveStatus;
 
@@ -3132,7 +3211,15 @@ export default function ViewRefundDetails() {
 // Consider tracking info as evidence the buyer has provided shipping info
 const hasReturnTrackingTop = Boolean(refund.return_request?.tracking_number || refund.tracking_number);
 const isReturnAwaitingShipmentTop = rrStatusTop === '' ? Boolean(refund?.buyer_notified_at || hasReturnTrackingTop) : ['pending','shipped'].includes(rrStatusTop);
-const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (refund?.refund_category === 'return_item' || (refund as any)?.refund_type === 'return') && isReturnAwaitingShipmentTop));
+// Ignore the generic "waiting" derivation for pickup+cash+completed orders - we handle them specially
+const orderInfoTop = refund.order_info || {};
+const orderStatusTop = String(orderInfoTop.status || orderInfoTop.status_display || orderInfoTop.current_status || (refund as any).order_status || (refund as any).order?.status || '').toLowerCase();
+const payMethodTop = String(orderInfoTop.payment_method || (refund as any).order?.payment_method || '').toLowerCase();
+const deliveryTop = String(orderInfoTop.delivery_method || (refund as any).order?.delivery_method || '').toLowerCase();
+// Be tolerant for payload shape variations and representation differences
+const isPickupCashCompletedOrderTop = orderStatusTop.includes('completed') && payMethodTop.includes('cash') && deliveryTop.includes('pickup');
+console.debug('seller top pickup check', { orderStatusTop, payMethodTop, deliveryTop, isPickupCashCompletedOrderTop });
+const isWaitingDerived = (status === 'waiting' || (status === 'approved' && (String(refund.refund_type || '').toLowerCase() === 'return' || String(refund.refund_type || '').toLowerCase() === 'return_item') && isReturnAwaitingShipmentTop && !isPickupCashCompletedOrderTop));
 
 // Special case: seller accepted return and refund is approved but payment is pending -> moderation-only processing
 const payStatusTop = String(refund.refund_payment_status || '').toLowerCase();
@@ -3366,7 +3453,11 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
         return;
       }
 
-      const response = await fetch(apiUrlFor(`/return-refund/${encodeURIComponent(String(idToUse))}/update_return_status/`), {
+      const targetUrl = apiUrlFor(`/return-refund/${encodeURIComponent(String(idToUse))}/update_return_status/`);
+      const payload = { action: 'mark_received', notes: '' };
+      console.debug('[refund] markReceived -> url:', targetUrl, 'payload:', payload, 'userId:', user?.id, 'shopId:', shopId, 'API_BASE:', (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'));
+      debugger;
+      const response = await fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -3374,7 +3465,7 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
           'X-Shop-Id': String(shopId),
         },
         credentials: 'include',
-        body: JSON.stringify({ action: 'mark_received', notes: '' }),
+        body: JSON.stringify(payload),
       });
 
       if (response.ok) {
@@ -3394,7 +3485,9 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
         // After marking received, open the inspection UI component (inline) by focusing UI on inspection
         // We keep the button in actions as well; the status UI below will change to the inspection prompt.
       } else {
-        throw new Error('Failed to mark as received');
+        const text = await response.text().catch(() => null);
+        console.error('[refund] markReceived -> failed response:', response.status, response.statusText, text);
+        throw new Error(`Failed to mark as received: ${response.status} ${response.statusText} ${text || ''}`);
       }
     } catch (error) {
       toast({
@@ -4002,6 +4095,40 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
       return <ToProcessStatusUI refund={refund} moderationOnly />;
     }
 
+    // Special-case: pickup returns on completed cash-on-pickup orders should show a simple approved/waiting message
+    const rStatusLower = String(refund.status || '').toLowerCase();
+    const rtypeLower = String(refund.refund_type || '').toLowerCase();
+    // Match either refund.refund_type === 'return' OR refund.refund_type === 'return_item'
+    const isReturnType = rtypeLower === 'return' || rtypeLower === 'return_item';
+
+    // Debug: log when we have an approved/waiting return but pickup check fails
+    if (isReturnType && (rStatusLower === 'approved' || rStatusLower === 'waiting') && !isPickupCashCompletedOrderTop) {
+      const orderCheck = refund.order_info || {};
+      console.debug('pickup-special-case not matched', {
+        refundId: refund.refund || refund.id,
+        refundStatus: rStatusLower,
+        refundType: rtypeLower,
+        orderStatus: String(orderCheck.status || '').toLowerCase(),
+        orderPaymentMethod: String(orderCheck.payment_method || '').toLowerCase(),
+        orderDeliveryMethod: String(orderCheck.delivery_method || '').toLowerCase(),
+        isPickupCashCompletedOrderTop
+      });
+    }
+
+    if ((rStatusLower === 'approved' || rStatusLower === 'waiting') && isReturnType && isPickupCashCompletedOrderTop) {
+      return (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+          <div className="flex items-center gap-3">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <div>
+              <p className="font-medium text-green-800">Approved</p>
+              <p className="text-sm text-green-700 mt-1">Approved — waiting for the buyer to return the item. If the buyer does not return the item within the specified return window, the refund may be cancelled.</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (isWaitingDerived) return <WaitingStatusUI refund={refund} />;
 
     if (refund.return_request?.status === 'inspected') return <ToVerifyStatusUI refund={refund} />;
@@ -4009,7 +4136,7 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
     switch (effectiveStatus) {
       case 'pending': return <PendingStatusUI refund={refund} />;
       case 'negotiation': return <NegotiationStatusUI refund={refund} />;
-      case 'approved': return <ApprovedStatusUI refund={refund} />;
+      case 'approved': return <ApprovedStatusUI refund={refund} onMarkAsReceived={handleMarkAsReceived} actionLoading={actionLoading} />;
       case 'waiting': return <WaitingStatusUI refund={refund} />;
       case 'to_verify': return <ToVerifyStatusUI refund={refund} />;
       case 'to_process': return <ToProcessStatusUI refund={refund} moderationOnly />;
@@ -4024,6 +4151,7 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
   return (
     <ClientUserProvider user={user ?? null}>
       <div className="container mx-auto px-4 py-6 max-w-7xl">
+
         {/* Header */}
         <HeaderSection 
           refund={refund} 

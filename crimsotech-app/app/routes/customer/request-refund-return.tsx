@@ -193,6 +193,14 @@ const refundMethods: RefundMethod[] = [
     allowedRefundTypes: ['return_item', 'keep_item']
   },
   {
+    id: 'cash_on_hand',
+    label: 'Cash on Hand',
+    description: 'Collect cash directly from the seller at pickup',
+    icon: DollarSign,
+    type: 'moneyback',
+    allowedRefundTypes: ['return_item', 'keep_item']
+  },
+  {
     id: 'replace',
     label: 'Replacement',
     description: 'Get a replacement item',
@@ -331,7 +339,7 @@ const BankTransferForm: React.FC<{
         <div className="flex items-center gap-2">
           <Bell className="w-4 h-4 text-green-600" />
           <p className="text-sm text-green-700">
-            Refunds will be transferred to this bank account. Processing may take 3-5 business days.
+            Refunds will be transferred to this bank account. Processing may take 3-5 business days. <span className="font-medium">A bank transfer fee of ₱50 will be deducted from the refund amount.</span>
           </p>
         </div>
       </div>
@@ -844,8 +852,13 @@ export default function RequestReturnRefund({ loaderData }: any) {
     // Fee rules by refund method subtype
     let fee = 0;
     const methodType = selectedRefundMethod?.type;
-    if (methodType === 'moneyback') {
+    // Cash on Hand should have no extra fee
+    if (selectedRefundMethod?.id === 'cash_on_hand') {
+      fee = 0;
+    } else if (methodType === 'moneyback') {
       fee = 50; // remittance fee
+    } else if (methodType === 'bank') {
+      fee = 50; // bank transfer fee
     } else if (methodType === 'wallet') {
       fee = 10; // e-wallet fee
     }
@@ -862,8 +875,13 @@ export default function RequestReturnRefund({ loaderData }: any) {
   const getAvailableMethods = () => {
     if (!selectedRefundType) return refundMethods;
     
+    const deliveryMethod = (order.delivery_method || order.shipping?.method || '').toString().toLowerCase();
+    const isPickup = deliveryMethod.includes('pickup');
+
     return refundMethods.filter(method => 
-      method.allowedRefundTypes.includes(selectedRefundType.id)
+      method.allowedRefundTypes.includes(selectedRefundType.id) &&
+      // Only allow Cash on Hand when the order is a pickup
+      (method.id !== 'cash_on_hand' || isPickup)
     );
   };
 
@@ -932,6 +950,16 @@ export default function RequestReturnRefund({ loaderData }: any) {
     }
     
     if (selectedRefundMethod.type === 'moneyback') {
+      // Cash on Hand requires no remittance details
+      if (selectedRefundMethod.id === 'cash_on_hand') {
+        return (
+          <div className="p-4 bg-yellow-50 border border-yellow-100 rounded-md mt-4">
+            <p className="text-sm text-yellow-800 font-medium mb-1">Cash on Hand</p>
+            <p className="text-xs text-yellow-700">No payment details required — you will collect cash from the seller at pickup.</p>
+          </div>
+        );
+      }
+
       return (
         <RemittanceForm
           details={remittanceDetails}
@@ -956,7 +984,12 @@ export default function RequestReturnRefund({ loaderData }: any) {
              bankDetails.accountName && bankDetails.accountType;
     }
     
+    // For Money Back: remittance requires details, except for Cash on Hand which doesn't
     if (selectedRefundMethod.type === 'moneyback') {
+      if (selectedRefundMethod.id === 'cash_on_hand') {
+        return true; // no details needed
+      }
+
       return remittanceDetails.provider && remittanceDetails.firstName && 
              remittanceDetails.lastName && remittanceDetails.contactNumber &&
              remittanceDetails.validIdType && remittanceDetails.validIdNumber;

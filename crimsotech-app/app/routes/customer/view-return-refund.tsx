@@ -1276,6 +1276,21 @@ function WaitingStatusUI({ refund, onOpenTrackingDialog, actionLoading, onSubmit
   );
 }
 
+// Small UI for pickup-approved return (customer-facing)
+function ApprovedPickupStatusUI() {
+  return (
+    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+      <div className="flex items-center gap-3">
+        <CheckCircle className="h-5 w-5 text-green-600" />
+        <div>
+          <p className="font-medium text-green-800">Approved</p>
+          <p className="text-sm text-green-700 mt-1">Please return the item within the specified return window (days/time) to complete your refund.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ToVerifyStatusUI() {
   return (
     <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
@@ -3042,6 +3057,22 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
       }
     };
 
+    // Special-case: pickup returns (Cash on Pickup + Pickup from Store) on completed orders
+    const orderInfoForCheck = refund.order_info || {};
+    const orderStatusForCheck = String(orderInfoForCheck.status || orderInfoForCheck.status_display || orderInfoForCheck.current_status || (refund as any).order_status || (refund as any).order?.status || '').toLowerCase();
+    const paymentMethodForCheck = String(orderInfoForCheck.payment_method || (refund as any).order?.payment_method || '').toLowerCase();
+    const deliveryMethodForCheck = String(orderInfoForCheck.delivery_method || (refund as any).order?.delivery_method || '').toLowerCase();
+    // Be tolerant: check substrings so different representations still match
+    const isPickupCashCompleted = orderStatusForCheck.includes('completed') && paymentMethodForCheck.includes('cash') && deliveryMethodForCheck.includes('pickup');
+    // debug to help trace mismatches
+    console.debug('pickup check:', { orderStatusForCheck, paymentMethodForCheck, deliveryMethodForCheck, isPickupCashCompleted });
+    const refundTypeLower = String(refund.refund_type || '').toLowerCase();
+    const isReturnType = refundTypeLower === 'return' || refundTypeLower === 'return_item';
+
+    if ((status === 'approved' || status === 'waiting') && isReturnType && isPickupCashCompleted) {
+      return <ApprovedPickupStatusUI />;
+    }
+
     if (isWaitingDerived) return <WaitingStatusUI refund={refund} onOpenTrackingDialog={() => setShowTrackingDialog(true)} actionLoading={actionLoading} onSubmitReturn={submitReturnInfo} detailsSubmittedMessage={detailsSubmittedMessage} />;
 
     switch (status) {
@@ -3275,6 +3306,36 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
           StatusIcon={StatusIcon} 
           navigate={navigate} 
         />
+
+        {/* Debug panel (dev only) */}
+        {process.env.NODE_ENV !== 'production' && refund && (
+          <div className="p-3 mb-4 bg-yellow-50 border border-yellow-200 rounded text-sm">
+            <strong>Debug:</strong>
+            <pre className="text-xs mt-2 whitespace-pre-wrap">{JSON.stringify((() => {
+              const orderInfoForCheck = refund.order_info || {};
+              const orderStatusForCheck = String(orderInfoForCheck.status || orderInfoForCheck.status_display || orderInfoForCheck.current_status || (refund as any).order_status || (refund as any).order?.status || '').toLowerCase();
+              const paymentMethodForCheck = String(orderInfoForCheck.payment_method || (refund as any).order?.payment_method || '').toLowerCase();
+              const deliveryMethodForCheck = String(orderInfoForCheck.delivery_method || (refund as any).order?.delivery_method || '').toLowerCase();
+              const isPickupCashCompleted = orderStatusForCheck.includes('completed') && paymentMethodForCheck.includes('cash') && deliveryMethodForCheck.includes('pickup');
+              const isReturnType = ['return','return_item'].includes(String(refund.refund_type||'').toLowerCase());
+              return {
+                orderStatus: refund.order_info?.status,
+                paymentMethod: refund.order_info?.payment_method,
+                deliveryMethod: refund.order_info?.delivery_method,
+                refundStatus: refund.status,
+                refundType: refund.refund_type,
+                rrStatus: String(refund.return_request?.status || '').toLowerCase(),
+                status,
+                orderStatusForCheck,
+                paymentMethodForCheck,
+                deliveryMethodForCheck,
+                isPickupCashCompleted,
+                isReturnType,
+                isWaitingDerived
+              };
+            })(), null, 2)}</pre>
+          </div>
+        )}
 
         <Separator className="mb-6" />
 
