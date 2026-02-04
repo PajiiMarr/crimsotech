@@ -130,7 +130,7 @@ export default function LoginPage({}: Route.ComponentProps ) {
       </div>
       <div className="bg-muted relative hidden lg:block">
         <img
-          src="public/crimsonity.png"
+          src="Crimsotech.png"
           alt="Image"
           className="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale"
         />

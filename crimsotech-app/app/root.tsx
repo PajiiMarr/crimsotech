@@ -34,6 +34,37 @@ export const links: Route.LinksFunction = () => [
     rel: "stylesheet",
     href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
   },
+  // ✅ Add custom NProgress CSS with orange color
+  {
+    rel: "stylesheet",
+    href: "data:text/css," + encodeURIComponent(`
+      #nprogress {
+        pointer-events: none;
+      }
+      #nprogress .bar {
+        background: #f97316; /* ← Change this color */
+        position: fixed;
+        z-index: 1031;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 3px;
+      }
+      #nprogress .peg {
+        display: block;
+        position: absolute;
+        right: 0px;
+        width: 100px;
+        height: 100%;
+        box-shadow: 0 0 10px #f97316, 0 0 5px #f97316; /* ← And these two */
+        opacity: 1.0;
+        transform: rotate(3deg) translate(0px, -4px);
+      }
+      #nprogress .spinner {
+        display: none;
+      }
+    `)
+  },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -55,90 +86,127 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ✅ NProgress Wrapper Component - handles ALL navigation types including dropdowns
+// ✅ Modified NProgress Wrapper - ONLY for navigation elements
 function RouteChangeProgress() {
   const location = useLocation();
   
   useEffect(() => {
-    // Track if we've already started progress for this interaction
-    let progressStarted = false;
-    
-    // Helper to start progress only once per interaction
-    const startProgress = () => {
-      if (!progressStarted) {
-        NProgress.start();
-        progressStarted = true;
-        // Reset flag after a short delay
-        setTimeout(() => { progressStarted = false; }, 100);
-      }
+    // Configure NProgress with orange color
+    NProgress.configure({
+      showSpinner: false,
+      trickleSpeed: 200,
+      minimum: 0.08,
+      easing: 'ease',
+      speed: 500,
+    });
+
+    // Store the current location pathname for comparison
+    const currentPath = location.pathname + location.search;
+
+    // Helper to check if we should exclude an element
+    const shouldExcludeElement = (element: HTMLElement): boolean => {
+      // Exclude dropdown elements
+      const isDropdown = 
+        element.closest('[role="menu"], [role="listbox"], [data-dropdown], [data-menu], .dropdown, .menu, [aria-haspopup="true"]') !== null;
+      
+      // Exclude button elements (unless they're inside an anchor)
+      const isButton = element.tagName === 'BUTTON' && !element.closest('a');
+      
+      // Exclude elements with specific data attributes
+      const hasExcludeDataAttr = element.closest('[data-no-progress], [data-exclude-progress]') !== null;
+      
+      return isDropdown || isButton || hasExcludeDataAttr;
     };
-    
-    // Intercept ALL clicks (links, buttons, dropdown items, etc.)
+
+    // Helper to check if element should trigger navigation progress
+    const shouldTriggerProgress = (element: HTMLElement): boolean => {
+      // If it's an excluded element, don't trigger progress
+      if (shouldExcludeElement(element)) {
+        return false;
+      }
+
+      // Find the closest anchor element
+      const anchor = element.closest('a');
+      
+      // Check for valid navigation anchor
+      if (anchor) {
+        // Skip if anchor has target="_blank" (external link)
+        if (anchor.target === '_blank') {
+          return false;
+        }
+        
+        // Skip if anchor doesn't have href or has empty href
+        if (!anchor.href || anchor.href === '#' || anchor.href === 'javascript:void(0)') {
+          return false;
+        }
+        
+        // Skip if it's a same-page anchor (hash link)
+        if (anchor.hash && !anchor.pathname && !anchor.search) {
+          return false;
+        }
+        
+        // Check if it's a same-origin link
+        try {
+          const targetUrl = new URL(anchor.href);
+          const currentUrl = new URL(window.location.href);
+          
+          // Only trigger for same-origin navigation
+          if (targetUrl.origin === currentUrl.origin) {
+            // Check if it's actually a different route
+            const targetPath = targetUrl.pathname + targetUrl.search;
+            return targetPath !== currentPath;
+          }
+        } catch (e) {
+          return false;
+        }
+      }
+      
+      // Check for React Router Link components (they have data-router-link attribute)
+      const isRouterLink = element.closest('[data-router-link], [data-link]') !== null;
+      
+      return isRouterLink;
+    };
+
+    // Handle click events
     const handleClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       
-      // Check for <a> tags (including <Link> components)
-      const anchor = target.closest('a');
-      if (anchor && anchor.href && anchor.href.startsWith(window.location.origin)) {
-        const targetUrl = new URL(anchor.href);
-        if (targetUrl.pathname !== window.location.pathname || targetUrl.search !== window.location.search) {
-          startProgress();
-        }
-        return;
-      }
-      
-      // Check for dropdown menu items (they have role="menuitem")
-      const menuItem = target.closest('[role="menuitem"]');
-      if (menuItem) {
-        // Dropdown items that trigger navigation
-        startProgress();
-        return;
-      }
-      
-      // Check for buttons that might trigger navigate()
-      const button = target.closest('button');
-      if (button && !button.disabled) {
-        // Check if button text or aria-label suggests navigation
-        const buttonText = button.textContent?.toLowerCase() || '';
-        const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
-        const navigationKeywords = ['view', 'details', 'go to', 'navigate', 'open', 'arrange', 'see'];
-        
-        if (navigationKeywords.some(keyword => 
-          buttonText.includes(keyword) || ariaLabel.includes(keyword)
-        )) {
-          startProgress();
-          return;
-        }
-        
-        // For any other button click, use a small delay to catch navigate() calls
-        requestAnimationFrame(() => {
-          startProgress();
-        });
-      }
-      
-      // Check for any clickable element with data attributes indicating navigation
-      const clickable = target.closest('[data-navigate], [data-link]');
-      if (clickable) {
-        startProgress();
+      // Only trigger progress for valid navigation elements
+      if (shouldTriggerProgress(target)) {
+        // Small delay to ensure we're actually navigating
+        setTimeout(() => {
+          if (window.location.pathname + window.location.search !== currentPath) {
+            NProgress.start();
+          }
+        }, 50);
       }
     };
-    
-    // Also intercept programmatic navigation by wrapping navigate calls
-    // This catches any navigate() calls that happen programmatically
-    const handleNavigate = () => {
-      startProgress();
+
+    // Handle programmatic navigation via useNavigate
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+
+    // Wrap history methods to detect programmatic navigation
+    history.pushState = function(...args) {
+      NProgress.start();
+      return originalPushState.apply(this, args);
     };
-    
-    // Listen for custom navigation events (you can dispatch these from your components)
-    window.addEventListener('navigate', handleNavigate);
-    
+
+    history.replaceState = function(...args) {
+      NProgress.start();
+      return originalReplaceState.apply(this, args);
+    };
+
     document.addEventListener('click', handleClick, true);
-    
+
     return () => {
-      window.removeEventListener('navigate', handleNavigate);
       document.removeEventListener('click', handleClick, true);
+      
+      // Restore original history methods
+      history.pushState = originalPushState;
+      history.replaceState = originalReplaceState;
     };
-  }, []);
+  }, [location]);
 
   useEffect(() => {
     // Complete progress when location changes

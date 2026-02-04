@@ -3892,6 +3892,93 @@ class AdminProduct(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=False, methods=['post'])
+    def add_category(self, request):
+        try:
+            name = request.data.get('name')
+            user_id = request.data.get('user')
+            
+            # Debug logging
+            print(f"Received name: {name}")
+            print(f"Received user_id: {user_id}, type: {type(user_id)}")
+            
+            clean_name = name.strip() if name else ""
+            
+            if not clean_name:
+                return Response({
+                    'success': False,
+                    'message': 'Category name is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if len(clean_name) > 50:
+                return Response({
+                    'success': False,
+                    'message': 'Category name must be 50 characters or less'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check if category already exists (case-insensitive)
+            existing_category = Category.objects.filter(
+                name__iexact=clean_name
+            ).first()
+            
+            if existing_category:
+                return Response({
+                    'success': False,
+                    'message': f'Category "{clean_name}" already exists'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get user object if user_id is provided
+            user = None
+            if user_id:
+                try:
+                    # Convert to UUID if it's a string
+                    if isinstance(user_id, str):
+                        user_uuid = uuid.UUID(user_id)
+                    else:
+                        user_uuid = user_id
+                    
+                    user = User.objects.get(id=user_uuid)
+                    print(f"Found user: {user.username}, id: {user.id}")
+                except (ValueError, User.DoesNotExist) as e:
+                    print(f"User lookup error: {str(e)}")
+                    return Response({
+                        'success': False,
+                        'message': f'User with ID {user_id} does not exist or is invalid'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create category with transaction for safety
+            with transaction.atomic():
+                category = Category.objects.create(
+                    name=clean_name,
+                    shop=None,
+                    user=user
+                )
+                
+                print(f"Created category: {category.name}, user: {category.user}")
+            
+            # Return success response
+            return Response({
+                'success': True,
+                'message': 'Category added successfully',
+                'category': {
+                    'id': str(category.id),
+                    'name': category.name,
+                    'shop': None,
+                    'user': str(category.user.id) if category.user else None
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            # Log the full error for debugging
+            import traceback
+            print(f"Error adding category: {str(e)}")
+            print(traceback.format_exc())
+            
+            # Return generic error message
+            return Response({
+                'success': False,
+                'message': f'An error occurred while adding the category: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class AdminShops(viewsets.ViewSet):
     """

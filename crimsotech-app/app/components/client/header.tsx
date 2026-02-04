@@ -33,13 +33,7 @@ export function Header() {
       <div className="flex items-center justify-between px-4 py-3">
         {/* Logo */}
         <div className="flex items-center gap-2">
-          <Link to="/" className="w-14 h-14">
-            <img
-              src="Crimsotech.png"
-              alt="crimsotech"
-              className="w-full h-full object-contain"
-            />
-          </Link>
+          
           <p className="font-semibold text-lg">CrimsoTech</p>
         </div>
 
