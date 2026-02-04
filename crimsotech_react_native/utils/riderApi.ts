@@ -1,7 +1,6 @@
 // utils/riderApi.ts
-import { API_CONFIG } from './config';
-
-const BASE_URL = API_CONFIG.BASE_URL;
+import axios from 'axios';
+import AxiosInstance from '../contexts/axios';
 
 // Type definitions for Rider API responses
 export interface RiderDashboardMetrics {
@@ -75,44 +74,37 @@ export interface ScheduleMetrics {
   has_data: boolean;
 }
 
+const getUserHeaders = (userId: string) => ({
+  headers: {
+    'X-User-Id': userId,
+  },
+});
+
+const handleAxiosError = (error: any, fallbackMessage: string) => {
+  if (axios.isAxiosError(error)) {
+    const data: any = error.response?.data;
+    throw new Error(data?.error || data?.message || fallbackMessage);
+  }
+  throw error;
+};
+
 /**
  * Get rider dashboard data including metrics and active deliveries
  */
 export const getRiderDashboard = async (userId: string, startDate?: string, endDate?: string) => {
   try {
-    let url = `${BASE_URL}/api/rider-dashboard/rider_dashboard/`;
-    
-    // Add query parameters if provided
-    const params = new URLSearchParams();
-    if (startDate) params.append('start_date', startDate);
-    if (endDate) params.append('end_date', endDate);
-    
-    if (params.toString()) {
-      url += `?${params.toString()}`;
-    }
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
+    const response = await AxiosInstance.get('/rider-dashboard/rider_dashboard/', {
+      ...getUserHeaders(userId),
+      params: {
+        start_date: startDate,
+        end_date: endDate,
       },
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Get rider dashboard API error:', data);
-      throw new Error(data.error || 'Failed to get dashboard data');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
     console.error('Get rider dashboard error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to get dashboard data');
   }
 };
 
@@ -128,40 +120,19 @@ export const getRiderOrderHistory = async (
   }
 ) => {
   try {
-    let url = `${BASE_URL}/api/rider-history/order_history/`;
-    
-    // Add query parameters
-    const params = new URLSearchParams();
-    if (filters?.startDate) params.append('start_date', filters.startDate);
-    if (filters?.endDate) params.append('end_date', filters.endDate);
-    if (filters?.status) params.append('status', filters.status);
-    
-    if (params.toString()) {
-      url += `?${params.toString()}`;
-    }
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
+    const response = await AxiosInstance.get('/rider-history/order_history/', {
+      ...getUserHeaders(userId),
+      params: {
+        start_date: filters?.startDate,
+        end_date: filters?.endDate,
+        status: filters?.status,
       },
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Get rider order history API error:', data);
-      throw new Error(data.error || 'Failed to get order history');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
     console.error('Get rider order history error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to get order history');
   }
 };
 
@@ -170,30 +141,14 @@ export const getRiderOrderHistory = async (
  */
 export const getRiderSchedule = async (userId: string) => {
   try {
-    const url = `${BASE_URL}/api/rider-schedule/get_schedule_data/`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
-      },
+    const response = await AxiosInstance.get('/rider-schedule/get_schedule_data/', {
+      ...getUserHeaders(userId),
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Get rider schedule API error:', data);
-      throw new Error(data.error || 'Failed to get schedule data');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
     console.error('Get rider schedule error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to get schedule data');
   }
 };
 
@@ -233,34 +188,19 @@ export const updateRiderAvailability = async (
   status?: 'available' | 'busy' | 'break' | 'offline' | 'unavailable'
 ) => {
   try {
-    const url = `${BASE_URL}/api/rider-status/update_status/`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
-      },
-      body: JSON.stringify({
+    const response = await AxiosInstance.post(
+      '/rider-status/update_status/',
+      {
         is_accepting_deliveries: isAccepting,
         availability_status: status || (isAccepting ? 'available' : 'offline'),
-      }),
-    });
+      },
+      getUserHeaders(userId)
+    );
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Update rider availability API error:', data);
-      throw new Error(data.error || 'Failed to update availability');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
     console.error('Update rider availability error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to update availability');
   }
 };
 
@@ -269,30 +209,14 @@ export const updateRiderAvailability = async (
  */
 export const getRiderStatus = async (userId: string) => {
   try {
-    const url = `${BASE_URL}/api/rider-status/get_rider_status/`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
-      },
+    const response = await AxiosInstance.get('/rider-status/get_rider_status/', {
+      ...getUserHeaders(userId),
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Get rider status API error:', data);
-      throw new Error(data.error || 'Failed to get rider status');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
     console.error('Get rider status error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to get rider status');
   }
 };
 
@@ -301,33 +225,16 @@ export const getRiderStatus = async (userId: string) => {
  */
 export const acceptDeliveryOrder = async (userId: string, orderId: string) => {
   try {
-    const url = `${BASE_URL}/api/rider-orders-active/accept_order/`;
+    const response = await AxiosInstance.post(
+      '/rider-orders-active/accept_order/',
+      { order_id: orderId },
+      getUserHeaders(userId)
+    );
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
-      },
-      body: JSON.stringify({
-        order_id: orderId,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Accept delivery order API error:', data);
-      throw new Error(data.error || 'Failed to accept order');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
     console.error('Accept delivery order error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to accept order');
   }
 };
 
@@ -340,34 +247,19 @@ export const updateDeliveryStatus = async (
   status: 'picked_up' | 'in_progress' | 'delivered' | 'cancelled'
 ) => {
   try {
-    const url = `${BASE_URL}/api/rider-orders-active/update_delivery_status/`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
-      },
-      body: JSON.stringify({
+    const response = await AxiosInstance.post(
+      '/rider-orders-active/update_delivery_status/',
+      {
         delivery_id: deliveryId,
-        status: status,
-      }),
-    });
+        status,
+      },
+      getUserHeaders(userId)
+    );
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Update delivery status API error:', data);
-      throw new Error(data.error || 'Failed to update delivery status');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
     console.error('Update delivery status error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to update delivery status');
   }
 };
 
@@ -376,30 +268,14 @@ export const updateDeliveryStatus = async (
  */
 export const getOrderDetails = async (userId: string, orderId: string) => {
   try {
-    const url = `${BASE_URL}/api/rider-orders-active/order-details/${orderId}/`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
-      },
+    const response = await AxiosInstance.get(`/rider-orders-active/order-details/${orderId}/`, {
+      ...getUserHeaders(userId),
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('Get order details API error:', data);
-      throw new Error(data.error || 'Failed to get order details');
-    }
-
-    return data;
+    return response.data;
   } catch (error: any) {
     console.error('Get order details error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to get order details');
   }
 };
 
@@ -415,39 +291,19 @@ export const exportOrderHistory = async (
   }
 ) => {
   try {
-    let url = `${BASE_URL}/api/rider-history/export_history/`;
-    
-    const params = new URLSearchParams();
-    params.append('format', format);
-    if (filters?.startDate) params.append('start_date', filters.startDate);
-    if (filters?.endDate) params.append('end_date', filters.endDate);
-    
-    url += `?${params.toString()}`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': userId,
+    const response = await AxiosInstance.get('/rider-history/export_history/', {
+      ...getUserHeaders(userId),
+      params: {
+        format,
+        start_date: filters?.startDate,
+        end_date: filters?.endDate,
       },
+      responseType: format === 'csv' ? 'arraybuffer' : 'json',
     });
 
-    if (format === 'csv') {
-      // Return blob for CSV
-      const blob = await response.blob();
-      return blob;
-    } else {
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to export history');
-      }
-      return data;
-    }
+    return response.data;
   } catch (error: any) {
     console.error('Export order history error:', error);
-    if (error.message === 'Network request failed' || error.message?.includes('Network')) {
-      throw new Error('Cannot connect to server. Please check your connection.');
-    }
-    throw error;
+    handleAxiosError(error, 'Failed to export history');
   }
 };

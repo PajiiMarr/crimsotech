@@ -81,6 +81,7 @@ export default function CreateProductFormMobile() {
   const router = useRouter();
   const { userId, shopId } = useAuth();
   const generateId = () => Math.random().toString(36).substring(2) + Date.now().toString(36);
+  const previousMediaCountRef = React.useRef(0);
 
   // Form state
   const [productName, setProductName] = useState('');
@@ -272,59 +273,65 @@ export default function CreateProductFormMobile() {
     generateSkuCombinations();
   }, [variantGroups, generateSkuCombinations]);
 
-  const handleManualPredict = async () => {
-    if (!arePredictionFieldsValid() || isPredicting) return;
+  const handleManualPredict = useCallback(async () => {
+    if (isPredicting) return;
+
+    const firstImage = mainMedia.find((m) => m.type === 'image');
+    if (!firstImage) {
+      Alert.alert('Add an image', 'Please add at least one product image to use AI suggestion.');
+      return;
+    }
 
     setIsPredicting(true);
     setShowPrediction(true);
 
     try {
-      const response = await AxiosInstance.post(
-        '/seller-products/global-categories/predict/',
-        {
-          name: productName,
-          description: productDescription,
-          quantity: parseInt(productQuantity, 10) || 0,
-          price: parseFloat(productPrice) || 0,
-          condition: productCondition,
-        },
-        {
-          headers: {
-            'X-User-Id': userId || '',
-            'X-Shop-Id': shopId || ''
-          }
-        }
-      );
+      const formData = new FormData();
+      formData.append('image', {
+        uri: firstImage.uri,
+        name: 'cover.jpg',
+        type: 'image/jpeg',
+      } as any);
 
-      const data = response.data;
-      if (data?.success && data?.predicted_category) {
+      const response = await AxiosInstance.post('/predict/', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const predictions = response.data?.predictions;
+      if (response.data?.success && predictions?.predicted_class) {
+        const predictedName = String(predictions.predicted_class);
+        const confidence = Number(predictions.confidence || 0);
+
+        const alternatives = Array.isArray(predictions.top_predictions)
+          ? predictions.top_predictions.map((c: any) => ({
+              category_id: c.category_id ? Number(c.category_id) : 0,
+              category_name: c.class,
+              confidence: Number(c.confidence || 0),
+              category_uuid: c.category_uuid || null,
+            }))
+          : [];
+
         setPredictionResult({
           success: true,
           predicted_category: {
-            category_id: data.predicted_category.category_id,
-            category_name: data.predicted_category.category_name,
-            confidence: data.predicted_category.confidence,
-            category_uuid: data.predicted_category.category_uuid || null,
+            category_id: 0,
+            category_name: predictedName,
+            confidence,
+            category_uuid: null,
           },
-          alternative_categories: (data.alternative_categories || []).map((c: any) => ({
-            category_id: c.category_id,
-            category_name: c.category_name,
-            confidence: c.confidence,
-            category_uuid: c.category_uuid || null,
-          }))
+          alternative_categories: alternatives,
         });
 
-        const suggestedId = data.predicted_category.category_uuid || String(data.predicted_category.category_id);
-        if (suggestedId) setSelectedCategoryId(suggestedId);
-
-        if (Array.isArray(data.all_categories)) {
-          setGlobalCategories(data.all_categories.map((c: any) => ({
-            id: String(c.id || c.uuid),
-            name: c.name
-          })));
+        const matched = globalCategories.find(
+          (category) => category.name.toLowerCase() === predictedName.toLowerCase()
+        );
+        if (matched) {
+          setSelectedCategoryId(matched.id);
         }
       } else {
-        Alert.alert('Prediction failed', 'Unable to predict category.');
+        Alert.alert('Prediction failed', 'Unable to predict category from image.');
       }
     } catch (err: any) {
       console.error('Prediction error:', err);
@@ -332,7 +339,26 @@ export default function CreateProductFormMobile() {
     } finally {
       setIsPredicting(false);
     }
-  };
+  }, [globalCategories, isPredicting, mainMedia]);
+
+  useEffect(() => {
+    const previousCount = previousMediaCountRef.current;
+    const currentCount = mainMedia.length;
+
+    if (currentCount === 0) {
+      previousMediaCountRef.current = 0;
+      return;
+    }
+
+    previousMediaCountRef.current = currentCount;
+
+    const hasNewMedia = currentCount > previousCount;
+    const hasImage = mainMedia.some((item) => item.type === 'image');
+
+    if (hasNewMedia && hasImage && !isPredicting) {
+      handleManualPredict();
+    }
+  }, [handleManualPredict, isPredicting, mainMedia]);
 
   const handleSubmit = async () => {
     if (!userId || !shopId) {
@@ -527,70 +553,6 @@ export default function CreateProductFormMobile() {
             />
           </View>
 
-          {/* Predict Button */}
-          <TouchableOpacity
-            style={[styles.button, (!arePredictionFieldsValid() || isPredicting) && styles.buttonDisabled]}
-            onPress={handleManualPredict}
-            disabled={!arePredictionFieldsValid() || isPredicting}
-          >
-            {isPredicting ? (
-              <>
-                <ActivityIndicator color="#fff" size="small" />
-                <Text style={styles.buttonText}>Analyzing...</Text>
-              </>
-            ) : (
-              <>
-                <Ionicons name="sparkles" size={16} color="#fff" />
-                <Text style={styles.buttonText}>Get AI Category Suggestion</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {/* Prediction Result */}
-          {showPrediction && predictionResult && (
-            <View style={styles.predictionCard}>
-              <View style={styles.predictionHeader}>
-                <Ionicons name="sparkles" size={20} color="#9333ea" />
-                <Text style={styles.predictionTitle}>AI Category Suggestion</Text>
-              </View>
-
-              <View style={styles.predictionResult}>
-                <View style={styles.predictionContent}>
-                  <Text style={styles.predictedCategory}>
-                    {predictionResult.predicted_category.category_name}
-                  </Text>
-                  <View style={styles.confidenceBadge}>
-                    <Text style={styles.confidenceText}>
-                      {Math.round(predictionResult.predicted_category.confidence * 100)}% confidence
-                    </Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  style={styles.selectButton}
-                  onPress={() => setSelectedCategoryId((predictionResult.predicted_category.category_uuid || predictionResult.predicted_category.category_id.toString()))}
-                >
-                  <Text style={styles.selectButtonText}>Select</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Manual Category Selection */}
-              <View style={styles.manualSelection}>
-                <Text style={styles.sectionSubtitle}>Prefer a different category?</Text>
-                <View style={styles.pickerContainer}>
-                  <Picker
-                    selectedValue={selectedCategoryId}
-                    onValueChange={setSelectedCategoryId}
-                    style={styles.picker}
-                  >
-                    <Picker.Item label="No Category (Not Recommended)" value="none" />
-                    {globalCategories.map((category) => (
-                      <Picker.Item key={category.id} label={category.name} value={category.id} />
-                    ))}
-                  </Picker>
-                </View>
-              </View>
-            </View>
-          )}
         </View>
       </View>
 
@@ -605,9 +567,11 @@ export default function CreateProductFormMobile() {
 
         <View style={styles.cardContent}>
           <View style={styles.mediaCountRow}>
-            <Text style={styles.mediaHint}>* First image/video will be the cover</Text>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{mainMedia.length}/9</Text>
+            <Text style={styles.mediaHint}>* First image/video will be used as the cover image</Text>
+            <View style={styles.mediaActionsRow}>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{mainMedia.length}/9</Text>
+              </View>
             </View>
           </View>
 
@@ -637,22 +601,51 @@ export default function CreateProductFormMobile() {
             )}
           </View>
 
-          {/* Category Selector */}
+          <TouchableOpacity
+            style={[styles.analyzeButton, (mainMedia.length === 0 || isPredicting) && styles.analyzeButtonDisabled]}
+            onPress={handleManualPredict}
+            disabled={mainMedia.length === 0 || isPredicting}
+          >
+            <Text style={styles.analyzeButtonText}>
+              {isPredicting ? 'Analyzing...' : 'Analyze All Images'}
+            </Text>
+          </TouchableOpacity>
+
           <View style={styles.categorySection}>
-            <Text style={styles.label}>Category *</Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={selectedCategoryId}
-                onValueChange={setSelectedCategoryId}
-                style={styles.picker}
-              >
-                <Picker.Item label="Select category" value="none" />
-                {globalCategories.map((category) => (
-                  <Picker.Item key={category.id} label={category.name} value={category.id} />
-                ))}
-              </Picker>
+            <Text style={styles.label}>Category</Text>
+            <View style={styles.categoryCard}>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={selectedCategoryId}
+                  onValueChange={setSelectedCategoryId}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select category" value="none" />
+                  {globalCategories.map((category) => (
+                    <Picker.Item key={category.id} label={category.name} value={category.id} />
+                  ))}
+                </Picker>
+              </View>
+              <Text style={styles.categoryHelper}>
+                Select a category here to override AI suggestion or to set it manually.
+              </Text>
+
+              {showPrediction && predictionResult && (
+                <View style={[styles.suggestedCard, styles.suggestedCardSpacing]}>
+                  <Text style={styles.suggestedTitle}>Suggested Category</Text>
+                  <Text style={styles.suggestedName}>
+                    {predictionResult.predicted_category.category_name} ({Math.round(predictionResult.predicted_category.confidence * 100)}% )
+                  </Text>
+                  {predictionResult.alternative_categories?.length ? (
+                    <Text style={styles.suggestedAlt}>
+                      Alternatives: {predictionResult.alternative_categories.map((c) => c.category_name).join(', ')}
+                    </Text>
+                  ) : null}
+                </View>
+              )}
             </View>
           </View>
+
         </View>
       </View>
 
@@ -1313,6 +1306,35 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111827',
   },
+  manualSelectionInline: {
+    marginBottom: 12,
+  },
+  suggestedCard: {
+    borderWidth: 1,
+    borderColor: '#d1fae5',
+    backgroundColor: '#f0fdf4',
+    borderRadius: 8,
+    padding: 12,
+  },
+  suggestedCardSpacing: {
+    marginTop: 12,
+  },
+  suggestedTitle: {
+    fontSize: 12,
+    color: '#059669',
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  suggestedName: {
+    fontSize: 14,
+    color: '#065f46',
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  suggestedAlt: {
+    fontSize: 12,
+    color: '#047857',
+  },
   predictionResult: {
     backgroundColor: '#fff',
     borderRadius: 8,
@@ -1370,9 +1392,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  mediaActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   mediaHint: {
     fontSize: 12,
     color: '#6b7280',
+  },
+  analyzeButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+    alignSelf: 'flex-start',
+    marginTop: 12,
+  },
+  analyzeButtonDisabled: {
+    opacity: 0.5,
+  },
+  analyzeButtonText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '500',
   },
   badge: {
     backgroundColor: '#f3f4f6',
@@ -1391,6 +1436,18 @@ const styles = StyleSheet.create({
   },
   categorySection: {
     marginTop: 16,
+  },
+  categoryCard: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#ffffff',
+  },
+  categoryHelper: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#6b7280',
   },
   mediaItem: {
     width: (SCREEN_WIDTH - 64) / 3,
