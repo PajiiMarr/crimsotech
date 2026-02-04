@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
 import AxiosInstance from "~/components/axios/Axios";
+import { toast } from 'sonner';
 import {
   ArrowLeft,
   MoreVertical,
@@ -35,6 +36,9 @@ import {
 // Import view components
 import ViewPending from "./view/view-pending";
 import ViewProcessing from "./view/view-processing";
+import ViewPickupProcessing from "./view/view-pickup-processing";
+import ViewPickupReady from "./view/view-pickup-ready";
+import ViewPickupPickedUp from "./view/view-pickup-picked-up";
 import ViewShipping from "./view/view-shipping";
 import ViewDelivered from "./view/view-delivered";
 import ViewCompleted from "./view/view-completed";
@@ -179,6 +183,8 @@ const mapStatus = (backendStatus: string) => {
       return "ready_for_pickup";
     case "delivered":
       return "to_receive"; // This will render ViewDelivered
+    case "picked_up":
+      return "picked_up"; // This will render a customer 'picked up' UI
     case "completed":
       return "completed"; // This will render ViewCompleted
     case "cancelled":
@@ -430,6 +436,30 @@ export default function ViewOrder({ loaderData }: any) {
     }
   };
 
+  const handleCompleteOrder = async (orderId: string) => {
+    try {
+      console.log('Completing order:', orderId, 'as user', normalizedUserId);
+      const response = await AxiosInstance.patch(`/purchases-buyer/${orderId}/complete/`, null, {
+        headers: {
+          'X-User-Id': normalizedUserId,
+        },
+      });
+
+      console.log('Complete response:', response?.data);
+
+      if (response.data?.success) {
+        toast.success(response.data.message || 'Order marked as completed');
+        // reload to fetch latest status
+        window.location.reload();
+      } else {
+        toast.error(response.data?.message || 'Failed to mark order as completed');
+      }
+    } catch (e: any) {
+      console.error('Error completing order:', e);
+      toast.error(e?.response?.data?.message || e?.message || 'Failed to mark order as completed');
+    }
+  };
+
   // Render the appropriate component based on order status
   const renderStatusComponent = () => {
     if (!orderDetails) return null;
@@ -453,7 +483,34 @@ export default function ViewOrder({ loaderData }: any) {
       onContactSupport: handleContactSupport,
       onContactSeller: handleContactSeller,
       onViewDisputeDetails: handleViewDisputeDetails,
+      onCompleteOrder: handleCompleteOrder,
+      // alias for components expecting `onComplete` prop
+      onComplete: handleCompleteOrder,
     };
+
+    // Special-case: If backend status is explicitly "pending" and delivery method
+    // is "Pickup from Store", prefer the pending view (same as regular pending).
+    // This ensures pickup orders that are still pending are shown with the
+    // customer-facing pending UI (`view-pending.tsx`).
+    const backendStatus = (orderDetails.order.backend_status || "").toString().toLowerCase();
+    const deliveryMethod = (orderDetails.order.shipping?.method || "").toString().toLowerCase();
+    const paymentMethod = (orderDetails.order.payment?.method || "").toString().toLowerCase();
+
+    if (backendStatus === "pending" && deliveryMethod === "pickup from store") {
+      console.log("Pickup from Store with pending status, rendering ViewPending");
+      return <ViewPending {...commonProps} />;
+    }
+
+    // Pickup-specific UI: when backend status is 'processing' and order uses
+    // Cash on Pickup + Pickup from Store, show a separate pickup-processing view
+    if (
+      backendStatus === "processing" &&
+      paymentMethod.includes("cash on pickup") &&
+      deliveryMethod.includes("pickup")
+    ) {
+      console.log("Rendering pickup-specific processing view");
+      return <ViewPickupProcessing {...commonProps} />;
+    }
 
     switch (status) {
       case "pending":
@@ -463,10 +520,17 @@ export default function ViewOrder({ loaderData }: any) {
       case "to_ship":
         return <ViewShipping {...commonProps} />;
       case "ready_for_pickup":
-        return <ViewShipping {...commonProps} />; // Use shipping view for pickup
+        // For pickup orders (Cash on Pickup + Pickup from Store) show a dedicated ready-for-pickup UI
+        if ((paymentMethod || "").toLowerCase().includes("cash on pickup") && (deliveryMethod || "").toLowerCase().includes("pickup")) {
+          return <ViewPickupReady {...commonProps} />;
+        }
+        return <ViewShipping {...commonProps} />; // Use shipping view for non-pickup
       case "to_receive":    // This comes from 'delivered' backend status
         console.log("Rendering ViewDelivered component");
         return <ViewDelivered {...commonProps} />;
+      case "picked_up":
+        console.log("Rendering ViewPickedUp component");
+        return <ViewPickupPickedUp {...commonProps} />;
       case "completed":     // This comes from 'completed' backend status
         console.log("Rendering ViewCompleted component");
         return <ViewCompleted {...commonProps} />;

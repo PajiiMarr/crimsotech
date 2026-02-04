@@ -104,7 +104,7 @@ interface PurchaseItem {
   shop_name: string;
   shop_id: string | null;
   quantity: number;
-  status: 'pending' | 'in_progress' | 'to_ship' | 'to_receive' | 'delivered' | 'completed' | 'cancelled' | 'return_refund' | 'ready_for_pickup';
+  status: 'pending' | 'in_progress' | 'to_ship' | 'to_receive' | 'delivered' | 'completed' | 'cancelled' | 'return_refund' | 'ready_for_pickup' | 'picked_up';
   purchased_at: string;
   total_amount: number;
   image: string;
@@ -193,6 +193,8 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
       return 'to_ship';
     case 'ready_for_pickup':
       return 'ready_for_pickup';
+    case 'picked_up':
+      return 'picked_up';
     case 'delivered':
       return 'delivered'; // Show delivered UI separately from to_receive
     case 'completed':
@@ -362,22 +364,35 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
 
     purchaseItems.forEach((item) => {
       const status = item.status;
-      
-      // Processing tab (pending or in_progress)
-      if (status === 'pending' || status === 'in_progress') {
+      const paymentMethod = (item.order.payment_method || '').toString().toLowerCase();
+      const deliveryMethod = (item.order.delivery_method || '').toString().toLowerCase();
+
+      const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
+
+      // Processing tab:
+      // - Non-pickup: pending or in_progress
+      // - Pickup (Cash on Pickup + Pickup from Store): pending, in_progress or ready_for_pickup
+      if ((status === 'pending' || status === 'in_progress') || (isPickupCash && status === 'ready_for_pickup')) {
         counts.processing++;
       }
-      
-      // Shipped tab (to_ship, to_receive, delivered or ready_for_pickup)
-      if (status === 'to_ship' || status === 'to_receive' || status === 'ready_for_pickup' || status === 'delivered') {
+
+      // Shipped tab:
+      // Includes shipping flows and pickup completion/picked states
+      if (
+        status === 'to_ship' ||
+        status === 'to_receive' ||
+        status === 'delivered' ||
+        status === 'picked_up' ||
+        status === 'completed'
+      ) {
         counts.shipped++;
       }
-      
-      // Rate tab (completed)
-      if (status === 'completed') {
+
+      // Rate tab (keep showing items eligible for rating regardless of moved tab policy)
+      if (status === 'completed' && item.can_review) {
         counts.rate++;
       }
-      
+
       // Returns tab (cancelled or return_refund)
       if (status === 'cancelled' || status === 'return_refund') {
         counts.returns++;
@@ -402,20 +417,30 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
     if (activeTab !== 'all') {
       switch (activeTab) {
         case 'processing':
-          filtered = filtered.filter(item => 
-            item.status === 'pending' || item.status === 'in_progress'
-          );
+          filtered = filtered.filter(item => {
+            const paymentMethod = (item.order.payment_method || '').toString().toLowerCase();
+            const deliveryMethod = (item.order.delivery_method || '').toString().toLowerCase();
+            const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
+
+            // For pickup orders using Cash on Pickup + Pickup from Store, include ready_for_pickup in processing
+            if (isPickupCash) {
+              return item.status === 'pending' || item.status === 'in_progress' || item.status === 'ready_for_pickup';
+            }
+
+            return item.status === 'pending' || item.status === 'in_progress';
+          });
           break;
         case 'shipped':
           filtered = filtered.filter(item => 
             item.status === 'to_ship' || 
             item.status === 'to_receive' ||
-            item.status === 'ready_for_pickup' ||
-            item.status === 'delivered'
+            item.status === 'delivered' ||
+            item.status === 'picked_up' ||
+            item.status === 'completed'
           );
           break;
         case 'rate':
-          // Show completed items that can be rated
+          // Show completed items that can be rated (keep this as a separate view for ratings)
           filtered = filtered.filter(item => 
             item.status === 'completed' && item.can_review
           );

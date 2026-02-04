@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '~/components/ui/alert';
 import { toast } from 'sonner';
+import AxiosInstance from '~/components/axios/Axios';
 
 export function meta(): Route.MetaDescriptors {
     return [
@@ -177,7 +178,7 @@ const STATUS_CONFIG: Record<string, {
     borderColor: "border-amber-200",
     icon: Clock,
     alertTitle: "Order Received",
-    alertDescription: "Order has been received and is being processed.",
+    alertDescription: "Waiting for order confirmation",
     alertClassName: "bg-amber-50 border-amber-200",
   },
   to_ship: {
@@ -492,17 +493,52 @@ export default function SellerViewOrder({ loaderData }: { loaderData: LoaderData
                                 <CardTitle className="text-sm">Quick Actions</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2">
-                                <Button 
-                                    variant="outline" 
-                                    size="sm" 
-                                    className="w-full justify-between"
-                                    onClick={() => navigate(`/arrange-shipment?orderId=${order.order_id}`)}
-                                >
-                                    <span className="flex items-center">
-                                        <Truck className="h-4 w-4 mr-2" /> Arrange Shipping
-                                    </span>
-                                    <ChevronRight className="h-3 w-3" />
-                                </Button>
+                                { /* If this is a pickup order paid with Cash on Pickup and still pending, show Confirm Pickup button */ }
+                                { (isPickup && (order.payment_method || '').toLowerCase().includes('cash on pickup') && (order.status || '').toLowerCase() === 'pending') ? (
+                                    <Button 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="w-full justify-between"
+                                        onClick={async () => {
+                                            try {
+                                                const confirm = window.confirm('Confirm pickup order? This will move the order to processing.');
+                                                if (!confirm) return;
+                                                const response = await AxiosInstance.patch(
+                                                    `/seller-order-list/${order.order_id}/update_status/`,
+                                                    { action_type: 'confirm' }
+                                                );
+                                                if (response.data.success) {
+                                                    toast.success('Pickup order confirmed');
+                                                    // Refresh to show new status
+                                                    window.location.reload();
+                                                } else {
+                                                    toast.error(response.data.message || 'Failed to confirm pickup order');
+                                                }
+                                            } catch (err: any) {
+                                                console.error('Error confirming pickup order:', err);
+                                                toast.error(err.response?.data?.message || err.message || 'Failed to confirm pickup order');
+                                            }
+                                        }}
+                                    >
+                                        <span className="flex items-center">
+                                            <CheckCircle className="h-4 w-4 mr-2" /> Confirm Pickup Order
+                                        </span>
+                                        <ChevronRight className="h-3 w-3" />
+                                    </Button>
+                                ) : (
+                                    <Button 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="w-full justify-between"
+                                        onClick={() => navigate(`/arrange-shipment?orderId=${order.order_id}`)}
+                                    >
+                                        <span className="flex items-center">
+                                            <Truck className="h-4 w-4 mr-2" /> Arrange Shipping
+                                        </span>
+                                        <ChevronRight className="h-3 w-3" />
+                                    </Button>
+                                ) }
+
                                 <Button 
                                     variant="ghost" 
                                     size="sm" 

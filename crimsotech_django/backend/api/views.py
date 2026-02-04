@@ -16765,11 +16765,12 @@ class SellerOrderList(viewsets.ViewSet):
                         "success": False,
                         "message": "This action is only for pickup orders"
                     }, status=status.HTTP_400_BAD_REQUEST)
-                order.status = 'completed'
-                # Update delivery status if exists
+                # Mark order as picked up (not completed) so UI and rider flows can track it
+                order.status = 'picked_up'
+                # Update delivery status if exists and set picked_at timestamp
                 Delivery.objects.filter(order=order).update(
-                    status='delivered',
-                    delivered_at=timezone.now()
+                    status='picked_up',
+                    picked_at=timezone.now()
                 )
                 message = "Order marked as picked up"
                 
@@ -19161,6 +19162,36 @@ class PurchasesBuyer(viewsets.ViewSet):
             })
         
         return timeline
+
+    @action(detail=True, methods=['patch'], url_path='complete')
+    def complete(self, request, pk=None):
+        """Buyer can mark picked up order as completed."""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'success': False, 'message': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order = Order.objects.get(order=pk)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if str(order.user.id) != str(user_id):
+            return Response({'success': False, 'message': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+        if order.status != 'picked_up':
+            return Response({'success': False, 'message': 'Order is not in picked up state'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order.status = 'completed'
+            order.completed_at = timezone.now()
+            order.save(update_fields=['status', 'completed_at'])
+
+            Delivery.objects.filter(order=order).update(status='delivered', delivered_at=timezone.now())
+
+            return Response({'success': True, 'message': 'Order marked as completed'}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception('Error marking order as completed: %s', e)
+            return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['get'], url_path='shipping-timeline')
     def shipping_timeline(self, request, pk=None):
