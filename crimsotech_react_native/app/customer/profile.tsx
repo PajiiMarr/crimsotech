@@ -531,7 +531,7 @@ export default function ProfileScreen() {
                 <MaterialIcons
                   name="store"
                   size={28}
-                  color="#78716C"
+                  color="#374151"
                 />
               </View>
               <View style={styles.shopCardText}>
@@ -547,7 +547,7 @@ export default function ProfileScreen() {
                   }
                 </Text>
               </View>
-              <MaterialIcons name="arrow-forward" size={24} color="#78716C" />
+              <MaterialIcons name="arrow-forward" size={24} color="#374151" />
             </View>
           </LinearGradient>
         </TouchableOpacity>
@@ -565,7 +565,7 @@ export default function ProfileScreen() {
           <TouchableOpacity onPress={() => pushRoute('/customer/purchases')}>
             <View style={styles.viewAllButton}>
               <Text style={styles.viewAllText}>View All</Text>
-              <MaterialIcons name="chevron-right" size={18} color="#78716C" />
+              <MaterialIcons name="chevron-right" size={18} color="#374151" />
             </View>
           </TouchableOpacity>
         </View>
@@ -579,7 +579,7 @@ export default function ProfileScreen() {
           >
             <View style={styles.orderIconContainer}>
               <View style={[styles.orderIconBg, { backgroundColor: '#F5F5F4' }]}>
-                <MaterialIcons name="assignment" size={24} color="#78716C" />
+                <MaterialIcons name="assignment" size={24} color="#374151" />
               </View>
               {orderCounts.processing > 0 && (
                 <View style={styles.modernBadge}>
@@ -598,7 +598,7 @@ export default function ProfileScreen() {
           >
             <View style={styles.orderIconContainer}>
               <View style={[styles.orderIconBg, { backgroundColor: '#F5F5F4' }]}>
-                <MaterialIcons name="local-shipping" size={24} color="#78716C" />
+                <MaterialIcons name="local-shipping" size={24} color="#374151" />
               </View>
               {orderCounts.shipped > 0 && (
                 <View style={styles.modernBadge}>
@@ -617,7 +617,7 @@ export default function ProfileScreen() {
           >
             <View style={styles.orderIconContainer}>
               <View style={[styles.orderIconBg, { backgroundColor: '#F5F5F4' }]}>
-                <MaterialIcons name="star" size={24} color="#78716C" />
+                <MaterialIcons name="star" size={24} color="#374151" />
               </View>
               {orderCounts.rate > 0 && (
                 <View style={styles.modernBadge}>
@@ -636,7 +636,7 @@ export default function ProfileScreen() {
           >
             <View style={styles.orderIconContainer}>
               <View style={[styles.orderIconBg, { backgroundColor: '#F5F5F4' }]}>
-                <MaterialIcons name="undo" size={24} color="#78716C" />
+                <MaterialIcons name="undo" size={24} color="#374151" />
               </View>
               {orderCounts.returns > 0 && (
                 <View style={styles.modernBadge}>
@@ -667,7 +667,7 @@ export default function ProfileScreen() {
             activeOpacity={0.7}
           >
             <View style={[styles.accountIconBg, { backgroundColor: '#F5F5F4' }]}>
-              <MaterialIcons name="person" size={22} color="#78716C" />
+              <MaterialIcons name="person" size={22} color="#374151" />
             </View>
             <Text style={styles.accountGridLabel}>Profile</Text>
           </TouchableOpacity>
@@ -678,7 +678,7 @@ export default function ProfileScreen() {
             activeOpacity={0.7}
           >
             <View style={[styles.accountIconBg, { backgroundColor: '#F5F5F4' }]}>
-              <MaterialIcons name="location-on" size={22} color="#78716C" />
+              <MaterialIcons name="location-on" size={22} color="#374151" />
             </View>
             <Text style={styles.accountGridLabel}>Addresses</Text>
           </TouchableOpacity>
@@ -689,7 +689,7 @@ export default function ProfileScreen() {
             activeOpacity={0.7}
           >
             <View style={[styles.accountIconBg, { backgroundColor: '#F5F5F4' }]}>
-              <MaterialIcons name="local-offer" size={22} color="#78716C" />
+              <MaterialIcons name="local-offer" size={22} color="#374151" />
             </View>
             <Text style={styles.accountGridLabel}>Vouchers</Text>
           </TouchableOpacity>
@@ -908,12 +908,12 @@ const styles = StyleSheet.create({
   shopCardTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#78716C',
+    color: '#374151',
     marginBottom: 4,
   },
   shopCardSubtitle: {
     fontSize: 14,
-    color: '#78716C',
+    color: '#374151',
   },
 
   // Modern Card Design
@@ -957,7 +957,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#111827',
+    color: '#374151',
   },
   viewAllButton: {
     flexDirection: 'row',
@@ -965,7 +965,7 @@ const styles = StyleSheet.create({
   },
   viewAllText: {
     fontSize: 14,
-    color: '#78716C',
+    color: '#374151',
     fontWeight: '600',
     marginRight: 4,
   },
@@ -1012,7 +1012,7 @@ const styles = StyleSheet.create({
   },
   orderItemLabel: {
     fontSize: 13,
-    color: '#6B7280',
+    color: '#374151',
     fontWeight: '500',
     textAlign: 'center',
   },
