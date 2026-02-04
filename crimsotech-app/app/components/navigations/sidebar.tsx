@@ -41,7 +41,7 @@ const menuItems = [
   {
     group: "Products & Shops",
     children: [
-      { title: "Products", url: "/admin/products", icon: Package, roles: ["admin"] },
+      { title: "Products and Categories", url: "/admin/products", icon: Package, roles: ["admin"] },
       { title: "Shops", url: "/admin/shops", icon: Store, roles: ["admin"] },
       { title: "Boosting Plans", url: "/admin/boosting", icon: CreditCard, roles: ["admin"] },
     ]
@@ -225,7 +225,7 @@ export function AppSidebar() {
           <SidebarGroupLabel className="mb-5">
             <Link to="/" className="h-20 flex  w-full pt-5">
               <img
-                src="/logo_crimsotech.jpg"
+                src="/Crimsotech.png"
                 alt="CrimsoTech"
               />
             </Link>

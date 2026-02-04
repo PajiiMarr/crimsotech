@@ -1,4 +1,5 @@
 // app/routes/admin/products.tsx
+import { toast } from 'sonner';
 import type { Route } from './+types/products'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -32,11 +33,44 @@ import {
   Download,
   MoreHorizontal,
   ArrowUpDown,
-  RefreshCw
+  RefreshCw,
+  Tag,
+  Grid,
+  List,
+  X
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
 import DateRangeFilter from '~/components/ui/date-range-filter';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "~/components/ui/dialog"
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "~/components/ui/drawer"
+import { Input } from "~/components/ui/input"
+import { Label } from "~/components/ui/label"
+import { Textarea } from "~/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select"
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -95,6 +129,12 @@ interface ProductMetrics {
     end_date: string;
     range_type: string;
   };
+}
+
+interface CategoryStats {
+  name: string;
+  count: number;
+  percentage: number;
 }
 
 interface LoaderData {
@@ -252,6 +292,231 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   };
 }
 
+function AddCategoryModalDrawer({ 
+  onCategoryAdded,
+  userId 
+}: { 
+  onCategoryAdded?: () => void;
+  userId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    name: '',
+  });
+
+  // Detect if we're on mobile
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!formData.name.trim()) {
+      toast.error('Category name is required');
+      return;
+    }
+    
+    if (formData.name.length > 50) {
+      toast.error('Category name must be 50 characters or less');
+      return;
+    }
+    
+    if (!userId) {
+      toast.error('User authentication required. Please log in again.');
+      return;
+    }
+    
+    setIsLoading(true);
+    
+    try {
+      const payload = {
+        name: formData.name.trim(),
+        user_id: userId
+      };
+      
+      console.log('Sending payload to /admin-products/add_category/ :', payload);
+      
+      // Get the session token or user ID from localStorage if available
+      const sessionUserId = localStorage.getItem('userId') || userId;
+      
+      const response = await AxiosInstance.post('/admin-products/add_category/', payload, {
+        headers: {
+          "X-User-Id": sessionUserId
+        }
+      });
+      
+      if (response.data.success) {
+        toast.success(response.data.message || 'Category added successfully!');
+        
+        setFormData({
+          name: '',
+        });
+        
+        setOpen(false);
+        
+        if (onCategoryAdded) {
+          onCategoryAdded();
+        }
+      } else {
+        toast.error(response.data.message || 'Failed to add category');
+      }
+    } catch (error: any) {
+      console.error('Error adding category:', error);
+      
+      if (error.response?.data?.message) {
+        toast.error(error.response.data.message);
+      } else if (error.response?.data?.error) {
+        toast.error(error.response.data.error);
+      } else {
+        toast.error('Failed to add category. Please try again.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  // Render only ONE component based on screen size
+  if (isMobile) {
+    return (
+      <Drawer open={open} onOpenChange={setOpen}>
+        <DrawerTrigger asChild>
+          <Button className="flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            Add Category
+          </Button>
+        </DrawerTrigger>
+        <DrawerContent>
+          <DrawerHeader className="text-left">
+            <DrawerTitle>Add New Category</DrawerTitle>
+            <DrawerDescription>
+              Create a new product category. Name is required (max 50 characters).
+            </DrawerDescription>
+          </DrawerHeader>
+          
+          <form onSubmit={handleSubmit} className="px-4 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="category-name">Category Name *</Label>
+              <Input
+                id="category-name"
+                name="name"
+                value={formData.name}
+                onChange={handleChange}
+                placeholder="e.g., Electronics, Clothing, Books"
+                required
+                maxLength={50}
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">
+                Maximum 50 characters. {50 - formData.name.length} characters remaining.
+              </p>
+            </div>
+          </form>
+          
+          <DrawerFooter className="pt-2">
+            <Button 
+              onClick={handleSubmit} 
+              disabled={isLoading}
+              className="w-full"
+            >
+              {isLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                'Add Category'
+              )}
+            </Button>
+            <DrawerClose asChild>
+              <Button variant="outline" disabled={isLoading}>
+                Cancel
+              </Button>
+            </DrawerClose>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="flex items-center gap-2">
+          <Plus className="w-4 h-4" />
+          Add Category
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle>Add New Category</DialogTitle>
+          <DialogDescription>
+            Create a new product category. Name is required (max 50 characters).
+          </DialogDescription>
+        </DialogHeader>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="category-name">Category Name *</Label>
+            <Input
+              id="category-name"
+              name="name"
+              value={formData.name}
+              onChange={handleChange}
+              placeholder="e.g., Electronics, Clothing, Books"
+              required
+              maxLength={50}
+              autoComplete="off"
+            />
+            <p className="text-xs text-muted-foreground">
+              Maximum 50 characters. {50 - formData.name.length} characters remaining.
+            </p>
+          </div>
+          
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={isLoading}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                'Add Category'
+              )}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Products({ loaderData }: { loaderData: LoaderData }) {
   if (!loaderData) {
     return (
@@ -269,6 +534,10 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     dateRange: initialDateRange 
   } = loaderData;
   
+  // Debug logging
+  console.log('User object:', user);
+  console.log('User ID:', user?.id);
+  
   // State for managing data
   const [productMetrics, setProductMetrics] = useState(initialMetrics);
   const [products, setProducts] = useState<Product[]>(initialProducts);
@@ -285,6 +554,7 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [categoryStats, setCategoryStats] = useState<CategoryStats[]>([]);
   
   // Date range state
   const [dateRange, setDateRange] = useState({
@@ -292,6 +562,31 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     end: initialDateRange?.end ? new Date(initialDateRange.end) : new Date(),
     rangeType: (initialDateRange?.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom') || 'weekly'
   });
+
+  // Calculate category stats from products
+  useEffect(() => {
+    if (products.length > 0) {
+      const categoryCounts: Record<string, number> = {};
+      
+      // Count products per category
+      products.forEach(product => {
+        const category = product.category || 'Uncategorized';
+        categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+      });
+      
+      // Convert to array and calculate percentages
+      const totalProducts = products.length;
+      const stats = Object.entries(categoryCounts).map(([name, count]) => ({
+        name,
+        count,
+        percentage: (count / totalProducts) * 100
+      })).sort((a, b) => b.count - a.count); // Sort by count descending
+      
+      setCategoryStats(stats);
+    } else {
+      setCategoryStats([]);
+    }
+  }, [products]);
 
   // Fetch data function with date range
   const fetchProductData = async (start: Date, end: Date, rangeType: string) => {
@@ -349,6 +644,11 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     fetchProductData(range.start, range.end, range.rangeType);
   };
 
+  // Function to refresh categories (call this after adding a new category)
+  const refreshCategories = () => {
+    fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
+  };
+
   // Use real data from backend or fallback
   const metrics = productMetrics || {
     total_products: 0,
@@ -382,14 +682,26 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
       options: filterOptions.shops,
       placeholder: 'Shop'
     },
-    boostPlan: {
-      options: filterOptions.boostPlans,
-      placeholder: 'Boost Plan'
-    },
-    condition: {
-      options: filterOptions.conditions,
-      placeholder: 'Condition'
-    }
+  };
+
+  // Function to get a random color for category badges
+  const getCategoryColor = (category: string) => {
+    const colors = [
+      'bg-blue-100 text-blue-800 border-blue-200',
+      'bg-green-100 text-green-800 border-green-200',
+      'bg-purple-100 text-purple-800 border-purple-200',
+      'bg-yellow-100 text-yellow-800 border-yellow-200',
+      'bg-pink-100 text-pink-800 border-pink-200',
+      'bg-indigo-100 text-indigo-800 border-indigo-200',
+      'bg-red-100 text-red-800 border-red-200',
+      'bg-teal-100 text-teal-800 border-teal-200',
+      'bg-orange-100 text-orange-800 border-orange-200',
+      'bg-cyan-100 text-cyan-800 border-cyan-200',
+    ];
+    
+    // Simple hash function to get consistent color for same category
+    const hash = category.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return colors[hash % colors.length];
   };
 
   return (
@@ -508,6 +820,106 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
               </CardContent>
             </Card>
           </div>
+
+          {/* Categories Section */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Tag className="w-5 h-5" />
+                    Product Categories
+                  </CardTitle>
+                </div>
+                {/* Add Category Button */}
+                <AddCategoryModalDrawer 
+                  onCategoryAdded={refreshCategories} 
+                  userId={user?.id || ''}
+                />
+              </div>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <div className="flex flex-wrap gap-2">
+                  {[...Array(8)].map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-24 rounded-full" />
+                  ))}
+                </div>
+              ) : categoryStats.length > 0 ? (
+                <div className="space-y-4">
+                  {/* Categories Grid */}
+                  <div className="flex flex-wrap gap-3">
+                    {categoryStats.map((category) => (
+                      <div
+                        key={category.name}
+                        className={`group relative px-4 py-3 rounded-lg border transition-all duration-200 hover:shadow-md cursor-pointer ${getCategoryColor(category.name)}`}
+                        onClick={() => setSelectedCategory(category.name === selectedCategory ? 'all' : category.name)}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-md ${getCategoryColor(category.name).includes('bg-blue') ? 'bg-blue-200' : 
+                              getCategoryColor(category.name).includes('bg-green') ? 'bg-green-200' :
+                              getCategoryColor(category.name).includes('bg-purple') ? 'bg-purple-200' :
+                              getCategoryColor(category.name).includes('bg-yellow') ? 'bg-yellow-200' :
+                              getCategoryColor(category.name).includes('bg-pink') ? 'bg-pink-200' : 'bg-gray-200'
+                            }`}>
+                              <Tag className="w-3.5 h-3.5" />
+                            </div>
+                            <span className="font-medium">{category.name}</span>
+                          </div>
+                          <Badge variant="secondary" className="ml-2 bg-white/50">
+                            {category.count}
+                          </Badge>
+                        </div>
+                        
+                        {/* Progress bar showing percentage */}
+                        <div className="mt-2 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full rounded-full transition-all duration-300"
+                            style={{
+                              width: `${Math.min(category.percentage, 100)}%`,
+                              backgroundColor: getCategoryColor(category.name).includes('bg-blue') ? '#3b82f6' :
+                                getCategoryColor(category.name).includes('bg-green') ? '#10b981' :
+                                getCategoryColor(category.name).includes('bg-purple') ? '#8b5cf6' :
+                                getCategoryColor(category.name).includes('bg-yellow') ? '#f59e0b' :
+                                getCategoryColor(category.name).includes('bg-pink') ? '#ec4899' : '#6b7280'
+                            }}
+                          />
+                        </div>
+                        
+                        {/* Percentage indicator */}
+                        <div className="text-xs mt-1 opacity-75">
+                          {category.percentage.toFixed(1)}% of total
+                        </div>
+                        
+                        {/* Hover info */}
+                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
+                          <div className="font-medium">{category.name}</div>
+                          <div className="text-xs text-gray-300">{category.count} products</div>
+                          <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <div className="inline-flex p-3 rounded-full bg-gray-100 mb-4">
+                    <Tag className="w-6 h-6 text-gray-400" />
+                  </div>
+                  <h3 className="text-lg font-medium mb-2">No Categories Found</h3>
+                  <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">
+                    No product categories have been created yet. Add your first category to get started.
+                  </p>
+                  <AddCategoryModalDrawer 
+                    onCategoryAdded={refreshCategories} 
+                    userId={user?.id || ''}
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Products Table */}
           <Card>
