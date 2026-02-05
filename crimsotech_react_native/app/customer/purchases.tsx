@@ -70,6 +70,8 @@ export default function PurchasesPage() {
   const [filteredOrders, setFilteredOrders] = useState<PurchaseOrder[]>([]);
   const [orderCounts, setOrderCounts] = useState({ processing: 0, shipped: 0, rate: 0, returns: 0, all: 0 });
   const [loadingCounts, setLoadingCounts] = useState(false);
+  // Track orders that have refund requests (order_id strings)
+  const [ordersWithRefund, setOrdersWithRefund] = useState<Set<string>>(new Set());
 
   // Sync active tab with navigation params if they exist
   useEffect(() => {
@@ -104,7 +106,7 @@ export default function PurchasesPage() {
           break;
         case 'Shipped':
           filtered = purchases.purchases.filter(order => 
-            order.status === 'shipped' || order.status === 'delivered'
+            order.status === 'shipped' || (order.status === 'delivered' && !ordersWithRefund.has(String(order.order_id)))
           );
           break;
         case 'Rate':
@@ -114,7 +116,9 @@ export default function PurchasesPage() {
           break;
         case 'Returns':
           filtered = purchases.purchases.filter(order => 
-            order.status === 'cancelled' || order.status === 'refunded'
+            order.status === 'cancelled' ||
+            order.status === 'refunded' ||
+            (order.status === 'delivered' && ordersWithRefund.has(String(order.order_id)))
           );
           break;
         default:
@@ -128,7 +132,7 @@ export default function PurchasesPage() {
     );
 
     setFilteredOrders(filtered);
-  }, [purchases, activeTab]);
+  }, [purchases, activeTab, ordersWithRefund]);
 
   const fetchPurchases = async () => {
     if (!user?.id) {
@@ -148,6 +152,40 @@ export default function PurchasesPage() {
         setPurchases(response.data);
         // Update the 'all' count
         setOrderCounts(prev => ({ ...prev, all: Number(response.data.total_purchases || (response.data.purchases || []).length || 0) }));
+      }
+
+      // Also fetch buyer refunds to know which orders have refunds
+      try {
+        const refundsResp = await AxiosInstance.get('/return-refund/get_my_refunds/', {
+          headers: { 'X-User-Id': user.id },
+        });
+
+        const refundOrderIds = new Set<string>();
+        if (refundsResp?.data && Array.isArray(refundsResp.data)) {
+          refundsResp.data.forEach((r: any) => {
+            try {
+              if (r.order && (r.order.order_id || r.order.order)) {
+                refundOrderIds.add(String(r.order.order_id || r.order.order));
+              } else if (r.order_id) {
+                if (typeof r.order_id === 'object') {
+                  refundOrderIds.add(String(r.order_id.order || r.order_id.order_id || r.order_id));
+                } else {
+                  refundOrderIds.add(String(r.order_id));
+                }
+              } else if (Array.isArray(r.order_items) && r.order_items.length > 0) {
+                r.order_items.forEach((oi: any) => {
+                  if (oi.order_id) refundOrderIds.add(String(oi.order_id));
+                });
+              }
+            } catch (e) {
+              // ignore parsing errors for individual refunds
+            }
+          });
+        }
+
+        setOrdersWithRefund(refundOrderIds);
+      } catch (e) {
+        console.warn('Failed to fetch buyer refunds', e);
       }
     } catch (error) {
       console.error('Error fetching purchases:', error);
@@ -266,9 +304,67 @@ export default function PurchasesPage() {
     }
   };
 
-  const handleRefund = (orderId: string) => {
-    // Navigate to customer refund screen (pass orderId as query param)
-    router.push(`/customer/request-refund?orderId=${encodeURIComponent(String(orderId))}`);
+  const handleRefund = async (orderId: string) => {
+    console.log('DEBUG: handleRefund called with orderId:', orderId);
+    try {
+      // Check if there's an existing refund for this order
+      const resp = await AxiosInstance.get('/return-refund/get_my_refunds/', {
+        headers: { 'X-User-Id': user?.id },
+      });
+
+      console.log('DEBUG: get_my_refunds response length:', resp?.data?.length);
+
+      if (resp?.data && Array.isArray(resp.data)) {
+        const existing = resp.data.find((r: any) => {
+          // Various possible shapes from backend
+          try {
+            // 1) r.order?.order_id
+            if (r.order && (r.order.order_id || r.order.order)) {
+              const oId = r.order.order_id || r.order.order;
+              if (String(oId) === String(orderId)) return true;
+            }
+
+            // 2) r.order_id (might be nested or plain id)
+            if (r.order_id) {
+              if (typeof r.order_id === 'object') {
+                if (r.order_id.order) return String(r.order_id.order) === String(orderId);
+                if (r.order_id.order_id) return String(r.order_id.order_id) === String(orderId);
+              } else if (String(r.order_id) === String(orderId)) return true;
+            }
+
+            // 3) order_items (backend sets this in get_my_refunds)
+            if (Array.isArray(r.order_items) && r.order_items.length > 0) {
+              const match = r.order_items.some((oi: any) => {
+                return String(oi.order_id || oi.order || oi.order_number || oi.checkout_id) === String(orderId);
+              });
+              if (match) return true;
+            }
+
+            // 4) fallback: customer_note or other fields may include the order number
+            if (r.customer_note && String(r.customer_note).includes(String(orderId))) return true;
+
+            return false;
+          } catch (e) {
+            return false;
+          }
+        });
+
+        console.log('DEBUG: existing refund found:', !!existing, existing?.refund_id);
+
+        if (existing) {
+          // If order is delivered, ensure we land on Returns tab
+          router.replace({ pathname: '/customer/purchases' as any, params: { tab: 'Returns', refundId: existing.refund_id } });
+          return;
+        }
+      }
+
+      // No existing refund -> go to request page
+      router.push(`/customer/request-refund?orderId=${encodeURIComponent(String(orderId))}`);
+    } catch (err: any) {
+      console.error('Error checking refunds for order:', err);
+      // Fallback to request page
+      router.push(`/customer/request-refund?orderId=${encodeURIComponent(String(orderId))}`);
+    }
   };
 
   const getStatusIcon = (status: string) => {
@@ -322,6 +418,21 @@ export default function PurchasesPage() {
       default:
         return status;
     }
+  };
+
+  // Return a user-facing status text for an order taking refunds into account
+  const getOrderStatusText = (order: PurchaseOrder) => {
+    if (ordersWithRefund.has(String(order.order_id)) && order.status === 'delivered') {
+      return 'Requested for Refund';
+    }
+    return getStatusText(order.status);
+  };
+
+  const getOrderStatusColor = (order: PurchaseOrder) => {
+    if (ordersWithRefund.has(String(order.order_id)) && order.status === 'delivered') {
+      return '#EF4444'; // red for refund request
+    }
+    return getStatusColor(order.status);
   };
 
   const formatDate = (dateString: string) => {
@@ -405,9 +516,9 @@ export default function PurchasesPage() {
           <View style={styles.orderHeader}>
             <View style={{ flex: 1 }}>
               <View style={styles.statusRow}>
-                <View style={[styles.statusDot, { backgroundColor: getStatusColor(item.status) }]} />
-                <Text style={[styles.orderStatusText, { color: getStatusColor(item.status), marginLeft: 8 }]}>
-                  {getStatusText(item.status)}
+                <View style={[styles.statusDot, { backgroundColor: getOrderStatusColor(item) }]} />
+                <Text style={[styles.orderStatusText, { color: getOrderStatusColor(item), marginLeft: 8 }]}>
+                  {getOrderStatusText(item)}
                 </Text>
               </View>
 
@@ -447,7 +558,7 @@ export default function PurchasesPage() {
             </TouchableOpacity>
           )}
 
-          {isShipped && (
+          {isShipped && !ordersWithRefund.has(String(item.order_id)) && (
             // For shipped we only show Track
             <TouchableOpacity
               style={styles.trackButton}
@@ -457,7 +568,7 @@ export default function PurchasesPage() {
             </TouchableOpacity>
           )}
 
-          {isDelivered && (
+          {isDelivered && !ordersWithRefund.has(String(item.order_id)) && (
             <>
               <TouchableOpacity
                 style={styles.trackButton}
