@@ -520,12 +520,7 @@ export default function ProfileScreen() {
           disabled={loadingProfile}
           activeOpacity={0.7}
         >
-          <LinearGradient
-            colors={effectiveHasShop ? ['#ffffff', '#ffffff'] : ['#ffffff', '#ffffff']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.shopCardGradient}
-          >
+          <View style={styles.shopCardGradient}>
             <View style={styles.shopCardContent}>
               <View style={styles.shopIconCircle}>
                 <MaterialIcons
@@ -537,19 +532,19 @@ export default function ProfileScreen() {
               <View style={styles.shopCardText}>
                 <Text style={styles.shopCardTitle}>
                   {loadingShop ? 'Checking...' : (
-                    effectiveHasShop ? 'Manage Your Shop' : 'Start Selling Today'
+                    effectiveHasShop ? 'Manage Your Shop' : "You Don't Have a Shop"
                   )}
                 </Text>
                 <Text style={styles.shopCardSubtitle}>
                   {effectiveHasShop 
                     ? 'View and manage your products' 
-                    : 'Create your shop in minutes'
+                    : 'Create your shop to start selling'
                   }
                 </Text>
               </View>
               <MaterialIcons name="arrow-forward" size={24} color="#374151" />
             </View>
-          </LinearGradient>
+          </View>
         </TouchableOpacity>
       )}
 
@@ -888,6 +883,7 @@ const styles = StyleSheet.create({
   },
   shopCardGradient: {
     padding: 20,
+    backgroundColor: '#FFFFFF',
   },
   shopCardContent: {
     flexDirection: 'row',
@@ -897,7 +893,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    backgroundColor: '#F5F5F4',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
