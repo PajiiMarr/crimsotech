@@ -12,9 +12,26 @@ type DashboardStats = {
   views: number;
 };
 
+type StoreManagementCounts = {
+  product_list: number;
+  orders: number;
+  gifts: number;
+  address: number;
+  shop_voucher: number;
+  product_voucher: number;
+};
+
 export default function Dashboard() {
   const { userId, shopId } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({ balance: 0, orders: 0, views: 0 });
+  const [managementCounts, setManagementCounts] = useState<StoreManagementCounts>({
+    product_list: 0,
+    orders: 0,
+    gifts: 0,
+    address: 0,
+    shop_voucher: 0,
+    product_voucher: 0,
+  });
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -30,11 +47,23 @@ export default function Dashboard() {
 
         const summary = response.data?.summary || {};
         const shopPerformance = response.data?.shop_performance || {};
+        const storeCounts = response.data?.store_management_counts || {};
+
+        console.log('Store management counts:', storeCounts);
 
         setStats({
           balance: Number(summary.period_sales || 0),
           orders: Number(summary.period_orders || 0),
           views: Number(shopPerformance.total_followers || 0)
+        });
+
+        setManagementCounts({
+          product_list: Number(storeCounts.product_list || 0),
+          orders: Number(storeCounts.orders || 0),
+          gifts: Number(storeCounts.gifts || 0),
+          address: Number(storeCounts.address || 0),
+          shop_voucher: Number(storeCounts.shop_voucher || 0),
+          product_voucher: Number(storeCounts.product_voucher || 0),
         });
       } catch (err) {
         console.error('Failed to load dashboard stats:', err);
@@ -44,12 +73,12 @@ export default function Dashboard() {
     fetchDashboard();
   }, [shopId, userId]);
   const dashboardItems = [
-    { title: 'Product List', Icon: Package, route: '/seller/product-list', color: '#E0F2FE' },
-    { title: 'Orders', Icon: ShoppingCart, route: '/seller/orders', badge: 2, color: '#FEF3C7' },
-    { title: 'Gifts', Icon: Gift, route: '/seller/gifts', color: '#F5F3FF' },
-    { title: 'Address', Icon: MapPin, route: '/seller/address', color: '#DCFCE7' },
-    { title: 'Shop Voucher', Icon: Store, route: '/seller/shop-vouchers', color: '#FFEDD5' },
-    { title: 'Product Voucher', Icon: Tag, route: '/seller/product-vouchers', color: '#FCE7F3' },
+    { title: 'Product List', Icon: Package, route: '/seller/product-list', badge: managementCounts.product_list, color: '#E0F2FE' },
+    { title: 'Orders', Icon: ShoppingCart, route: '/seller/orders', badge: managementCounts.orders, color: '#FEF3C7' },
+    { title: 'Gifts', Icon: Gift, route: '/seller/gifts', badge: managementCounts.gifts, color: '#F5F3FF' },
+    { title: 'Address', Icon: MapPin, route: '/seller/address', badge: managementCounts.address, color: '#DCFCE7' },
+    { title: 'Shop Voucher', Icon: Store, route: '/seller/shop-vouchers', badge: managementCounts.shop_voucher, color: '#FFEDD5' },
+    { title: 'Product Voucher', Icon: Tag, route: '/seller/product-vouchers', badge: managementCounts.product_voucher, color: '#FCE7F3' },
   ];
 
   return (
@@ -92,11 +121,13 @@ export default function Dashboard() {
                 style={styles.gridItem} 
                 onPress={() => router.push(item.route as any)}
               >
-                <View style={[styles.iconCircle, { backgroundColor: item.color }]}>
-                  <item.Icon size={22} color="#1F2937" strokeWidth={2} />
-                  {item.badge && (
+                <View style={styles.iconWrapper}>
+                  <View style={[styles.iconCircle, { backgroundColor: item.color }]}>
+                    <item.Icon size={22} color="#1F2937" strokeWidth={2} />
+                  </View>
+                  {item.badge !== undefined && item.badge !== null && (
                     <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{item.badge}</Text>
+                      <Text style={styles.badgeText}>{Math.max(0, item.badge)}</Text>
                     </View>
                   )}
                 </View>
@@ -119,10 +150,11 @@ const styles = StyleSheet.create({
   statLab: { fontSize: 10, color: '#94A3B8', fontWeight: '600' },
   gridCard: { backgroundColor: '#FFF', marginHorizontal: 16, borderRadius: 24, padding: 20, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 15, elevation: 5 },
   gridTitle: { fontSize: 15, fontWeight: '700', color: '#1E293B', marginBottom: 20 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  gridItem: { width: '33.33%', alignItems: 'center', marginBottom: 25 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', overflow: 'visible' },
+  gridItem: { width: '33.33%', alignItems: 'center', marginBottom: 25, overflow: 'visible' },
+  iconWrapper: { position: 'relative', overflow: 'visible' },
   iconCircle: { width: 52, height: 52, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
   itemLabel: { fontSize: 10, fontWeight: '700', color: '#475569', marginTop: 8, textAlign: 'center' },
-  badge: { position: 'absolute', top: -5, right: -5, backgroundColor: '#EF4444', minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF' },
+  badge: { position: 'absolute', top: -6, right: -6, backgroundColor: '#EF4444', minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF', zIndex: 10, elevation: 10 },
   badgeText: { color: '#FFF', fontSize: 9, fontWeight: '900' }
 });

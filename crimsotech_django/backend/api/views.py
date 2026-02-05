@@ -13572,6 +13572,7 @@ class SellerDashboard(viewsets.ViewSet):
                 'refunds': self._get_refund_data(shop, start_date, end_date),
                 'shop_performance': self._get_shop_performance_data(shop, start_date, end_date),
                 'reports': self._get_report_data(shop),
+                'store_management_counts': self._get_store_management_counts(shop),
             }
             
             return Response(data)
@@ -13581,6 +13582,58 @@ class SellerDashboard(viewsets.ViewSet):
                 {'error': str(e), 'success': False},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def _get_store_management_counts(self, shop):
+        """Get counts for Store Management grid items"""
+        try:
+            product_count = Product.objects.filter(
+                shop=shop,
+                is_removed=False
+            ).count()
+
+            orders_count = Order.objects.filter(
+                shipping_address__user__customer__owned_shops=shop,
+                status__in=['delivered', 'shipped', 'processing', 'pending']
+            ).count()
+
+            gifts_count = AppliedGift.objects.filter(
+                shop_id=shop,
+                is_active=True
+            ).count()
+
+            address_count = ReturnAddress.objects.filter(
+                shop=shop
+            ).count()
+
+            shop_voucher_count = Voucher.objects.filter(
+                shop=shop,
+                is_active=True,
+                discount_type__icontains='shop'
+            ).count()
+
+            product_voucher_count = Voucher.objects.filter(
+                shop=shop,
+                is_active=True,
+                discount_type__icontains='product'
+            ).count()
+
+            return {
+                'product_list': product_count,
+                'orders': orders_count,
+                'gifts': gifts_count,
+                'address': address_count,
+                'shop_voucher': shop_voucher_count,
+                'product_voucher': product_voucher_count,
+            }
+        except Exception:
+            return {
+                'product_list': 0,
+                'orders': 0,
+                'gifts': 0,
+                'address': 0,
+                'shop_voucher': 0,
+                'product_voucher': 0,
+            }
     
     def _get_previous_period_dates(self, start_date, end_date, range_type):
         """Calculate previous period dates for comparison"""
