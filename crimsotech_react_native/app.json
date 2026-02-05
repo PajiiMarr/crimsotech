@@ -40,7 +40,8 @@
       ],
       "expo-secure-store",
       "expo-web-browser",
-      "expo-font"
+      "expo-font",
+      "expo-router"
     ],
     "experiments": {
       "typedRoutes": true,
