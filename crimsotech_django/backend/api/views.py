@@ -14485,6 +14485,8 @@ class SellerProducts(viewsets.ModelViewSet):
         for key, value in request.data.items():
             if not hasattr(value, 'file'):  # Skip file objects
                 product_data[key] = value
+        if 'status' not in product_data or product_data.get('status') in (None, ''):
+            product_data['status'] = 'active'
         # Map frontend 'refundable' to model's 'is_refundable' boolean field if provided
         if 'refundable' in product_data:
             product_data['is_refundable'] = True if str(product_data.get('refundable')).lower() in ('true', '1') else False
