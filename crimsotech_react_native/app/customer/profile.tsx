@@ -520,18 +520,13 @@ export default function ProfileScreen() {
           disabled={loadingProfile}
           activeOpacity={0.7}
         >
-          <LinearGradient
-            colors={effectiveHasShop ? ['#F97316', '#EA580C'] : ['#78716C', '#57534E']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.shopCardGradient}
-          >
+          <View style={styles.shopCardGradient}>
             <View style={styles.shopCardContent}>
               <View style={styles.shopIconCircle}>
                 <MaterialIcons
                   name="store"
                   size={28}
-                  color="#fff"
+                  color="#374151"
                 />
               </View>
               <View style={styles.shopCardText}>
@@ -547,9 +542,9 @@ export default function ProfileScreen() {
                   }
                 </Text>
               </View>
-              <MaterialIcons name="arrow-forward" size={24} color="rgba(255,255,255,0.8)" />
+              <MaterialIcons name="arrow-forward" size={24} color="#374151" />
             </View>
-          </LinearGradient>
+          </View>
         </TouchableOpacity>
       )}
 
@@ -888,6 +883,7 @@ const styles = StyleSheet.create({
   },
   shopCardGradient: {
     padding: 20,
+    backgroundColor: '#FFFFFF',
   },
   shopCardContent: {
     flexDirection: 'row',
@@ -897,7 +893,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    backgroundColor: '#F5F5F4',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
@@ -908,12 +904,12 @@ const styles = StyleSheet.create({
   shopCardTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#374151',
     marginBottom: 4,
   },
   shopCardSubtitle: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#374151',
   },
 
   // Modern Card Design
