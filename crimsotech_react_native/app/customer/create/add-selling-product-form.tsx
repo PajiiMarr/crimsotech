@@ -372,22 +372,35 @@ export default function CreateProductFormMobile() {
 
     try {
       setIsSubmitting(true);
+
+      // Helper: sanitize numeric inputs (remove commas and stray chars)
+      const sanitizeNumber = (s?: string) => String(s || '').replace(/,/g, '').replace(/[^0-9.\-]/g, '').trim();
+      const rawQuantity = sanitizeNumber(productQuantity);
+      const rawPrice = sanitizeNumber(productPrice);
+
       const formData = new FormData();
 
+      // Core fields (use sanitized numeric strings)
       formData.append('name', productName);
       formData.append('description', productDescription);
-      formData.append('quantity', String(productQuantity));
-      formData.append('price', String(productPrice));
+      formData.append('quantity', rawQuantity || '0');
+      formData.append('price', rawPrice || '0');
       formData.append('condition', productCondition);
       formData.append('shop', shopId);
+      formData.append('status', 'active'); // match web behavior
       formData.append('customer_id', userId);
+
+      // Send both keys to be tolerant server-side
       formData.append('is_refundable', String(isRefundable));
+      formData.append('refundable', String(isRefundable));
 
       if (selectedCategoryId && selectedCategoryId !== 'none') {
         formData.append('category_admin_id', selectedCategoryId);
       }
 
       if (enableCriticalTrigger && criticalThreshold) {
+        // Some codepaths expect critical_threshold, some expect critical_stock; send both
+        formData.append('critical_threshold', String(criticalThreshold));
         formData.append('critical_stock', String(criticalThreshold));
       }
 
@@ -413,7 +426,7 @@ export default function CreateProductFormMobile() {
           id: sku.id,
           option_ids: sku.option_ids,
           option_map: sku.option_map,
-          price: sku.price || productPrice,
+          price: sku.price || rawPrice || '',
           compare_price: sku.compare_price || '',
           quantity: sku.quantity || 0,
           length: sku.length || '',
@@ -447,7 +460,17 @@ export default function CreateProductFormMobile() {
         }
       });
 
-      await AxiosInstance.post('/seller-products/', formData, {
+      // Debug: log entries so server-side printouts are easier to correlate
+      try {
+        for (const [k, v] of (formData as any).entries()) {
+          const valPreview = (v && typeof v === 'object' && 'name' in v) ? { name: v.name, size: v.size, type: v.type } : String(v).slice(0, 200);
+          console.log('submitForm formData ->', k, valPreview);
+        }
+      } catch (e) {
+        console.log('Failed to inspect formData entries', e);
+      }
+
+      const response = await AxiosInstance.post('/seller-products/', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
           'X-User-Id': userId || '',
@@ -455,11 +478,35 @@ export default function CreateProductFormMobile() {
         }
       });
 
-      Alert.alert('Success', 'Product created successfully!');
-      router.back();
+      if (response.data && response.data.success) {
+        Alert.alert('Success', 'Product created successfully!');
+        router.back();
+      } else {
+        // Handle API validation error shape
+        const errData = response.data || {};
+        const firstField = errData && errData.details ? Object.keys(errData.details || {})[0] : null;
+        const msg = firstField ? (Array.isArray(errData.details[firstField]) ? errData.details[firstField][0] : errData.details[firstField]) : (errData.message || 'Product creation failed');
+        Alert.alert('Error', String(msg));
+      }
+
     } catch (err: any) {
       console.error('Failed to create product:', err);
-      Alert.alert('Error', err?.response?.data?.error || 'Failed to create product.');
+
+      // If server returned validation details, show the first message
+      const apiErr = err?.response?.data;
+      if (apiErr && typeof apiErr === 'object') {
+        let firstMsg = apiErr.error || apiErr.message;
+        if (!firstMsg && apiErr.details) {
+          const keys = Object.keys(apiErr.details);
+          if (keys.length > 0) {
+            const val = apiErr.details[keys[0]];
+            firstMsg = Array.isArray(val) ? val[0] : val;
+          }
+        }
+        Alert.alert('Error', String(firstMsg || 'Failed to create product.'));
+      } else {
+        Alert.alert('Error', err?.response?.data?.error || 'Failed to create product.');
+      }
     } finally {
       setIsSubmitting(false);
     }
