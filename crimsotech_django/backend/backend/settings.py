@@ -47,7 +47,8 @@ INSTALLED_APPS = [
     'api',
     'rest_framework',
     'corsheaders',
-    'django_seed'
+    'django_seed',
+    'storages'
 ]
 
 MIDDLEWARE = [
@@ -154,14 +155,6 @@ STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# Media files
-MEDIA_URL = env.str("MEDIA_URL", default="/media/")
-
-MEDIA_ROOT = env.str(
-    "MEDIA_ROOT",
-    default=str(BASE_DIR / "media")
-)
-
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -194,3 +187,25 @@ LOGGING = {
         },
     },
 }
+
+STORAGES = {
+    "default": {
+        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+        "OPTIONS": {
+            "access_key": env.str("SUPABASE_ACCESS_KEY"),
+            "secret_key": env.str("SUPABASE_SECRET_KEY"),
+            "bucket_name": env.str("SUPABASE_STORAGE_BUCKET"),
+            "endpoint_url": env.str("SUPABASE_ENDPOINT"),
+            "region_name": env.str("SUPABASE_REGION", default="ap-south-1"),
+            "signature_version": "s3v4",
+            "addressing_style": "path",
+            "default_acl": None,
+            "querystring_auth": False,
+        },
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+MEDIA_URL = f"{env.str('SUPABASE_ENDPOINT')}/{env.str('SUPABASE_STORAGE_BUCKET')}/"
