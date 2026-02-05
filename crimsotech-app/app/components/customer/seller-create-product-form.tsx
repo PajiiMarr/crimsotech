@@ -285,7 +285,6 @@ const analyzeImages = async (files: File[]) => {
       form.append('image', file);
       return AxiosInstance.post('/predict/', form, {
         signal: predictionAbortController.current!.signal,
-        timeout: 30000,
       });
     });
 
