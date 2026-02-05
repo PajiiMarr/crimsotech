@@ -521,7 +521,7 @@ export default function ProfileScreen() {
           activeOpacity={0.7}
         >
           <LinearGradient
-            colors={effectiveHasShop ? ['#ffffff', '#ffffff'] : ['#ffffff', '#ffffff']}
+            colors={effectiveHasShop ? ['#F97316', '#EA580C'] : ['#78716C', '#57534E']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.shopCardGradient}
@@ -531,23 +531,23 @@ export default function ProfileScreen() {
                 <MaterialIcons
                   name="store"
                   size={28}
-                  color="#374151"
+                  color="#fff"
                 />
               </View>
               <View style={styles.shopCardText}>
                 <Text style={styles.shopCardTitle}>
                   {loadingShop ? 'Checking...' : (
-                    effectiveHasShop ? 'Manage Your Shop' : 'Start Selling Today'
+                    effectiveHasShop ? 'Manage Your Shop' : "You Don't Have a Shop"
                   )}
                 </Text>
                 <Text style={styles.shopCardSubtitle}>
                   {effectiveHasShop 
                     ? 'View and manage your products' 
-                    : 'Create your shop in minutes'
+                    : 'Create your shop to start selling'
                   }
                 </Text>
               </View>
-              <MaterialIcons name="arrow-forward" size={24} color="#374151" />
+              <MaterialIcons name="arrow-forward" size={24} color="rgba(255,255,255,0.8)" />
             </View>
           </LinearGradient>
         </TouchableOpacity>
@@ -908,12 +908,12 @@ const styles = StyleSheet.create({
   shopCardTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#374151',
+    color: '#FFFFFF',
     marginBottom: 4,
   },
   shopCardSubtitle: {
     fontSize: 14,
-    color: '#374151',
+    color: 'rgba(255, 255, 255, 0.9)',
   },
 
   // Modern Card Design
