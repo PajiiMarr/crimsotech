@@ -207,13 +207,25 @@ export default function PurchasesPage() {
   };
 
   const handleTrackOrder = (orderId: string) => {
-    // Navigate to the view-track-order page
-    router.push(`/customer/view-order?orderId=${orderId}`);
+    // For Processing, Shipped, Rate, and All tabs, use view-order page
+    if (activeTab === 'Returns') {
+      // For Returns tab, use view-returns instead
+      router.push(`/customer/view-refund?orderId=${orderId}`);
+    } else {
+      // Navigate to the view-order page for tracking
+      router.push(`/customer/view-order?orderId=${orderId}`);
+    }
   };
 
   const handleViewOrderDetails = (orderId: string) => {
-    // Navigate to view-track-order page with orderId as query param
-    router.push(`/customer/view-order?orderId=${orderId}`);
+    // Check which tab is active to determine which component to use
+    if (activeTab === 'Returns') {
+      // Navigate to view-returns page for orders in Returns tab
+      router.push(`/customer/view-refund?orderId=${orderId}`);
+    } else {
+      // For Processing, Shipped, Rate, and All tabs, use view-order page
+      router.push(`/customer/view-order?orderId=${orderId}`);
+    }
   };
 
   const handleRepurchase = (orderId: string) => {
@@ -512,7 +524,11 @@ export default function PurchasesPage() {
     const canReviewAny = item.items.some(it => it.can_review);
 
     return (
-      <TouchableOpacity style={styles.orderCard} onPress={() => handleViewOrderDetails(item.order_id)} activeOpacity={0.85}>
+      <TouchableOpacity 
+        style={styles.orderCard} 
+        onPress={() => handleViewOrderDetails(item.order_id)} 
+        activeOpacity={0.85}
+      >
           <View style={styles.orderHeader}>
             <View style={{ flex: 1 }}>
               <View style={styles.statusRow}>
