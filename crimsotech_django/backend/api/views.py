@@ -3245,7 +3245,9 @@ class AdminProduct(viewsets.ViewSet):
                     'price': str(product.price),
                     'quantity': product.quantity,
                     'condition': product.condition,
+                    # Use status from model (text field) and upload_status for publication status
                     'status': product.status,
+                    'upload_status': product.upload_status,
                     'views': engagement['views'],
                     'purchases': engagement['purchases'],
                     'favorites': engagement['favorites'],
@@ -3254,6 +3256,7 @@ class AdminProduct(viewsets.ViewSet):
                     'variants': variants_count,
                     'issues': issues_count,
                     'lowStock': low_stock,
+                    'is_removed': product.is_removed,
                     'created_at': product.created_at.isoformat() if product.created_at else None,
                     'updated_at': product.updated_at.isoformat() if product.updated_at else None
                 }
@@ -3332,7 +3335,7 @@ class AdminProduct(viewsets.ViewSet):
                 "quantity": product.quantity,
                 "price": str(product.price),
                 "upload_status": product.upload_status,
-                "status": product.status,
+                "status": product.status,  # Using the actual status field from model
                 "condition": product.condition,
                 "created_at": product.created_at.isoformat(),
                 "updated_at": product.updated_at.isoformat(),
@@ -3354,6 +3357,7 @@ class AdminProduct(viewsets.ViewSet):
                     "total_sales": str(product.shop.total_sales),
                     "created_at": product.shop.created_at.isoformat(),
                     "is_suspended": product.shop.is_suspended,
+                    "status": product.shop.status,  # Shop has its own status field
                 }
             else:
                 product_data["shop"] = None
@@ -3364,6 +3368,7 @@ class AdminProduct(viewsets.ViewSet):
                     "username": product.customer.customer.username if product.customer.customer else None,
                     "email": product.customer.customer.email if product.customer.customer else None,
                     "contact_number": product.customer.customer.contact_number if product.customer.customer else None,
+                    "is_suspended": product.customer.customer.is_suspended,  # User suspension status
                     "product_limit": product.customer.product_limit,
                     "current_product_count": product.customer.current_product_count,
                 }
@@ -3563,7 +3568,7 @@ class AdminProduct(viewsets.ViewSet):
                     # Validate product can be published
                     if product.upload_status != 'draft':
                         return Response(
-                            {"error": f"Product is not in draft status. Current status: {product.upload_status}"},
+                            {"error": f"Product is not in draft status. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
@@ -3580,8 +3585,9 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product
+                    # Update product - set upload_status to 'published' and status to 'Active'
                     product.upload_status = 'published'
+                    product.status = 'Active'  # Set status to Active when publishing
                     product.save()
                     
                     # Create log entry
@@ -3593,6 +3599,7 @@ class AdminProduct(viewsets.ViewSet):
                     return Response({
                         "message": "Product published successfully",
                         "upload_status": product.upload_status,
+                        "status": product.status,
                         "updated_at": product.updated_at
                     }, status=status.HTTP_200_OK)
                     
@@ -3600,7 +3607,7 @@ class AdminProduct(viewsets.ViewSet):
                     # Validate product can be deleted
                     if product.upload_status != 'draft':
                         return Response(
-                            {"error": f"Only draft products can be deleted. Current status: {product.upload_status}"},
+                            {"error": f"Only draft products can be deleted. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
@@ -3626,11 +3633,11 @@ class AdminProduct(viewsets.ViewSet):
                     # Validate product can be unpublished
                     if product.upload_status != 'published':
                         return Response(
-                            {"error": f"Only published products can be unpublished. Current status: {product.upload_status}"},
+                            {"error": f"Only published products can be unpublished. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product
+                    # Update product - set upload_status back to 'draft'
                     product.upload_status = 'draft'
                     product.save()
                     
@@ -3650,11 +3657,11 @@ class AdminProduct(viewsets.ViewSet):
                     # Validate product can be archived
                     if product.upload_status != 'published' and product.upload_status != 'draft':
                         return Response(
-                            {"error": f"Only published or draft products can be archived. Current status: {product.upload_status}"},
+                            {"error": f"Only published or draft products can be archived. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product
+                    # Update product - set upload_status to 'archived'
                     product.upload_status = 'archived'
                     product.save()
                     
@@ -3674,7 +3681,7 @@ class AdminProduct(viewsets.ViewSet):
                     # Validate product can be restored (from archived)
                     if product.upload_status != 'archived':
                         return Response(
-                            {"error": f"Only archived products can be restored. Current status: {product.upload_status}"},
+                            {"error": f"Only archived products can be restored. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
@@ -3702,7 +3709,7 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product
+                    # Update product - set is_removed to True
                     product.is_removed = True
                     product.removal_reason = reason
                     product.removed_at = timezone.now()
@@ -3740,7 +3747,7 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product
+                    # Update product - set is_removed to False
                     product.is_removed = False
                     product.removal_reason = None
                     product.removed_at = None
@@ -3784,11 +3791,11 @@ class AdminProduct(viewsets.ViewSet):
                     
                     if product.upload_status != 'published':
                         return Response(
-                            {"error": f"Only published products can be suspended. Current upload status: {product.upload_status}"},
+                            {"error": f"Only published products can be suspended. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product
+                    # Update product - set status to 'Suspended'
                     previous_status = product.status
                     product.status = 'Suspended'
                     product.save()
@@ -3798,15 +3805,6 @@ class AdminProduct(viewsets.ViewSet):
                         user=admin_user,
                         action=f"Suspended product: {product.name}. Previous status: {previous_status}. Reason: {reason}"
                     )
-                    
-                    # Create suspension record (optional - if you have a Suspension model)
-                    # Suspension.objects.create(
-                    #     product=product,
-                    #     suspended_by=admin_user,
-                    #     reason=reason,
-                    #     suspension_days=suspension_days,
-                    #     suspended_until=timezone.now() + timedelta(days=suspension_days)
-                    # )
                     
                     # Get user to send notification (customer)
                     if product.customer and product.customer.customer:
@@ -3833,7 +3831,7 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product
+                    # Update product - set status back to 'Active'
                     product.status = 'Active'
                     product.save()
                     
@@ -3842,16 +3840,6 @@ class AdminProduct(viewsets.ViewSet):
                         user=admin_user,
                         action=f"Unsuspended product: {product.name}"
                     )
-                    
-                    # Update suspension record if exists (optional)
-                    # suspension = Suspension.objects.filter(
-                    #     product=product,
-                    #     is_active=True
-                    # ).first()
-                    # if suspension:
-                    #     suspension.is_active = False
-                    #     suspension.unsuspended_at = timezone.now()
-                    #     suspension.save()
                     
                     # Get user to send notification (customer)
                     if product.customer and product.customer.customer:
@@ -3979,6 +3967,47 @@ class AdminProduct(viewsets.ViewSet):
                 'success': False,
                 'message': f'An error occurred while adding the category: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    
+    @action(detail=False, methods=['get'])
+    def get_categories(self, request):
+        """
+        Get all categories
+        """
+        try:
+            # Get all categories
+            categories = Category.objects.all().order_by('name')
+            
+            # Serialize the categories
+            categories_data = []
+            for category in categories:
+                category_data = {
+                    'id': str(category.id),
+                    'name': category.name,
+                    'shop_id': str(category.shop.id) if category.shop else None,
+                    'shop_name': category.shop.name if category.shop else None,
+                    'user_id': str(category.user.id) if category.user else None,
+                    'username': category.user.username if category.user else None,
+                    'created_at': category.id.generation_time.isoformat() if hasattr(category.id, 'generation_time') else None
+                }
+                categories_data.append(category_data)
+            
+            response_data = {
+                'success': True,
+                'categories': categories_data,
+                'total_count': len(categories_data),
+                'message': f'{len(categories_data)} categories retrieved successfully'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error retrieving categories: {str(e)}")
+            return Response(
+                {'success': False, 'error': f'Error retrieving categories: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class AdminShops(viewsets.ViewSet):
     """

@@ -37,7 +37,18 @@ import {
   Tag,
   Grid,
   List,
-  X
+  X,
+  CheckCircle,
+  Clock,
+  AlertCircle,
+  Archive,
+  Ban,
+  Check,
+  XCircle,
+  Circle,
+  PlayCircle,
+  PauseCircle,
+  AlertOctagon
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
@@ -82,14 +93,16 @@ export function meta(): Route.MetaDescriptors {
 
 // Define proper types for our data
 interface Product {
-  id: number;
+  id: string;
   name: string;
   category: string;
   shop: string;
-  price: number;
+  price: string;
   quantity: number;
   condition: string;
   status: string;
+  upload_status: string;  // Added for consistency
+  is_removed: boolean;    // Added for consistency
   views: number;
   purchases: number;
   favorites: number;
@@ -99,6 +112,15 @@ interface Product {
   lowStock: boolean;
   created_at?: string;
   updated_at?: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  shop_id: string | null;
+  shop_name: string | null;
+  user_id: string | null;
+  username: string | null;
 }
 
 interface FilterOptions {
@@ -141,6 +163,7 @@ interface LoaderData {
   user: any;
   productMetrics: ProductMetrics;
   products: Product[];
+  categories: Category[];
   filterOptions?: FilterOptions;
   dateRange?: {
     start: string;
@@ -149,7 +172,197 @@ interface LoaderData {
   };
 }
 
-// app/routes/admin/products.tsx
+// Helper function to normalize status
+const normalizeStatus = (status: string): string => {
+  if (!status) return 'Unknown';
+  const lowerStatus = status.toLowerCase();
+  
+  switch (lowerStatus) {
+    case 'active':
+    case 'published':
+      return 'Active';
+    case 'delivered':
+      return 'Delivered';
+    case 'suspended':
+      return 'Suspended';
+    case 'draft':
+      return 'Draft';
+    case 'archived':
+      return 'Archived';
+    case 'removed':
+    case 'is_removed':
+      return 'Removed';
+    case 'pending':
+    case 'processing':
+      return 'Pending';
+    case 'completed':
+      return 'Completed';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'out of stock':
+    case 'out_of_stock':
+      return 'Out of Stock';
+    default:
+      // Capitalize first letter
+      return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+  }
+};
+
+// Helper function to get status badge variant and styling
+const getStatusConfig = (status: string) => {
+  const normalizedStatus = normalizeStatus(status);
+  
+  switch (normalizedStatus) {
+    case 'Active':
+    case 'Published':
+      return {
+        variant: 'default' as const,
+        className: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',
+        icon: CheckCircle,
+        iconClassName: 'text-green-600'
+      };
+    case 'Delivered':
+    case 'Completed':
+      return {
+        variant: 'default' as const,
+        className: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
+        icon: CheckCircle,
+        iconClassName: 'text-blue-600'
+      };
+    case 'Suspended':
+    case 'Banned':
+      return {
+        variant: 'destructive' as const,
+        className: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',
+        icon: Ban,
+        iconClassName: 'text-red-600'
+      };
+    case 'Draft':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: Clock,
+        iconClassName: 'text-gray-600'
+      };
+    case 'Archived':
+      return {
+        variant: 'outline' as const,
+        className: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
+        icon: Archive,
+        iconClassName: 'text-purple-600'
+      };
+    case 'Removed':
+    case 'Cancelled':
+      return {
+        variant: 'destructive' as const,
+        className: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
+        icon: XCircle,
+        iconClassName: 'text-rose-600'
+      };
+    case 'Pending':
+    case 'Processing':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',
+        icon: Clock,
+        iconClassName: 'text-amber-600'
+      };
+    case 'Out of Stock':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
+        icon: AlertTriangle,
+        iconClassName: 'text-orange-600'
+      };
+    default:
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: Circle,
+        iconClassName: 'text-gray-600'
+      };
+  }
+};
+
+// Helper function to get upload status badge styling
+const getUploadStatusConfig = (uploadStatus: string) => {
+  if (!uploadStatus) return {
+    variant: 'secondary' as const,
+    className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+    icon: Circle,
+    iconClassName: 'text-gray-600'
+  };
+  
+  const lowerStatus = uploadStatus.toLowerCase();
+  
+  switch (lowerStatus) {
+    case 'published':
+      return {
+        variant: 'default' as const,
+        className: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+        icon: PlayCircle,
+        iconClassName: 'text-emerald-600'
+      };
+    case 'draft':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100',
+        icon: PauseCircle,
+        iconClassName: 'text-slate-600'
+      };
+    case 'archived':
+      return {
+        variant: 'outline' as const,
+        className: 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100',
+        icon: Archive,
+        iconClassName: 'text-violet-600'
+      };
+    case 'scheduled':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100',
+        icon: Clock,
+        iconClassName: 'text-cyan-600'
+      };
+    default:
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: Circle,
+        iconClassName: 'text-gray-600'
+      };
+  }
+};
+
+// Helper function to get removed status styling - MODIFIED for consistency
+const getRemovedStatusConfig = () => {
+  return {
+    variant: 'destructive' as const,
+    className: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
+    icon: AlertOctagon,
+    iconClassName: 'text-rose-600'
+  };
+};
+
+// Helper function to normalize upload status display
+const normalizeUploadStatus = (uploadStatus: string): string => {
+  if (!uploadStatus) return 'Unknown';
+  const lowerStatus = uploadStatus.toLowerCase();
+  
+  switch (lowerStatus) {
+    case 'published':
+      return 'Published';
+    case 'draft':
+      return 'Draft';
+    case 'archived':
+      return 'Archived';
+    case 'scheduled':
+      return 'Scheduled';
+    default:
+      return uploadStatus.charAt(0).toUpperCase() + uploadStatus.slice(1).toLowerCase();
+  }
+};
+
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
   await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
@@ -180,7 +393,8 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const defaultEndDate = new Date();
 
   let productMetrics = null;
-  let productsList = [];
+  let productsList: Product[] = [];
+  let categoriesList: Category[] = [];
   let filterOptions: FilterOptions = {
     categories: [],
     statuses: [],
@@ -219,6 +433,18 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       productMetrics = metricsResponse.data.metrics;
     }
 
+    // Fetch categories separately using the new endpoint
+    const categoriesResponse = await AxiosInstance.get(`/admin-products/get_categories/`, {
+      headers: {
+        "X-User-Id": session.get("userId")
+      }
+    });
+
+    if (categoriesResponse.data.success) {
+      categoriesList = categoriesResponse.data.categories;
+      console.log('Loaded categories:', categoriesList.length);
+    }
+
     // Fetch products list with date range
     const productsParams = new URLSearchParams();
     if (startDate) productsParams.append('start_date', startDate);
@@ -242,12 +468,19 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     if (productsResponse.data.success) {
       productsList = productsResponse.data.products;
       
+      // Normalize product statuses for consistency
+      productsList = productsList.map(product => ({
+        ...product,
+        status: normalizeStatus(product.status),
+        upload_status: normalizeUploadStatus(product.upload_status)
+      }));
+      
       // Extract unique filter values from products data
       if (productsList.length > 0) {
-        // Extract unique categories
+        // Extract unique categories from products
         const uniqueCategories: string[] = [...new Set(productsList.map((product: Product) => product.category))].filter(Boolean) as string[];
         
-        // Extract unique statuses
+        // Extract unique statuses (using normalized status)
         const uniqueStatuses: string[] = [...new Set(productsList.map((product: Product) => product.status))].filter(Boolean) as string[];
         
         // Extract unique shops
@@ -283,6 +516,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user, 
     productMetrics,
     products: productsList,
+    categories: categoriesList,
     filterOptions,
     dateRange: {
       start: startDate || defaultStartDate.toISOString().split('T')[0],
@@ -517,6 +751,31 @@ function AddCategoryModalDrawer({
   );
 }
 
+// Status Badge Component
+function StatusBadge({ status, type = 'status' }: { status: string; type?: 'status' | 'upload' | 'removed' }) {
+  let config;
+  
+  if (type === 'removed') {
+    config = getRemovedStatusConfig();
+  } else if (type === 'upload') {
+    config = getUploadStatusConfig(status);
+  } else {
+    config = getStatusConfig(status);
+  }
+  
+  const Icon = config.icon;
+  
+  return (
+    <Badge 
+      variant={config.variant} 
+      className={`flex items-center gap-1.5 ${config.className}`}
+    >
+      <Icon className={`w-3 h-3 ${config.iconClassName}`} />
+      {status}
+    </Badge>
+  );
+}
+
 export default function Products({ loaderData }: { loaderData: LoaderData }) {
   if (!loaderData) {
     return (
@@ -530,6 +789,7 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     user, 
     productMetrics: initialMetrics, 
     products: initialProducts, 
+    categories: initialCategories,
     filterOptions: initialFilterOptions,
     dateRange: initialDateRange 
   } = loaderData;
@@ -537,10 +797,12 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
   // Debug logging
   console.log('User object:', user);
   console.log('User ID:', user?.id);
+  console.log('Initial categories:', initialCategories.length);
   
   // State for managing data
   const [productMetrics, setProductMetrics] = useState(initialMetrics);
   const [products, setProducts] = useState<Product[]>(initialProducts);
+  const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>(
     initialFilterOptions || {
       categories: [],
@@ -563,9 +825,38 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     rangeType: (initialDateRange?.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom') || 'weekly'
   });
 
-  // Calculate category stats from products
+  // Calculate category stats from all categories
   useEffect(() => {
-    if (products.length > 0) {
+    if (categories.length > 0) {
+      // Create a map to count products per category
+      const categoryProductCount: Record<string, number> = {};
+      
+      // Initialize all categories with 0 count
+      categories.forEach(category => {
+        categoryProductCount[category.name] = 0;
+      });
+      
+      // Count products per category
+      products.forEach(product => {
+        const categoryName = product.category || 'Uncategorized';
+        if (categoryProductCount[categoryName] !== undefined) {
+          categoryProductCount[categoryName] += 1;
+        } else {
+          categoryProductCount[categoryName] = 1;
+        }
+      });
+      
+      // Convert to array and calculate percentages
+      const totalProducts = products.length;
+      const stats = Object.entries(categoryProductCount).map(([name, count]) => ({
+        name,
+        count,
+        percentage: totalProducts > 0 ? (count / totalProducts) * 100 : 0
+      })).sort((a, b) => b.count - a.count); // Sort by count descending
+      
+      setCategoryStats(stats);
+    } else if (products.length > 0) {
+      // Fallback to calculating from products if no categories loaded
       const categoryCounts: Record<string, number> = {};
       
       // Count products per category
@@ -580,13 +871,13 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
         name,
         count,
         percentage: (count / totalProducts) * 100
-      })).sort((a, b) => b.count - a.count); // Sort by count descending
+      })).sort((a, b) => b.count - a.count);
       
       setCategoryStats(stats);
     } else {
       setCategoryStats([]);
     }
-  }, [products]);
+  }, [categories, products]);
 
   // Fetch data function with date range
   const fetchProductData = async (start: Date, end: Date, rangeType: string) => {
@@ -604,20 +895,32 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
         setProductMetrics(metricsResponse.data.metrics);
       }
 
+      // Fetch categories separately
+      const categoriesResponse = await AxiosInstance.get(`/admin-products/get_categories/`);
+      if (categoriesResponse.data.success) {
+        setCategories(categoriesResponse.data.categories);
+      }
+
       // Fetch products list with date range
       const productsParams = new URLSearchParams(params);
-
       const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`);
 
       if (productsResponse.data.success) {
-        setProducts(productsResponse.data.products);
+        // Normalize product statuses for consistency
+        const normalizedProducts = productsResponse.data.products.map((product: Product) => ({
+          ...product,
+          status: normalizeStatus(product.status),
+          upload_status: normalizeUploadStatus(product.upload_status)
+        }));
+        
+        setProducts(normalizedProducts);
         
         // Update filter options from new data
-        if (productsResponse.data.products.length > 0) {
-          const uniqueCategories: string[] = [...new Set(productsResponse.data.products.map((product: Product) => product.category))].filter(Boolean) as string[];
-          const uniqueStatuses: string[] = [...new Set(productsResponse.data.products.map((product: Product) => product.status))].filter(Boolean) as string[];
-          const uniqueShops: string[] = [...new Set(productsResponse.data.products.map((product: Product) => product.shop))].filter(Boolean) as string[];
-          const uniqueConditions: string[] = [...new Set(productsResponse.data.products.map((product: Product) => product.condition))].filter(Boolean) as string[];
+        if (normalizedProducts.length > 0) {
+          const uniqueCategories: string[] = [...new Set(normalizedProducts.map((product: Product) => product.category))].filter(Boolean) as string[];
+          const uniqueStatuses: string[] = [...new Set(normalizedProducts.map((product: Product) => product.status))].filter(Boolean) as string[];
+          const uniqueShops: string[] = [...new Set(normalizedProducts.map((product: Product) => product.shop))].filter(Boolean) as string[];
+          const uniqueConditions: string[] = [...new Set(normalizedProducts.map((product: Product) => product.condition))].filter(Boolean) as string[];
 
           setFilterOptions({
             categories: uniqueCategories,
@@ -645,8 +948,94 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
   };
 
   // Function to refresh categories (call this after adding a new category)
-  const refreshCategories = () => {
-    fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
+  const refreshCategories = async () => {
+    setIsLoading(true);
+    try {
+      // Refresh categories from the new endpoint
+      const categoriesResponse = await AxiosInstance.get(`/admin-products/get_categories/`);
+      if (categoriesResponse.data.success) {
+        setCategories(categoriesResponse.data.categories);
+        console.log('Categories refreshed:', categoriesResponse.data.categories.length);
+        toast.success('Categories refreshed successfully');
+      }
+      
+      // Also refresh the products to update counts
+      await fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
+    } catch (error) {
+      console.error('Error refreshing categories:', error);
+      toast.error('Failed to refresh categories');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Function to update product status
+  const updateProductStatus = async (productId: string, actionType: string, reason?: string, suspensionDays?: number) => {
+    setIsLoading(true);
+    try {
+      const payload = {
+        product_id: productId,
+        action_type: actionType,
+        user_id: user?.id,
+        ...(reason && { reason }),
+        ...(suspensionDays && { suspension_days: suspensionDays })
+      };
+
+      const response = await AxiosInstance.put('/admin-products/update_product_status/', payload, {
+        headers: {
+          "X-User-Id": user?.id || ''
+        }
+      });
+
+      if (response.data.success || response.data.message) {
+        toast.success(response.data.message || 'Product status updated successfully');
+        
+        // Refresh the products data
+        await fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
+        return true;
+      } else {
+        toast.error(response.data.error || 'Failed to update product status');
+        return false;
+      }
+    } catch (error: any) {
+      console.error('Error updating product status:', error);
+      
+      if (error.response?.data?.error) {
+        toast.error(error.response.data.error);
+      } else if (error.response?.data?.message) {
+        toast.error(error.response.data.message);
+      } else {
+        toast.error('Failed to update product status');
+      }
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Function to handle product actions
+  const handleProductAction = async (product: Product, actionType: string) => {
+    let reason = '';
+    let suspensionDays = 7;
+
+    if (actionType === 'remove' || actionType === 'suspend') {
+      // Prompt for reason for remove/suspend actions
+      reason = prompt(`Enter reason for ${actionType === 'remove' ? 'removal' : 'suspension'}:`) || '';
+      if (!reason) {
+        toast.error('Reason is required');
+        return;
+      }
+      
+      if (actionType === 'suspend') {
+        const daysInput = prompt('Enter suspension days (default: 7):', '7');
+        suspensionDays = parseInt(daysInput || '7', 10);
+        if (isNaN(suspensionDays) || suspensionDays <= 0) {
+          suspensionDays = 7;
+        }
+      }
+    }
+
+    await updateProductStatus(product.id, actionType, reason, suspensionDays);
   };
 
   // Use real data from backend or fallback
@@ -702,6 +1091,46 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     // Simple hash function to get consistent color for same category
     const hash = category.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
     return colors[hash % colors.length];
+  };
+
+  // Function to determine available actions based on product state
+  const getAvailableActions = (product: Product) => {
+    const actions = [];
+    
+    const normalizedStatus = normalizeStatus(product.status);
+    const normalizedUploadStatus = normalizeUploadStatus(product.upload_status);
+    
+    // Draft actions
+    if (normalizedUploadStatus === 'Draft' && !product.is_removed) {
+      actions.push({ label: 'Publish', action: 'publish' });
+      actions.push({ label: 'Delete Draft', action: 'deleteDraft' });
+    }
+    
+    // Published actions
+    if (normalizedUploadStatus === 'Published' && !product.is_removed) {
+      if (normalizedStatus === 'Active') {
+        actions.push({ label: 'Unpublish', action: 'unpublish' });
+        actions.push({ label: 'Archive', action: 'archive' });
+        actions.push({ label: 'Suspend', action: 'suspend' });
+        actions.push({ label: 'Remove', action: 'remove' });
+      } else if (normalizedStatus === 'Suspended') {
+        actions.push({ label: 'Unsuspend', action: 'unsuspend' });
+        actions.push({ label: 'Remove', action: 'remove' });
+      }
+    }
+    
+    // Archived actions
+    if (normalizedUploadStatus === 'Archived' && !product.is_removed) {
+      actions.push({ label: 'Restore', action: 'restore' });
+      actions.push({ label: 'Remove', action: 'remove' });
+    }
+    
+    // Removed actions
+    if (product.is_removed) {
+      actions.push({ label: 'Restore Removed', action: 'restoreRemoved' });
+    }
+    
+    return actions;
   };
 
   return (
@@ -821,6 +1250,35 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
             </Card>
           </div>
 
+          {/* Status Legend */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Tag className="w-5 h-5" />
+                Status Legend
+              </CardTitle>
+              <CardDescription>
+                Color-coded status indicators for quick product identification
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-3">
+                <StatusBadge status="Active" />
+                <StatusBadge status="Delivered" />
+                <StatusBadge status="Published" type="upload" />
+                <StatusBadge status="Draft" />
+                <StatusBadge status="Draft" type="upload" />
+                <StatusBadge status="Pending" />
+                <StatusBadge status="Suspended" />
+                <StatusBadge status="Archived" />
+                <StatusBadge status="Archived" type="upload" />
+                <StatusBadge status="Removed" />
+                <StatusBadge status="Removed" type="removed" />
+                <StatusBadge status="Out of Stock" />
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Categories Section */}
           <Card>
             <CardHeader>
@@ -830,12 +1288,26 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                     <Tag className="w-5 h-5" />
                     Product Categories
                   </CardTitle>
+                  <CardDescription>
+                    Total categories: {categories.length} | Total products: {products.length}
+                  </CardDescription>
                 </div>
-                {/* Add Category Button */}
-                <AddCategoryModalDrawer 
-                  onCategoryAdded={refreshCategories} 
-                  userId={user?.id || ''}
-                />
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={refreshCategories}
+                    disabled={isLoading}
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                  {/* Add Category Button */}
+                  <AddCategoryModalDrawer 
+                    onCategoryAdded={refreshCategories} 
+                    userId={user?.id || ''}
+                  />
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -1072,42 +1544,152 @@ const columns: ColumnDef<Product>[] = [
   {
     accessorKey: "status",
     header: "Status",
-    cell: ({ row }) => (
-      <Badge variant={row.getValue("status") === 'Active' ? 'default' : 'secondary'}>
-        {row.getValue("status")}
-      </Badge>
-    ),
+    cell: ({ row }) => {
+      const status = row.getValue("status") as string;
+      const product = row.original;
+      
+      return (
+        <div className="flex flex-col gap-1.5">
+          <StatusBadge status={status} type="status" />
+          <StatusBadge status={product.upload_status} type="upload" />
+          {product.is_removed && (
+            <StatusBadge status="Removed" type="removed" />
+          )}
+        </div>
+      );
+    },
   },
   {
     accessorKey: "rating",
     header: "Rating",
-    cell: ({ row }) => (
-      <div className="flex items-center gap-1">
-        <Star className="w-4 h-4 text-yellow-500 fill-current" />
-        <span>{row.getValue("rating")}</span>
-      </div>
-    ),
+    cell: ({ row }) => {
+      const rating = row.getValue("rating");
+      const numericRating = typeof rating === 'number' ? rating : parseFloat(rating as string) || 0;
+      
+      return (
+        <div className="flex items-center gap-1">
+          <Star className="w-4 h-4 text-yellow-500 fill-current" />
+          <span>{numericRating.toFixed(1)}</span>
+        </div>
+      );
+    },
   },
   {
     id: "actions",
     cell: ({ row }) => {
-      const product = row.original
+      const product = row.original;
+      
+      const handleAction = async (actionType: string) => {
+        let reason = '';
+        let suspensionDays = 7;
+
+        if (actionType === 'remove' || actionType === 'suspend') {
+          reason = prompt(`Enter reason for ${actionType === 'remove' ? 'removal' : 'suspension'}:`) || '';
+          if (!reason) {
+            toast.error('Reason is required');
+            return;
+          }
+          
+          if (actionType === 'suspend') {
+            const daysInput = prompt('Enter suspension days (default: 7):', '7');
+            suspensionDays = parseInt(daysInput || '7', 10);
+            if (isNaN(suspensionDays) || suspensionDays <= 0) {
+              suspensionDays = 7;
+            }
+          }
+        }
+
+        try {
+          const payload = {
+            product_id: product.id,
+            action_type: actionType,
+            user_id: (window as any).user?.id || '', // Get from global context
+            ...(reason && { reason }),
+            ...(suspensionDays && { suspension_days: suspensionDays })
+          };
+
+          const response = await AxiosInstance.put('/admin-products/update_product_status/', payload);
+          
+          if (response.data.success || response.data.message) {
+            toast.success(response.data.message || 'Product status updated successfully');
+            // Trigger a page refresh or data reload
+            window.location.reload();
+          } else {
+            toast.error(response.data.error || 'Failed to update product status');
+          }
+        } catch (error: any) {
+          console.error('Error updating product status:', error);
+          toast.error(error.response?.data?.error || 'Failed to update product status');
+        }
+      };
+
+      const getAvailableActions = () => {
+        const actions = [];
+        
+        const normalizedStatus = normalizeStatus(product.status);
+        const normalizedUploadStatus = normalizeUploadStatus(product.upload_status);
+        
+        // Draft actions
+        if (normalizedUploadStatus === 'Draft' && !product.is_removed) {
+          actions.push({ label: 'Publish', action: 'publish', variant: 'default' as const });
+          actions.push({ label: 'Delete', action: 'deleteDraft', variant: 'destructive' as const });
+        }
+        
+        // Published actions
+        if (normalizedUploadStatus === 'Published' && !product.is_removed) {
+          if (normalizedStatus === 'Active') {
+            actions.push({ label: 'Unpublish', action: 'unpublish', variant: 'secondary' as const });
+            actions.push({ label: 'Archive', action: 'archive', variant: 'outline' as const });
+            actions.push({ label: 'Suspend', action: 'suspend', variant: 'destructive' as const });
+            actions.push({ label: 'Remove', action: 'remove', variant: 'destructive' as const });
+          } else if (normalizedStatus === 'Suspended') {
+            actions.push({ label: 'Unsuspend', action: 'unsuspend', variant: 'default' as const });
+            actions.push({ label: 'Remove', action: 'remove', variant: 'destructive' as const });
+          }
+        }
+        
+        // Archived actions
+        if (normalizedUploadStatus === 'Archived' && !product.is_removed) {
+          actions.push({ label: 'Restore', action: 'restore', variant: 'default' as const });
+          actions.push({ label: 'Remove', action: 'remove', variant: 'destructive' as const });
+        }
+        
+        // Removed actions
+        if (product.is_removed) {
+          actions.push({ label: 'Restore', action: 'restoreRemoved', variant: 'default' as const });
+        }
+        
+        return actions;
+      };
+
+      const actions = getAvailableActions();
+
       return (
         <div className="flex items-center gap-2">
           <Link 
             to={`/admin/products/${product.id}`}
             className="text-primary hover:underline"
+            title="View Details"
           >
-            View
+            <Eye className="w-4 h-4" />
           </Link>
-          <Button variant="ghost" size="sm">
-            <Edit className="w-4 h-4" />
-          </Button>
-          <Button variant="ghost" size="sm">
-            <Trash2 className="w-4 h-4" />
-          </Button>
+          
+          {actions.length > 0 && (
+            <Select onValueChange={(value) => handleAction(value)}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="Actions" />
+              </SelectTrigger>
+              <SelectContent>
+                {actions.map((action) => (
+                  <SelectItem key={action.action} value={action.action}>
+                    {action.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
-      )
+      );
     },
   },
 ];
