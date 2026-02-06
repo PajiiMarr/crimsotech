@@ -14,8 +14,12 @@ class Command(BaseCommand):
     help = "Seed the database with comprehensive shop and product data"
 
     def handle(self, *args, **kwargs):
-        """Updated handle method with report data creation"""
-        self.cleanup_existing_data()
+        """Only seed if database is empty"""
+        
+        # Check if data already exists
+        if Shop.objects.exists():
+            self.stdout.write(self.style.WARNING("⚠️  Data already exists, skipping seed..."))
+            return
         
         self.stdout.write("🌱 Starting comprehensive shop data seeding...")
         
@@ -32,7 +36,6 @@ class Command(BaseCommand):
                 
                 # # Create products matching frontend data
                 # products = self.create_products(customers, shops, categories, admin_user)
-
                 # self.create_engagement_data()
                 
                 # # Create boosts and boost plans
@@ -52,16 +55,13 @@ class Command(BaseCommand):
                 
                 # # Create comprehensive boost analytics data
                 # # self.create_boost_analytics_data(products, shops, customers, admin_user)
-
                 # # Create order data
                 # self.create_order_data(products, customers, shops, admin_user)
-
                 # # Create checkout data
                 # self.create_checkout_data(products, customers, shops, admin_user)
                 
                 # # Create checkout analytics data
                 # self.create_order_analytics_data()
-
                 # # Create rider data
                 # self.create_rider_data(products, customers, shops, admin_user)
                 
@@ -79,6 +79,7 @@ class Command(BaseCommand):
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"❌ Error seeding data: {str(e)}"))
             raise
+
 
     def create_admin_user(self):
         """Create admin user if not exists"""
