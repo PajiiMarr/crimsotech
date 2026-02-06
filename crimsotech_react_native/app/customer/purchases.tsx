@@ -61,7 +61,7 @@ interface PurchasesResponse {
 
 export default function PurchasesPage() {
   const { user, userRole } = useAuth();
-  const { tab } = useLocalSearchParams();
+  const { tab, refundId } = useLocalSearchParams();
   
   const [activeTab, setActiveTab] = useState<string>('All');
   const [loading, setLoading] = useState(true);
@@ -72,6 +72,9 @@ export default function PurchasesPage() {
   const [loadingCounts, setLoadingCounts] = useState(false);
   // Track orders that have refund requests (order_id strings)
   const [ordersWithRefund, setOrdersWithRefund] = useState<Set<string>>(new Set());
+  // Store refunds list and a quick lookup map from order_id -> refund object
+  const [refundsList, setRefundsList] = useState<any[]>([]);
+  const [refundByOrder, setRefundByOrder] = useState<Record<string, any>>({});
 
   // Sync active tab with navigation params if they exist
   useEffect(() => {
@@ -79,6 +82,17 @@ export default function PurchasesPage() {
       setActiveTab(tab as string);
     }
   }, [tab]);
+
+  // If a refundId is present in navigation params, open the refund detail view
+  useEffect(() => {
+    if (refundId) {
+      try {
+        router.push(`/customer/view-refund?refundId=${encodeURIComponent(String(refundId))}`);
+      } catch (e) {
+        console.warn('Failed to open refund detail from purchases params', e);
+      }
+    }
+  }, [refundId]);
 
   // Fetch purchases when component mounts or user changes
   useEffect(() => {
@@ -161,20 +175,43 @@ export default function PurchasesPage() {
         });
 
         const refundOrderIds = new Set<string>();
-        if (refundsResp?.data && Array.isArray(refundsResp.data)) {
-          refundsResp.data.forEach((r: any) => {
+        const refundsArr: any[] = Array.isArray(refundsResp?.data) ? refundsResp.data : (refundsResp?.data?.results || []);
+
+        // Build a map from order id -> refund object for quick lookup when tapping an order in Returns
+        const mapByOrder: Record<string, any> = {};
+
+        if (refundsArr && refundsArr.length > 0) {
+          refundsArr.forEach((r: any) => {
             try {
+              // 1) r.order?.order_id
               if (r.order && (r.order.order_id || r.order.order)) {
-                refundOrderIds.add(String(r.order.order_id || r.order.order));
-              } else if (r.order_id) {
+                const oId = String(r.order.order_id || r.order.order);
+                refundOrderIds.add(oId);
+                // keep the first refund for this order
+                if (!mapByOrder[oId]) mapByOrder[oId] = r;
+              }
+
+              // 2) r.order_id (might be nested or plain id)
+              if (r.order_id) {
                 if (typeof r.order_id === 'object') {
-                  refundOrderIds.add(String(r.order_id.order || r.order_id.order_id || r.order_id));
+                  const o = String(r.order_id.order || r.order_id.order_id || r.order_id);
+                  refundOrderIds.add(o);
+                  if (!mapByOrder[o]) mapByOrder[o] = r;
                 } else {
-                  refundOrderIds.add(String(r.order_id));
+                  const o = String(r.order_id);
+                  refundOrderIds.add(o);
+                  if (!mapByOrder[o]) mapByOrder[o] = r;
                 }
-              } else if (Array.isArray(r.order_items) && r.order_items.length > 0) {
+              }
+
+              // 3) order_items (backend sets this in get_my_refunds)
+              if (Array.isArray(r.order_items) && r.order_items.length > 0) {
                 r.order_items.forEach((oi: any) => {
-                  if (oi.order_id) refundOrderIds.add(String(oi.order_id));
+                  if (oi.order_id) {
+                    const o = String(oi.order_id);
+                    refundOrderIds.add(o);
+                    if (!mapByOrder[o]) mapByOrder[o] = r;
+                  }
                 });
               }
             } catch (e) {
@@ -184,6 +221,8 @@ export default function PurchasesPage() {
         }
 
         setOrdersWithRefund(refundOrderIds);
+        setRefundsList(refundsArr);
+        setRefundByOrder(mapByOrder);
       } catch (e) {
         console.warn('Failed to fetch buyer refunds', e);
       }
@@ -526,7 +565,18 @@ export default function PurchasesPage() {
     return (
       <TouchableOpacity 
         style={styles.orderCard} 
-        onPress={() => handleViewOrderDetails(item.order_id)} 
+        onPress={() => {
+          // In Returns tab, open refund detail when available
+          if (activeTab === 'Returns') {
+            const refund = refundByOrder[String(item.order_id)];
+            if (refund) {
+              router.push(`/customer/view-refund?refundId=${encodeURIComponent(String(refund.refund_id || refund.id || refund.refund_number || refund.refund_id))}`);
+              return;
+            }
+          }
+
+          handleViewOrderDetails(item.order_id);
+        }}
         activeOpacity={0.85}
       >
           <View style={styles.orderHeader}>
