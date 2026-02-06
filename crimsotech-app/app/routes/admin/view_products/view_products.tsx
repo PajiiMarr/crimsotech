@@ -24,7 +24,6 @@ import {
   CheckCircle,
   XCircle,
   ChevronLeft,
-  Menu,
   MoreVertical
 } from 'lucide-react';
 import AxiosInstance from "~/components/axios/Axios";
@@ -57,6 +56,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "~/components/ui/dropdown-menu";
 
 export function meta(): Route.MetaDescriptors {
@@ -152,8 +152,10 @@ interface LoaderData {
 export async function loader({ request, context, params}: Route.LoaderArgs): Promise<LoaderData> {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
   await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
+
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
+
   const { product_id } = params;
 
   let user = (context as any).user;
@@ -284,9 +286,7 @@ const actionConfigs = {
 
 export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) {
   const { user, product: initialProduct, error: initialError } = loaderData;
-
   const baseUrl = import.meta.env.VITE_MEDIA_URL;
-
   console.log("Base URL:", baseUrl);
   
   // State for dynamic product data
@@ -750,7 +750,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
           </div>
         )}
 
-        {/* Responsive Header with Mobile Navigation */}
+        {/* Responsive Header with Admin Actions Dropdown */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           {/* Breadcrumb */}
           <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
@@ -768,29 +768,38 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
             </span>
           </nav>
 
-          {/* Mobile Actions Dropdown */}
-          {isMobile && availableActions.length > 0 && (
+          {/* Admin Actions Dropdown - Visible on all screen sizes */}
+          {availableActions.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="ml-auto">
-                  <Menu className="w-4 h-4" />
+                  <MoreVertical className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                {availableActions.map((action, index) => (
-                  <DropdownMenuItem
-                    key={index}
-                    onClick={() => handleActionClick(action.id)}
-                    className={`flex items-center gap-2 ${
-                      action.variant === "destructive" 
-                        ? "text-destructive focus:text-destructive" 
-                        : ""
-                    }`}
-                  >
-                    <action.icon className="w-4 h-4" />
-                    {action.label}
-                  </DropdownMenuItem>
-                ))}
+              <DropdownMenuContent align="end" className="w-56">
+                {availableActions.map((action, index) => {
+                  // Add separator before destructive actions
+                  const isDestructive = action.variant === "destructive";
+                  const prevAction = availableActions[index - 1];
+                  const needsSeparator = isDestructive && prevAction && prevAction.variant !== "destructive";
+
+                  return (
+                    <div key={action.id}>
+                      {needsSeparator && <DropdownMenuSeparator />}
+                      <DropdownMenuItem
+                        onClick={() => handleActionClick(action.id)}
+                        className={`flex items-center gap-2 ${
+                          isDestructive 
+                            ? "text-destructive focus:text-destructive" 
+                            : ""
+                        }`}
+                      >
+                        <action.icon className="w-4 h-4" />
+                        {action.label}
+                      </DropdownMenuItem>
+                    </div>
+                  );
+                })}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -1237,38 +1246,6 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
             </Card>
           </TabsContent>
         </Tabs>
-
-        {/* Admin Actions - Desktop only, mobile has dropdown */}
-        {!isMobile && availableActions.length > 0 && (
-          <Card>
-            <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-              <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
-                Admin Actions
-              </CardTitle>
-              <CardDescription className="text-xs sm:text-sm">
-                Available actions based on product status: {product.upload_status} • {product.status} • {product.is_removed ? 'Removed' : 'Active'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
-              <div className="flex gap-2 flex-wrap">
-                {availableActions.map((action, index) => (
-                  <Button
-                    key={index}
-                    variant={action.variant}
-                    className="flex items-center gap-2 text-xs sm:text-sm"
-                    onClick={() => handleActionClick(action.id)}
-                    disabled={processing}
-                    size="sm"
-                  >
-                    <action.icon className="w-3 h-3 sm:w-4 sm:h-4" />
-                    {action.label}
-                  </Button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         {/* Responsive Dialog */}
         {isMobile ? renderMobileDialog() : renderDesktopDialog()}
