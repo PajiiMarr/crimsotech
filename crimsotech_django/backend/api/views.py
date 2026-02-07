@@ -14466,6 +14466,7 @@ class SellerProducts(viewsets.ModelViewSet):
         if user_id:
             try:
                 seller = Customer.objects.get(customer_id=user_id)
+                # REMOVED: is_removed=False filter to show all products including removed ones
                 return Product.objects.filter(customer=seller).order_by('-created_at')
             except Customer.DoesNotExist:
                 return Product.objects.none()
@@ -14892,6 +14893,7 @@ class SellerProducts(viewsets.ModelViewSet):
         try:
             seller = Customer.objects.get(customer_id=user_id)
             # Prefetch variants and variant options to avoid N+1 queries
+            # REMOVED: is_removed=False filter to show all products including removed ones
             queryset = Product.objects.filter(customer=seller)\
                 .prefetch_related('variants_set__variantoptions_set')\
                 .order_by('-created_at')
@@ -14928,6 +14930,8 @@ class SellerProducts(viewsets.ModelViewSet):
                     "upload_status": product.upload_status,
                     "condition": product.condition,
                     "is_refundable": product.is_refundable,
+                    "is_removed": product.is_removed,  # Add is_removed field
+                    "removal_reason": product.removal_reason,  # Add removal_reason field
                     "shop": {
                         "id": str(product.shop.id),
                         "name": product.shop.name
@@ -15134,7 +15138,7 @@ class SellerProducts(viewsets.ModelViewSet):
             return Response({
                 'success': False,
                 'error': f'Image prediction failed: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)  
 
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer

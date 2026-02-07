@@ -14,10 +14,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
-import { Search, Plus, Edit, Trash2, Eye, Store, Tag, MoreHorizontal, Package } from "lucide-react";
+import { Search, Plus, Edit, Trash2, Eye, Store, Tag, MoreHorizontal, Package, AlertCircle } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import { type ColumnDef } from "@tanstack/react-table";
 import AxiosInstance from '~/components/axios/Axios';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -65,6 +72,8 @@ interface Product {
   variants?: Variant[];
   created_at: string;
   updated_at: string;
+  is_removed?: boolean;
+  removal_reason?: string;
 }
 
 interface ProductListResponse {
@@ -111,6 +120,8 @@ export default function SellerProductList() {
     limit: number;
     remaining: number;
   } | null>(null);
+  const [removalModalOpen, setRemovalModalOpen] = useState(false);
+  const [selectedRemovalReason, setSelectedRemovalReason] = useState<string>('');
 
   useEffect(() => {
     const fetchProducts = async () => {
@@ -177,7 +188,7 @@ export default function SellerProductList() {
 
   const handleToggleStatus = async (productId: string, currentStatus: string) => {
     try {
-      const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+      const newStatus = currentStatus.toLowerCase() === 'active' ? 'inactive' : 'active';
       // Add your status update API call here
       console.log('Toggle status:', productId, newStatus);
       // await AxiosInstance.patch(`/seller-products/${productId}/`, { status: newStatus });
@@ -190,6 +201,11 @@ export default function SellerProductList() {
       console.error('Error updating product status:', error);
       alert('Failed to update product status');
     }
+  };
+
+  const handleViewRemovalReason = (removalReason?: string) => {
+    setSelectedRemovalReason(removalReason || 'No removal reason provided.');
+    setRemovalModalOpen(true);
   };
 
   const formatDate = (dateString: string) => {
@@ -205,6 +221,7 @@ export default function SellerProductList() {
   };
 
   const getStatusBadge = (status: string, type: 'status' | 'upload_status' = 'status') => {
+    const statusLower = status.toLowerCase();
     const statusConfig = {
       active: { variant: "default" as const, label: "Active" },
       inactive: { variant: "secondary" as const, label: "Inactive" },
@@ -213,7 +230,7 @@ export default function SellerProductList() {
       published: { variant: "default" as const, label: "Published" }
     };
 
-    const config = statusConfig[status as keyof typeof statusConfig] || 
+    const config = statusConfig[statusLower as keyof typeof statusConfig] || 
                    { variant: "outline" as const, label: status };
 
     return (
@@ -227,7 +244,6 @@ export default function SellerProductList() {
     return product.variants && product.variants.length > 0;
   };
 
-
   // Define columns for the data table
   const columns: ColumnDef<Product>[] = [
     {
@@ -235,13 +251,32 @@ export default function SellerProductList() {
       header: "Product",
       cell: ({ row }) => {
         const product = row.original;
+        const isRemoved = product.is_removed;
         return (
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center">
-              <Tag className="h-5 w-5 text-muted-foreground" />
+          <div className={`flex items-center gap-3 ${isRemoved ? 'bg-red-50 p-2 rounded' : ''}`}>
+            <div className={`h-10 w-10 rounded-md flex items-center justify-center ${isRemoved ? 'bg-red-100' : 'bg-muted'}`}>
+              <Tag className={`h-5 w-5 ${isRemoved ? 'text-red-600' : 'text-muted-foreground'}`} />
             </div>
             <div className="min-w-0 flex-1">
               <div className="font-medium truncate">{product.name}</div>
+              {isRemoved && (
+                <div className="flex items-center gap-1 mt-1">
+                  <Badge variant="destructive" className="text-xs">
+                    Removed
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleViewRemovalReason(product.removal_reason);
+                    }}
+                  >
+                    <AlertCircle className="h-3 w-3 text-red-600" />
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -252,8 +287,9 @@ export default function SellerProductList() {
       header: "Shop",
       cell: ({ row }) => {
         const product = row.original;
+        const isRemoved = product.is_removed;
         return product.shop ? (
-          <div className="flex items-center gap-2">
+          <div className={`flex items-center gap-2 ${isRemoved ? 'text-red-700' : ''}`}>
             <Store className="h-3 w-3 text-muted-foreground" />
             <span className="text-sm">{product.shop.name}</span>
           </div>
@@ -267,8 +303,9 @@ export default function SellerProductList() {
       header: "Category",
       cell: ({ row }) => {
         const product = row.original;
+        const isRemoved = product.is_removed;
         return (
-          <Badge variant="outline">
+          <Badge variant={isRemoved ? "destructive" : "outline"}>
             {getCategoryName(product)}
           </Badge>
         );
@@ -278,8 +315,10 @@ export default function SellerProductList() {
       accessorKey: "condition",
       header: "Condition",
       cell: ({ row }) => {
+        const product = row.original;
+        const isRemoved = product.is_removed;
         return (
-          <Badge variant="outline" className="capitalize">
+          <Badge variant={isRemoved ? "destructive" : "outline"} className="capitalize">
             {row.original.condition}
           </Badge>
         );
@@ -289,6 +328,11 @@ export default function SellerProductList() {
       accessorKey: "upload_status",
       header: "Upload Status",
       cell: ({ row }) => {
+        const product = row.original;
+        const isRemoved = product.is_removed;
+        if (isRemoved) {
+          return <Badge variant="destructive">Removed</Badge>;
+        }
         return getStatusBadge(row.original.upload_status, 'upload_status');
       },
     },
@@ -296,6 +340,11 @@ export default function SellerProductList() {
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => {
+        const product = row.original;
+        const isRemoved = product.is_removed;
+        if (isRemoved) {
+          return <Badge variant="destructive">Removed</Badge>;
+        }
         return getStatusBadge(row.original.status, 'status');
       },
     },
@@ -303,7 +352,13 @@ export default function SellerProductList() {
       accessorKey: "created_at",
       header: "Date Added",
       cell: ({ row }) => {
-        return formatDate(row.original.created_at);
+        const product = row.original;
+        const isRemoved = product.is_removed;
+        return (
+          <span className={isRemoved ? 'text-red-700' : ''}>
+            {formatDate(row.original.created_at)}
+          </span>
+        );
       },
     },
     {
@@ -311,6 +366,22 @@ export default function SellerProductList() {
       header: "Actions",
       cell: ({ row }) => {
         const product = row.original;
+        const isRemoved = product.is_removed;
+        
+        if (isRemoved) {
+          return (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleViewRemovalReason(product.removal_reason)}
+              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+            >
+              <AlertCircle className="h-4 w-4 mr-1" />
+              View Reason
+            </Button>
+          );
+        }
+        
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -331,7 +402,7 @@ export default function SellerProductList() {
               <DropdownMenuItem 
                 onClick={() => handleToggleStatus(product.id, product.status)}
               >
-                {product.status === 'active' ? 'Deactivate' : 'Activate'}
+                {product.status.toLowerCase() === 'active' ? 'Deactivate' : 'Activate'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem 
@@ -433,7 +504,7 @@ export default function SellerProductList() {
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold text-green-600">
-                {products.filter(p => p.status === 'active').length}
+                {products.filter(p => p.status.toLowerCase() === 'active').length}
               </div>
               <div className="text-sm text-muted-foreground">Active Products</div>
             </CardContent>
@@ -455,6 +526,11 @@ export default function SellerProductList() {
             <CardDescription>
               {products.length} product{products.length !== 1 ? 's' : ''} found
               {productLimitInfo && ` • ${productLimitInfo.remaining} products remaining`}
+              {products.some(p => p.is_removed) && (
+                <span className="text-red-600 ml-2">
+                  • {products.filter(p => p.is_removed).length} removed product{products.filter(p => p.is_removed).length !== 1 ? 's' : ''}
+                </span>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -466,25 +542,53 @@ export default function SellerProductList() {
                 </Button>
               </div>
             ) : (
-              <DataTable
-                columns={columns}
-                data={products}
-                searchConfig={{
-                  column: "name",
-                  placeholder: "Search products by name, description, or category..."
-                }}
-                filterConfig={filterConfig}
-                defaultSorting={[
-                  {
-                    id: "created_at",
-                    desc: true, // Sort by newest first
-                  },
-                ]}
-              />
+              <>
+                <DataTable
+                  columns={columns}
+                  data={products}
+                  searchConfig={{
+                    column: "name",
+                    placeholder: "Search products by name, description, or category..."
+                  }}
+                  filterConfig={filterConfig}
+                  defaultSorting={[
+                    {
+                      id: "created_at",
+                      desc: true, // Sort by newest first
+                    },
+                  ]}
+                />
+              </>
             )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Removal Reason Modal */}
+      <Dialog open={removalModalOpen} onOpenChange={setRemovalModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertCircle className="h-5 w-5" />
+              Product Removal Reason
+            </DialogTitle>
+            <DialogDescription>
+              This product has been removed from the platform. Here is the reason provided:
+            </DialogDescription>
+          </DialogHeader>
+          <div className="bg-red-50 border border-red-200 rounded-md p-4 mt-4">
+            <p className="text-red-800 whitespace-pre-wrap">{selectedRemovalReason}</p>
+          </div>
+          <div className="flex justify-end">
+            <Button 
+              variant="outline" 
+              onClick={() => setRemovalModalOpen(false)}
+            >
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </SellerSidebarLayout>
   );
 }
