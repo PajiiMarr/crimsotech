@@ -75,8 +75,14 @@ export default function SellerSidebar() {
     <Sidebar variant="floating" collapsible="icon">
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>
-            <h1 className="text-lg font-semibold">Seller</h1>
+          <SidebarGroupLabel className="mb-5">
+            <Link to="/seller" className="h-20 flex w-full pt-5">
+              <img
+                src="/Crimsotech.png"
+                alt="CrimsoTech"
+                className="h-full object-contain"
+              />
+            </Link>
           </SidebarGroupLabel>
 
           <SidebarGroupContent>
