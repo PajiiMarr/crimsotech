@@ -130,7 +130,7 @@ export default function ReviewDispute() {
         // Refresh to reflect changes
         await refreshData();
         // navigate to process page for additional processing actions
-        navigate(`/admin/view-refund/process-refund/${id}`);
+        navigate(`/admin/view-refund/process-refund/${encodeURIComponent(String(id))}`);
       } else {
         throw new Error('Failed to update refund status');
       }
