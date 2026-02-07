@@ -1,5 +1,5 @@
 // app/(auth)/login.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,11 +11,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-} from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useAuth } from '../../contexts/AuthContext';
-import AxiosInstance from '../../contexts/axios';
+  Image,
+} from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { useAuth } from "../../contexts/AuthContext";
+import AxiosInstance from "../../contexts/axios";
 
 type LoginData = {
   username: string;
@@ -24,20 +25,20 @@ type LoginData = {
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { 
-    userId, 
-    shopId, 
-    userRole, 
+  const {
+    userId,
+    shopId,
+    userRole,
     registrationStage,
-    loading: authLoading, 
-    setAuthData, 
+    loading: authLoading,
+    setAuthData,
     updateShopId,
-    clearAuthData 
+    clearAuthData,
   } = useAuth();
-  
+
   const [formData, setFormData] = useState<LoginData>({
-    username: '',
-    password: '',
+    username: "",
+    password: "",
   });
   const [loginLoading, setLoginLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<LoginData>>({});
@@ -45,21 +46,23 @@ export default function LoginScreen() {
 
   // Check if user is already logged in
   useEffect(() => {
-    console.log('🔄 Login screen - Auth state:', { 
-      userId, 
+    console.log("🔄 Login screen - Auth state:", {
+      userId,
       shopId,
       userRole,
       registrationStage,
-      authLoading 
+      authLoading,
     });
 
     // Only auto-redirect to home if registration is fully complete (stage === 4)
     if (userId && !authLoading && registrationStage === 4) {
-      console.log('✅ User already logged in and fully registered, redirecting to home...');
-      if (userRole === 'customer') {
-        router.replace('/customer/home');
-      } else if (userRole === 'rider') {
-        router.replace('/rider/home');
+      console.log(
+        "✅ User already logged in and fully registered, redirecting to home...",
+      );
+      if (userRole === "customer") {
+        router.replace("/customer/home");
+      } else if (userRole === "rider") {
+        router.replace("/rider/home");
       }
     }
   }, [userId, userRole, registrationStage, authLoading]);
@@ -68,11 +71,11 @@ export default function LoginScreen() {
     const newErrors: Partial<LoginData> = {};
 
     if (!formData.username.trim()) {
-      newErrors.username = 'Username is required';
+      newErrors.username = "Username is required";
     }
 
     if (!formData.password) {
-      newErrors.password = 'Password is required';
+      newErrors.password = "Password is required";
     }
 
     setErrors(newErrors);
@@ -81,23 +84,25 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!validateForm()) return;
-    
+
     setLoginLoading(true);
     try {
       const { username, password } = formData;
-      const response = await AxiosInstance.post(`/login/`,{ username, password },
+      const response = await AxiosInstance.post(
+        `/login/`,
+        { username, password },
         {
-          headers: { 'Content-Type': 'application/json' },
+          headers: { "Content-Type": "application/json" },
           timeout: 10000,
-        }
+        },
       );
 
       const data = response.data;
-      console.log('✅ Login response:', data);
+      console.log("✅ Login response:", data);
 
       // ✅ Determine user role based on response
-      const userRole = data.is_rider ? 'rider' : 'customer';
-      
+      const userRole = data.is_rider ? "rider" : "customer";
+
       // ✅ Get shop ID if available
       const shopId = data.shop_id || data.profile?.shop?.id || null;
 
@@ -108,107 +113,120 @@ export default function LoginScreen() {
         data.username, // username
         data.email, // email
         shopId, // shop ID (optional)
-        data.registration_stage // registration stage (optional)
+        data.registration_stage, // registration stage (optional)
       );
 
       // Try to fetch full profile immediately to obtain shop information if server didn't include it in login response
       try {
-        const profileRes = await AxiosInstance.get('/profile/', {
-          headers: { 'X-User-Id': data.user_id || data.id, 'Content-Type': 'application/json' },
+        const profileRes = await AxiosInstance.get("/profile/", {
+          headers: {
+            "X-User-Id": data.user_id || data.id,
+            "Content-Type": "application/json",
+          },
         });
         if (profileRes.data?.success && profileRes.data.profile?.shop) {
           const foundShopId = profileRes.data.profile.shop.id;
           if (foundShopId) {
             await updateShopId(foundShopId);
-            console.log('🚀 Shop ID updated from profile after login:', foundShopId);
+            console.log(
+              "🚀 Shop ID updated from profile after login:",
+              foundShopId,
+            );
           }
         }
       } catch (profileErr) {
-        console.log('No shop info available immediately after login or failed to fetch profile:', profileErr?.message || profileErr);
+        console.log(
+          "No shop info available immediately after login or failed to fetch profile:",
+          profileErr?.message || profileErr,
+        );
       }
 
-      console.log('📊 Registration stage:', data.registration_stage, 'Role:', userRole);
+      console.log(
+        "📊 Registration stage:",
+        data.registration_stage,
+        "Role:",
+        userRole,
+      );
 
       // Handle registration stages
       const registrationStage = data.registration_stage || 1;
-      
-      if (userRole === 'rider') {
+
+      if (userRole === "rider") {
         // Rider flow
         if (registrationStage === 1) {
-          router.replace('/(auth)/signup');
+          router.replace("/(auth)/signup");
           return;
         } else if (registrationStage === 2) {
-          router.replace('/(auth)/setup-account');
+          router.replace("/(auth)/setup-account");
           return;
         } else if (registrationStage === 3) {
-          router.replace('/(auth)/verify-phone');
+          router.replace("/(auth)/verify-phone");
           return;
         } else if (registrationStage === 4) {
-          router.replace('/rider/home');
+          router.replace("/rider/home");
           return;
         }
       } else {
         // Customer flow
         if (registrationStage === 1) {
-          router.replace('/(auth)/setup-account');
+          router.replace("/(auth)/setup-account");
           return;
         } else if (registrationStage === 2) {
-          router.replace('/(auth)/verify-phone');
+          router.replace("/(auth)/verify-phone");
           return;
         } else if (registrationStage === 4) {
           // Only navigate to home when fully completed (stage 4)
-          router.replace('/customer/home');
+          router.replace("/customer/home");
           return;
         }
       }
-      
     } catch (error: any) {
-      console.error('Login error:', error);
-      
-      let errorMessage = 'Please check your credentials and try again.';
-      
+      console.error("Login error:", error);
+
+      let errorMessage = "Please check your credentials and try again.";
+
       if (error.response) {
         // Server responded with error
         const status = error.response.status;
         if (status === 401) {
-          errorMessage = 'Invalid username or password.';
+          errorMessage = "Invalid username or password.";
         } else if (status === 403) {
-          errorMessage = 'Account is suspended or inactive.';
+          errorMessage = "Account is suspended or inactive.";
         } else if (status === 404) {
-          errorMessage = 'Account not found.';
+          errorMessage = "Account not found.";
         } else if (status >= 500) {
-          errorMessage = 'Server error. Please try again later.';
+          errorMessage = "Server error. Please try again later.";
         }
       } else if (error.request) {
         // No response received
-        errorMessage = 'Network error. Please check your connection.';
+        errorMessage = "Network error. Please check your connection.";
       }
-      
-      Alert.alert('Login failed', errorMessage);
+
+      Alert.alert("Login failed", errorMessage);
     } finally {
       setLoginLoading(false);
     }
   };
 
   const handleDebugAuth = async () => {
-    console.log('🔍 Current Auth Context:');
-    console.log('User ID:', userId);
-    console.log('Shop ID:', shopId);
-    console.log('User Role:', userRole);
-    
+    console.log("🔍 Current Auth Context:");
+    console.log("User ID:", userId);
+    console.log("Shop ID:", shopId);
+    console.log("User Role:", userRole);
+
     Alert.alert(
-      'Auth Debug',
-      `User ID: ${userId || 'null'}\nShop ID: ${shopId || 'null'}\nRole: ${userRole || 'null'}`
+      "Auth Debug",
+      `User ID: ${userId || "null"}\nShop ID: ${shopId || "null"}\nRole: ${userRole || "null"}`,
     );
   };
 
   const handleClearAuth = async () => {
     try {
       await clearAuthData();
-      Alert.alert('Success', 'Auth data cleared!');
+      Alert.alert("Success", "Auth data cleared!");
     } catch (error) {
-      console.error('Clear error:', error);
-      Alert.alert('Error', 'Failed to clear auth data');
+      console.error("Clear error:", error);
+      Alert.alert("Error", "Failed to clear auth data");
     }
   };
 
@@ -223,23 +241,29 @@ export default function LoginScreen() {
   }
 
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Header with CrimsoTech */}
+        {/* Header with Logo and CrimsoTech */}
         <View style={styles.header}>
+          <Image
+            source={require("../../assets/images/crimsotechlogo.png")}
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <Text style={styles.brandTitle}>CrimsoTech</Text>
         </View>
 
         <View style={styles.content}>
           {/* Login Title */}
-          <Text style={styles.title}>Login to your account</Text>
+          <Text style={styles.title}>Welcome Back!</Text>
+          <Text style={styles.subtitle}>Log in to your account</Text>
 
           {/* Username Field */}
           <View style={styles.inputContainer}>
@@ -250,12 +274,15 @@ export default function LoginScreen() {
               value={formData.username}
               onChangeText={(text) => {
                 setFormData({ ...formData, username: text });
-                if (errors.username) setErrors({ ...errors, username: undefined });
+                if (errors.username)
+                  setErrors({ ...errors, username: undefined });
               }}
               autoCapitalize="none"
               autoCorrect={false}
             />
-            {errors.username ? <Text style={styles.errorText}>{errors.username}</Text> : null}
+            {errors.username ? (
+              <Text style={styles.errorText}>{errors.username}</Text>
+            ) : null}
           </View>
 
           {/* Password Field */}
@@ -263,12 +290,17 @@ export default function LoginScreen() {
             <Text style={styles.label}>Password</Text>
             <View style={styles.passwordContainer}>
               <TextInput
-                style={[styles.input, styles.passwordInput, errors.password && styles.inputError]}
+                style={[
+                  styles.input,
+                  styles.passwordInput,
+                  errors.password && styles.inputError,
+                ]}
                 placeholder="Enter your password"
                 value={formData.password}
                 onChangeText={(text) => {
                   setFormData({ ...formData, password: text });
-                  if (errors.password) setErrors({ ...errors, password: undefined });
+                  if (errors.password)
+                    setErrors({ ...errors, password: undefined });
                 }}
                 secureTextEntry={!showPassword}
               />
@@ -283,20 +315,25 @@ export default function LoginScreen() {
                 />
               </TouchableOpacity>
             </View>
-            {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
+            {errors.password ? (
+              <Text style={styles.errorText}>{errors.password}</Text>
+            ) : null}
           </View>
 
           {/* Forgot Password Link */}
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.forgotPassword}
-            onPress={() => router.push('/(auth)/login')}
+            onPress={() => router.push("/(auth)/login")}
           >
             <Text style={styles.forgotPasswordText}>Forgot your password?</Text>
           </TouchableOpacity>
 
           {/* Login Button */}
-          <TouchableOpacity 
-            style={[styles.loginButton, loginLoading && styles.loginButtonDisabled]}
+          <TouchableOpacity
+            style={[
+              styles.loginButton,
+              loginLoading && styles.loginButtonDisabled,
+            ]}
             onPress={handleLogin}
             disabled={loginLoading}
           >
@@ -309,8 +346,8 @@ export default function LoginScreen() {
 
           {/* Sign Up Link */}
           <View style={styles.signupContainer}>
-            <Text style={styles.signupText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
+            <Text style={styles.signupText}>Don&apos;t have an account? </Text>
+            <TouchableOpacity onPress={() => router.push("/(auth)/signup")}>
               <Text style={styles.signupLink}>Sign up</Text>
             </TouchableOpacity>
           </View>
@@ -326,12 +363,12 @@ export default function LoginScreen() {
           <View style={styles.riderLinkContainer}>
             <MaterialIcons name="two-wheeler" size={20} color="#ff6d0b" />
             <Text style={styles.riderText}>Want to deliver? </Text>
-            <TouchableOpacity onPress={() => router.push('/(auth)/rider-apply')}>
+            <TouchableOpacity
+              onPress={() => router.push("/(auth)/rider-apply")}
+            >
               <Text style={styles.riderLink}>Apply as Rider</Text>
             </TouchableOpacity>
           </View>
-
-
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -341,180 +378,181 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   loadingContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
   },
   loadingText: {
     marginTop: 10,
-    color: '#666',
+    color: "#666",
     fontSize: 16,
   },
   scrollContent: {
     flexGrow: 1,
   },
   header: {
-    paddingTop: 60,
-    paddingLeft: 40,
-    paddingBottom: 20,
+    paddingTop: Platform.OS === "ios" ? 60 : 40,
+    paddingHorizontal: 25,
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  logo: {
+    width: 35,
+    height: 35,
+    marginRight: 10,
   },
   brandTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#333',
-    letterSpacing: 0.5,
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#1a1a1a",
+    letterSpacing: -0.5,
   },
   content: {
     flex: 1,
-    padding: 40,
-    paddingTop: 0,
-    justifyContent: 'center',
+    paddingHorizontal: 25,
+    justifyContent: "center",
   },
   title: {
-    fontSize: 24,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: 40,
-    color: '#333',
+    fontSize: 28,
+    fontWeight: "700",
+    marginBottom: 8,
+    color: "#1a1a1a",
+    textAlign: "left",
+  },
+  subtitle: {
+    fontSize: 16,
+    color: "#666",
+    marginBottom: 32,
+    textAlign: "left",
   },
   inputContainer: {
-    marginBottom: 10,
+    marginBottom: 20,
   },
   label: {
     fontSize: 14,
     marginBottom: 8,
-    color: '#333',
-    fontWeight: '500',
+    color: "#1a1a1a",
+    fontWeight: "600",
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 12,
+    borderWidth: 1.5,
+    borderColor: "#f0f0f0",
+    borderRadius: 12,
+    padding: 16,
     fontSize: 16,
-    color: '#333',
-    backgroundColor: '#fff',
+    color: "#1a1a1a",
+    backgroundColor: "#f9f9f9",
   },
   passwordContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    position: 'relative',
+    flexDirection: "row",
+    alignItems: "center",
+    position: "relative",
   },
   passwordInput: {
     flex: 1,
-    paddingRight: 40,
+    paddingRight: 50,
   },
   eyeButton: {
-    position: 'absolute',
+    position: "absolute",
     right: 12,
     padding: 8,
   },
   inputError: {
-    borderColor: '#ff6d0b',
+    borderColor: "#ff6d0b",
   },
   errorText: {
-    color: '#ff6d0b',
+    color: "#ff6d0b",
     fontSize: 12,
     marginTop: 4,
     marginLeft: 4,
   },
   forgotPassword: {
-    alignSelf: 'flex-end',
-    marginBottom: 30,
-    marginTop: 10,
+    alignSelf: "flex-end",
+    marginBottom: 32,
+    marginTop: -8,
   },
   forgotPasswordText: {
-    color: '#666',
+    color: "#ff6d0b",
     fontSize: 14,
+    fontWeight: "600",
   },
   loginButton: {
-    backgroundColor: '#ff6d0b',
-    padding: 14,
-    borderRadius: 6,
-    alignItems: 'center',
+    backgroundColor: "#ff6d0b",
+    padding: 18,
+    borderRadius: 12,
+    alignItems: "center",
     marginBottom: 20,
+    shadowColor: "#ff6d0b",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
   loginButtonDisabled: {
-    backgroundColor: '#ff9d6b',
+    backgroundColor: "#ff9d6b",
+    shadowOpacity: 0,
+    elevation: 0,
   },
   loginButtonText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: "700",
   },
   signupContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
+    marginBottom: 32,
   },
   signupText: {
     fontSize: 14,
-    color: '#666',
+    color: "#666",
   },
   signupLink: {
     fontSize: 14,
-    color: '#333',
-    fontWeight: '600',
+    color: "#ff6d0b",
+    fontWeight: "700",
   },
   dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 32,
   },
   divider: {
     flex: 1,
     height: 1,
-    backgroundColor: '#eee',
+    backgroundColor: "#eee",
   },
   dividerText: {
     marginHorizontal: 16,
-    color: '#999',
+    color: "#999",
     fontSize: 14,
   },
   riderLinkContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#fff7f2",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ffe8d9",
   },
   riderText: {
     fontSize: 14,
-    color: '#666',
-    marginLeft: 4,
+    color: "#666",
+    marginLeft: 8,
   },
   riderLink: {
     fontSize: 14,
-    color: '#ff6d0b',
-    fontWeight: '600',
-  },
-  debugContainer: {
-    marginTop: 20,
-    gap: 10,
-  },
-  debugButton: {
-    backgroundColor: '#5856D6',
-    borderRadius: 6,
-    padding: 12,
-    alignItems: 'center',
-  },
-  debugButtonText: {
-    color: '#FFF',
-    fontSize: 14,
-  },
-  clearButton: {
-    backgroundColor: '#FF3B30',
-    borderRadius: 6,
-    padding: 12,
-    alignItems: 'center',
-  },
-  clearButtonText: {
-    color: '#FFF',
-    fontSize: 14,
+    color: "#ff6d0b",
+    fontWeight: "700",
   },
 });

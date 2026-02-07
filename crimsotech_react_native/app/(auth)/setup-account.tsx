@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -13,51 +13,56 @@ import {
   Modal,
   FlatList,
   Pressable,
-} from 'react-native';
-import { router } from 'expo-router';
-import { MaterialIcons } from '@expo/vector-icons';
-import AxiosInstance from '../../contexts/axios';
-import * as SecureStore from 'expo-secure-store';
-import AddressDropdowns from '../components/address/AddressDropdowns';
+  Image,
+} from "react-native";
+import { router } from "expo-router";
+import { MaterialIcons } from "@expo/vector-icons";
+import AxiosInstance from "../../contexts/axios";
+import * as SecureStore from "expo-secure-store";
+import AddressDropdowns from "../components/address/AddressDropdowns";
 
-type Gender = 'male' | 'female' | 'prefer_not_to_say';
+type Gender = "male" | "female" | "prefer_not_to_say";
 
 export default function SetupAccountScreen() {
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [isRider, setIsRider] = useState(false);
-  const [username, setUsername] = useState('');
-  
+  const [username, setUsername] = useState("");
+
   // Form fields
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [middleName, setMiddleName] = useState('');
-  const [email, setEmail] = useState('');
-  const [gender, setGender] = useState<Gender | ''>('');
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [middleName, setMiddleName] = useState("");
+  const [email, setEmail] = useState("");
+  const [gender, setGender] = useState<Gender | "">("");
   const [dateOfBirth, setDateOfBirth] = useState<Date | null>(null);
-  const [dateValue, setDateValue] = useState('');
-  
+  const [dateValue, setDateValue] = useState("");
+
   // Calendar state
   const [showCalendarModal, setShowCalendarModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(
+    new Date().getMonth(),
+  );
+  const [selectedYear, setSelectedYear] = useState<number>(
+    new Date().getFullYear(),
+  );
   const [showYearDropdown, setShowYearDropdown] = useState(false);
-  
+
   // Address fields
   const [address, setAddress] = useState({
-    province: '',
-    city: '',
-    barangay: '',
-    street: '',
+    province: "",
+    city: "",
+    barangay: "",
+    street: "",
   });
-  
+
   // Dropdown modals
   const [showGenderModal, setShowGenderModal] = useState(false);
-  
+
   // Errors
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [age, setAge] = useState<string>('');
+  const [age, setAge] = useState<string>("");
 
   useEffect(() => {
     checkUserStage();
@@ -68,7 +73,7 @@ export default function SetupAccountScreen() {
   }, [dateOfBirth]);
 
   // Function to format date for display (June 01, 2025)
-  const formatDate = (date: Date | null) => { 
+  const formatDate = (date: Date | null) => {
     if (!date) {
       return "";
     }
@@ -84,8 +89,8 @@ export default function SetupAccountScreen() {
       return "";
     }
     const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   };
 
@@ -101,48 +106,51 @@ export default function SetupAccountScreen() {
       setAge("");
       return;
     }
-    
+
     const today = new Date();
     const birthDate = new Date(dateOfBirth);
-    
+
     let calculatedAge = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
-    
+
     // Adjust age if birthday hasn't occurred this year yet
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && today.getDate() < birthDate.getDate())
+    ) {
       calculatedAge--;
     }
-    
+
     setAge(calculatedAge.toString());
   };
 
   const checkUserStage = async () => {
     try {
-      const userJson = await SecureStore.getItemAsync('user');
+      const userJson = await SecureStore.getItemAsync("user");
       if (userJson) {
         const user = JSON.parse(userJson);
-        setUsername(user.username || '');
-        
+        setUsername(user.username || "");
+
         const stage = user.registration_stage || 1;
         const isUserRider = user.is_rider || false;
         setIsRider(isUserRider);
-        
-        console.log('📊 User stage check:', { stage, isUserRider });
-        
+
+        console.log("📊 User stage check:", { stage, isUserRider });
+
         // Stage logic with stage 3 as completed for customers
         if (isUserRider) {
           // Rider flow
           if (stage === 1) {
-            router.replace('/(auth)/signup');
+            router.replace("/(auth)/signup");
             return;
           } else if (stage === 2) {
             // Good - stay on profiling
             setUserId(user.user_id?.toString() || null);
           } else if (stage === 3) {
-            router.replace('/(auth)/verify-phone');
+            router.replace("/(auth)/verify-phone");
             return;
           } else if (stage >= 4) {
-            router.replace('/rider/home');
+            router.replace("/rider/home");
             return;
           }
         } else {
@@ -151,43 +159,43 @@ export default function SetupAccountScreen() {
             // Good - stay on profiling
             setUserId(user.user_id?.toString() || null);
           } else if (stage === 2) {
-            router.replace('/(auth)/verify-phone');
+            router.replace("/(auth)/verify-phone");
             return;
           } else if (stage === 4) {
             // Only allow navigation to home when registration is fully complete (stage 4)
-            router.replace('/customer/home');
+            router.replace("/customer/home");
             return;
           }
         }
-        
+
         // Load user profiling data if available
         await loadUserProfilingData(user.user_id?.toString() || null);
       } else {
         // No user found, redirect to login
-        router.replace('/(auth)/login');
+        router.replace("/(auth)/login");
       }
     } catch (error) {
-      console.error('Error checking user stage:', error);
-      Alert.alert('Error', 'Failed to load user data');
+      console.error("Error checking user stage:", error);
+      Alert.alert("Error", "Failed to load user data");
     }
   };
 
   const loadUserProfilingData = async (userId: string | null) => {
     if (!userId) return;
-    
+
     try {
-      const response = await AxiosInstance.get('/profiling/', {
-        headers: { 'X-User-Id': userId }
+      const response = await AxiosInstance.get("/profiling/", {
+        headers: { "X-User-Id": userId },
       });
-      
+
       if (response.data) {
         const data = response.data;
-        setFirstName(data.first_name || '');
-        setLastName(data.last_name || '');
-        setMiddleName(data.middle_name || '');
-        setEmail(data.email || '');
-        setGender(data.sex || '');
-        
+        setFirstName(data.first_name || "");
+        setLastName(data.last_name || "");
+        setMiddleName(data.middle_name || "");
+        setEmail(data.email || "");
+        setGender(data.sex || "");
+
         if (data.date_of_birth) {
           const dob = new Date(data.date_of_birth);
           if (isValidDate(dob)) {
@@ -198,70 +206,70 @@ export default function SetupAccountScreen() {
             setSelectedYear(dob.getFullYear());
           }
         }
-        
+
         setAddress({
-          province: data.province || '',
-          city: data.city || '',
-          barangay: data.barangay || '',
-          street: data.street || '',
+          province: data.province || "",
+          city: data.city || "",
+          barangay: data.barangay || "",
+          street: data.street || "",
         });
       }
     } catch (error) {
-      console.error('Error loading profiling data:', error);
+      console.error("Error loading profiling data:", error);
     }
   };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
-    if (!firstName.trim()) newErrors.first_name = 'First name is required';
-    if (!lastName.trim()) newErrors.last_name = 'Last name is required';
-    
+    if (!firstName.trim()) newErrors.first_name = "First name is required";
+    if (!lastName.trim()) newErrors.last_name = "Last name is required";
+
     if (!email.trim()) {
-      newErrors.email = 'Email is required';
+      newErrors.email = "Email is required";
     } else {
       const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailPattern.test(email)) {
-        newErrors.email = 'Invalid email format';
+        newErrors.email = "Invalid email format";
       }
     }
 
-    if (!gender) newErrors.sex = 'Sex is required';
-    
+    if (!gender) newErrors.sex = "Sex is required";
+
     if (!dateOfBirth) {
-      newErrors.date_of_birth = 'Date of birth is required';
+      newErrors.date_of_birth = "Date of birth is required";
     } else if (parseInt(age) < 15) {
-      newErrors.age = 'You must be at least 15 years old!';
+      newErrors.age = "You must be at least 15 years old!";
     }
-    
-    if (!address.province) newErrors.province = 'Province is required';
-    if (!address.city) newErrors.city = 'City is required';
-    if (!address.barangay) newErrors.barangay = 'Barangay is required';
+
+    if (!address.province) newErrors.province = "Province is required";
+    if (!address.city) newErrors.city = "City is required";
+    if (!address.barangay) newErrors.barangay = "Barangay is required";
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = async () => {
-    console.log('🎯 Submit button clicked');
-    
+    console.log("🎯 Submit button clicked");
+
     if (!validateForm()) {
-      console.log('❌ Form validation failed');
+      console.log("❌ Form validation failed");
       return;
     }
-    
+
     if (!userId) {
-      console.log('❌ No user ID found');
-      Alert.alert('Error', 'User session expired. Please login again.');
+      console.log("❌ No user ID found");
+      Alert.alert("Error", "User session expired. Please login again.");
       return;
     }
 
     setLoading(true);
-    
+
     try {
       const apiDateOfBirth = formatDateForAPI(dateOfBirth);
       const registrationStage = isRider ? 3 : 2;
-      
+
       const payload = {
         first_name: firstName,
         last_name: lastName,
@@ -277,48 +285,47 @@ export default function SetupAccountScreen() {
         registration_stage: registrationStage,
       };
 
-      console.log('📤 Sending to API:', {
-        endpoint: '/api/profiling/',
-        headers: { 'X-User-Id': userId },
+      console.log("📤 Sending to API:", {
+        endpoint: "/api/profiling/",
+        headers: { "X-User-Id": userId },
         payload,
         isRider,
-        newStage: registrationStage
-      });
-      
-      const response = await AxiosInstance.put('/profiling/', payload, {
-        headers: { 'X-User-Id': userId }
+        newStage: registrationStage,
       });
 
-      console.log('✅ API Response:', response.data);
-      
+      const response = await AxiosInstance.put("/profiling/", payload, {
+        headers: { "X-User-Id": userId },
+      });
+
+      console.log("✅ API Response:", response.data);
+
       // Update user data with new registration stage
-      const userJson = await SecureStore.getItemAsync('user');
+      const userJson = await SecureStore.getItemAsync("user");
       if (userJson) {
         const user = JSON.parse(userJson);
         user.registration_stage = registrationStage;
-        await SecureStore.setItemAsync('user', JSON.stringify(user));
+        await SecureStore.setItemAsync("user", JSON.stringify(user));
       }
-      
+
       // Save temp_user_id for next stage
-      await SecureStore.setItemAsync('temp_user_id', userId);
-      
+      await SecureStore.setItemAsync("temp_user_id", userId);
+
       // Navigate to phone verification
-      console.log('🚀 Navigating to verify-phone...');
-      router.replace('/(auth)/verify-phone');
-      
+      console.log("🚀 Navigating to verify-phone...");
+      router.replace("/(auth)/verify-phone");
     } catch (error: any) {
-      console.error('❌ ERROR DETAILS:', error.response?.data || error.message);
-      
-      let errorMessage = 'Failed to save profile. Please try again.';
+      console.error("❌ ERROR DETAILS:", error.response?.data || error.message);
+
+      let errorMessage = "Failed to save profile. Please try again.";
       if (error.response?.data?.error) {
         errorMessage = error.response.data.error;
       } else if (error.response?.data?.detail) {
         errorMessage = error.response.data.detail;
       }
-      
-      Alert.alert('Error', errorMessage);
+
+      Alert.alert("Error", errorMessage);
     } finally {
-      console.log('🏁 Loading finished');
+      console.log("🏁 Loading finished");
       setLoading(false);
     }
   };
@@ -346,7 +353,7 @@ export default function SetupAccountScreen() {
   const handleMonthChange = (change: number) => {
     let newMonth = selectedMonth + change;
     let newYear = selectedYear;
-    
+
     if (newMonth < 0) {
       newMonth = 11;
       newYear--;
@@ -354,7 +361,7 @@ export default function SetupAccountScreen() {
       newMonth = 0;
       newYear++;
     }
-    
+
     setSelectedMonth(newMonth);
     setSelectedYear(newYear);
   };
@@ -380,28 +387,42 @@ export default function SetupAccountScreen() {
 
   const getGenderDisplay = () => {
     switch (gender) {
-      case 'male': return 'Male';
-      case 'female': return 'Female';
-      case 'prefer_not_to_say': return 'Prefer not to say';
-      default: return 'Select';
+      case "male":
+        return "Male";
+      case "female":
+        return "Female";
+      case "prefer_not_to_say":
+        return "Prefer not to say";
+      default:
+        return "Select";
     }
   };
 
   // Generate years for dropdown (from current year to 1900)
   const currentYear = new Date().getFullYear();
   const years = Array.from(
-    { length: currentYear - 1900 + 1 }, 
-    (_, i) => currentYear - i
+    { length: currentYear - 1900 + 1 },
+    (_, i) => currentYear - i,
   );
 
   const selectedYearIndex = Math.max(
     0,
-    Math.min(years.length - 1, currentYear - selectedYear)
+    Math.min(years.length - 1, currentYear - selectedYear),
   );
 
   const monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
   ];
 
   // Generate calendar days
@@ -411,36 +432,45 @@ export default function SetupAccountScreen() {
   const emptyDays = Array.from({ length: firstDayOfMonth }, (_, i) => i);
 
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
+          <Image
+            source={require("../../assets/images/crimsotechlogo.png")}
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <Text style={styles.brandTitle}>CrimsoTech</Text>
         </View>
 
         <View style={styles.content}>
           {/* Welcome Header */}
           <View style={styles.welcomeContainer}>
-            <Text style={styles.welcomeTitle}>Welcome {username}</Text>
-            <Text style={styles.welcomeSubtitle}>Setup your account first!</Text>
+            <Text style={styles.welcomeTitle}>Welcome, {username}!</Text>
+            <Text style={styles.welcomeSubtitle}>
+              Let&apos;s complete your profile to get started.
+            </Text>
           </View>
 
           {/* Personal Information */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Account Profile</Text>
-            
+
             <View style={styles.row}>
               <View style={styles.inputGroup}>
                 <View style={styles.labelContainer}>
                   <Text style={styles.label}>First Name</Text>
                   {errors.first_name && (
-                    <Text style={styles.fieldErrorText}>{errors.first_name}</Text>
+                    <Text style={styles.fieldErrorText}>
+                      {errors.first_name}
+                    </Text>
                   )}
                 </View>
                 <TextInput
@@ -451,12 +481,14 @@ export default function SetupAccountScreen() {
                   editable={!loading}
                 />
               </View>
-              
+
               <View style={styles.inputGroup}>
                 <View style={styles.labelContainer}>
                   <Text style={styles.label}>Last Name</Text>
                   {errors.last_name && (
-                    <Text style={styles.fieldErrorText}>{errors.last_name}</Text>
+                    <Text style={styles.fieldErrorText}>
+                      {errors.last_name}
+                    </Text>
                   )}
                 </View>
                 <TextInput
@@ -473,7 +505,9 @@ export default function SetupAccountScreen() {
               <View style={styles.labelContainer}>
                 <Text style={styles.label}>Middle Name</Text>
                 {errors.middle_name && (
-                  <Text style={styles.fieldErrorText}>{errors.middle_name}</Text>
+                  <Text style={styles.fieldErrorText}>
+                    {errors.middle_name}
+                  </Text>
                 )}
               </View>
               <TextInput
@@ -512,14 +546,25 @@ export default function SetupAccountScreen() {
                   )}
                 </View>
                 <TouchableOpacity
-                  style={[styles.dropdownTrigger, errors.sex && styles.inputError]}
+                  style={[
+                    styles.dropdownTrigger,
+                    errors.sex && styles.inputError,
+                  ]}
                   onPress={() => setShowGenderModal(true)}
                   disabled={loading}
                 >
-                  <Text style={gender ? styles.dropdownText : styles.dropdownPlaceholder}>
+                  <Text
+                    style={
+                      gender ? styles.dropdownText : styles.dropdownPlaceholder
+                    }
+                  >
                     {getGenderDisplay()}
                   </Text>
-                  <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
+                  <MaterialIcons
+                    name="arrow-drop-down"
+                    size={24}
+                    color="#666"
+                  />
                 </TouchableOpacity>
               </View>
 
@@ -531,7 +576,7 @@ export default function SetupAccountScreen() {
                   )}
                 </View>
                 <TextInput
-                  style={[styles.input, { backgroundColor: '#f5f5f5' }]}
+                  style={[styles.input, { backgroundColor: "#f5f5f5" }]}
                   value={age}
                   editable={false}
                   placeholder="Auto-calculated"
@@ -544,16 +589,23 @@ export default function SetupAccountScreen() {
               <View style={styles.labelContainer}>
                 <Text style={styles.label}>Date of Birth</Text>
                 {errors.date_of_birth && (
-                  <Text style={styles.fieldErrorText}>{errors.date_of_birth}</Text>
+                  <Text style={styles.fieldErrorText}>
+                    {errors.date_of_birth}
+                  </Text>
                 )}
               </View>
               <TouchableOpacity
-                style={[styles.dateInput, errors.date_of_birth && styles.inputError]}
+                style={[
+                  styles.dateInput,
+                  errors.date_of_birth && styles.inputError,
+                ]}
                 onPress={openCalendar}
                 disabled={loading}
               >
-                <Text style={dateOfBirth ? styles.dateText : styles.datePlaceholder}>
-                  {dateOfBirth ? formatDate(dateOfBirth) : 'Select date'}
+                <Text
+                  style={dateOfBirth ? styles.dateText : styles.datePlaceholder}
+                >
+                  {dateOfBirth ? formatDate(dateOfBirth) : "Select date"}
                 </Text>
                 <MaterialIcons name="calendar-today" size={20} color="#666" />
               </TouchableOpacity>
@@ -563,7 +615,7 @@ export default function SetupAccountScreen() {
           {/* Address Information */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Address</Text>
-            
+
             <AddressDropdowns
               value={address}
               onChange={(data) =>
@@ -586,18 +638,17 @@ export default function SetupAccountScreen() {
           {errors.details && (
             <View style={styles.backendErrorContainer}>
               <Text style={styles.backendErrorText}>
-                {typeof errors.details === 'object' 
+                {typeof errors.details === "object"
                   ? Object.values(errors.details).map((errorMessage, index) => (
                       <Text key={index}>{String(errorMessage)}</Text>
                     ))
-                  : String(errors.details)
-                }
+                  : String(errors.details)}
               </Text>
             </View>
           )}
 
           {/* Submit Button */}
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.submitButton, loading && styles.buttonDisabled]}
             onPress={handleSubmit}
             disabled={loading}
@@ -626,24 +677,33 @@ export default function SetupAccountScreen() {
                 <MaterialIcons name="close" size={24} color="#333" />
               </TouchableOpacity>
             </View>
-            
+
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => { setGender('male'); setShowGenderModal(false); }}
+              onPress={() => {
+                setGender("male");
+                setShowGenderModal(false);
+              }}
             >
               <Text style={styles.dropdownItemText}>Male</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => { setGender('female'); setShowGenderModal(false); }}
+              onPress={() => {
+                setGender("female");
+                setShowGenderModal(false);
+              }}
             >
               <Text style={styles.dropdownItemText}>Female</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => { setGender('prefer_not_to_say'); setShowGenderModal(false); }}
+              onPress={() => {
+                setGender("prefer_not_to_say");
+                setShowGenderModal(false);
+              }}
             >
               <Text style={styles.dropdownItemText}>Prefer not to say</Text>
             </TouchableOpacity>
@@ -669,33 +729,37 @@ export default function SetupAccountScreen() {
 
             {/* Month/Year Selector */}
             <View style={styles.monthYearSelector}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.monthNavButton}
                 onPress={() => handleMonthChange(-1)}
               >
                 <MaterialIcons name="chevron-left" size={24} color="#333" />
               </TouchableOpacity>
-              
+
               <View style={styles.monthYearDisplay}>
-                <Text style={styles.monthText}>{monthNames[selectedMonth]}</Text>
-                
+                <Text style={styles.monthText}>
+                  {monthNames[selectedMonth]}
+                </Text>
+
                 {/* Year Dropdown */}
                 <View style={styles.yearSelectorContainer}>
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={styles.yearButton}
                     onPress={() => setShowYearDropdown(!showYearDropdown)}
                   >
                     <Text style={styles.yearText}>{selectedYear}</Text>
-                    <MaterialIcons 
-                      name={showYearDropdown ? "arrow-drop-up" : "arrow-drop-down"} 
-                      size={24} 
-                      color="#333" 
+                    <MaterialIcons
+                      name={
+                        showYearDropdown ? "arrow-drop-up" : "arrow-drop-down"
+                      }
+                      size={24}
+                      color="#333"
                     />
                   </TouchableOpacity>
                 </View>
               </View>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={styles.monthNavButton}
                 onPress={() => handleMonthChange(1)}
               >
@@ -705,8 +769,10 @@ export default function SetupAccountScreen() {
 
             {/* Day Headers */}
             <View style={styles.dayHeaders}>
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-                <Text key={day} style={styles.dayHeaderText}>{day}</Text>
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                <Text key={day} style={styles.dayHeaderText}>
+                  {day}
+                </Text>
               ))}
             </View>
 
@@ -716,31 +782,35 @@ export default function SetupAccountScreen() {
               {emptyDays.map((_, index) => (
                 <View key={`empty-${index}`} style={styles.calendarDayEmpty} />
               ))}
-              
+
               {/* Days of the month */}
               {days.map((day) => {
-                const isSelected = selectedDate.getDate() === day && 
-                                 selectedDate.getMonth() === selectedMonth && 
-                                 selectedDate.getFullYear() === selectedYear;
-                const isToday = day === new Date().getDate() && 
-                               selectedMonth === new Date().getMonth() && 
-                               selectedYear === new Date().getFullYear();
-                
+                const isSelected =
+                  selectedDate.getDate() === day &&
+                  selectedDate.getMonth() === selectedMonth &&
+                  selectedDate.getFullYear() === selectedYear;
+                const isToday =
+                  day === new Date().getDate() &&
+                  selectedMonth === new Date().getMonth() &&
+                  selectedYear === new Date().getFullYear();
+
                 return (
                   <TouchableOpacity
                     key={day}
                     style={[
                       styles.calendarDay,
                       isSelected && styles.calendarDaySelected,
-                      isToday && styles.calendarDayToday
+                      isToday && styles.calendarDayToday,
                     ]}
                     onPress={() => handleDateSelect(day)}
                   >
-                    <Text style={[
-                      styles.calendarDayText,
-                      isSelected && styles.calendarDayTextSelected,
-                      isToday && !isSelected && styles.calendarDayTextToday
-                    ]}>
+                    <Text
+                      style={[
+                        styles.calendarDayText,
+                        isSelected && styles.calendarDayTextSelected,
+                        isToday && !isSelected && styles.calendarDayTextToday,
+                      ]}
+                    >
                       {day}
                     </Text>
                   </TouchableOpacity>
@@ -752,20 +822,21 @@ export default function SetupAccountScreen() {
             <View style={styles.selectedDateContainer}>
               <Text style={styles.selectedDateLabel}>Selected Date:</Text>
               <Text style={styles.selectedDateText}>
-                {selectedDate.getDate()} {monthNames[selectedDate.getMonth()]} {selectedDate.getFullYear()}
+                {selectedDate.getDate()} {monthNames[selectedDate.getMonth()]}{" "}
+                {selectedDate.getFullYear()}
               </Text>
             </View>
 
             {/* Action Buttons */}
             <View style={styles.calendarActions}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => setShowCalendarModal(false)}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={styles.confirmButton}
                 onPress={confirmDate}
               >
@@ -793,7 +864,11 @@ export default function SetupAccountScreen() {
               data={years}
               keyExtractor={(year) => String(year)}
               initialScrollIndex={selectedYearIndex}
-              getItemLayout={(_, index) => ({ length: 44, offset: 44 * index, index })}
+              getItemLayout={(_, index) => ({
+                length: 44,
+                offset: 44 * index,
+                index,
+              })}
               showsVerticalScrollIndicator={true}
               renderItem={({ item: year }) => (
                 <TouchableOpacity
@@ -824,396 +899,425 @@ export default function SetupAccountScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 40,
   },
   header: {
-    paddingTop: 60,
-    paddingLeft: 40,
-    paddingBottom: 20,
+    paddingTop: Platform.OS === "ios" ? 60 : 40,
+    paddingHorizontal: 25,
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  logo: {
+    width: 35,
+    height: 35,
+    marginRight: 10,
   },
   brandTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#333',
-    letterSpacing: 0.5,
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#1a1a1a",
+    letterSpacing: -0.5,
   },
   content: {
     flex: 1,
-    paddingHorizontal: 40,
+    paddingHorizontal: 25,
     paddingTop: 0,
   },
   welcomeContainer: {
-    alignItems: 'center',
-    marginBottom: 30,
+    alignItems: "flex-start",
+    marginBottom: 32,
   },
   welcomeTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#1a1a1a",
     marginBottom: 8,
   },
   welcomeSubtitle: {
     fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
+    color: "#666",
+    textAlign: "left",
   },
   section: {
-    marginBottom: 30,
+    marginBottom: 32,
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#ff6d0b',
+    fontWeight: "700",
+    color: "#ff6d0b",
     marginBottom: 20,
-    textAlign: 'center',
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
     columnGap: 12,
-    marginBottom: 15,
   },
   inputGroup: {
     flex: 1,
-    marginBottom: 15,
+    marginBottom: 20,
   },
   labelContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 8,
   },
   label: {
     fontSize: 14,
-    color: '#333',
-    fontWeight: '500',
+    color: "#1a1a1a",
+    fontWeight: "600",
   },
   fieldErrorText: {
     fontSize: 12,
-    color: '#ff6d0b',
+    color: "#ff6d0b",
     marginLeft: 8,
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 12,
+    borderWidth: 1.5,
+    borderColor: "#f0f0f0",
+    borderRadius: 12,
+    padding: 16,
     fontSize: 16,
-    color: '#333',
-    backgroundColor: '#fff',
+    color: "#1a1a1a",
+    backgroundColor: "#f9f9f9",
   },
   inputError: {
-    borderColor: '#ff6d0b',
+    borderColor: "#ff6d0b",
   },
   dropdownTrigger: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 12,
+    borderWidth: 1.5,
+    borderColor: "#f0f0f0",
+    borderRadius: 12,
+    padding: 16,
     fontSize: 16,
-    color: '#333',
-    backgroundColor: '#fff',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    color: "#1a1a1a",
+    backgroundColor: "#f9f9f9",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   dropdownText: {
     fontSize: 16,
-    color: '#333',
+    color: "#1a1a1a",
   },
   dropdownPlaceholder: {
     fontSize: 16,
-    color: '#999',
+    color: "#999",
   },
   dateOfBirthContainer: {
-    marginBottom: 15,
+    marginBottom: 20,
   },
   dateInput: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 12,
+    borderWidth: 1.5,
+    borderColor: "#f0f0f0",
+    borderRadius: 12,
+    padding: 16,
     fontSize: 16,
-    color: '#333',
-    backgroundColor: '#fff',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    color: "#1a1a1a",
+    backgroundColor: "#f9f9f9",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   dateText: {
     fontSize: 16,
-    color: '#333',
+    color: "#1a1a1a",
   },
   datePlaceholder: {
     fontSize: 16,
-    color: '#999',
+    color: "#999",
   },
   submitButton: {
-    backgroundColor: '#ff6d0b',
-    padding: 14,
-    borderRadius: 6,
-    alignItems: 'center',
+    backgroundColor: "#ff6d0b",
+    padding: 18,
+    borderRadius: 12,
+    alignItems: "center",
     marginTop: 10,
+    shadowColor: "#ff6d0b",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
   buttonDisabled: {
-    backgroundColor: '#ccc',
+    backgroundColor: "#ff9d6b",
+    shadowOpacity: 0,
+    elevation: 0,
   },
   submitButtonText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: "700",
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
   },
   modalContent: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "80%",
+    paddingBottom: Platform.OS === "ios" ? 40 : 20,
   },
   modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 24,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: "#f0f0f0",
   },
   modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1a1a1a",
   },
   dropdownItem: {
-    padding: 15,
+    padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#f5f5f5',
+    borderBottomColor: "#f9f9f9",
   },
   dropdownItemText: {
     fontSize: 16,
-    color: '#333',
+    color: "#1a1a1a",
   },
   backendErrorContainer: {
-    marginBottom: 20,
-    padding: 15,
-    backgroundColor: '#ffebee',
+    marginBottom: 24,
+    padding: 16,
+    backgroundColor: "#fff5f5",
     borderWidth: 1,
-    borderColor: '#ffcdd2',
-    borderRadius: 6,
+    borderColor: "#fed7d7",
+    borderRadius: 12,
   },
   backendErrorText: {
-    color: '#d32f2f',
+    color: "#c53030",
     fontSize: 14,
+    fontWeight: "500",
   },
   // Calendar Modal Styles
   calendarModalContent: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '90%',
-    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "90%",
+    paddingBottom: Platform.OS === "ios" ? 40 : 20,
   },
   calendarHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 24,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: "#f0f0f0",
   },
   calendarTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: "700",
+    color: "#1a1a1a",
   },
   monthYearSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    backgroundColor: "#f9f9f9",
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 12,
   },
   monthNavButton: {
-    padding: 10,
+    padding: 8,
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   monthYearDisplay: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
   },
   monthText: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 5,
+    fontWeight: "700",
+    color: "#1a1a1a",
+    marginBottom: 4,
   },
   yearSelectorContainer: {
-    position: 'relative',
+    position: "relative",
     zIndex: 10,
   },
   yearButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 6,
-    backgroundColor: '#f5f5f5',
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   yearText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginRight: 5,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#666",
+    marginRight: 4,
   },
   yearPickerOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    justifyContent: "center",
+    alignItems: "center",
     paddingHorizontal: 20,
   },
   yearPickerCard: {
-    width: '100%',
+    width: "100%",
     maxWidth: 320,
-    maxHeight: 420,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#eee',
-    overflow: 'hidden',
+    maxHeight: 450,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 10,
   },
   yearPickerTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1a1a1a",
+    padding: 20,
+    textAlign: "center",
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: "#f0f0f0",
   },
   yearItem: {
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    minHeight: 44,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f5f5f5',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    alignItems: "center",
   },
   yearItemSelected: {
-    backgroundColor: '#ff6d0b',
+    backgroundColor: "#fff7f2",
   },
   yearItemText: {
-    fontSize: 14,
-    color: '#333',
+    fontSize: 16,
+    color: "#1a1a1a",
   },
   yearItemTextSelected: {
-    color: '#fff',
-    fontWeight: '600',
+    color: "#ff6d0b",
+    fontWeight: "700",
   },
   dayHeaders: {
-    flexDirection: 'row',
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
   },
   dayHeaderText: {
     flex: 1,
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
+    textAlign: "center",
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#999",
+    textTransform: "uppercase",
   },
   calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 10,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    padding: 8,
   },
   calendarDayEmpty: {
-    width: '14.28%',
+    width: "14.28%",
     aspectRatio: 1,
-    padding: 5,
   },
   calendarDay: {
-    width: '14.28%',
+    width: "14.28%",
     aspectRatio: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 5,
+    justifyContent: "center",
+    alignItems: "center",
   },
   calendarDaySelected: {
-    backgroundColor: '#ff6d0b',
-    borderRadius: 20,
+    backgroundColor: "#ff6d0b",
+    borderRadius: 12,
   },
   calendarDayToday: {
     borderWidth: 1,
-    borderColor: '#ff6d0b',
-    borderRadius: 20,
+    borderColor: "#ff6d0b",
+    borderRadius: 12,
   },
   calendarDayText: {
     fontSize: 16,
-    color: '#333',
+    color: "#1a1a1a",
   },
   calendarDayTextSelected: {
-    color: '#fff',
-    fontWeight: '600',
+    color: "#fff",
+    fontWeight: "700",
   },
   calendarDayTextToday: {
-    color: '#ff6d0b',
-    fontWeight: '600',
+    color: "#ff6d0b",
+    fontWeight: "700",
   },
   selectedDateContainer: {
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#f9f9f9',
-    marginHorizontal: 20,
-    marginTop: 10,
-    borderRadius: 10,
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#fff7f2",
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ffe8d9",
   },
   selectedDateLabel: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 5,
+    fontSize: 13,
+    color: "#ff6d0b",
+    fontWeight: "600",
+    marginBottom: 4,
+    textTransform: "uppercase",
   },
   selectedDateText: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: "700",
+    color: "#1a1a1a",
   },
   calendarActions: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    gap: 10,
+    flexDirection: "row",
+    padding: 16,
+    gap: 12,
   },
   cancelButton: {
     flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ddd',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: "#eee",
+    backgroundColor: "#fff",
   },
   cancelButtonText: {
     fontSize: 16,
-    color: '#666',
-    fontWeight: '500',
+    color: "#666",
+    fontWeight: "600",
   },
   confirmButton: {
     flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#ff6d0b',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "#ff6d0b",
   },
   confirmButtonText: {
     fontSize: 16,
-    color: '#fff',
-    fontWeight: '500',
+    color: "#fff",
+    fontWeight: "700",
   },
 });
