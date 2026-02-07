@@ -12,7 +12,11 @@ import {
   StatusBar,
   Alert,
   TextInput,
+  Modal,
+  FlatList,
+  Dimensions,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { 
   ArrowLeft, Copy, Truck, CheckCircle2, XCircle, Clock, 
   RotateCcw, Box, Hourglass, MessageSquare, Search, PackageCheck, 
@@ -579,6 +583,49 @@ const DisputeStatusUI = ({ refund, formatCurrency, formatDate, onAcknowledgeDisp
     );
   }
 
+  // Handle specific dispute workflow states: under_review and partial
+  if (dr && dr.status?.toLowerCase() === 'under_review') {
+    return (
+      <View style={styles.statusSection}>
+        <View style={styles.statusRow}>
+          <Hourglass size={24} color="#0EA5E9" fill="#E0F2FE" />
+          <View style={styles.statusTextContainer}>
+            <Text style={styles.statusTitle}>Under Review</Text>
+            <Text style={styles.statusSubtitle}>
+              Your dispute is currently under review by the moderation team. We will notify you once a decision has been made.
+            </Text>
+            {dr.created_at && (
+              <Text style={styles.disputeDate}>Filed at: {formatDate(dr.created_at)}</Text>
+            )}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  if (dr && dr.status?.toLowerCase() === 'partial') {
+    const amt = refund.approved_refund_amount != null ? refund.approved_refund_amount : null;
+    return (
+      <View style={styles.statusSection}>
+        <View style={styles.statusRow}>
+          <ShieldCheck size={24} color="#7C3AED" fill="#F3E8FF" />
+          <View style={styles.statusTextContainer}>
+            <Text style={styles.statusTitle}>Partial Refund Decision</Text>
+            <Text style={styles.statusSubtitle}>
+              The moderation team decided to issue a partial refund.
+            </Text>
+            {amt != null && (
+              <Text style={styles.partialAmount}>Amount: {formatCurrency(amt)}</Text>
+            )}
+            {dr.updated_at && (
+              <Text style={styles.disputeDate}>Decided at: {formatDate(dr.updated_at)}</Text>
+            )}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   // Show processing UI for disputes only if backend has already set refund to approved+processing
   if (dr && dr.status?.toLowerCase() === 'approved') {
     const payStatus = String(refund.refund_payment_status || '').toLowerCase();
@@ -617,8 +664,7 @@ const DisputeStatusUI = ({ refund, formatCurrency, formatDate, onAcknowledgeDisp
             </Text>
             {dr.resolved_at && (
               <Text style={styles.disputeDate}>Approved at: {formatDate(dr.resolved_at)}</Text>
-            )}
-          </View>
+            )}          </View>
         </View>
       </View>
     );
@@ -663,10 +709,27 @@ const DisputeStatusUI = ({ refund, formatCurrency, formatDate, onAcknowledgeDisp
 };
 
 // --- COMPLETED STATUS ---
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 const CompletedStatusUI = ({ refund, formatCurrency, formatDate }: { refund: any, formatCurrency: (amount: string | number) => string, formatDate: (dateString: string) => string }) => {
   const dr = refund.dispute || refund.dispute_request || null;
   const isResolved = dr && dr.status?.toLowerCase() === 'resolved';
-  
+
+  // Local state for proof viewer
+  const [proofModalVisible, setProofModalVisible] = React.useState(false);
+  const [proofUrls, setProofUrls] = React.useState<string[]>([]);
+  const [proofIndex, setProofIndex] = React.useState(0);
+
+  const proofs = Array.isArray(refund.proofs) ? refund.proofs : [];
+
+  const openProofViewer = (index = 0) => {
+    const urls = proofs.map((p: any) => p.file_url).filter(Boolean);
+    if (urls.length === 0) return;
+    setProofUrls(urls);
+    setProofIndex(index);
+    setProofModalVisible(true);
+  };
+
   return (
     <View style={styles.statusSection}>
       <View style={styles.statusRow}>
@@ -675,11 +738,11 @@ const CompletedStatusUI = ({ refund, formatCurrency, formatDate }: { refund: any
           <Text style={styles.statusTitle}>Refund Completed</Text>
           <Text style={styles.statusSubtitle}>
             Your refund has been successfully completed.
-            {refund.total_refund_amount && (
-              <Text style={styles.amountText}> {formatCurrency(refund.total_refund_amount)}</Text>
+            {refund.approved_refund_amount && (
+              <Text style={styles.amountText}> {formatCurrency(refund.approved_refund_amount)}</Text>
             )}
           </Text>
-          
+
           {isResolved && (
             <View style={styles.resolvedCard}>
               <Text style={styles.resolvedTitle}>Resolved After Dispute</Text>
@@ -698,6 +761,57 @@ const CompletedStatusUI = ({ refund, formatCurrency, formatDate }: { refund: any
               )}
             </View>
           )}
+
+          {/* Proof Thumbnails */}
+          {proofs.length > 0 && (
+            <View style={{ marginTop: 12 }}>
+              <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Proofs</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.proofRow}>
+                {proofs.map((p: any, idx: number) => (
+                  <TouchableOpacity key={p.id || idx} onPress={() => openProofViewer(idx)} style={styles.proofThumbWrapper}>
+                    <Image source={{ uri: p.file_url }} style={styles.proofThumb} resizeMode="cover" />
+                    {p.notes ? <Text style={styles.proofNote} numberOfLines={1}>{p.notes}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Proof Viewer Modal */}
+          <Modal animationType="fade" transparent={true} visible={proofModalVisible} onRequestClose={() => setProofModalVisible(false)}>
+            <View style={styles.modalOverlay}>
+              <View style={[styles.modalContainer, { width: '95%', padding: 0, backgroundColor: '#000' }]}>
+                <View style={styles.modalHeader}>
+                  <TouchableOpacity onPress={() => setProofModalVisible(false)} style={styles.closeButton}>
+                    <Ionicons name="close" size={28} color="#FFF" />
+                  </TouchableOpacity>
+                </View>
+
+                <FlatList
+                  data={proofUrls}
+                  keyExtractor={(item, i) => `${i}`}
+                  horizontal
+                  pagingEnabled
+                  initialScrollIndex={proofIndex}
+                  getItemLayout={(_data, index) => ({ length: SCREEN_WIDTH, offset: SCREEN_WIDTH * index, index })}
+                  onMomentumScrollEnd={(event) => {
+                    const idx = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+                    setProofIndex(idx);
+                  }}
+                  renderItem={({ item }) => (
+                    <View style={styles.modalImageContainer}>
+                      <Image source={{ uri: item }} style={styles.modalImage} resizeMode="contain" />
+                    </View>
+                  )}
+                />
+
+                <View style={styles.modalFooter}>
+                  <Text style={styles.modalImageCounter}>{proofIndex + 1} / {proofUrls.length}</Text>
+                </View>
+              </View>
+            </View>
+          </Modal>
+
         </View>
       </View>
     </View>
@@ -880,19 +994,33 @@ const NegotiationActions = ({
 // --- APPROVED/WAITING ACTIONS (for returns) ---
 const ReturnActions = ({ 
   onAddTracking, 
+  onWalkIn,
   loading 
 }: { 
   onAddTracking: () => void, 
+  onWalkIn?: () => void,
   loading: boolean 
 }) => (
-  <TouchableOpacity 
-    style={[styles.primaryButton, loading && styles.disabledButton]} 
-    onPress={onAddTracking}
-    disabled={loading}
-  >
-    <Upload size={16} color="#FFF" />
-    <Text style={styles.primaryButtonText}>Provide Shipping Info</Text>
-  </TouchableOpacity>
+  <>
+    <TouchableOpacity 
+      style={[styles.primaryButton, loading && styles.disabledButton]} 
+      onPress={onAddTracking}
+      disabled={loading}
+    >
+      <Upload size={16} color="#FFF" />
+      <Text style={styles.primaryButtonText}>Provide Shipping Info</Text>
+    </TouchableOpacity>
+
+    {/* Walk in Return button below */}
+    <TouchableOpacity 
+      style={[styles.secondaryButton, loading && styles.disabledButton]}
+      onPress={onWalkIn}
+      disabled={loading}
+    >
+      <Store size={16} color="#374151" />
+      <Text style={styles.secondaryButtonText}>Walk in Return</Text>
+    </TouchableOpacity>
+  </>
 );
 
 // --- REJECTED ACTIONS ---
@@ -1193,6 +1321,9 @@ export default function ViewRefundPage() {
   const [showTrackingForm, setShowTrackingForm] = useState(false);
   const [trackingForm, setTrackingForm] = useState({ logistic_service: '', tracking_number: '', shipped_at: '', notes: '' });
 
+  // Walk-in confirm modal state
+  const [showWalkInConfirm, setShowWalkInConfirm] = useState(false);
+
   const handleOpenTrackingForm = () => {
     setTrackingForm({ logistic_service: '', tracking_number: '', shipped_at: '', notes: '' });
     setShowTrackingForm(true);
@@ -1200,6 +1331,41 @@ export default function ViewRefundPage() {
 
   // Backwards-compatible alias used by action components
   const handleAddTracking = () => handleOpenTrackingForm();
+
+  // Open Walk-in confirmation modal
+  const handleOpenWalkInConfirm = () => {
+    setShowWalkInConfirm(true);
+  };
+
+  // Confirm Walk-in return: create return process if missing then submit update_tracking with walk-in logistic service
+  const handleConfirmWalkIn = async () => {
+    try {
+      setActionLoading(true);
+
+      // Start return process if missing
+      if (!refund.return_request) {
+        await AxiosInstance.post(`/return-refund/${refundId}/start_return_process/`, {}, {
+          headers: { 'X-User-Id': user?.id }
+        });
+      }
+
+      // Submit walk-in tracking details by sending an empty payload so fields remain null (indicates Walk-in)
+      const payload: any = {};
+
+      await AxiosInstance.post(`/return-refund/${refundId}/update_tracking/`, payload, {
+        headers: { 'X-User-Id': user?.id }
+      });
+
+      Alert.alert('Success', 'Walk-in return recorded. Please bring the item to the store address shown.');
+      setShowWalkInConfirm(false);
+      await fetchRefund();
+    } catch (err: any) {
+      console.error('Failed to confirm walk-in return', err);
+      Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to record walk-in return');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const handleSubmitTrackingForm = async () => {
     if (!trackingForm.logistic_service || !trackingForm.tracking_number) {
@@ -1447,6 +1613,14 @@ export default function ViewRefundPage() {
     if (STATUS_CONDITIONS.showReceivedStatus(statusUpper)) {
       return logAndReturn('ReceivedStatusUI (status)', <ReceivedStatusUI />);
     }
+
+    // Special-case: if refund is in dispute but the dispute request is resolved and payment already completed,
+    // show the Completed UI to the buyer (finalized by moderation)
+    const drCheck = refund.dispute || refund.dispute_request || null;
+    if (statusUpper === 'DISPUTE' && drCheck && drCheck.status?.toLowerCase() === 'resolved' && String(refund.refund_payment_status || '').toLowerCase() === 'completed') {
+      return logAndReturn('CompletedStatusUI (dispute-resolved)', <CompletedStatusUI refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />);
+    }
+
     if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) {
       return logAndReturn('DisputeStatusUI', <DisputeStatusUI refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} onAcknowledgeDispute={handleAcknowledgeDispute} />);
     }
@@ -1497,7 +1671,7 @@ export default function ViewRefundPage() {
     );
 
     if (showAddTrackingAction) {
-      return <ReturnActions onAddTracking={handleAddTracking} loading={actionLoading} />;
+      return <ReturnActions onAddTracking={handleAddTracking} onWalkIn={handleOpenWalkInConfirm} loading={actionLoading} />;
     }
     
     if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) {
@@ -1933,6 +2107,36 @@ export default function ViewRefundPage() {
           </View>
         )}
 
+        {/* WALK-IN CONFIRM MODAL */}
+        {showWalkInConfirm && (
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <Text style={styles.modalTitle}>Walk in Return</Text>
+
+              {(refund.return_address || refund.return_request?.return_address) ? (
+                <View>
+                  <Text style={[styles.returnAddressTitle, { marginTop: 0 }]}>Return Address</Text>
+                  <Text style={styles.returnAddressText}>{(refund.return_address || refund.return_request?.return_address).recipient_name} — {(refund.return_address || refund.return_request?.return_address).contact_number}</Text>
+                  <Text style={styles.returnAddressText}>{(refund.return_address || refund.return_request?.return_address).street}, {(refund.return_address || refund.return_request?.return_address).barangay}, {(refund.return_address || refund.return_request?.return_address).city}, {(refund.return_address || refund.return_request?.return_address).province} {(refund.return_address || refund.return_request?.return_address).zip_code}, {(refund.return_address || refund.return_request?.return_address).country}</Text>
+                  {(refund.return_address || refund.return_request?.return_address).notes && <Text style={styles.addressNotes}>{(refund.return_address || refund.return_request?.return_address).notes}</Text>}
+                </View>
+              ) : (
+                <Text style={styles.statusSubtitle}>Return address not available. Please contact the seller.</Text>
+              )}
+
+              <View style={{ height: 12 }} />
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={[styles.secondaryButton, { flex: 1, marginRight: 8 }]} onPress={() => setShowWalkInConfirm(false)} disabled={actionLoading}>
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.primaryButton, { flex: 1 }]} onPress={handleConfirmWalkIn} disabled={actionLoading}>
+                  <Text style={styles.primaryButtonText}>{actionLoading ? 'Processing...' : 'Confirm'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+
       </ScrollView>
     </SafeAreaView>
   );
@@ -2316,6 +2520,13 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 8
   },
+
+  partialAmount: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#111827',
+    fontWeight: '700'
+  },
   
   // Common Section
   section: { 
@@ -2508,6 +2719,54 @@ const styles = StyleSheet.create({
   modalButtons: {
     flexDirection: 'row',
     marginTop: 8
+  },
+
+  // Proof thumbnails and modal
+  proofRow: {
+    paddingVertical: 4,
+  },
+  proofThumbWrapper: {
+    marginRight: 8,
+    width: 90,
+    alignItems: 'center'
+  },
+  proofThumb: {
+    width: 90,
+    height: 90,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6'
+  },
+  proofNote: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 6,
+    width: 90,
+    textAlign: 'center'
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    padding: 8,
+  },
+  closeButton: {
+    padding: 8,
+  },
+  modalImageContainer: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_WIDTH,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  modalImage: {
+    width: '100%',
+    height: '100%'
+  },
+  modalFooter: {
+    padding: 8,
+    alignItems: 'center'
+  },
+  modalImageCounter: {
+    color: '#FFF'
   },
 
   // Empty State

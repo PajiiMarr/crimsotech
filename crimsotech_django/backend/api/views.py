@@ -16943,6 +16943,8 @@ class SellerOrderList(viewsets.ViewSet):
                     status='picked_up',
                     picked_at=timezone.now()
                 )
+                # Store completed timestamp on order so frontend can show completion time for pickup
+                order.completed_at = timezone.now()
                 message = "Order marked as picked up"
                 
             elif action_type == 'shipped':
@@ -19957,6 +19959,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'status_display': order.get_status_display() if hasattr(order, 'get_status_display') else order.status,
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                'completed_at': order.completed_at.isoformat() if getattr(order, 'completed_at', None) else None,
                 'payment_method': order.payment_method,
                 'total_amount': str(order.total_amount),
             },
@@ -23996,8 +23999,7 @@ class RefundViewSet(viewsets.ViewSet):
             logistic_service = request.data.get('logistic_service')
             tracking_number = request.data.get('tracking_number')
 
-            if not logistic_service or not tracking_number:
-                return Response({"error": "Both logistic_service and tracking_number are required"}, status=status.HTTP_400_BAD_REQUEST)
+
 
             return_request = getattr(refund, 'return_request', None)
             if not return_request:
@@ -24558,6 +24560,22 @@ class RefundViewSet(viewsets.ViewSet):
                         refund.processed_by = user
                     except Exception:
                         pass
+
+                    # If there's an associated dispute, mark it resolved when payment is completed
+                    try:
+                        dispute_obj = getattr(refund, 'dispute', None)
+                        if dispute_obj and dispute_obj.status != 'resolved':
+                            dispute_obj.status = 'resolved'
+                            dispute_obj.processed_by = user
+                            dispute_obj.resolved_at = timezone.now()
+                            dispute_obj.save()
+                            print('[admin_process_refund] dispute auto-resolved on payment completion', {
+                                'refund_id': str(refund.refund_id),
+                                'dispute_id': str(dispute_obj.id),
+                                'processed_by': str(user.id)
+                            })
+                    except Exception as e:
+                        print('Failed to auto-resolve dispute during admin_process_refund', e)
 
             refund.save()
             data = self._get_refund_details_data(refund, request, user)

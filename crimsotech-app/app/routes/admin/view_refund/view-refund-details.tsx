@@ -1211,7 +1211,9 @@ export default function AdminViewRefundDetails() {
                                     headers: { 'X-User-Id': String(user?.id || '') }
                                   });
                                   toast({ title: 'Review started', description: 'Dispute marked under review.' });
-                                  navigate(`/admin/view-refund/review-dispute?refund=${encodeURIComponent(String(refund.refund))}`);
+                                  const refundIdForRoute = encodeURIComponent(String(refund.refund || refund.refund_id || refund.id || ''));
+                                  console.debug('[admin-review] navigating to review-dispute for refundId:', refundIdForRoute);
+                                  navigate(`/admin/view-refund/review-dispute/${refundIdForRoute}`);
                                 } catch (err) {
                                   console.error('Start review error', err);
                                   toast({ title: 'Failed to start review', description: String(err), variant: 'destructive' });
