@@ -3100,7 +3100,7 @@ class AdminProduct(viewsets.ViewSet):
             range_type = request.query_params.get('range_type', 'weekly')
             
             # Start with base query
-            products = Product.objects.all().order_by('name').select_related('shop', 'category')
+            products = Product.objects.all().order_by('-created_at').select_related('shop', 'category')
             
             # Apply date range filter if provided
             start_datetime = None
@@ -3315,16 +3315,11 @@ class AdminProduct(viewsets.ViewSet):
                 'customer__customer'  # Access the User through Customer
             ).prefetch_related(
                 'productmedia_set',
-                'variants_set',
-                'variants_set__variantoptions_set',
-                'reviews',
-                'reviews__customer__customer',  # Access User through Customer for reviews
-                'favorites_set',
-                'favorites_set__customer__customer',
-                'boost_set',
-                'boost_set__boost_plan',
-                'reports_against',
-                'reports_against__reporter'
+                Prefetch('variants_set', queryset=Variants.objects.prefetch_related('variantoptions_set')),
+                Prefetch('reviews', queryset=Review.objects.select_related('customer__customer')),
+                Prefetch('favorites_set', queryset=Favorites.objects.select_related('customer__customer')),
+                Prefetch('boost_set', queryset=Boost.objects.select_related('boost_plan')),
+                Prefetch('reports_against', queryset=Report.objects.select_related('reporter'))
             ).get(id=product_id)
             
             # Build the response data
@@ -3333,9 +3328,10 @@ class AdminProduct(viewsets.ViewSet):
                 "name": product.name,
                 "description": product.description,
                 "quantity": product.quantity,
+                "used_for": product.description,  # Using description as used_for since model doesn't have used_for field
                 "price": str(product.price),
                 "upload_status": product.upload_status,
-                "status": product.status,  # Using the actual status field from model
+                "status": product.status,
                 "condition": product.condition,
                 "created_at": product.created_at.isoformat(),
                 "updated_at": product.updated_at.isoformat(),
@@ -3357,18 +3353,17 @@ class AdminProduct(viewsets.ViewSet):
                     "total_sales": str(product.shop.total_sales),
                     "created_at": product.shop.created_at.isoformat(),
                     "is_suspended": product.shop.is_suspended,
-                    "status": product.shop.status,  # Shop has its own status field
                 }
             else:
                 product_data["shop"] = None
             
             # Customer data
-            if product.customer:
+            if product.customer and product.customer.customer:
+                user = product.customer.customer
                 product_data["customer"] = {
-                    "username": product.customer.customer.username if product.customer.customer else None,
-                    "email": product.customer.customer.email if product.customer.customer else None,
-                    "contact_number": product.customer.customer.contact_number if product.customer.customer else None,
-                    "is_suspended": product.customer.customer.is_suspended,  # User suspension status
+                    "username": user.username,
+                    "email": user.email,
+                    "contact_number": user.contact_number,
                     "product_limit": product.customer.product_limit,
                     "current_product_count": product.customer.current_product_count,
                 }
@@ -3403,23 +3398,27 @@ class AdminProduct(viewsets.ViewSet):
                 for media in product.productmedia_set.all()
             ]
             
-            # Variants
-            product_data["variants"] = [
-                {
+            # Variants - Updated to match model structure
+            product_data["variants"] = []
+            for variant in product.variants_set.all():
+                variant_data = {
                     "id": str(variant.id),
                     "title": variant.title,
-                    "options": [
-                        {
-                            "id": str(option.id),
-                            "title": option.title,
-                            "quantity": option.quantity,
-                            "price": str(option.price),
-                        }
-                        for option in variant.variantoptions_set.all()
-                    ]
+                    "options": []
                 }
-                for variant in product.variants_set.all()
-            ]
+                
+                for option in variant.variantoptions_set.all():
+                    # Note: VariantOptions model doesn't have quantity and price fields
+                    # These would need to come from SKU or another model
+                    option_data = {
+                        "id": str(option.id),
+                        "title": option.title,
+                        "quantity": 0,  # Default value since model doesn't have this field
+                        "price": "0.00"  # Default value since model doesn't have this field
+                    }
+                    variant_data["options"].append(option_data)
+                
+                product_data["variants"].append(variant_data)
             
             # Reviews
             product_data["reviews"] = [
@@ -3463,6 +3462,7 @@ class AdminProduct(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
+            print(f"Error fetching product: {str(e)}")
             return Response(
                 {"error": "An error occurred while fetching product data"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -3874,7 +3874,9 @@ class AdminProduct(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            logger.error(f"Error updating product status: {str(e)}", exc_info=True)
+            import traceback
+            print(f"Error updating product status: {str(e)}")
+            print(traceback.format_exc())
             return Response(
                 {"error": "An error occurred while updating product status"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -4007,7 +4009,6 @@ class AdminProduct(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving categories: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
 
 class AdminShops(viewsets.ViewSet):
     """

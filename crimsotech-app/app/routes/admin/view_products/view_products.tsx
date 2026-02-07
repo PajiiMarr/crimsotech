@@ -3,7 +3,12 @@ import { UserProvider } from '~/components/providers/user-role-provider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '~/components/ui/card';
 import { Badge } from '~/components/ui/badge';
 import { Button } from '~/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
+import { 
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "~/components/ui/accordion";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '~/components/ui/carousel';
 import { Separator } from '~/components/ui/separator';
 import { 
@@ -24,7 +29,13 @@ import {
   CheckCircle,
   XCircle,
   ChevronLeft,
-  MoreVertical
+  MoreVertical,
+  ChevronDown,
+  Calendar,
+  Tag,
+  Box,
+  Layers,
+  TrendingUp
 } from 'lucide-react';
 import AxiosInstance from "~/components/axios/Axios";
 import { useState, useEffect } from 'react';
@@ -210,15 +221,6 @@ const actionConfigs = {
     needsReason: false,
     needsSuspensionDays: false,
   },
-  deleteDraft: {
-    title: "Delete Draft",
-    description: "This action cannot be undone. This will permanently delete the draft product.",
-    confirmText: "Delete Draft",
-    variant: "destructive" as const,
-    icon: Trash2,
-    needsReason: false,
-    needsSuspensionDays: false,
-  },
   unpublish: {
     title: "Unpublish Product",
     description: "This will unpublish the product and make it invisible to customers.",
@@ -352,12 +354,6 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
           icon: Send,
           variant: "default" as const,
         },
-        {
-          id: "deleteDraft",
-          label: "Delete Draft",
-          icon: Trash2,
-          variant: "destructive" as const,
-        }
       );
     } else if (product.upload_status === 'published') {
       actions.push(
@@ -737,6 +733,14 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     );
   }
 
+  // Flatten all options from all variants into a simple list
+  const allOptions = product.variants.flatMap(variant => 
+    variant.options.map(option => ({
+      ...option,
+      variantTitle: variant.title
+    }))
+  );
+
   return (
     <UserProvider user={user}>
       <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
@@ -746,6 +750,22 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
             <div className="flex flex-col items-center gap-2">
               <div className="h-6 w-6 sm:h-8 sm:w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
               <p className="text-xs sm:text-sm text-muted-foreground">Updating product data...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Product removed banner - ADDED THIS SECTION */}
+        {product?.is_removed && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center gap-3">
+              <XCircle className="w-5 h-5 text-red-600" />
+              <div className="flex-1">
+                <h3 className="font-medium text-red-800">This product has been removed</h3>
+                <div className="text-sm text-red-700 mt-1 space-y-1">
+                  <p><strong>Removal Reason:</strong> {product.removal_reason || "No reason provided"}</p>
+                  <p><strong>Removed At:</strong> {product.removed_at ? new Date(product.removed_at).toLocaleString() : "Unknown date"}</p>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -807,189 +827,246 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
           {/* Left Column - Images */}
-          <div className="space-y-3 sm:space-y-4">
-            <Card>
-              <CardContent className="p-3 sm:p-4">
-                {product.media.length > 0 ? (
-                  <Carousel className="w-full">
-                    <CarouselContent>
-                      {product.media.map((media) => (
-                        <CarouselItem key={media.id}>
-                          <div className="aspect-square rounded-lg overflow-hidden">
-                            <img
-                              src={baseUrl + media.file_data || "/api/placeholder/600/400"}
-                              alt={product.name}
-                              className="w-full h-full object-cover"
-                              loading="lazy"
-                            />
-                          </div>
-                        </CarouselItem>
-                      ))}
-                    </CarouselContent>
-                    <CarouselPrevious className="hidden sm:flex -left-3" />
-                    <CarouselNext className="hidden sm:flex -right-3" />
-                    {/* Mobile carousel indicators */}
-                    <div className="flex justify-center gap-2 mt-3 sm:hidden">
-                      {product.media.map((_, index) => (
-                        <div
-                          key={index}
-                          className="w-2 h-2 rounded-full bg-muted"
-                        />
-                      ))}
-                    </div>
-                  </Carousel>
-                ) : (
-                  <div className="aspect-square rounded-lg bg-muted flex items-center justify-center">
-                    <Package className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Right Column - Product Details */}
-          <div className="space-y-4 sm:space-y-6">
-            <div>
-              <div className="flex flex-col xs:flex-row xs:items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight break-words">
-                    {product.name}
-                  </h1>
-                  <div className="flex items-center gap-2 mt-2 flex-wrap">
-                    {getUploadStatusBadge(product.upload_status)}
-                    <Badge variant={product.condition === "Excellent" ? "default" : "secondary"}>
-                      {product.condition} Condition
-                    </Badge>
-                    <Badge variant="outline">
-                      {product.category?.name || "No Category"}
-                    </Badge>
-                  </div>
-                </div>
-                <div className="text-left xs:text-right">
-                  <div className="text-xl sm:text-2xl font-bold text-primary">
-                    ₱{parseFloat(product.price).toLocaleString()}
-                  </div>
-                  <div className="flex items-center gap-1 mt-1 xs:justify-end">
-                    <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
-                    <span className="text-xs sm:text-sm text-muted-foreground">
-                      {product.favorites_count} favorites
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Rating and Engagement */}
-              <div className="flex items-center gap-3 sm:gap-4 mt-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <Star
-                        key={star}
-                        className={`w-3 h-3 sm:w-4 sm:h-4 ${
-                          star <= Math.round(averageRating)
-                            ? "fill-yellow-400 text-yellow-400"
-                            : "text-gray-300"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  <span className="text-xs sm:text-sm text-muted-foreground">
-                    {averageRating.toFixed(1)} • ({product.reviews.length} reviews)
-                  </span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
-                  <span className="text-xs sm:text-sm text-muted-foreground">
-                    {product.favorites_count} favorites
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Key Details */}
-            <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <Package className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Product Details
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
-                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Stock Quantity</p>
-                    <p className="font-medium text-sm sm:text-base">{product.quantity} units</p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Category</p>
-                    <p className="font-medium text-sm sm:text-base">{product.category?.name || "No Category"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Used For</p>
-                    <p className="font-medium text-xs sm:text-sm break-words">{product.used_for}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Condition</p>
-                    <p className="font-medium text-sm sm:text-base">{product.condition}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Created</p>
-                    <p className="font-medium text-xs sm:text-sm">
-                      {new Date(product.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Last Updated</p>
-                    <p className="font-medium text-xs sm:text-sm">
-                      {new Date(product.updated_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Favorites Count</p>
-                    <div className="flex items-center gap-1">
-                      <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
-                      <p className="font-medium text-sm sm:text-base">{product.favorites_count}</p>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Upload Status</p>
-                    <p className="font-medium text-sm sm:text-base capitalize">{product.upload_status}</p>
-                  </div>
-                </div>
-                
-                <Separator />
-                
-                <div>
-                  <p className="text-xs sm:text-sm text-muted-foreground mb-2">Description</p>
-                  <p className="text-xs sm:text-sm break-words">{product.description}</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Variants */}
-            {product.variants.length > 0 && (
-              <Card>
-                <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                  <CardTitle className="text-base sm:text-lg">Product Variants</CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
-                  {product.variants.map((variant) => (
-                    <div key={variant.id}>
-                      <p className="font-medium text-sm sm:text-base mb-2">{variant.title}</p>
-                      <div className="flex gap-2 flex-wrap">
-                        {variant.options.map((option) => (
-                          <Badge key={option.id} variant="outline" className="text-xs">
-                            {option.title} (₱{parseFloat(option.price).toLocaleString()})
-                          </Badge>
+          <div className="w-full col-span-2 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 lg:grid-rows-1 lg:min-h-[600px]">
+            {/* Left Column - Images */}
+            <div className="lg:h-[800px]">
+              <Card className="h-full">
+                <CardContent className="p-3 sm:p-4 h-full">
+                  {product.media.length > 0 ? (
+                    <div className="h-full flex flex-col">
+                      <Carousel className="w-full flex-1">
+                        <CarouselContent className="h-full">
+                          {product.media.map((media) => (
+                            <CarouselItem key={media.id} className="h-full">
+                              <div className="h-full flex items-center justify-center">
+                                <div className="aspect-square w-full rounded-lg overflow-hidden">
+                                  <img
+                                    src={baseUrl + media.file_data || "/api/placeholder/600/400"}
+                                    alt={product.name}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                  />
+                                </div>
+                              </div>
+                            </CarouselItem>
+                          ))}
+                        </CarouselContent>
+                        <CarouselPrevious className="hidden sm:flex -left-3" />
+                        <CarouselNext className="hidden sm:flex -right-3" />
+                      </Carousel>
+                      {/* Mobile carousel indicators */}
+                      <div className="flex justify-center gap-2 mt-3 sm:hidden">
+                        {product.media.map((_, index) => (
+                          <div
+                            key={index}
+                            className="w-2 h-2 rounded-full bg-muted"
+                          />
                         ))}
                       </div>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="h-full flex items-center justify-center">
+                      <div className="aspect-square w-full rounded-lg bg-muted flex items-center justify-center">
+                        <Package className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
-            )}
-          </div>
+            </div>
+            {/* Right Column - Product Details */}
+            <div className="lg:h-[800px]">
+              <Card className="h-full flex flex-col">
+                <CardContent className="p-3 sm:p-4 flex-1 flex flex-col min-h-0">
+                  {/* Product Header - Fixed */}
+                  <div className="flex-shrink-0">
+                    <div className="flex flex-col xs:flex-row xs:items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight break-words">
+                          {product.name}
+                        </h1>
+                        <div className="flex items-center gap-2 mt-2 flex-wrap">
+                          {getUploadStatusBadge(product.upload_status)}
+                          <Badge variant={product.condition === "Excellent" ? "default" : "secondary"}>
+                            {product.condition} Condition
+                          </Badge>
+                          <Badge variant="outline">
+                            {product.category?.name || "No Category"}
+                          </Badge>
+                          {/* ADDED: Removed badge indicator */}
+                          {product.is_removed && (
+                            <Badge variant="destructive" className="animate-pulse">
+                              <XCircle className="w-3 h-3 mr-1" />
+                              Removed
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-left xs:text-right">
+                        <div className="text-xl sm:text-2xl font-bold text-primary">
+                          ₱{parseFloat(product.price).toLocaleString()}
+                        </div>
+                        <div className="flex items-center gap-1 mt-1 xs:justify-end">
+                          <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
+                          <span className="text-xs sm:text-sm text-muted-foreground">
+                            {product.favorites_count} favorites
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Rating and Engagement */}
+                    <div className="flex items-center gap-3 sm:gap-4 mt-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <Star
+                              key={star}
+                              className={`w-3 h-3 sm:w-4 sm:h-4 ${
+                                star <= Math.round(averageRating)
+                                  ? "fill-yellow-400 text-yellow-400"
+                                  : "text-gray-300"
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-xs sm:text-sm text-muted-foreground">
+                          {averageRating.toFixed(1)} • ({product.reviews.length} reviews)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
 
+                  <Separator className="my-4" />
+
+                  {/* Scrollable Content Area */}
+                  <div className="flex-1 overflow-y-auto min-h-0 pr-2 space-y-4">
+                    {/* Key Stats Grid */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20">
+                        <Box className="w-5 h-5 text-muted-foreground mb-2" />
+                        <span className="text-xs text-muted-foreground mb-1">Stock</span>
+                        <span className="font-semibold text-base">{product.quantity} units</span>
+                      </div>
+                      <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20">
+                        <Tag className="w-5 h-5 text-muted-foreground mb-2" />
+                        <span className="text-xs text-muted-foreground mb-1">Category</span>
+                        <span className="font-semibold text-sm text-center">{product.category?.name || "No Category"}</span>
+                      </div>
+                      <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20">
+                        <Calendar className="w-5 h-5 text-muted-foreground mb-2" />
+                        <span className="text-xs text-muted-foreground mb-1">Created</span>
+                        <span className="font-semibold text-xs text-center">
+                          {new Date(product.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20">
+                        <TrendingUp className="w-5 h-5 text-muted-foreground mb-2" />
+                        <span className="text-xs text-muted-foreground mb-1">Last Updated</span>
+                        <span className="font-semibold text-xs text-center">
+                          {new Date(product.updated_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Additional Details */}
+                    <div className="space-y-3">
+                      <div>
+                        <h3 className="font-medium text-sm mb-2">
+                          <span className="text-muted-foreground">Condition</span>
+                        </h3>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={product.condition === "Excellent" ? "default" : "secondary"} className="text-sm">
+                            {product.condition}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {product.condition === "Excellent" ? "Like new" : 
+                            product.condition === "Good" ? "Minor wear" : 
+                            product.condition === "Fair" ? "Visible wear" : "Well used"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Description */}
+                    <div>
+                      <h3 className="font-medium text-sm mb-3">
+                        <span className="text-muted-foreground">Description</span>
+                      </h3>
+                      <div className="bg-muted/10 p-4 rounded-lg">
+                        <p className="text-sm leading-relaxed whitespace-pre-line">{product.description}</p>
+                      </div>
+                    </div>
+
+                    {/* Product Options - Showing in grid layout with 3 per row, disabled for 0 stock */}
+                    {allOptions.length > 0 && (
+                      <>
+                        <Separator />
+                        <div>
+                          <h3 className="font-medium text-sm mb-3 flex items-center gap-2">
+                            <Layers className="w-4 h-4" />
+                            Available Options
+                          </h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {allOptions.map((option) => {
+                              const isOutOfStock = option.quantity === 0;
+                              
+                              return (
+                                <div 
+                                  key={option.id} 
+                                  className={`
+                                    border rounded-lg p-3 transition-colors
+                                    ${isOutOfStock 
+                                      ? 'bg-muted/30 border-muted opacity-60 cursor-not-allowed' 
+                                      : 'hover:border-primary/50'
+                                    }
+                                  `}
+                                >
+                                  <div className="flex flex-col h-full">
+                                    <div className="flex-1">
+                                      <div className="flex justify-between items-start mb-2">
+                                        <span className={`font-medium text-sm line-clamp-2 ${isOutOfStock ? 'text-muted-foreground' : ''}`}>
+                                          {option.title}
+                                        </span>
+                                        <Badge 
+                                          variant={isOutOfStock ? "outline" : option.quantity < 5 ? "destructive" : "default"}
+                                          className="text-xs shrink-0 ml-1"
+                                        >
+                                          {isOutOfStock ? "Out of stock" : option.quantity}
+                                        </Badge>
+                                      </div>
+                                      <p className={`text-xs mb-2 truncate ${isOutOfStock ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>
+                                        {option.variantTitle}
+                                      </p>
+                                    </div>
+                                    <div className="mt-2 pt-2 border-t">
+                                      <div className="flex justify-between items-center">
+                                        <span className={`text-sm font-semibold ${isOutOfStock ? 'text-muted-foreground' : 'text-primary'}`}>
+                                          ₱{parseFloat(option.price).toLocaleString()}
+                                        </span>
+                                        {!isOutOfStock && (
+                                          <span className="text-xs text-muted-foreground">
+                                            in stock
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
           {/* Product Status Overview - Full Width */}
           <Card className="col-span-1 lg:col-span-2">
             <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
@@ -999,7 +1076,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
               </CardTitle>
             </CardHeader>
             <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
-              <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+              <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                 <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
                   <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Upload Status</span>
                   {getUploadStatusBadge(product.upload_status)}
@@ -1018,92 +1095,219 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                 </div>
                 <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
                   <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Removal Status</span>
-                  <Badge variant={product.is_removed ? "destructive" : "outline"}>
+                  <Badge variant={product.is_removed ? "destructive" : "default"}>
                     {product.is_removed ? "Removed" : "Active"}
                   </Badge>
-                </div>
-                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
-                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Favorites</span>
-                  <div className="flex items-center gap-1">
-                    <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
-                    <span className="font-medium text-base sm:text-lg">{product.favorites_count}</span>
-                  </div>
                 </div>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Bottom Section - Tabs */}
-        <Tabs defaultValue="reviews" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto min-h-[2.5rem]">
-            <TabsTrigger value="reviews" className="text-xs sm:text-sm py-2 px-2">
-              Reviews & Ratings
-            </TabsTrigger>
-            <TabsTrigger value="shop" className="text-xs sm:text-sm py-2 px-2">
-              Shop Information
-            </TabsTrigger>
-            <TabsTrigger value="seller" className="text-xs sm:text-sm py-2 px-2">
-              Seller Details
-            </TabsTrigger>
-            <TabsTrigger value="reports" className="text-xs sm:text-sm py-2 px-2">
-              Reports & Moderation
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="reviews" className="space-y-3 sm:space-y-4">
-            <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="text-base sm:text-lg">Customer Reviews</CardTitle>
-                <CardDescription className="text-xs sm:text-sm">
-                  {product.reviews.length} total reviews • {averageRating.toFixed(1)} average rating • {product.favorites_count} favorites
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
-                {product.reviews.map((review) => (
-                  <div key={review.id} className="border-b pb-3 sm:pb-4 last:border-0">
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mb-2">
-                      <div className="flex items-center gap-1">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                          <Star
-                            key={star}
-                            className={`w-3 h-3 ${
-                              star <= review.rating
-                                ? "fill-yellow-400 text-yellow-400"
-                                : "text-gray-300"
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      <span className="text-xs sm:text-sm font-medium">{review.customer || "Anonymous"}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(review.created_at).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <p className="text-xs sm:text-sm">{review.comment || "No comment provided"}</p>
+        {/* Bottom Section - Accordion */}
+        <Accordion type="single" collapsible className="w-full" defaultValue="product-details">
+          <AccordionItem value="product-details">
+            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+              <div className="flex items-center gap-2">
+                <Package className="w-4 h-4 sm:w-5 sm:h-5" />
+                Product Details & Information
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4 p-4 sm:p-6">
+                  <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Stock Quantity</p>
+                    <p className="font-medium text-sm sm:text-base">{product.quantity} units</p>
                   </div>
-                ))}
-                {product.reviews.length === 0 && (
-                  <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
-                    No reviews yet for this product.
-                  </p>
+                  <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Category</p>
+                    <p className="font-medium text-sm sm:text-base">{product.category?.name || "No Category"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Condition</p>
+                    <p className="font-medium text-sm sm:text-base">{product.condition}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Created</p>
+                    <p className="font-medium text-xs sm:text-sm">
+                      {new Date(product.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Last Updated</p>
+                    <p className="font-medium text-xs sm:text-sm">
+                      {new Date(product.updated_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  {/* ADDED: Removal info section */}
+                  {product.is_removed && (
+                    <>
+                      <div>
+                        <p className="text-xs sm:text-sm text-muted-foreground">Removal Status</p>
+                        <p className="font-medium text-sm sm:text-base text-red-600">Removed</p>
+                      </div>
+                      <div>
+                        <p className="text-xs sm:text-sm text-muted-foreground">Removed At</p>
+                        <p className="font-medium text-xs sm:text-sm">
+                          {product.removed_at ? new Date(product.removed_at).toLocaleString() : "Unknown"}
+                        </p>
+                      </div>
+                      {product.removal_reason && (
+                        <div className="col-span-2">
+                          <p className="text-xs sm:text-sm text-muted-foreground">Removal Reason</p>
+                          <p className="font-medium text-sm sm:text-base">{product.removal_reason}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                
+                {product.description && (
+                  <div className="p-4 sm:p-6 pt-0">
+                    <p className="text-xs sm:text-sm text-muted-foreground mb-2">Description</p>
+                    <p className="text-sm break-words">{product.description}</p>
+                  </div>
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
 
-          <TabsContent value="shop">
-            <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <Store className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Shop Information
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
+                {/* Options in accordion view - also in grid layout with disabled state for 0 stock */}
+                {allOptions.length > 0 && (
+                  <div className="p-4 sm:p-6 pt-0">
+                    <p className="text-xs sm:text-sm text-muted-foreground mb-3">Available Options</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {allOptions.map((option) => {
+                        const isOutOfStock = option.quantity === 0;
+                        
+                        return (
+                          <div 
+                            key={option.id} 
+                            className={`
+                              border rounded-lg p-3 transition-colors
+                              ${isOutOfStock 
+                                ? 'bg-muted/30 border-muted opacity-60 cursor-not-allowed' 
+                                : 'hover:border-primary/50'
+                              }
+                            `}
+                          >
+                            <div className="flex flex-col h-full">
+                              <div className="flex-1">
+                                <div className="flex justify-between items-start mb-1">
+                                  <span className={`font-medium text-sm line-clamp-2 ${isOutOfStock ? 'text-muted-foreground' : ''}`}>
+                                    {option.title}
+                                  </span>
+                                  <Badge 
+                                    variant={isOutOfStock ? "outline" : option.quantity < 5 ? "destructive" : "default"}
+                                    className="text-xs shrink-0 ml-1"
+                                  >
+                                    {isOutOfStock ? "Out of stock" : option.quantity}
+                                  </Badge>
+                                </div>
+                                <p className={`text-xs truncate mb-2 ${isOutOfStock ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>
+                                  {option.variantTitle}
+                                </p>
+                              </div>
+                              <div className="mt-2 pt-2 border-t">
+                                <p className={`text-sm font-semibold ${isOutOfStock ? 'text-muted-foreground' : 'text-primary'}`}>
+                                  ₱{parseFloat(option.price).toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="reviews-ratings">
+            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+              <div className="flex items-center gap-2">
+                <Star className="w-4 h-4 sm:w-5 sm:h-5" />
+                Reviews & Ratings
+                <Badge variant="outline" className="ml-2">
+                  {product.reviews.length}
+                </Badge>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="p-4 sm:p-6">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="flex flex-col items-center">
+                    <div className="text-2xl sm:text-3xl font-bold">{averageRating.toFixed(1)}</div>
+                    <div className="flex items-center gap-1 mt-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star
+                          key={star}
+                          className={`w-3 h-3 sm:w-4 sm:h-4 ${
+                            star <= Math.round(averageRating)
+                              ? "fill-yellow-400 text-yellow-400"
+                              : "text-gray-300"
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {product.reviews.length} reviews
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Heart className="w-4 h-4 sm:w-5 sm:h-5 text-red-500" />
+                    <div>
+                      <div className="font-medium">{product.favorites_count}</div>
+                      <div className="text-xs text-muted-foreground">favorites</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {product.reviews.map((review) => (
+                    <div key={review.id} className="border-b pb-3 sm:pb-4 last:border-0">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mb-2">
+                        <div className="flex items-center gap-1">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <Star
+                              key={star}
+                              className={`w-3 h-3 ${
+                                star <= review.rating
+                                  ? "fill-yellow-400 text-yellow-400"
+                                  : "text-gray-300"
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-xs sm:text-sm font-medium">{review.customer || "Anonymous"}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(review.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <p className="text-xs sm:text-sm">{review.comment || "No comment provided"}</p>
+                    </div>
+                  ))}
+                  {product.reviews.length === 0 && (
+                    <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
+                      No reviews yet for this product.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="shop-information">
+            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+              <div className="flex items-center gap-2">
+                <Store className="w-4 h-4 sm:w-5 sm:h-5" />
+                Shop Information
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="p-4 sm:p-6">
                 {product.shop ? (
                   <>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 mb-4">
                       <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-lg flex items-center justify-center flex-shrink-0">
                         <Store className="w-5 h-5 sm:w-6 sm:h-6" />
                       </div>
@@ -1142,22 +1346,22 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                     No shop information available.
                   </p>
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-          <TabsContent value="seller">
-            <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <User className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Seller Details
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
+          <AccordionItem value="seller-details">
+            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 sm:w-5 sm:h-5" />
+                Seller Details
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="p-4 sm:p-6">
                 {product.customer ? (
                   <>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 mb-4">
                       <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-full flex items-center justify-center flex-shrink-0">
                         <User className="w-5 h-5 sm:w-6 sm:h-6" />
                       </div>
@@ -1191,20 +1395,25 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                     No seller information available.
                   </p>
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-          <TabsContent value="reports">
-            <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Reports & Moderation
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
-                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
+          <AccordionItem value="reports-moderation">
+            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+                Reports & Moderation
+                {product.reports.active > 0 && (
+                  <Badge variant="destructive" className="ml-2">
+                    {product.reports.active} active
+                  </Badge>
+                )}
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="p-4 sm:p-6">
+                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4 mb-4">
                   <div>
                     <p className="text-xs sm:text-sm text-muted-foreground">Active Reports</p>
                     <p className={`font-medium text-sm sm:text-base ${product.reports.active > 0 ? 'text-red-600' : 'text-green-600'}`}>
@@ -1222,14 +1431,24 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                       <p className="font-medium text-sm sm:text-base">{product.favorites_count}</p>
                     </div>
                   </div>
+                  {/* ADDED: Removal status in reports section */}
+                  {product.is_removed && (
+                    <div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">Removal Status</p>
+                      <p className="font-medium text-sm sm:text-base text-red-600">Removed</p>
+                    </div>
+                  )}
                 </div>
                 
                 {product.reports.total > 0 && (
-                  <div className="space-y-2">
+                  <div className="space-y-2 mb-4">
                     <p className="text-xs sm:text-sm font-medium">Report Summary:</p>
                     <div className="text-xs sm:text-sm text-muted-foreground space-y-1">
                       <p>• {product.reports.active} active reports requiring attention</p>
                       <p>• {product.reports.total - product.reports.active} resolved reports</p>
+                      {product.is_removed && (
+                        <p className="text-red-600">• This product has been removed from the platform</p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1242,10 +1461,10 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                     Moderate Product
                   </Button>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
 
         {/* Responsive Dialog */}
         {isMobile ? renderMobileDialog() : renderDesktopDialog()}
