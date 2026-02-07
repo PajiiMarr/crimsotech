@@ -4069,6 +4069,28 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
   const renderStatusUI = useMemo(() => {
     if (!refund) return null;
 
+    // If the return_request shows 'shipped', handle special pickup case first
+    const orderInfo = refund.order_info || {};
+    const orderStatusLower2 = String(orderInfo.status || orderInfo.status_display || orderInfo.current_status || (refund as any).order_status || (refund as any).order?.status || '').toLowerCase();
+    const deliveryLower2 = String(orderInfo.delivery_method || (refund as any).order?.delivery_method || '').toLowerCase();
+    const isPickupCashPickedUp = orderStatusLower2.includes('picked_up') && deliveryLower2.includes('pickup');
+
+    // Special UI: For Cash on Pickup orders marked "picked_up" where buyer submitted a 'shipped' return_request,
+    // show a simple waiting message and do NOT display shipped_at (buyer will return the item in person).
+    if (refund.return_request?.status === 'shipped' && String(refund.status || '').toLowerCase() === 'approved' && isPickupCashPickedUp) {
+      return (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <Package className="h-5 w-5 text-blue-600" />
+            <div>
+              <p className="font-medium text-blue-800">Waiting for buyer to return the item</p>
+              <p className="text-sm text-blue-700 mt-1">The buyer indicated the item was shipped for the return, but this order was picked up via Cash on Pickup and is marked <strong>picked up</strong>. Please await the buyer's physical return; the shipped timestamp is intentionally hidden for pickup returns.</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // If the return_request shows 'shipped', show a specific Shipped UI with tracking and files
     if (refund.return_request?.status === 'shipped' && String(refund.status || '').toLowerCase() === 'approved') return <ShippedStatusUI refund={refund} />;
 

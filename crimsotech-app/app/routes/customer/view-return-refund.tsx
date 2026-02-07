@@ -3307,35 +3307,7 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
           navigate={navigate} 
         />
 
-        {/* Debug panel (dev only) */}
-        {process.env.NODE_ENV !== 'production' && refund && (
-          <div className="p-3 mb-4 bg-yellow-50 border border-yellow-200 rounded text-sm">
-            <strong>Debug:</strong>
-            <pre className="text-xs mt-2 whitespace-pre-wrap">{JSON.stringify((() => {
-              const orderInfoForCheck = refund.order_info || {};
-              const orderStatusForCheck = String(orderInfoForCheck.status || orderInfoForCheck.status_display || orderInfoForCheck.current_status || (refund as any).order_status || (refund as any).order?.status || '').toLowerCase();
-              const paymentMethodForCheck = String(orderInfoForCheck.payment_method || (refund as any).order?.payment_method || '').toLowerCase();
-              const deliveryMethodForCheck = String(orderInfoForCheck.delivery_method || (refund as any).order?.delivery_method || '').toLowerCase();
-              const isPickupCashCompleted = orderStatusForCheck.includes('completed') && paymentMethodForCheck.includes('cash') && deliveryMethodForCheck.includes('pickup');
-              const isReturnType = ['return','return_item'].includes(String(refund.refund_type||'').toLowerCase());
-              return {
-                orderStatus: refund.order_info?.status,
-                paymentMethod: refund.order_info?.payment_method,
-                deliveryMethod: refund.order_info?.delivery_method,
-                refundStatus: refund.status,
-                refundType: refund.refund_type,
-                rrStatus: String(refund.return_request?.status || '').toLowerCase(),
-                status,
-                orderStatusForCheck,
-                paymentMethodForCheck,
-                deliveryMethodForCheck,
-                isPickupCashCompleted,
-                isReturnType,
-                isWaitingDerived
-              };
-            })(), null, 2)}</pre>
-          </div>
-        )}
+       
 
         <Separator className="mb-6" />
 

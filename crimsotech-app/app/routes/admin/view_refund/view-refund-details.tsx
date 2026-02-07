@@ -1211,7 +1211,9 @@ export default function AdminViewRefundDetails() {
                                     headers: { 'X-User-Id': String(user?.id || '') }
                                   });
                                   toast({ title: 'Review started', description: 'Dispute marked under review.' });
-                                  navigate(`/admin/view-refund/review-dispute/${refund.refund}`);
+                                  const refundIdForRoute = encodeURIComponent(String(refund.refund || refund.refund_id || refund.id || ''));
+                                  console.debug('[admin-review] navigating to review-dispute for refundId:', refundIdForRoute);
+                                  navigate(`/admin/view-refund/review-dispute/${refundIdForRoute}`);
                                 } catch (err) {
                                   console.error('Start review error', err);
                                   toast({ title: 'Failed to start review', description: String(err), variant: 'destructive' });
@@ -1220,7 +1222,30 @@ export default function AdminViewRefundDetails() {
                                 }
                                 return;
                               }
-                              navigate(`/admin/view_refund/process-refund/${refund.refund}`);
+
+                              // Admin: set refund payment status to 'processing' before navigating to process page
+                              try {
+                                setProcessing(true);
+                                const id = refund.refund || refund.refund_id;
+                                const formData = new FormData();
+                                formData.append('set_status', 'processing');
+
+                                const resp = await AxiosInstance.post(`/return-refund/${encodeURIComponent(String(id))}/admin_process_refund/`, formData, {
+                                  headers: { 'X-User-Id': String(user?.id || '') }
+                                });
+
+                                if (resp && resp.data) {
+                                  toast({ title: 'Processing', description: 'Refund payment status set to processing.' });
+                                  navigate(`/admin/view-refund/process-refund/${encodeURIComponent(String(id))}`);
+                                } else {
+                                  throw new Error('Failed to set refund to processing');
+                                }
+                              } catch (err) {
+                                console.error('Failed to set refund to processing', err);
+                                toast({ title: 'Error', description: String(err?.response?.data?.error || err?.message || 'Failed to set to processing'), variant: 'destructive' });
+                              } finally {
+                                setProcessing(false);
+                              }
                             }}
                             className="w-full"
                           >
@@ -1272,7 +1297,7 @@ export default function AdminViewRefundDetails() {
               className="ml-2"
               onClick={() => {
                 setShowConfirmModal(false);
-                navigate(`/admin/view-refund/process-refund/${refund.refund}`);
+                navigate(`/admin/view-refund/process-refund?refund=${encodeURIComponent(String(refund.refund))}`);
               }}
             >
               Proceed

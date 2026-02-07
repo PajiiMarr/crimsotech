@@ -260,6 +260,31 @@ export default function ViewTrackOrderPage() {
     return `₱${parseFloat(amount).toFixed(2)}`;
   };
 
+  // Map internal status values to user-facing labels
+  const getStatusText = (orderObj: any) => {
+    const s = String(orderObj?.status || '').toLowerCase();
+    switch (s) {
+      case 'pending':
+        return 'Pending';
+      case 'processing':
+        return 'Processing';
+      case 'ready_for_pickup':
+        return 'Ready for Pickup';
+      case 'shipped':
+        return 'Shipped';
+      case 'delivered':
+        return 'Delivered';
+      case 'cancelled':
+        return 'Cancelled';
+      case 'refunded':
+        return 'Refunded';
+      case 'picked_up':
+        return 'Picked up';
+      default:
+        return orderObj?.status_display || orderObj?.status || '';
+    }
+  }; 
+
   const handleCancelOrder = () => {
     if (!orderId || !user?.id) return;
     
@@ -357,6 +382,7 @@ export default function ViewTrackOrderPage() {
   }
 
   const { order, shipping_info, delivery_address, items, order_summary, timeline, actions } = orderData;
+  const orderStatusLower = String(order?.status || '').toLowerCase();
 
   return (
     <View style={styles.container}>
@@ -388,84 +414,194 @@ export default function ViewTrackOrderPage() {
         }
       >
         {/* Order Status Banner */}
-        <View style={[styles.statusBanner, { backgroundColor: `${order.status_color}20` }]}>
-          <View>
-            <View style={styles.statusRow}>
-              <Ionicons 
-                name={order.status === 'delivered' ? "checkmark-circle" : "time"} 
-                size={18} 
-                color={order.status_color} 
-              />
-              <Text style={[styles.statusText, { color: order.status_color }]}>
-                {order.status_display}: {formatDate(order.delivery_date)}
-              </Text>
-            </View>
-            {order.status === 'delivered' && (
-              <Text style={styles.subStatusText}>
-                Returnable time: before {formatDateTime(items[0]?.return_deadline || '')}
-              </Text>
-            )}
-          </View>
-          {/* {actions.can_track && (
-            <TouchableOpacity 
-              style={styles.trackButton}
-              onPress={handleTrackOrder}
-            >
-              <Text style={styles.trackButtonText}>Track</Text>
-            </TouchableOpacity>
-          )} */}
-        </View>
+        {(() => {
+          const deliveryDateDisplay = order.delivery_date ? formatDate(order.delivery_date) : null;
+          const baseStyle = [styles.statusBanner, { backgroundColor: `${order.status_color}20` }];
+          const statusLower = String(order?.status || '').toLowerCase();
 
-        {/* Shipping Information Card */}
-        <TouchableOpacity 
-          style={styles.infoCard} 
-          activeOpacity={0.7}
-          onPress={handleTrackOrder}
-        >
-          <View style={styles.cardHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <MaterialCommunityIcons name="truck-delivery-outline" size={20} color="#111827" />
-              <Text style={styles.cardTitle}>Shipping Information</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
-          </View>
-          
-          <View style={styles.cardContent}>
-            <View style={styles.shippingRow}>
-              <Text style={styles.shippingLabel}>Logistics Carrier:</Text>
-              <Text style={styles.shippingValue}>{shipping_info.logistics_carrier}</Text>
-            </View>
-            {shipping_info.tracking_number && (
-              <View style={styles.shippingRow}>
-                <Text style={styles.shippingLabel}>Tracking Number:</Text>
-                <Text style={styles.shippingValue}>{shipping_info.tracking_number}</Text>
+          // Pending status UI
+          if (String(order?.status || '').toLowerCase() === 'pending') {
+            return (
+              <View style={baseStyle}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <Ionicons name="time" size={18} color={order.status_color} />
+                    <Text style={[styles.statusText, { color: order.status_color }]}> 
+                      {getStatusText(order)}
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    Awaiting confirmation from the seller. We will notify you once processing starts.
+                  </Text>
+                </View>
               </View>
-            )}
-            {shipping_info.estimated_delivery && (
-              <View style={styles.shippingRow}>
-                <Text style={styles.shippingLabel}>Estimated Delivery:</Text>
-                <Text style={styles.shippingValue}>{shipping_info.estimated_delivery}</Text>
-              </View>
-            )}
-          </View>
-        </TouchableOpacity>
+            );
+          }
 
-        {/* Delivery Information Card */}
-        <View style={styles.infoCard}>
-          <View style={styles.cardHeader}>
-            <MaterialCommunityIcons name="map-marker-outline" size={20} color="#111827" />
-            <Text style={styles.cardTitle}>Delivery Address</Text>
-          </View>
-          <View style={styles.cardContent}>
-            <Text style={styles.recipientName}>
-              {delivery_address.recipient_name} 
-              <Text style={styles.phoneNumber}> ({delivery_address.phone_number})</Text>
-            </Text>
-            <Text style={styles.addressText}>
-              {delivery_address.address}
-            </Text>
-          </View>
-        </View>
+// Processing status UI (includes ready_for_pickup variant)
+          if (statusLower === 'processing' || statusLower === 'ready_for_pickup') {
+            const isReadyForPickup = statusLower === 'ready_for_pickup';
+            return (
+              <View style={baseStyle}>
+                <View>
+                  <View style={styles.statusRow}>
+                    {isReadyForPickup ? (
+                      <MaterialCommunityIcons name="store-outline" size={20} color={order.status_color} />
+                    ) : (
+                      <Ionicons name="time" size={18} color={order.status_color} />
+                    )}
+                    <Text style={[styles.statusText, { color: order.status_color, marginLeft: 8 }]}> 
+                      {getStatusText(order)}
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    {isReadyForPickup
+                      ? 'Your order is ready for pickup. Please collect it from the store. Contact the seller for pickup instructions.'
+                      : 'Your order is being processed by the seller.'}
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
+          // Picked up UI
+          if (statusLower === 'picked_up') {
+            const deliveryMethodRawForPicked = String(order?.delivery_method || shipping_info?.delivery_method || '').toLowerCase();
+            const isPickupForPicked = deliveryMethodRawForPicked.includes('pickup');
+            const pickupDateDisplay = order?.completed_at ? formatDateTime(order.completed_at) : null;
+            return (
+              <View style={baseStyle}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="store-check-outline" size={20} color={order.status_color} />
+                    <Text style={[styles.statusText, { color: order.status_color, marginLeft: 8 }]}> 
+                      {getStatusText(order)}
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    {isPickupForPicked
+                      ? `Your order has been picked up from the store${pickupDateDisplay ? ' on ' + pickupDateDisplay : ''}.`
+                      : `Your order has been picked up${pickupDateDisplay ? ' on ' + pickupDateDisplay : ''}.`}
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
+          // Default behavior for other statuses (delivered, shipped, etc.)
+          return (
+            <View style={baseStyle}>
+              <View>
+                <View style={styles.statusRow}>
+                  <Ionicons 
+                    name={order.status === 'delivered' ? "checkmark-circle" : "time"} 
+                    size={18} 
+                    color={order.status_color} 
+                  />
+                  <Text style={[styles.statusText, { color: order.status_color }]}> 
+                    {getStatusText(order)}{deliveryDateDisplay ? `: ${deliveryDateDisplay}` : ''}
+                  </Text>
+                </View>
+                {order.status === 'delivered' && (
+                  <Text style={styles.subStatusText}>
+                    Returnable time: before {formatDateTime(items[0]?.return_deadline || '')}
+                  </Text>
+                )}
+              </View>
+            </View>
+          );
+        })()}
+
+        {/* Shipping / Pickup Information */}
+        {(() => {
+          const deliveryMethodRaw = String(order?.delivery_method || shipping_info?.delivery_method || '').toLowerCase();
+          const isPickup = deliveryMethodRaw.includes('pickup');
+
+          if (isPickup) {
+            // Show pickup location set by seller and hide shipping & delivery address
+            return (
+              <View style={styles.infoCard}>
+                <View style={styles.cardHeader}>
+                  <MaterialCommunityIcons name="store-outline" size={20} color="#111827" />
+                  <Text style={styles.cardTitle}>Pickup Location</Text>
+                </View>
+                <View style={styles.cardContent}>
+                  <Text style={styles.recipientName}>{delivery_address.recipient_name || (order?.shop_name || 'Store Pickup')}</Text>
+                  {delivery_address.phone_number ? (
+                    <Text style={styles.phoneNumber}>{delivery_address.phone_number}</Text>
+                  ) : null}
+                  <Text style={styles.addressText}>
+                    {delivery_address.address || `${delivery_address.address_details?.street || ''}${delivery_address.address_details?.barangay ? ', ' + delivery_address.address_details.barangay : ''}${delivery_address.address_details?.city ? ', ' + delivery_address.address_details.city : ''}${delivery_address.address_details?.province ? ', ' + delivery_address.address_details.province : ''}`.replace(/^,\s*/, '') || 'Pickup address not provided'}
+                  </Text>
+
+                  {order?.completed_at ? (
+                    <View style={{ marginTop: 8, paddingLeft: 4 }}>
+                      <Text style={styles.pickupLabel}>Picked up</Text>
+                      <Text style={styles.pickupValue}>{formatDateTime(order.completed_at)}</Text>
+                    </View>
+                  ) : null}
+
+
+                </View>
+              </View>
+            );
+          }
+
+          // Default: Show shipping info and delivery address
+          return (
+            <>
+              <TouchableOpacity 
+                style={styles.infoCard} 
+                activeOpacity={0.7}
+                onPress={handleTrackOrder}
+              >
+                <View style={styles.cardHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <MaterialCommunityIcons name="truck-delivery-outline" size={20} color="#111827" />
+                    <Text style={styles.cardTitle}>Shipping Information</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+                </View>
+                
+                <View style={styles.cardContent}>
+                  <View style={styles.shippingRow}>
+                    <Text style={styles.shippingLabel}>Logistics Carrier:</Text>
+                    <Text style={styles.shippingValue}>{shipping_info.logistics_carrier}</Text>
+                  </View>
+                  {shipping_info.tracking_number && (
+                    <View style={styles.shippingRow}>
+                      <Text style={styles.shippingLabel}>Tracking Number:</Text>
+                      <Text style={styles.shippingValue}>{shipping_info.tracking_number}</Text>
+                    </View>
+                  )}
+                  {shipping_info.estimated_delivery && (
+                    <View style={styles.shippingRow}>
+                      <Text style={styles.shippingLabel}>Estimated Delivery:</Text>
+                      <Text style={styles.shippingValue}>{shipping_info.estimated_delivery}</Text>
+                    </View>
+                  )}
+                </View>
+              </TouchableOpacity>
+
+              {/* Delivery Information Card */}
+              <View style={styles.infoCard}>
+                <View style={styles.cardHeader}>
+                  <MaterialCommunityIcons name="map-marker-outline" size={20} color="#111827" />
+                  <Text style={styles.cardTitle}>Delivery Address</Text>
+                </View>
+                <View style={styles.cardContent}>
+                  <Text style={styles.recipientName}>
+                    {delivery_address.recipient_name} 
+                    <Text style={styles.phoneNumber}> ({delivery_address.phone_number})</Text>
+                  </Text>
+                  <Text style={styles.addressText}>
+                    {delivery_address.address}
+                  </Text>
+                </View>
+              </View>
+            </>
+          );
+        })()}
 
         {/* Order Timeline */}
         {timeline.length > 0 && (
@@ -662,6 +798,17 @@ export default function ViewTrackOrderPage() {
               <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
             </TouchableOpacity>
           )}
+
+          {/* Request Refund (order-level) - visible for picked_up or delivered orders */}
+          {(orderStatusLower === 'picked_up' || orderStatusLower === 'delivered') && (
+            <TouchableOpacity
+              style={styles.requestRefundButton}
+              onPress={() => router.push(`/customer/request-refund?orderId=${order.id}`)}
+            >
+              <Text style={styles.requestRefundButtonText}>Request Refund</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={styles.helpButton}
             // onPress={() => router.push('/help')}
@@ -804,6 +951,18 @@ const styles = StyleSheet.create({
     color: '#4B5563', 
     lineHeight: 18 
   },
+  pickupLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  pickupValue: {
+    fontSize: 13,
+    color: '#111827',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+
   shippingRow: { 
     flexDirection: 'row', 
     marginBottom: 4 
@@ -1139,6 +1298,20 @@ const styles = StyleSheet.create({
   },
   helpButtonText: {
     color: '#6B7280',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  requestRefundButton: {
+    flex: 1,
+    backgroundColor: '#FFF',
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F97316',
+    alignItems: 'center',
+  },
+  requestRefundButtonText: {
+    color: '#F97316',
     fontSize: 14,
     fontWeight: '600',
   },

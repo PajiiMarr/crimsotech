@@ -1015,7 +1015,6 @@ export default function RequestRefundPage() {
         <View style={styles.card}>
           <View style={styles.orderHeader}>
             <Text style={styles.orderId}>Order #{order.order_id}</Text>
-            <Badge variant="info">{order.status}</Badge>
           </View>
           <Text style={styles.orderDate}>{formatDate(order.created_at)}</Text>
           

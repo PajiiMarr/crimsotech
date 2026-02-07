@@ -114,14 +114,26 @@ export default function PurchasesPage() {
     if (activeTab !== 'All') {
       switch (activeTab) {
         case 'Processing':
-          filtered = purchases.purchases.filter(order => 
-            order.status === 'pending' || order.status === 'processing'
-          );
+          filtered = purchases.purchases.filter(order => {
+            const deliveryLower = String(order.delivery_method || '').toLowerCase();
+            const isPickup = deliveryLower.includes('pickup');
+            return (
+              order.status === 'pending' ||
+              order.status === 'processing' ||
+              (order.status === 'ready_for_pickup' && isPickup)
+            );
+          });
           break;
         case 'Shipped':
-          filtered = purchases.purchases.filter(order => 
-            order.status === 'shipped' || (order.status === 'delivered' && !ordersWithRefund.has(String(order.order_id)))
-          );
+          filtered = purchases.purchases.filter(order => {
+            const deliveryLower = String(order.delivery_method || '').toLowerCase();
+            const isPickup = deliveryLower.includes('pickup');
+            return (
+              order.status === 'shipped' ||
+              (order.status === 'picked_up' && isPickup) ||
+              (order.status === 'delivered' && !ordersWithRefund.has(String(order.order_id)))
+            );
+          });
           break;
         case 'Rate':
           filtered = purchases.purchases.filter(order => 
@@ -129,11 +141,25 @@ export default function PurchasesPage() {
           );
           break;
         case 'Returns':
-          filtered = purchases.purchases.filter(order => 
-            order.status === 'cancelled' ||
-            order.status === 'refunded' ||
-            (order.status === 'delivered' && ordersWithRefund.has(String(order.order_id)))
-          );
+          filtered = purchases.purchases.filter(order => {
+            const deliveryLower = String(order.delivery_method || '').toLowerCase();
+            const isPickup = deliveryLower.includes('pickup');
+
+            // Check if this order has an associated refund and inspect its status
+            const refundForOrder = refundByOrder[String(order.order_id)] || null;
+            const refundIsDispute = refundForOrder && String(refundForOrder.status || '').toLowerCase() === 'dispute';
+
+            return (
+              order.status === 'cancelled' ||
+              order.status === 'refunded' ||
+              // Orders that were delivered and have a refund request should appear
+              (order.status === 'delivered' && ordersWithRefund.has(String(order.order_id))) ||
+              // Pickup orders that have been picked up and have a refund request should appear in Returns
+              (order.status === 'picked_up' && isPickup && ordersWithRefund.has(String(order.order_id))) ||
+              // Include disputes for pickup/delivered orders so customers can see them in Returns
+              (refundIsDispute && (order.status === 'picked_up' || order.status === 'delivered'))
+            );
+          });
           break;
         default:
           filtered = purchases.purchases;
@@ -466,6 +492,10 @@ export default function PurchasesPage() {
         return 'Cancelled';
       case 'refunded':
         return 'Refunded';
+      case 'ready_for_pickup':
+        return 'Ready for pickup';
+      case 'picked_up':
+        return 'Picked up';
       default:
         return status;
     }
@@ -473,13 +503,30 @@ export default function PurchasesPage() {
 
   // Return a user-facing status text for an order taking refunds into account
   const getOrderStatusText = (order: PurchaseOrder) => {
+    const refund = refundByOrder[String(order.order_id)];
+    const refundStatus = refund ? String(refund.status || '').toLowerCase() : '';
+
+    // If there's an active dispute for a delivered or picked_up order, label it as Dispute
+    if (refundStatus.includes('dispute') && (order.status === 'delivered' || order.status === 'picked_up')) {
+      return 'Dispute';
+    }
+
+    // Legacy behavior: show requested for refund when delivered and a refund exists
     if (ordersWithRefund.has(String(order.order_id)) && order.status === 'delivered') {
       return 'Requested for Refund';
     }
+
     return getStatusText(order.status);
   };
 
   const getOrderStatusColor = (order: PurchaseOrder) => {
+    const refund = refundByOrder[String(order.order_id)];
+    const refundStatus = refund ? String(refund.status || '').toLowerCase() : '';
+
+    if (refundStatus.includes('dispute') && (order.status === 'delivered' || order.status === 'picked_up')) {
+      return '#F59E0B'; // amber for dispute
+    }
+
     if (ordersWithRefund.has(String(order.order_id)) && order.status === 'delivered') {
       return '#EF4444'; // red for refund request
     }
