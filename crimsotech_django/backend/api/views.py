@@ -15765,11 +15765,36 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             )
 
         return queryset.order_by('-created_at')
+
+    def get_detail_queryset(self):
+        """Detail view should not exclude products just because they were ordered."""
+        return Product.objects.filter(
+            upload_status='published',
+            is_removed=False
+        ).select_related(
+            'shop',
+            'customer',
+            'category',
+            'category_admin'
+        ).prefetch_related(
+            Prefetch(
+                'productmedia_set',
+                queryset=ProductMedia.objects.all()
+            ),
+            Prefetch(
+                'variants_set',
+                queryset=Variants.objects.all().prefetch_related('variantoptions_set')
+            ),
+            Prefetch(
+                'skus',
+                queryset=ProductSKU.objects.filter(is_active=True).prefetch_related('accepted_categories')
+            )
+        )
     
     def retrieve(self, request, pk=None):
         """Return a single product with SKU images mapped to variant options"""
         try:
-            product = self.get_queryset().get(pk=pk)
+            product = self.get_detail_queryset().get(pk=pk)
         except Product.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
