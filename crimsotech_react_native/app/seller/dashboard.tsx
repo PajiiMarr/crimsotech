@@ -1,7 +1,7 @@
 // app/seller/dashboard.tsx
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
-import { Package, Gift, ShoppingCart, MapPin, Store, Tag, TrendingUp, Wallet, Eye } from 'lucide-react-native';
+import { Package, Gift, ShoppingCart, MapPin, Store, Tag, TrendingUp, Wallet, Eye, Bell } from 'lucide-react-native';
 import { router, Stack } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
 import { useAuth } from '../../contexts/AuthContext';
@@ -84,11 +84,21 @@ export default function Dashboard() {
   return (
     <SafeAreaView style={styles.container}>
       {/* This ensures the Dashboard title itself is correct */}
-      <Stack.Screen options={{ 
-        title: 'Seller Dashboard', 
-        headerTitleAlign: 'center',
-        headerShadowVisible: false 
-      }} />
+      <Stack.Screen
+        options={{
+          title: 'Seller Dashboard',
+          headerTitleAlign: 'center',
+          headerShadowVisible: false,
+          headerRight: () => (
+            <TouchableOpacity
+              style={styles.headerButton}
+              onPress={() => router.push('/seller/notification' as any)}
+            >
+              <Bell size={18} color="#4F46E5" />
+            </TouchableOpacity>
+          ),
+        }}
+      />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
         
@@ -156,5 +166,14 @@ const styles = StyleSheet.create({
   iconCircle: { width: 52, height: 52, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
   itemLabel: { fontSize: 10, fontWeight: '700', color: '#475569', marginTop: 8, textAlign: 'center' },
   badge: { position: 'absolute', top: -6, right: -6, backgroundColor: '#EF4444', minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF', zIndex: 10, elevation: 10 },
-  badgeText: { color: '#FFF', fontSize: 9, fontWeight: '900' }
+  badgeText: { color: '#FFF', fontSize: 9, fontWeight: '900' },
+  headerButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
 });
