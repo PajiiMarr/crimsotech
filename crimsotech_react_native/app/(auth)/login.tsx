@@ -346,7 +346,7 @@ export default function LoginScreen() {
 
           {/* Sign Up Link */}
           <View style={styles.signupContainer}>
-            <Text style={styles.signupText}>Don&apos;t have an account? </Text>
+            <Text style={styles.signupText}>Don't have an account? </Text>
             <TouchableOpacity onPress={() => router.push("/(auth)/signup")}>
               <Text style={styles.signupLink}>Sign up</Text>
             </TouchableOpacity>
@@ -399,15 +399,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 25,
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 10,
   },
   logo: {
-    width: 35,
-    height: 35,
-    marginRight: 10,
+    width: 28,
+    height: 28,
+    marginRight: 8,
   },
   brandTitle: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: "700",
     color: "#1a1a1a",
     letterSpacing: -0.5,
@@ -418,33 +418,33 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "700",
-    marginBottom: 8,
+    marginBottom: 6,
     color: "#1a1a1a",
     textAlign: "left",
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 13,
     color: "#666",
-    marginBottom: 32,
+    marginBottom: 24,
     textAlign: "left",
   },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   label: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 12,
+    marginBottom: 6,
     color: "#1a1a1a",
     fontWeight: "600",
   },
   input: {
     borderWidth: 1.5,
     borderColor: "#f0f0f0",
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 15,
     color: "#1a1a1a",
     backgroundColor: "#f9f9f9",
   },
@@ -455,7 +455,7 @@ const styles = StyleSheet.create({
   },
   passwordInput: {
     flex: 1,
-    paddingRight: 50,
+    paddingRight: 45,
   },
   eyeButton: {
     position: "absolute",
@@ -467,34 +467,34 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: "#ff6d0b",
-    fontSize: 12,
+    fontSize: 11,
     marginTop: 4,
     marginLeft: 4,
   },
   forgotPassword: {
     alignSelf: "flex-end",
-    marginBottom: 32,
+    marginBottom: 24,
     marginTop: -8,
   },
   forgotPasswordText: {
-    color: "#ff6d0b",
-    fontSize: 14,
+    color: "#1a1a1a",
+    fontSize: 13,
     fontWeight: "600",
   },
   loginButton: {
     backgroundColor: "#ff6d0b",
-    padding: 18,
-    borderRadius: 12,
+    padding: 14,
+    borderRadius: 8,
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 16,
     shadowColor: "#ff6d0b",
     shadowOffset: {
       width: 0,
       height: 4,
     },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
   },
   loginButtonDisabled: {
     backgroundColor: "#ff9d6b",
@@ -503,27 +503,27 @@ const styles = StyleSheet.create({
   },
   loginButtonText: {
     color: "#fff",
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "700",
   },
   signupContainer: {
     flexDirection: "row",
     justifyContent: "center",
-    marginBottom: 32,
+    marginBottom: 24,
   },
   signupText: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#666",
   },
   signupLink: {
-    fontSize: 14,
-    color: "#ff6d0b",
+    fontSize: 13,
+    color: "#1a1a1a",
     fontWeight: "700",
   },
   dividerContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 32,
+    marginBottom: 24,
   },
   divider: {
     flex: 1,
@@ -533,26 +533,50 @@ const styles = StyleSheet.create({
   dividerText: {
     marginHorizontal: 16,
     color: "#999",
-    fontSize: 14,
+    fontSize: 13,
   },
   riderLinkContainer: {
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    padding: 16,
+    padding: 14,
     backgroundColor: "#fff7f2",
-    borderRadius: 12,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: "#ffe8d9",
   },
   riderText: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#666",
     marginLeft: 8,
   },
   riderLink: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#ff6d0b",
     fontWeight: "700",
+  },
+  debugContainer: {
+    marginTop: 20,
+    gap: 10,
+  },
+  debugButton: {
+    backgroundColor: "#5856D6",
+    borderRadius: 6,
+    padding: 12,
+    alignItems: "center",
+  },
+  debugButtonText: {
+    color: "#FFF",
+    fontSize: 14,
+  },
+  clearButton: {
+    backgroundColor: "#FF3B30",
+    borderRadius: 6,
+    padding: 12,
+    alignItems: "center",
+  },
+  clearButtonText: {
+    color: "#FFF",
+    fontSize: 14,
   },
 });
