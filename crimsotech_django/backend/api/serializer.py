@@ -898,6 +898,7 @@ class DeliveryStatsSerializer(serializers.ModelSerializer):
     actual_time = serializers.IntegerField(source='actual_minutes', read_only=True)
     rating = serializers.IntegerField(source='delivery_rating', read_only=True)
     completed_at = serializers.DateTimeField(source='delivered_at', read_only=True)
+    delivery_fee = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     
     class Meta:
         model = Delivery
@@ -905,7 +906,7 @@ class DeliveryStatsSerializer(serializers.ModelSerializer):
             'id', 'order_id', 'customer_name', 'pickup_location', 
             'delivery_location', 'status', 'amount', 'distance', 
             'estimated_time', 'actual_time', 'rating', 'completed_at',
-            'picked_at', 'delivered_at', 'created_at'
+            'picked_at', 'delivered_at', 'created_at', 'delivery_fee'
         ]
     
     def get_order_id(self, obj):

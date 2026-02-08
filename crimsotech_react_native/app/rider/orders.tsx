@@ -13,25 +13,25 @@ import {
 import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
-import { getRiderDashboard, acceptDeliveryOrder, updateDeliveryStatus } from '../../utils/riderApi';
+import { getRiderOrderHistory, acceptDeliveryOrder } from '../../utils/riderApi';
 
 // --- Theme Colors (Consistent with Home/Schedule) ---
 const COLORS = {
-  primary: '#F97316',
-  primaryLight: '#FFF7ED',
-  secondary: '#111827',
-  muted: '#6B7280',
-  bg: '#F9FAFB',
+  primary: '#DC2626',
+  primaryLight: '#FEF2F2',
+  secondary: '#1E293B',
+  muted: '#64748B',
+  bg: '#FFFFFF',
   cardBg: '#FFFFFF',
   danger: '#DC2626',
   success: '#10B981',
   warning: '#F59E0B',
-  border: '#F3F4F6'
+  border: '#E2E8F0'
 };
 
 export default function OrdersPage() {
   const { userRole, userId } = useAuth();
-  const [activeTab, setActiveTab] = useState<'pending' | 'toDeliver'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'delivered'>('pending');
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [deliveries, setDeliveries] = useState<any[]>([]);
@@ -43,7 +43,7 @@ export default function OrdersPage() {
     
     try {
       setError(null);
-      const data = await getRiderDashboard(userId);
+      const data = await getRiderOrderHistory(userId, { status: 'all' });
       setDeliveries(data.deliveries || []);
     } catch (err: any) {
       console.error('Error fetching deliveries:', err);
@@ -58,10 +58,8 @@ export default function OrdersPage() {
   }, [userId]);
 
   // Filter orders based on active tab
-  const pendingOrders = deliveries.filter(d => d.status === 'pending');
-  const toDeliverOrders = deliveries.filter(d => 
-    d.status === 'picked_up' || d.status === 'in_progress'
-  );
+  const pendingOrders = deliveries.filter(d => d.status === 'pending' || d.status === 'pending_offer' || d.status === 'picked_up' || d.status === 'in_progress');
+  const deliveredOrders = deliveries.filter(d => d.status === 'delivered');
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -69,32 +67,36 @@ export default function OrdersPage() {
     setRefreshing(false);
   };
 
-  const handleAcceptOrder = async (deliveryId: string) => {
+  const handleAcceptOrder = async (deliveryId: string, order: any) => {
     if (!userId) return;
     
     try {
       await acceptDeliveryOrder(userId, deliveryId);
-      await fetchDeliveries(); // Refresh list
-      alert('Order accepted successfully!');
+      // After accepting, navigate to delivery details
+      const deliveryData = {
+        id: order.id,
+        order_id: order.order_id,
+        customer_name: order.customer_name || order.order?.user?.first_name,
+        delivery_location: order.delivery_location || order.order?.delivery_address_text,
+        distance_km: order.distance_km,
+        estimated_minutes: order.estimated_minutes,
+        delivery_fee: order.delivery_fee,
+        status: 'pending', // Status remains pending until pickup photo taken
+        order: order.order,
+      };
+      
+      router.push({
+        pathname: '/rider/delivery-details',
+        params: { delivery: encodeURIComponent(JSON.stringify(deliveryData)) }
+      });
     } catch (err: any) {
       alert('Failed to accept order: ' + err.message);
     }
   };
 
-  const handleDeliverNow = async (deliveryId: string) => {
-    if (!userId) return;
-    
-    try {
-      await updateDeliveryStatus(userId, deliveryId, 'in_progress');
-      await fetchDeliveries(); // Refresh list
-      alert('Delivery started!');
-    } catch (err: any) {
-      alert('Failed to update status: ' + err.message);
-    }
-  };
-
-  const formatCurrency = (amount: number) => {
-    return `₱${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const formatCurrency = (amount: number | string) => {
+    const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
+    return `₱${(numAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
   const formatTime = (dateString: string) => {
@@ -139,6 +141,7 @@ export default function OrdersPage() {
     const address = order.order?.delivery_address_text || order.delivery_location || 'Address not available';
     const amount = order.order?.total_amount || order.order_amount || 0;
     const orderId = order.order_id || order.id;
+    const deliveryFee = typeof order.delivery_fee === 'string' ? parseFloat(order.delivery_fee) : (order.delivery_fee || 0);
     
     return (
     <TouchableOpacity 
@@ -152,8 +155,8 @@ export default function OrdersPage() {
           <Text style={styles.orderId}>Order #{orderId.substring(0, 8)}</Text>
         </View>
         <View style={[styles.statusBadge, isToDeliver ? styles.deliverBadge : styles.pendingBadge]}>
-          <Text style={[styles.statusText, isToDeliver ? { color: '#0369A1' } : { color: COLORS.primary }]}>
-            {isToDeliver ? 'To Deliver' : 'Pending'}
+          <Text style={[styles.statusText, isToDeliver ? { color: COLORS.success } : { color: COLORS.primary }]}>
+            {isToDeliver ? 'Delivered' : 'Pending'}
           </Text>
         </View>
       </View>
@@ -178,11 +181,20 @@ export default function OrdersPage() {
           </Text>
         </View>
         
-        {isToDeliver && order.picked_at && (
+        {!isToDeliver && order.picked_at && (
           <View style={styles.detailRow}>
             <MaterialIcons name="inventory" size={16} color={COLORS.muted} />
             <Text style={styles.detailText}>
               Picked up: {formatTime(order.picked_at)}
+            </Text>
+          </View>
+        )}
+        
+        {isToDeliver && order.delivered_at && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="check-circle" size={16} color={COLORS.success} />
+            <Text style={styles.detailText}>
+              Delivered: {formatTime(order.delivered_at)}
             </Text>
           </View>
         )}
@@ -193,6 +205,15 @@ export default function OrdersPage() {
             {order.distance_km ? `${order.distance_km} km away` : 'Distance not set'}
           </Text>
         </View>
+        
+        {deliveryFee > 0 && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="payments" size={16} color={COLORS.success} />
+            <Text style={[styles.detailText, { color: COLORS.success, fontWeight: '600' }]}>
+              Delivery Fee: {formatCurrency(deliveryFee)}
+            </Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.orderFooter}>
@@ -201,20 +222,44 @@ export default function OrdersPage() {
           <Text style={styles.orderItems}>{order.items_count || 1} item{(order.items_count || 1) > 1 ? 's' : ''}</Text>
         </View>
         
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => isToDeliver ? handleDeliverNow(order.id) : handleAcceptOrder(order.id)}
-        >
-          <Text style={styles.actionButtonText}>
-            {isToDeliver ? 'Deliver Now' : 'Accept Order'}
-          </Text>
-        </TouchableOpacity>
+        {!isToDeliver && (
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => {
+              if (order.status === 'pending' || order.status === 'pending_offer') {
+                // Accept order
+                handleAcceptOrder(order.id, order);
+              } else {
+                // Already accepted, view details
+                const deliveryData = {
+                  id: order.id,
+                  order_id: order.order_id,
+                  customer_name: order.customer_name || order.order?.user?.first_name,
+                  delivery_location: order.delivery_location || order.order?.delivery_address_text,
+                  distance_km: order.distance_km,
+                  estimated_minutes: order.estimated_minutes,
+                  delivery_fee: order.delivery_fee,
+                  status: order.status,
+                  order: order.order,
+                };
+                router.push({
+                  pathname: '/rider/delivery-details',
+                  params: { delivery: encodeURIComponent(JSON.stringify(deliveryData)) }
+                });
+              }
+            }}
+          >
+            <Text style={styles.actionButtonText}>
+              {order.status === 'pending' || order.status === 'pending_offer' ? 'Accept Order' : 'View Details'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
     );
   };
 
-  const currentOrders = activeTab === 'pending' ? pendingOrders : toDeliverOrders;
+  const currentOrders = activeTab === 'pending' ? pendingOrders : deliveredOrders;
   const isEmpty = currentOrders.length === 0;
 
   return (
@@ -260,13 +305,13 @@ export default function OrdersPage() {
         </TouchableOpacity>
         
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'toDeliver' && styles.activeTab]}
-          onPress={() => setActiveTab('toDeliver')}
+          style={[styles.tab, activeTab === 'delivered' && styles.activeTab]}
+          onPress={() => setActiveTab('delivered')}
         >
-          <Text style={[styles.tabText, activeTab === 'toDeliver' && styles.activeTabText]}>
-            To Deliver
+          <Text style={[styles.tabText, activeTab === 'delivered' && styles.activeTabText]}>
+            Delivered
           </Text>
-          {activeTab === 'toDeliver' && <View style={styles.tabIndicator} />}
+          {activeTab === 'delivered' && <View style={styles.tabIndicator} />}
         </TouchableOpacity>
       </View>
 
@@ -286,11 +331,11 @@ export default function OrdersPage() {
             <Text style={styles.emptyText}>
               {activeTab === 'pending' 
                 ? 'No pending orders available'
-                : 'No orders to deliver at the moment'}
+                : 'No delivered orders yet'}
             </Text>
           </View>
         ) : (
-          currentOrders.map(order => renderOrderCard(order, activeTab === 'toDeliver'))
+          currentOrders.map(order => renderOrderCard(order, activeTab === 'delivered'))
         )}
       </ScrollView>
     </SafeAreaView>
@@ -306,41 +351,41 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
   },
   message: {
-    fontSize: 16,
+    fontSize: 14,
     color: COLORS.muted,
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 16,
+    fontSize: 14,
     color: COLORS.muted,
   },
   errorText: {
     marginTop: 12,
-    fontSize: 16,
+    fontSize: 14,
     color: COLORS.danger,
     textAlign: 'center',
     marginBottom: 20,
   },
   retryButton: {
     backgroundColor: COLORS.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 6,
   },
   retryButtonText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
   },
-  
+
   // Header
   header: {
     backgroundColor: COLORS.cardBg,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
     flexDirection: 'row',
@@ -348,25 +393,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '600',
     color: COLORS.secondary,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   iconButton: {
-    padding: 10,
+    padding: 8,
     backgroundColor: COLORS.border,
-    borderRadius: 12,
+    borderRadius: 8,
     position: 'relative',
   },
   notificationBadge: {
     position: 'absolute',
-    top: 10,
-    right: 10,
+    top: 6,
+    right: 6,
     backgroundColor: COLORS.danger,
     borderRadius: 4,
     width: 8,
@@ -374,7 +419,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#FFFFFF',
   },
-  
+
   // Tabs
   tabContainer: {
     flexDirection: 'row',
@@ -385,14 +430,14 @@ const styles = StyleSheet.create({
   tab: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingVertical: 12,
     position: 'relative',
   },
   activeTab: {
     backgroundColor: COLORS.primaryLight,
   },
   tabText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: COLORS.muted,
   },
@@ -403,10 +448,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 0,
     width: '100%',
-    height: 3,
+    height: 2,
     backgroundColor: COLORS.primary,
   },
-  
+
   // List
   scrollView: {
     flex: 1,
@@ -414,27 +459,27 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 100, // Space for bottom tab
   },
-  
+
   // Order Card
   orderCard: {
     backgroundColor: COLORS.cardBg,
-    marginHorizontal: 20,
-    marginTop: 16,
-    padding: 16,
-    borderRadius: 16,
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: COLORS.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
-    elevation: 2,
+    elevation: 1,
   },
   orderHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   orderIdContainer: {
     flexDirection: 'row',
@@ -442,36 +487,36 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   orderId: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: COLORS.secondary,
   },
   statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
   },
   pendingBadge: {
     backgroundColor: COLORS.primaryLight,
   },
   deliverBadge: {
-    backgroundColor: '#E0F2FE', // Light blue
+    backgroundColor: '#D1FAE5', // Light green
   },
   statusText: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '600',
   },
   orderDetails: {
-    gap: 8,
-    marginBottom: 16,
+    gap: 6,
+    marginBottom: 8,
   },
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   detailText: {
-    fontSize: 13,
+    fontSize: 12,
     color: COLORS.muted,
     flex: 1,
   },
@@ -479,55 +524,55 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 12,
+    paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
   },
   orderInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   orderAmount: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '700',
-    color: COLORS.success,
+    color: COLORS.primary,
   },
   orderItems: {
-    fontSize: 13,
+    fontSize: 11,
     color: COLORS.muted,
   },
   actionButton: {
     backgroundColor: COLORS.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
   },
   actionButtonText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '600',
   },
-  
+
   // Empty State
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 80,
-    paddingHorizontal: 20,
+    paddingTop: 64,
+    paddingHorizontal: 16,
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: COLORS.secondary,
-    marginTop: 16,
+    marginTop: 12,
     marginBottom: 8,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: 13,
     color: COLORS.muted,
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 18,
   },
 });

@@ -10,7 +10,8 @@ import {
   Image,
   StatusBar,
   SafeAreaView,
-  ActivityIndicator
+  ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { MaterialIcons, Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -19,8 +20,8 @@ import { getRiderDashboard, updateRiderAvailability } from '../../utils/riderApi
 
 // --- Theme Colors ---
 const COLORS = {
-  primary: '#F97316',
-  primaryLight: '#FFF7ED',
+  primary: '#EE4D2D',
+  primaryLight: '#FDEEE9',
   secondary: '#111827',
   muted: '#6B7280',
   bg: '#F9FAFB',
@@ -28,6 +29,7 @@ const COLORS = {
   danger: '#DC2626',
   success: '#10B981',
   warning: '#F59E0B',
+  border: '#E5E7EB',
 };
 
 export default function Home() {
@@ -254,7 +256,7 @@ export default function Home() {
           {activeDeliveries.map((item) => (
             <View key={item.id} style={styles.deliveryCard}>
               <View style={styles.deliveryHeader}>
-                <Text style={styles.deliveryId}>{item.order_id}</Text>
+                <Text style={styles.deliveryId} numberOfLines={1} ellipsizeMode="tail">{item.order_id}</Text>
                 <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + '20' }]}>
                   <Text style={[styles.statusBadgeText, { color: getStatusColor(item.status) }]}>
                     {getStatusText(item.status)}
@@ -266,23 +268,23 @@ export default function Home() {
                 <View style={styles.detailRow}>
                   <Feather name="user" size={14} color={COLORS.muted} />
                   <Text style={styles.detailText}>
-                    {item.order.user.first_name} {item.order.user.last_name}
+                    {item.order?.user?.first_name || ''} {item.order?.user?.last_name || 'Customer'}
                   </Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Feather name="map-pin" size={14} color={COLORS.muted} />
                   <Text style={styles.detailText} numberOfLines={1}>
-                    {item.order.delivery_address_text}
+                    {item.order?.delivery_address_text || item.delivery_location || 'Delivery Location'}
                   </Text>
                 </View>
                 <View style={styles.detailRow}>
                    <Feather name="navigation" size={14} color={COLORS.muted} />
-                   <Text style={styles.detailText}>{item.distance_km} km • {item.estimated_minutes} mins</Text>
+                   <Text style={styles.detailText}>{item.distance_km || 0} km • {item.estimated_minutes || 0} mins</Text>
                 </View>
               </View>
 
               <View style={styles.deliveryFooter}>
-                <Text style={styles.deliveryAmount}>{formatCurrency(item.order.total_amount)}</Text>
+                <Text style={styles.deliveryAmount}>{formatCurrency(item.order?.total_amount || item.delivery_fee || 0)}</Text>
                 <TouchableOpacity style={styles.actionButton}>
                   <Text style={styles.actionButtonText}>View Details</Text>
                 </TouchableOpacity>
@@ -380,10 +382,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 14,
     backgroundColor: COLORS.cardBg,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: COLORS.border,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 1 },
+      },
+      android: {
+        elevation: 1,
+      },
+    }),
   },
   headerTitle: {
     fontSize: 20,
@@ -555,26 +568,40 @@ const styles = StyleSheet.create({
   deliveryCard: {
     backgroundColor: COLORS.cardBg,
     padding: 16,
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
-    marginBottom: 12,
+    borderColor: COLORS.border,
+    marginBottom: 8,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 1 },
+      },
+      android: {
+        elevation: 1,
+      },
+    }),
   },
   deliveryHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
+    gap: 8,
   },
   deliveryId: {
     fontSize: 14,
     fontWeight: '700',
     color: COLORS.secondary,
+    flex: 1,
   },
   statusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+    flexShrink: 0,
   },
   statusBadgeText: {
     fontSize: 11,
@@ -622,10 +649,21 @@ const styles = StyleSheet.create({
   // --- Vehicle Card ---
   vehicleCard: {
     backgroundColor: COLORS.cardBg,
-    padding: 16,
-    borderRadius: 16,
+    padding: 12,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: COLORS.border,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 1 },
+      },
+      android: {
+        elevation: 1,
+      },
+    }),
   },
   vehicleHeader: {
     flexDirection: 'row',

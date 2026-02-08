@@ -13300,18 +13300,80 @@ class RiderStatus(viewsets.ViewSet):
     def get_rider_status(self, request):
         rider_id = request.headers.get('X-User-Id')
 
-        try: 
-            rider_status = Rider.objects.get(rider_id=rider_id)
+        if not rider_id:
+            return Response({
+                'success': False,
+                'message': 'X-User-Id header is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rider = Rider.objects.select_related('rider').get(rider_id=rider_id)
 
             return Response({
                 'success': True,
-                'rider_status': rider_status.verified
+                'rider': {
+                    'id': str(rider.rider.id),
+                    'verified': rider.verified,
+                    'availability_status': rider.availability_status,
+                    'is_accepting_deliveries': rider.is_accepting_deliveries,
+                    'last_status_update': rider.last_status_update,
+                }
             }, status=status.HTTP_200_OK)
         except Rider.DoesNotExist:
             return Response({
                 'success': False,
                 'message': 'Rider not found'
             }, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=False, methods=['post'])
+    def update_status(self, request):
+        rider_id = request.headers.get('X-User-Id')
+
+        if not rider_id:
+            return Response({
+                'success': False,
+                'message': 'X-User-Id header is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rider = Rider.objects.select_related('rider').get(rider_id=rider_id)
+        except Rider.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Rider not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        availability_status = request.data.get('availability_status', rider.availability_status)
+        is_accepting_deliveries = request.data.get('is_accepting_deliveries', rider.is_accepting_deliveries)
+
+        valid_statuses = ['offline', 'available', 'busy', 'break', 'unavailable']
+        if availability_status not in valid_statuses:
+            return Response({
+                'success': False,
+                'message': f'Invalid availability_status. Must be one of: {", ".join(valid_statuses)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if isinstance(is_accepting_deliveries, str):
+            is_accepting_deliveries = is_accepting_deliveries.strip().lower() in ['true', '1', 'yes']
+        elif is_accepting_deliveries is None:
+            is_accepting_deliveries = rider.is_accepting_deliveries
+
+        rider.availability_status = availability_status
+        rider.is_accepting_deliveries = bool(is_accepting_deliveries)
+        rider.last_status_update = timezone.now()
+        rider.save()
+
+        return Response({
+            'success': True,
+            'message': 'Status updated successfully',
+            'rider': {
+                'id': str(rider.rider.id),
+                'verified': rider.verified,
+                'availability_status': rider.availability_status,
+                'is_accepting_deliveries': rider.is_accepting_deliveries,
+                'last_status_update': rider.last_status_update,
+            }
+        }, status=status.HTTP_200_OK)
 
 
 class CustomerShops(APIView):
@@ -13704,6 +13766,18 @@ class SellerDashboard(viewsets.ViewSet):
             total_sales=Sum('total_amount')
         )['total_sales'] or Decimal('0.00')
         
+        # Get delivery fees for current period (from delivered orders)
+        current_period_delivery_fees = Delivery.objects.filter(
+            order__shipping_address__user__customer__owned_shops=shop,
+            delivered_at__date__range=[start_date, end_date],
+            status='delivered'
+        ).aggregate(
+            total_fees=Sum('delivery_fee')
+        )['total_fees'] or Decimal('0.00')
+        
+        # Total earnings = sales + delivery fees
+        current_period_earnings = current_period_sales + current_period_delivery_fees
+        
         current_period_order_count = current_period_orders.count()
         
         # Previous period data for comparison
@@ -13719,12 +13793,28 @@ class SellerDashboard(viewsets.ViewSet):
             total_sales=Sum('total_amount')
         )['total_sales'] or Decimal('0.00')
         
+        # Get delivery fees for previous period
+        previous_period_delivery_fees = Delivery.objects.filter(
+            order__shipping_address__user__customer__owned_shops=shop,
+            delivered_at__date__range=[previous_start_date, previous_end_date],
+            status='delivered'
+        ).aggregate(
+            total_fees=Sum('delivery_fee')
+        )['total_fees'] or Decimal('0.00')
+        
+        # Total earnings = sales + delivery fees
+        previous_period_earnings = previous_period_sales + previous_period_delivery_fees
+        
         previous_period_order_count = previous_period_orders.count()
         
         # Calculate percentage changes
         sales_change = 0
         if previous_period_sales > 0:
             sales_change = ((current_period_sales - previous_period_sales) / previous_period_sales) * 100
+        
+        earnings_change = 0
+        if previous_period_earnings > 0:
+            earnings_change = ((current_period_earnings - previous_period_earnings) / previous_period_earnings) * 100
         
         orders_change = 0
         if previous_period_order_count > 0:
@@ -13787,10 +13877,13 @@ class SellerDashboard(viewsets.ViewSet):
         
         return {
             'period_sales': float(current_period_sales),
+            'period_delivery_fees': float(current_period_delivery_fees),
+            'period_earnings': float(current_period_earnings),
             'period_orders': current_period_order_count,
             'low_stock_count': low_stock_count,
             'refund_requests': refund_requests,
             'sales_change': round(sales_change, 1),
+            'earnings_change': round(earnings_change, 1),
             'orders_change': round(orders_change, 1),
             'low_stock_change': low_stock_change,
             'refund_change': refund_change,
@@ -20721,7 +20814,9 @@ class ArrangeShipment(viewsets.ViewSet):
             delivery = Delivery.objects.create(
                 order=order,
                 rider=rider,
-                status='pending_offer',  # New status for offer system
+                status='pending',
+                delivery_fee=offer_amount,
+                notes=delivery_notes,
                 created_at=timezone.now(),
                 updated_at=timezone.now()
             )
@@ -20741,7 +20836,7 @@ class ArrangeShipment(viewsets.ViewSet):
                     "offer_amount": offer_amount,
                     "offer_type": offer_type,
                     "delivery_notes": delivery_notes,
-                    "status": "pending_offer",
+                    "status": "pending",
                     "submitted_at": timezone.now().isoformat()
                 }
             }, status=status.HTTP_200_OK)
@@ -21115,6 +21210,196 @@ class RiderOrdersActive(viewsets.ViewSet):
         }
         
         return Response(response)
+
+    @action(detail=False, methods=['post'])
+    def accept_order(self, request):
+        """
+        Accept an order and mark it as picked up for the rider.
+        Expects: order_id (Order UUID or Delivery UUID).
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if rider is online/accepting deliveries
+        if not rider.is_accepting_deliveries:
+            return Response(
+                {"success": False, "error": "You must be online to accept orders. Please go online first."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return Response(
+                {"success": False, "error": "order_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            order_uuid = uuid.UUID(str(order_id))
+        except (ValueError, AttributeError):
+            return Response(
+                {"success": False, "error": "Invalid order_id format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Try to treat order_id as a Delivery ID first
+        delivery = Delivery.objects.filter(id=order_uuid, rider=rider).first()
+
+        # If not found, treat as Order ID
+        if not delivery:
+            order = Order.objects.filter(order=order_uuid).first()
+            if not order:
+                return Response(
+                    {"success": False, "error": "Order not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            delivery = Delivery.objects.filter(order=order).first()
+
+            if delivery and delivery.rider and delivery.rider != rider:
+                return Response(
+                    {"success": False, "error": "Order already assigned to another rider"},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            if not delivery:
+                # Calculate delivery fee - default ₱50.00 for standard delivery
+                delivery_fee = Decimal('50.00')
+                
+                delivery = Delivery.objects.create(
+                    order=order,
+                    rider=rider,
+                    status='pending',
+                    delivery_fee=delivery_fee
+                )
+            else:
+                delivery.rider = rider
+                # Set delivery_fee if not already set
+                if not delivery.delivery_fee or delivery.delivery_fee == 0:
+                    delivery.delivery_fee = Decimal('50.00')
+                    delivery.save()
+
+        # Idempotent behavior for already accepted deliveries
+        if delivery.status in ['picked_up', 'in_progress']:
+            return Response({
+                "success": True,
+                "message": "Order already accepted",
+                "delivery": {
+                    "id": str(delivery.id),
+                    "status": delivery.status
+                }
+            })
+
+        if delivery.status in ['delivered', 'cancelled']:
+            return Response(
+                {"success": False, "error": "Order cannot be accepted"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        delivery.status = 'picked_up'
+        delivery.picked_at = delivery.picked_at or timezone.now()
+        delivery.updated_at = timezone.now()
+        delivery.save()
+
+        order = delivery.order
+        if order.status in ['pending', 'processing']:
+            order.status = 'shipped'
+            order.updated_at = timezone.now()
+            order.save()
+
+        return Response({
+            "success": True,
+            "message": "Order accepted successfully",
+            "delivery": {
+                "id": str(delivery.id),
+                "status": delivery.status,
+                "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None
+            }
+        })
+
+    @action(detail=False, methods=['post'])
+    def update_delivery_status(self, request):
+        """
+        Update delivery status for a rider.
+        Expects: delivery_id, status (picked_up|in_progress|delivered|cancelled)
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        delivery_id = request.data.get('delivery_id')
+        status_value = request.data.get('status')
+
+        if not delivery_id or not status_value:
+            return Response(
+                {"success": False, "error": "delivery_id and status are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        valid_statuses = ['picked_up', 'in_progress', 'delivered', 'cancelled']
+        if status_value not in valid_statuses:
+            return Response(
+                {"success": False, "error": "Invalid status"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            delivery_uuid = uuid.UUID(str(delivery_id))
+        except (ValueError, AttributeError):
+            return Response(
+                {"success": False, "error": "Invalid delivery_id format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            delivery = Delivery.objects.get(id=delivery_uuid, rider=rider)
+        except Delivery.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Delivery not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        delivery.status = status_value
+        delivery.updated_at = timezone.now()
+
+        order = delivery.order
+
+        if status_value == 'picked_up':
+            delivery.picked_at = delivery.picked_at or timezone.now()
+            if order.status in ['pending', 'processing']:
+                order.status = 'shipped'
+        elif status_value == 'in_progress':
+            delivery.picked_at = delivery.picked_at or timezone.now()
+            if order.status in ['pending', 'processing']:
+                order.status = 'shipped'
+        elif status_value == 'delivered':
+            delivery.delivered_at = delivery.delivered_at or timezone.now()
+            order.status = 'delivered'
+            order.completed_at = order.completed_at or timezone.now()
+        elif status_value == 'cancelled':
+            order.status = 'cancelled'
+
+        order.updated_at = timezone.now()
+        delivery.save()
+        order.save()
+
+        return Response({
+            "success": True,
+            "message": "Delivery status updated successfully",
+            "delivery": {
+                "id": str(delivery.id),
+                "status": delivery.status,
+                "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
+                "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None
+            }
+        })
     
     @action(detail=False, methods=['post'])
     def pickup_order(self, request):
@@ -27761,7 +28046,7 @@ class RiderDashboardViewSet(viewsets.ViewSet):
                 'order__user',
                 'order__shipping_address'
             ).prefetch_related(
-                'order__orderitem_set__product__shop'
+                'order__checkout_set__cart_item__product__shop'
             ).order_by('-created_at')
         except (Rider.DoesNotExist, AttributeError):
             return Delivery.objects.none()
@@ -27815,13 +28100,22 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             # Calculate metrics efficiently (now based on filtered deliveries)
             metrics = self._calculate_metrics(deliveries, user.rider)
             
-            # Get recent deliveries (all filtered or up to 50)
-            recent_deliveries = deliveries[:50]  # Increased limit for date ranges
-            delivery_serializer = DeliveryStatsSerializer(recent_deliveries, many=True)
+            # Filter to only show active deliveries (exclude delivered and cancelled)
+            active_deliveries = deliveries.exclude(
+                status__in=['delivered', 'cancelled']
+            )[:50]  # Increased limit for date ranges
+            
+            delivery_serializer = DeliveryStatsSerializer(active_deliveries, many=True)
+            
+            # Post-process to normalize "pending_offer" to "pending"
+            data = delivery_serializer.data
+            for delivery in data:
+                if delivery['status'] == 'pending_offer':
+                    delivery['status'] = 'pending'
             
             return Response({
                 'metrics': metrics,
-                'deliveries': delivery_serializer.data
+                'deliveries': data
             })
             
         except ValueError as e:
@@ -27838,6 +28132,15 @@ class RiderDashboardViewSet(viewsets.ViewSet):
     def _calculate_metrics(self, deliveries, rider):
         """Calculate all metrics in optimized queries based on filtered deliveries"""
         
+        # Update any delivered deliveries with missing/zero delivery_fee before calculating metrics
+        delivered_without_fee = deliveries.filter(
+            status='delivered'
+        ).filter(
+            Q(delivery_fee__isnull=True) | Q(delivery_fee=0)
+        )
+        if delivered_without_fee.exists():
+            delivered_without_fee.update(delivery_fee=Decimal('50.00'))
+        
         # 1. Basic counts (single query)
         status_counts = deliveries.aggregate(
             total=Count('id'),
@@ -27846,12 +28149,11 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             cancelled=Count('id', filter=Q(status='cancelled'))
         )
         
-        # 2. Total earnings from delivered orders
+        # 2. Total earnings from delivered orders (using delivery_fee)
         total_earnings = deliveries.filter(
-            status='delivered',
-            order__payment__status='success'
+            status='delivered'
         ).aggregate(
-            total=Sum('order__total_amount')
+            total=Sum('delivery_fee')
         )['total'] or Decimal('0.00')
         
         # 3. Average delivery time in minutes
@@ -28067,6 +28369,310 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             }
         }
 
+class RiderEarningsViewSet(viewsets.ViewSet):
+    """
+    Rider Earnings API - track delivery fee earnings by time period
+    """
+    
+    def _get_user_from_header(self, request):
+        """Extract and validate user from X-User-Id header"""
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            raise ValueError('X-User-Id header is required')
+        
+        try:
+            user = User.objects.get(id=user_id)
+            return user
+        except User.DoesNotExist:
+            raise ValueError(f'User with ID {user_id} does not exist')
+    
+    def list(self, request):
+        """
+        Get rider earnings breakdown for today, this week, and this month
+        Returns all delivered orders with their delivery fees
+        """
+        try:
+            # Get user from X-User-Id header
+            user = self._get_user_from_header(request)
+            
+            # Check if user is a rider
+            if not hasattr(user, 'rider'):
+                return Response({
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            rider = user.rider
+            now = timezone.now()
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_start = today_start - timedelta(days=now.weekday())
+            month_start = today_start.replace(day=1)
+            
+            # Helper function to get earnings for a period
+            def get_period_earnings(start_date, end_date):
+                # Include deliveries that are:
+                # 1. Delivered with delivered_at in the date range, OR
+                # 2. Delivered with NULL delivered_at (fallback to updated_at), OR
+                # 3. Delivered recently (last 30 days) if no timestamp
+                deliveries = Delivery.objects.filter(
+                    rider=rider,
+                    status='delivered'
+                ).filter(
+                    Q(delivered_at__date__gte=start_date.date(), delivered_at__date__lte=end_date.date()) |
+                    Q(delivered_at__isnull=True, updated_at__date__gte=start_date.date(), updated_at__date__lte=end_date.date())
+                ).select_related('order__user')
+                
+                # Update any delivered deliveries with missing/zero delivery_fee
+                deliveries_to_update = deliveries.filter(
+                    Q(delivery_fee__isnull=True) | Q(delivery_fee=0)
+                )
+                if deliveries_to_update.exists():
+                    deliveries_to_update.update(delivery_fee=Decimal('50.00'))
+                
+                # Refresh the queryset to get updated values
+                deliveries = Delivery.objects.filter(
+                    rider=rider,
+                    status='delivered'
+                ).filter(
+                    Q(delivered_at__date__gte=start_date.date(), delivered_at__date__lte=end_date.date()) |
+                    Q(delivered_at__isnull=True, updated_at__date__gte=start_date.date(), updated_at__date__lte=end_date.date())
+                ).select_related('order__user')
+                
+                total_fees = deliveries.aggregate(
+                    total=Sum('delivery_fee')
+                )['total'] or Decimal('0.00')
+                
+                return float(total_fees), list(deliveries.values(
+                    'id',
+                    'delivery_fee',
+                    'status',
+                    'created_at',
+                    'delivered_at',
+                    'order__user__first_name'
+                ))
+            
+            # Get earnings for each period
+            today_earnings, today_deliveries = get_period_earnings(today_start, now)
+            week_earnings, week_deliveries = get_period_earnings(week_start, now)
+            month_earnings, month_deliveries = get_period_earnings(month_start, now)
+            
+            # Format deliveries response
+            def format_deliveries(deliveries_data):
+                return [
+                    {
+                        'id': d['id'],
+                        'delivery_fee': float(d['delivery_fee'] or 0),
+                        'status': d['status'],
+                        'shop_name': d['order__user__first_name'] or 'Unknown',
+                        'created_at': d['created_at'].isoformat() if d['created_at'] else None,
+                        'delivered_at': d['delivered_at'].isoformat() if d['delivered_at'] else d['created_at'].isoformat()
+                    }
+                    for d in deliveries_data
+                    if d['delivery_fee'] and float(d['delivery_fee']) > 0  # Only include deliveries with valid fees
+                ]
+            
+            return Response({
+                'today_earnings': today_earnings,
+                'week_earnings': week_earnings,
+                'month_earnings': month_earnings,
+                'deliveries': format_deliveries(
+                    list(month_deliveries)  # Show all deliveries from current month
+                )
+            }, status=status.HTTP_200_OK)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class RiderDeliveryActionsViewSet(viewsets.ViewSet):
+    """
+    Rider Delivery Actions API - Mark pickups and deliveries with proof
+    """
+    
+    def _get_user_from_header(self, request):
+        """Extract and validate user from X-User-Id header"""
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            raise ValueError('X-User-Id header is required')
+        
+        try:
+            user = User.objects.get(id=user_id)
+            return user
+        except User.DoesNotExist:
+            raise ValueError(f'User with ID {user_id} does not exist')
+    
+    @action(detail=True, methods=['post'], url_path='mark-pickup')
+    def mark_pickup(self, request, pk=None):
+        """
+        Mark delivery as picked up with optional proof photo
+        POST /rider-delivery-actions/{delivery_id}/mark-pickup/
+        
+        Body:
+        - pickup_proof: image file (optional)
+        - notes: string (optional)
+        """
+        try:
+            # Get user from header
+            user = self._get_user_from_header(request)
+            
+            # Check if user is a rider
+            if not hasattr(user, 'rider'):
+                return Response({
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get delivery
+            try:
+                delivery = Delivery.objects.get(id=pk, rider=user.rider)
+            except Delivery.DoesNotExist:
+                return Response({
+                    'error': 'Delivery not found or not assigned to you'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if already picked up
+            if delivery.status not in ['pending']:
+                return Response({
+                    'error': f'Cannot mark as picked up. Current status: {delivery.status}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update delivery
+            delivery.status = 'picked_up'
+            delivery.picked_at = timezone.now()
+            
+            # Handle proof upload if provided
+            if 'pickup_proof' in request.FILES:
+                delivery.pickup_proof = request.FILES['pickup_proof']
+            
+            # Add notes if provided
+            if 'notes' in request.data:
+                current_notes = delivery.notes or ''
+                pickup_note = f"\n[PICKUP {timezone.now().strftime('%Y-%m-%d %H:%M')}]: {request.data['notes']}"
+                delivery.notes = current_notes + pickup_note
+            
+            delivery.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Delivery marked as picked up',
+                'data': {
+                    'delivery_id': str(delivery.id),
+                    'status': delivery.status,
+                    'picked_at': delivery.picked_at.isoformat(),
+                    'has_proof': bool(delivery.pickup_proof)
+                }
+            }, status=status.HTTP_200_OK)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'], url_path='mark-delivered')
+    def mark_delivered(self, request, pk=None):
+        """
+        Mark delivery as delivered with optional proof photo
+        POST /rider-delivery-actions/{delivery_id}/mark-delivered/
+        
+        Body:
+        - delivery_proof: image file (optional)
+        - notes: string (optional)
+        """
+        try:
+            # Get user from header
+            user = self._get_user_from_header(request)
+            
+            # Check if user is a rider
+            if not hasattr(user, 'rider'):
+                return Response({
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get delivery
+            try:
+                delivery = Delivery.objects.get(id=pk, rider=user.rider)
+            except Delivery.DoesNotExist:
+                return Response({
+                    'error': 'Delivery not found or not assigned to you'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if picked up first
+            if delivery.status not in ['picked_up', 'in_progress']:
+                return Response({
+                    'error': f'Cannot mark as delivered. Current status: {delivery.status}. Must be picked up first.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update delivery
+            delivery.status = 'delivered'
+            delivery.delivered_at = timezone.now()
+            
+            # Calculate actual delivery time if picked_at exists
+            if delivery.picked_at:
+                time_diff = delivery.delivered_at - delivery.picked_at
+                delivery.actual_minutes = int(time_diff.total_seconds() / 60)
+            
+            # Handle proof upload if provided
+            if 'delivery_proof' in request.FILES:
+                delivery.delivery_proof = request.FILES['delivery_proof']
+            
+            # Add notes if provided
+            if 'notes' in request.data:
+                current_notes = delivery.notes or ''
+                delivery_note = f"\n[DELIVERED {timezone.now().strftime('%Y-%m-%d %H:%M')}]: {request.data['notes']}"
+                delivery.notes = current_notes + delivery_note
+            
+            # Ensure delivery_fee is set (for backward compatibility)
+            if not delivery.delivery_fee or delivery.delivery_fee == 0:
+                delivery.delivery_fee = Decimal('50.00')
+            
+            delivery.save()
+            
+            # Update order status to delivered
+            order = delivery.order
+            order.status = 'delivered'
+            order.completed_at = delivery.delivered_at
+            order.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Delivery marked as delivered',
+                'data': {
+                    'delivery_id': str(delivery.id),
+                    'order_id': str(order.order),
+                    'status': delivery.status,
+                    'delivered_at': delivery.delivered_at.isoformat(),
+                    'actual_minutes': delivery.actual_minutes,
+                    'delivery_fee': float(delivery.delivery_fee) if delivery.delivery_fee else 0,
+                    'has_proof': bool(delivery.delivery_proof)
+                }
+            }, status=status.HTTP_200_OK)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class RiderOrderHistoryViewSet(viewsets.ViewSet):
     """
     Rider Order History API endpoints with optimized queries and data integrity
@@ -28190,8 +28796,8 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
             cancelled_count=Count('id', filter=Q(status='cancelled')),
             total_earnings=Coalesce(
                 Sum(
-                    'order__total_amount',
-                    filter=Q(status='delivered', order__payment__status='success')
+                    'delivery_fee',
+                    filter=Q(status='delivered')
                 ),
                 Decimal('0.00'),
                 output_field=DecimalField()
@@ -28286,10 +28892,10 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
             # Get shop name from order items if available
             shop_name = None
             try:
-                if order.orderitem_set.exists():
-                    first_item = order.orderitem_set.first()
-                    if first_item.product and first_item.product.shop:
-                        shop_name = first_item.product.shop.name
+                if order.checkout_set.exists():
+                    first_item = order.checkout_set.first()
+                    if first_item.cart_item and first_item.cart_item.product and first_item.cart_item.product.shop:
+                        shop_name = first_item.cart_item.product.shop.name
             except:
                 shop_name = None
             
@@ -28317,7 +28923,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 
                 # Order financials
                 'order_amount': float(order.total_amount),
-                'delivery_fee': 0.0,  # Can be calculated from order if separate field exists
+                'delivery_fee': float(delivery.delivery_fee or 0),
                 'payment_method': order.payment_method,
                 'payment_status': payment.status if payment else 'unknown',
                 
@@ -28332,7 +28938,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 'created_at': delivery.created_at.isoformat(),
                 
                 # Additional metadata
-                'items_count': order.orderitem_set.count(),
+                'items_count': order.checkout_set.count(),
                 'items_summary': self._get_items_summary(order),
                 'is_late': is_late,
                 'time_elapsed': time_elapsed,
@@ -28342,20 +28948,20 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
     
     def _get_items_summary(self, order):
         """Get a brief summary of order items"""
-        items = order.orderitem_set.all()[:3]  # Get first 3 items
+        items = order.checkout_set.all()[:3]  # Get first 3 items
         if not items.exists():
             return "No items"
         
         item_names = []
         for item in items:
-            if item.product:
-                item_names.append(item.product.name)
+            if item.cart_item and item.cart_item.product:
+                item_names.append(item.cart_item.product.name)
             else:
                 item_names.append("Unknown Product")
         
         summary = ", ".join(item_names)
-        if order.orderitem_set.count() > 3:
-            summary += f" and {order.orderitem_set.count() - 3} more"
+        if order.checkout_set.count() > 3:
+            summary += f" and {order.checkout_set.count() - 3} more"
         
         return summary
     

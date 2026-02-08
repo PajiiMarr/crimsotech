@@ -14,7 +14,7 @@ import {
   RefreshControl,
   Platform
 } from 'react-native';
-import { router, useLocalSearchParams, Link } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import AxiosInstance from '../../contexts/axios';
 import { 
@@ -54,6 +54,7 @@ interface Voucher {
   customer_tier?: string;
   is_recommended?: boolean;
   is_general?: boolean;
+  discount_amount?: number;
 }
 
 interface VoucherCategory {
@@ -146,16 +147,16 @@ const paymentMethods = [
     icon: 'mobile-alt',
     iconSet: 'FontAwesome5' as const,
     iconColor: '#EA580C',
-    requiresDetails: true,
+    requiresDetails: false,
   },
   {
-    id: 'paymaya',
-    name: 'PayMaya',
-    description: 'Pay using PayMaya wallet',
+    id: 'maya',
+    name: 'Maya',
+    description: 'Pay using Maya wallet',
     icon: 'credit-card',
     iconSet: 'FontAwesome' as const,
     iconColor: '#EA580C',
-    requiresDetails: true,
+    requiresDetails: false,
   }
 ];
 
@@ -184,15 +185,16 @@ const shippingMethods = [
 export default function CheckoutPage() {
   const { userId, userRole, loading: authLoading } = useAuth();
   const params = useLocalSearchParams();
-  // Normalize selected ids from query params (supports string, array, or alternate keys)
+  
+  // Normalize selected ids from query params
   const getSelectedIds = () => {
     const raw = (params?.selected ?? params?.selectedIds ?? params?.items ?? params?.ids) as string | string[] | undefined;
     if (!raw) return [] as string[];
     if (Array.isArray(raw)) return raw.flatMap(r => String(r).split(',')).map(s => s.trim()).filter(Boolean);
     return String(raw).split(',').map(s => s.trim()).filter(Boolean);
   };
+  
   const selectedIds = getSelectedIds();
-  console.log('Checkout params:', params, 'resolved selectedIds:', selectedIds);
   
   const [checkoutData, setCheckoutData] = useState<CheckoutData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -203,7 +205,6 @@ export default function CheckoutPage() {
   const [voucherCode, setVoucherCode] = useState('');
   const [appliedVoucher, setAppliedVoucher] = useState<Voucher | null>(null);
   const [showVoucherInput, setShowVoucherInput] = useState(false);
-  const [showAvailableVouchers, setShowAvailableVouchers] = useState(false);
   const [loadingVouchers, setLoadingVouchers] = useState(false);
   const [activeVoucherCategory, setActiveVoucherCategory] = useState('all');
   const [isAddressModalVisible, setIsAddressModalVisible] = useState(false);
@@ -214,14 +215,17 @@ export default function CheckoutPage() {
     agreeTerms: false,
     shippingMethod: 'Pickup from Store' as 'Pickup from Store' | 'Standard Delivery',
     paymentMethod: 'Cash on Pickup',
-    ewalletName: '',
-    ewalletNumber: '',
-    ewalletEmail: '',
     remarks: '',
     selectedAddressId: null as string | null,
   });
   
   const [processingOrder, setProcessingOrder] = useState(false);
+  const [summary, setSummary] = useState({
+    subtotal: 0,
+    delivery: 0,
+    total: 0,
+    discount: 0,
+  });
 
   // Fetch checkout data
   const fetchCheckoutData = useCallback(async () => {
@@ -235,10 +239,6 @@ export default function CheckoutPage() {
       setLoading(true);
       setError(null);
 
-      console.log('Fetching checkout items...');
-      console.log('User ID:', userId);
-      console.log('Selected IDs:', selectedIds);
-
       const response = await AxiosInstance.get('/checkout-order/get_checkout_items/', {
         params: {
           selected: selectedIds.join(','),
@@ -246,17 +246,16 @@ export default function CheckoutPage() {
         }
       });
 
-      console.log('Checkout API Response:', response.data);
-
       if (response.data.success) {
-        // Normalize response to avoid null arrays/objects that cause runtime errors
+        // Normalize response
         const normalized = {
           ...response.data,
           checkout_items: response.data.checkout_items ?? [],
           available_vouchers: response.data.available_vouchers ?? [],
           shipping_addresses: response.data.shipping_addresses ?? [],
           default_shipping_address: response.data.default_shipping_address ?? null,
-          summary: response.data.summary ?? { subtotal: 0, delivery: 0, total: 0, item_count: 0, shop_count: 0 }
+          summary: response.data.summary ?? { subtotal: 0, delivery: 0, total: 0, item_count: 0, shop_count: 0 },
+          shop_addresses: response.data.shop_addresses ?? []
         };
 
         const hasOrderedItems = normalized.checkout_items.some((item: any) => item.is_ordered === true);
@@ -268,6 +267,16 @@ export default function CheckoutPage() {
         }
         
         setCheckoutData(normalized);
+        
+        // Update summary
+        if (normalized.summary) {
+          setSummary({
+            subtotal: normalized.summary.subtotal,
+            delivery: normalized.summary.delivery,
+            total: normalized.summary.total,
+            discount: 0,
+          });
+        }
         
         // Set default shipping address if available
         if (normalized.default_shipping_address) {
@@ -286,7 +295,6 @@ export default function CheckoutPage() {
       }
     } catch (error: any) {
       console.error('Error fetching checkout data:', error);
-      console.error('Response data:', error.response?.data);
       
       let errorMessage = 'Failed to load checkout items';
       if (error.response?.status === 404) {
@@ -305,42 +313,25 @@ export default function CheckoutPage() {
     }
   }, [userId, selectedIds]);
 
-  // Log render state to help diagnose stuck loading
-  console.log('Checkout render state:', { authLoading, loading, userId, selectedIds, error, params });
-
-  // Fix the useEffect in checkout.tsx
   useEffect(() => {
-    console.log('Checkout useEffect triggered:', {
-      authLoading,
-      loading,
-      userId,
-      selectedIds,
-      params
-    });
-
     if (authLoading) {
-      console.log('Waiting for auth to finish...');
       return;
     }
 
     if (!userId) {
-      console.log('No userId, setting error');
       setLoading(false);
       setError('Please login to checkout');
       return;
     }
 
     if (selectedIds.length === 0) {
-      console.log('No selected items, setting error');
       setLoading(false);
       setError('No items selected for checkout');
       return;
     }
 
-    // Only fetch if we have everything we need
-    console.log('Fetching checkout data...');
     fetchCheckoutData();
-  }, [authLoading, userId, selectedIds.length]); // Only depend on these
+  }, [authLoading, userId, selectedIds.length]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -363,6 +354,15 @@ export default function CheckoutPage() {
           setFormData(prev => ({ ...prev, paymentMethod: methodName }));
         }
       }
+      
+      // Update delivery cost in summary
+      const deliveryCost = value === 'Pickup from Store' ? 0 : 50.00;
+      const newTotal = summary.subtotal + deliveryCost - summary.discount;
+      setSummary(prev => ({
+        ...prev,
+        delivery: deliveryCost,
+        total: newTotal
+      }));
     }
   };
 
@@ -376,12 +376,7 @@ export default function CheckoutPage() {
       
       setFormData(prev => ({ 
         ...prev, 
-        paymentMethod: methodName,
-        ...(methodId === 'cod' && {
-          ewalletName: '',
-          ewalletNumber: '',
-          ewalletEmail: ''
-        })
+        paymentMethod: methodName
       }));
     }
   };
@@ -394,19 +389,6 @@ export default function CheckoutPage() {
         : method.name;
       return methodName === formData.paymentMethod;
     });
-  };
-
-  // Validate e-wallet fields
-  const isEwalletFieldsValid = () => {
-    const currentMethod = getCurrentPaymentMethod();
-    if (!currentMethod?.requiresDetails) return true;
-    
-    const isValid = formData.ewalletName.trim() !== '' && 
-      (currentMethod.id === 'paypal' 
-        ? formData.ewalletEmail.trim() !== '' 
-        : formData.ewalletNumber.trim() !== '');
-    
-    return isValid;
   };
 
   // Apply voucher
@@ -428,15 +410,26 @@ export default function CheckoutPage() {
       const response = await AxiosInstance.post('/checkout-order/validate_voucher/', {
         voucher_code: voucherCode.toUpperCase(),
         user_id: userId,
-        subtotal: checkoutData.summary.subtotal,
+        subtotal: summary.subtotal,
       });
 
       if (response.data.valid) {
-        setAppliedVoucher(response.data.voucher);
+        const voucher = response.data.voucher;
+        setAppliedVoucher(voucher);
         setVoucherError(null);
         setVoucherCode('');
         setShowVoucherInput(false);
         setIsVoucherModalVisible(false);
+        
+        const newDiscount = voucher.discount_amount || voucher.potential_savings || 0;
+        const deliveryCost = formData.shippingMethod === 'Pickup from Store' ? 0 : 50.00;
+        const newTotal = summary.subtotal + deliveryCost - newDiscount;
+        
+        setSummary(prev => ({
+          ...prev,
+          discount: newDiscount,
+          total: newTotal
+        }));
       } else {
         setVoucherError(response.data.error || 'Invalid voucher code');
       }
@@ -453,6 +446,15 @@ export default function CheckoutPage() {
     setAppliedVoucher(null);
     setVoucherCode('');
     setVoucherError(null);
+    
+    const deliveryCost = formData.shippingMethod === 'Pickup from Store' ? 0 : 50.00;
+    const newTotal = summary.subtotal + deliveryCost;
+    
+    setSummary(prev => ({
+      ...prev,
+      discount: 0,
+      total: newTotal
+    }));
   };
 
   // Fetch vouchers by amount
@@ -481,43 +483,28 @@ export default function CheckoutPage() {
     }
   };
 
-  // Calculate totals
-  const calculateTotals = () => {
-    if (!checkoutData) {
-      return { subtotal: 0, delivery: 0, discount: 0, total: 0 };
+  // Update vouchers when subtotal changes
+  useEffect(() => {
+    if (summary.subtotal > 0 && userId) {
+      fetchVouchersByAmount(summary.subtotal);
     }
+  }, [summary.subtotal, userId]);
 
-    const subtotal = checkoutData.summary.subtotal;
-    const deliveryCost = formData.shippingMethod === 'Pickup from Store' ? 0 : 50.00;
-    const discount = appliedVoucher?.potential_savings || 0;
-    const total = subtotal + deliveryCost - discount;
-
-    return { subtotal, delivery: deliveryCost, discount, total };
-  };
-
-  // Get selected address (prefer explicit user selection, otherwise fallback to default)
+  // Get selected address
   const getSelectedAddress = () => {
     if (!checkoutData) return null;
 
-    // If user explicitly selected an address, use it when available
     if (formData.selectedAddressId) {
       const selected = checkoutData.shipping_addresses?.find(addr => addr.id === formData.selectedAddressId);
       if (selected) return selected;
     }
 
-    // fallback to default_shipping_address if present
     if (checkoutData.default_shipping_address) return checkoutData.default_shipping_address;
 
-    // final fallback: first available address
-    return (checkoutData.shipping_addresses && checkoutData.shipping_addresses.length > 0) ? checkoutData.shipping_addresses[0] : null;
+    return (checkoutData.shipping_addresses && checkoutData.shipping_addresses.length > 0) 
+      ? checkoutData.shipping_addresses[0] 
+      : null;
   };
-
-  // Initialize selectedAddressId from default_shipping_address only if none selected yet
-  useEffect(() => {
-    if (checkoutData?.default_shipping_address && !formData.selectedAddressId) {
-      setFormData(prev => ({ ...prev, selectedAddressId: checkoutData.default_shipping_address.id }));
-    }
-  }, [checkoutData?.default_shipping_address, formData.selectedAddressId]);
 
   // Get shop addresses for products
   const getShopAddressesForProducts = () => {
@@ -533,19 +520,19 @@ export default function CheckoutPage() {
 
   // Place order
   const handlePlaceOrder = async () => {
-    if (!userId || !checkoutData || !formData.selectedAddressId) {
+    if (!userId || !checkoutData) {
       Alert.alert('Error', 'Please complete all required information');
+      return;
+    }
+
+    // Validate shipping address for delivery
+    if (formData.shippingMethod === 'Standard Delivery' && !formData.selectedAddressId) {
+      Alert.alert('Required', 'Please select a shipping address for delivery');
       return;
     }
 
     if (!formData.agreeTerms) {
       Alert.alert('Required', 'Please agree to the Terms of Service and Privacy Policy');
-      return;
-    }
-
-    const currentMethod = getCurrentPaymentMethod();
-    if (currentMethod?.requiresDetails && !isEwalletFieldsValid()) {
-      Alert.alert('Required', 'Please fill in all required payment details');
       return;
     }
 
@@ -561,13 +548,6 @@ export default function CheckoutPage() {
         shipping_method: formData.shippingMethod,
         voucher_id: appliedVoucher?.id || null,
         remarks: formData.remarks.substring(0, 500) || null,
-        ...(currentMethod?.requiresDetails && {
-          ewallet_details: {
-            name: formData.ewalletName,
-            number: formData.ewalletNumber,
-            email: formData.ewalletEmail,
-          }
-        })
       };
 
       console.log('Placing order with data:', requestBody);
@@ -575,20 +555,18 @@ export default function CheckoutPage() {
       const response = await AxiosInstance.post('/checkout-order/create_order/', requestBody);
 
       if (response.data.success) {
-        Alert.alert(
-            'Success',
-            'Order placed successfully!',
-            [
-              {
-                text: 'View Order',
-                onPress: () => router.push(`/customer/orders/${String(response.data.order_id)}` as any)
-              },
-              {
-                text: 'Continue Shopping',
-                onPress: () => router.push('/customer/home')
-              }
-            ]
-          );
+        const orderId = response.data.order_id;
+        // Detect e-wallet payments
+        const isEWalletPayment = ['GCash', 'Maya'].includes(formData.paymentMethod);
+
+        if (isEWalletPayment) {
+          // Redirect to mobile pay screen with order id
+          router.push(`/customer/pay-order?order_id=${orderId}` as any);
+        } else {
+          // For Cash on Pickup/Delivery, go directly to order success
+          router.push(`/customer/order-successful/${orderId}` as any);
+        }
+
       } else {
         throw new Error(response.data.error || 'Failed to create order');
       }
@@ -603,14 +581,55 @@ export default function CheckoutPage() {
     }
   };
 
+  // Get tier badge component
+  const getTierBadge = (tier: string) => {
+    const tierConfig = {
+      platinum: { color: 'bg-gradient-to-r from-orange-700 to-amber-900', label: 'Platinum' },
+      gold: { color: 'bg-gradient-to-r from-amber-500 to-orange-300', label: 'Gold' },
+      silver: { color: 'bg-gradient-to-r from-gray-300 to-gray-100', label: 'Silver' },
+      new: { color: 'bg-gradient-to-r from-orange-400 to-amber-200', label: 'New' }
+    };
+    
+    const config = tierConfig[tier as keyof typeof tierConfig] || tierConfig.new;
+    
+    return (
+      <View style={[styles.tierBadge, tier === 'platinum' && styles.tierBadgePlatinum, 
+                    tier === 'gold' && styles.tierBadgeGold, 
+                    tier === 'silver' && styles.tierBadgeSilver]}>
+        <Text style={styles.tierBadgeText}>{config.label}</Text>
+      </View>
+    );
+  };
+
+  // Get all vouchers
+  const getAllVouchers = () => {
+    if (!checkoutData) return [];
+    return checkoutData.available_vouchers.flatMap(category => (category?.vouchers ?? []));
+  };
+
+  // Get filtered vouchers
+  const getFilteredVouchers = () => {
+    if (!checkoutData) return [];
+    
+    if (activeVoucherCategory === 'all') {
+      return getAllVouchers();
+    }
+    
+    const category = checkoutData.available_vouchers.find((cat: any) => 
+      cat.category.includes(activeVoucherCategory.replace('_', ' '))
+    );
+    
+    return category ? category.vouchers : [];
+  };
+
   // Loading state
   if (authLoading || loading) {
     return (
       <SafeAreaView style={styles.container}>
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color="#EA580C" />
-            <Text style={styles.loadingText}>Loading checkout...</Text>
-          </View>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#EA580C" />
+          <Text style={styles.loadingText}>Loading checkout...</Text>
+        </View>
       </SafeAreaView>
     );
   }
@@ -619,11 +638,11 @@ export default function CheckoutPage() {
   if (userRole && userRole !== 'customer') {
     return (
       <SafeAreaView style={styles.container}>
-          <View style={styles.center}>
-            <MaterialIcons name="warning" size={64} color="#F59E0B" />
-            <Text style={styles.message}>Not authorized to view this page</Text>
-            <Text style={styles.subMessage}>This page is for customers only</Text>
-          </View>
+        <View style={styles.center}>
+          <MaterialIcons name="warning" size={64} color="#F59E0B" />
+          <Text style={styles.message}>Not authorized to view this page</Text>
+          <Text style={styles.subMessage}>This page is for customers only</Text>
+        </View>
       </SafeAreaView>
     );
   }
@@ -632,26 +651,25 @@ export default function CheckoutPage() {
   if (error || !checkoutData || !Array.isArray(checkoutData.checkout_items) || checkoutData.checkout_items.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
-          <View style={styles.center}>
-            <MaterialIcons name="error-outline" size={80} color="#E5E5E5" />
-            <Text style={styles.emptyTitle}>
-              {error || 'No items selected'}
-            </Text>
-            <Text style={styles.emptyText}>
-              {error ? error : 'Please add items to your cart first'}
-            </Text>
-            <TouchableOpacity 
-              style={styles.shopButton}
-              onPress={() => router.push('/customer/cart')}
-            >
-              <Text style={styles.shopButtonText}>Go to Cart</Text>
-            </TouchableOpacity>
-          </View>
+        <View style={styles.center}>
+          <MaterialIcons name="error-outline" size={80} color="#E5E5E5" />
+          <Text style={styles.emptyTitle}>
+            {error || 'No items selected'}
+          </Text>
+          <Text style={styles.emptyText}>
+            {error ? error : 'Please add items to your cart first'}
+          </Text>
+          <TouchableOpacity 
+            style={styles.shopButton}
+            onPress={() => router.push('/customer/cart')}
+          >
+            <Text style={styles.shopButtonText}>Go to Cart</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
-  const { subtotal, delivery, discount, total } = calculateTotals();
   const selectedAddress = getSelectedAddress();
   const shopAddresses = getShopAddressesForProducts();
   const currentPaymentMethod = getCurrentPaymentMethod();
@@ -660,873 +678,854 @@ export default function CheckoutPage() {
         ? currentPaymentMethod.name(formData.shippingMethod)
         : currentPaymentMethod.name)
     : '';
-  const allVouchers = (checkoutData.available_vouchers ?? []).flatMap(category => (category?.vouchers ?? []));
-  const filteredVouchers = activeVoucherCategory === 'all' 
-    ? allVouchers
-    : ((checkoutData.available_vouchers ?? []).find(cat => 
-        cat.category?.includes(activeVoucherCategory.replace('_', ' '))
-      )?.vouchers ?? []);
+  const allVouchers = getAllVouchers();
+  const filteredVouchers = getFilteredVouchers();
+
+  // Calculate button text
+  const getPlaceOrderButtonText = () => {
+    if (processingOrder) return 'Processing Order...';
+    
+    const isEWalletPayment = ['GCash', 'Maya'].includes(formData.paymentMethod);
+    if (isEWalletPayment) {
+      return `Pay with ${formData.paymentMethod} • ₱${summary.total.toFixed(2)}`;
+    } else {
+      return `Place Order • ₱${summary.total.toFixed(2)}`;
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-        <ScrollView
-          style={styles.scrollView}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl 
-              refreshing={refreshing} 
-              onRefresh={onRefresh}
-              colors={['#EA580C']}
-              tintColor="#EA580C"
-            />
-          }
-        >
-          {/* Header */}
-          <SafeAreaView style={styles.headerSafeArea}>
-            <View style={styles.header}>
-              <TouchableOpacity 
-                style={styles.backButton}
-                onPress={() => router.back()}
-              >
-                <MaterialIcons name="arrow-back" size={24} color="#374151" />
-              </TouchableOpacity>
-              <View style={styles.headerTitleContainer}>
-                <Text style={styles.headerTitle}>Checkout</Text>
-                <Text style={styles.headerSubtitle}>Complete your purchase</Text>
-              </View>
-              <View style={{ width: 40 }} />
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={onRefresh}
+            colors={['#EA580C']}
+            tintColor="#EA580C"
+          />
+        }
+      >
+        {/* Header */}
+        <SafeAreaView style={styles.headerSafeArea}>
+          <View style={styles.header}>
+            <TouchableOpacity 
+              style={styles.backButton}
+              onPress={() => router.back()}
+            >
+              <MaterialIcons name="arrow-back" size={24} color="#374151" />
+            </TouchableOpacity>
+            <View style={styles.headerTitleContainer}>
+              <Text style={styles.headerTitle}>Checkout</Text>
+              <Text style={styles.headerSubtitle}>Complete your purchase</Text>
             </View>
-          </SafeAreaView>
+            <View style={{ width: 40 }} />
+          </View>
+        </SafeAreaView>
 
-          {error && (
-            <View style={styles.errorCard}>
-              <MaterialIcons name="error-outline" size={20} color="#DC2626" />
-              <Text style={styles.errorText}>{error}</Text>
+        {error && (
+          <View style={styles.errorCard}>
+            <MaterialIcons name="error-outline" size={20} color="#DC2626" />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {/* Order Summary */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <MaterialIcons name="shopping-cart" size={24} color="#EA580C" />
             </View>
-          )}
-
-          {/* Order Summary */}
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionIcon}>
-                <MaterialIcons name="shopping-cart" size={24} color="#EA580C" />
-              </View>
-              <View>
-                <Text style={styles.sectionTitle}>Order Summary</Text>
-                <Text style={styles.sectionSubtitle}>Review your items and shipping details</Text>
-              </View>
+            <View>
+              <Text style={styles.sectionTitle}>Order Summary</Text>
+              <Text style={styles.sectionSubtitle}>Review your items and shipping details</Text>
             </View>
+          </View>
 
-            <View style={styles.itemsList}>
-              {checkoutData.checkout_items.map((item) => (
-                <View key={item.id} style={styles.itemCard}>
-                  {item.image ? (
-                    <Image source={{ uri: item.image }} style={styles.itemImage} />
-                  ) : (
-                    <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
-                      <MaterialIcons name="image" size={24} color="#9CA3AF" />
-                    </View>
-                  )}
+          <View style={styles.itemsList}>
+            {checkoutData.checkout_items.map((item) => (
+              <View key={item.id} style={styles.itemCard}>
+                {item.image ? (
+                  <Image source={{ uri: item.image }} style={styles.itemImage} />
+                ) : (
+                  <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                    <MaterialIcons name="image" size={24} color="#9CA3AF" />
+                  </View>
+                )}
+                
+                <View style={styles.itemDetails}>
+                  <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
+                  <Text style={styles.itemShop}>{item.shop_name}</Text>
                   
-                  <View style={styles.itemDetails}>
-                    <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-                    <Text style={styles.itemShop}>{item.shop_name}</Text>
+                  <View style={styles.itemBottomRow}>
+                    <View>
+                      <Text style={styles.itemTotalPrice}>
+                        ₱{(item.price * item.quantity).toFixed(2)}
+                      </Text>
+                      <Text style={styles.itemEachPrice}>
+                        ₱{item.price.toFixed(2)} each
+                      </Text>
+                    </View>
                     
-                    <View style={styles.itemBottomRow}>
-                      <View>
-                        <Text style={styles.itemTotalPrice}>
-                          ₱{(item.price * item.quantity).toFixed(2)}
-                        </Text>
-                        <Text style={styles.itemEachPrice}>
-                          ₱{item.price.toFixed(2)} each
-                        </Text>
-                      </View>
-                      
-                      <View style={styles.itemQuantity}>
-                        <Text style={styles.quantityText}>Qty: {item.quantity}</Text>
-                      </View>
+                    <View style={styles.itemQuantity}>
+                      <Text style={styles.quantityText}>Qty: {item.quantity}</Text>
                     </View>
                   </View>
                 </View>
-              ))}
+              </View>
+            ))}
+          </View>
+        </View>
+
+        {/* Shipping Method */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <MaterialIcons name="local-shipping" size={24} color="#EA580C" />
+            </View>
+            <View>
+              <Text style={styles.sectionTitle}>Shipping Method</Text>
+              <Text style={styles.sectionSubtitle}>Choose how you want to receive your order</Text>
             </View>
           </View>
 
-          {/* Shipping Method */}
+          <View style={styles.shippingMethods}>
+            {shippingMethods.map((method) => {
+              const IconComponent = MaterialIcons;
+              const isSelected = formData.shippingMethod === method.name;
+              
+              return (
+                <TouchableOpacity
+                  key={method.id}
+                  style={[
+                    styles.shippingMethodCard,
+                    isSelected && styles.shippingMethodCardSelected
+                  ]}
+                  onPress={() => handleInputChange('shippingMethod', method.name)}
+                >
+                  <View style={styles.shippingMethodContent}>
+                    <View style={styles.shippingMethodLeft}>
+                      <IconComponent 
+                        name={method.icon as any} 
+                        size={24} 
+                        color={isSelected ? '#EA580C' : '#6B7280'} 
+                      />
+                      <View style={styles.shippingMethodInfo}>
+                        <Text style={[
+                          styles.shippingMethodName,
+                          isSelected && styles.shippingMethodNameSelected
+                        ]}>
+                          {method.name}
+                        </Text>
+                        <Text style={styles.shippingMethodDescription}>
+                          {method.description}
+                        </Text>
+                        <Text style={styles.shippingMethodDelivery}>
+                          Estimated delivery: {method.delivery}
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.shippingMethodRight}>
+                      <Text style={styles.shippingMethodCost}>
+                        {method.cost === 0 ? 'FREE' : `₱${method.cost.toFixed(2)}`}
+                      </Text>
+                      <View style={[
+                        styles.radioButton,
+                        isSelected && styles.radioButtonSelected
+                      ]} />
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Delivery Address (for Standard Delivery) */}
+        {formData.shippingMethod === 'Standard Delivery' && (
+          <View style={styles.sectionCard}>
+            <View style={styles.addressHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionTitle}>Delivery Address</Text>
+                <Text style={styles.sectionSubtitle}>Select where to deliver your order</Text>
+              </View>
+              <TouchableOpacity 
+                style={styles.manageButton}
+                onPress={() => router.push('/customer/create/add-address')}
+              >
+                <MaterialIcons name="edit" size={16} color="#374151" />
+                <Text style={styles.manageButtonText}>Manage</Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedAddress ? (
+              <View>
+                <TouchableOpacity
+                  style={[styles.addressCard, styles.addressCardSelected]}
+                  onPress={() => handleInputChange('selectedAddressId', selectedAddress.id)}
+                >
+                  <View style={styles.addressCardHeader}>
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.addressNameRow}>
+                        <Text style={styles.addressName}>{selectedAddress.recipient_name}</Text>
+                        {selectedAddress.is_default && (
+                          <View style={styles.defaultBadge}>
+                            <Text style={styles.defaultBadgeText}>Default</Text>
+                          </View>
+                        )}
+                        <Text style={styles.addressPhone}>{selectedAddress.recipient_phone}</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.addressRadio, styles.addressRadioSelected]} />
+                  </View>
+
+                  <Text style={styles.addressFull} numberOfLines={2}>
+                    {selectedAddress.full_address}
+                  </Text>
+
+                  {selectedAddress.instructions && (
+                    <Text style={styles.addressInstructions} numberOfLines={1}>
+                      📝 {selectedAddress.instructions}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => setIsAddressModalVisible(true)} style={{ marginTop: 8 }}>
+                  <Text style={styles.changeLink}>Change</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.noAddressContainer}>
+                <MaterialIcons name="location-off" size={48} color="#D1D5DB" />
+                <Text style={styles.noAddressTitle}>No Shipping Addresses</Text>
+                <Text style={styles.noAddressText}>
+                  You need to add a shipping address for delivery orders.
+                </Text>
+                <TouchableOpacity 
+                  style={styles.addAddressButton}
+                  onPress={() => router.push('/customer/create/add-address')}
+                >
+                  <MaterialIcons name="add" size={20} color="#FFFFFF" />
+                  <Text style={styles.addAddressText}>Add Shipping Address</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Pickup Location (for Pickup from Store) */}
+        {formData.shippingMethod === 'Pickup from Store' && shopAddresses.length > 0 && (
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionIcon}>
-                <MaterialIcons name="local-shipping" size={24} color="#EA580C" />
+                <MaterialIcons name="store" size={24} color="#EA580C" />
               </View>
               <View>
-                <Text style={styles.sectionTitle}>Shipping Method</Text>
-                <Text style={styles.sectionSubtitle}>Choose how you want to receive your order</Text>
+                <Text style={styles.sectionTitle}>Pickup Location</Text>
+                <Text style={styles.sectionSubtitle}>Where to pick up your order</Text>
               </View>
             </View>
 
-            <View style={styles.shippingMethods}>
-              {shippingMethods.map((method) => {
-                const IconComponent = MaterialIcons; // All shipping icons are MaterialIcons
-                const isSelected = formData.shippingMethod === method.name;
-                
-                return (
-                  <TouchableOpacity
-                    key={method.id}
-                    style={[
-                      styles.shippingMethodCard,
-                      isSelected && styles.shippingMethodCardSelected
-                    ]}
-                    onPress={() => handleInputChange('shippingMethod', method.name)}
-                  >
-                    <View style={styles.shippingMethodContent}>
-                      <View style={styles.shippingMethodLeft}>
-                        <IconComponent 
-                          name={method.icon as any} 
-                          size={24} 
-                          color={isSelected ? '#EA580C' : '#6B7280'} 
-                        />
-                        <View style={styles.shippingMethodInfo}>
-                          <Text style={[
-                            styles.shippingMethodName,
-                            isSelected && styles.shippingMethodNameSelected
-                          ]}>
-                            {method.name}
-                          </Text>
-                          <Text style={styles.shippingMethodDescription}>
-                            {method.description}
-                          </Text>
-                          <Text style={styles.shippingMethodDelivery}>
-                            Estimated delivery: {method.delivery}
-                          </Text>
-                        </View>
-                      </View>
-                      
-                      <View style={styles.shippingMethodRight}>
-                        <Text style={styles.shippingMethodCost}>
-                          {method.cost === 0 ? 'FREE' : `₱${method.cost.toFixed(2)}`}
-                        </Text>
-                        <View style={[
-                          styles.radioButton,
-                          isSelected && styles.radioButtonSelected
-                        ]} />
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
+            {shopAddresses.map((shop, index) => (
+              <View key={index} style={styles.pickupLocationCard}>
+                <View style={styles.pickupShopHeader}>
+                  <MaterialIcons name="storefront" size={20} color="#374151" />
+                  <Text style={styles.pickupShopName}>{shop.shop_name}</Text>
+                </View>
+                <Text style={styles.pickupAddress}>{shop.shop_address}</Text>
+                {shop.shop_contact_number && (
+                  <Text style={styles.pickupContact}>
+                    Contact: {shop.shop_contact_number}
+                  </Text>
+                )}
+              </View>
+            ))}
+            
+            <View style={styles.pickupInstructions}>
+              <MaterialIcons name="info" size={16} color="#EA580C" />
+              <Text style={styles.pickupInstructionsText}>
+                Orders are typically ready within 1-2 hours. Please bring your order confirmation when picking up.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Payment Method */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <MaterialIcons name="payment" size={24} color="#EA580C" />
+            </View>
+            <View>
+              <Text style={styles.sectionTitle}>Payment Method</Text>
+              <Text style={styles.sectionSubtitle}>Choose your preferred payment option</Text>
             </View>
           </View>
 
-          {/* Delivery Address (for Standard Delivery) */}
-          {formData.shippingMethod === 'Standard Delivery' && (
-            <View style={styles.sectionCard}>
-              <View style={styles.addressHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.sectionTitle}>Delivery Address</Text>
-                  <Text style={styles.sectionSubtitle}>Select where to deliver your order</Text>
-                </View>
-              </View>
-
-              {selectedAddress ? (
-                <View>
-                  <TouchableOpacity
-                    style={[styles.addressCard, styles.addressCardSelected]}
-                    onPress={() => handleInputChange('selectedAddressId', selectedAddress.id)}
-                  >
-                    <View style={styles.addressCardHeader}>
-                      <View style={{ flex: 1 }}>
-                        <View style={styles.addressNameRow}>
-                          <Text style={styles.addressName}>{selectedAddress.recipient_name}</Text>
-                          {selectedAddress.is_default && (
-                            <View style={styles.defaultBadge}>
-                              <Text style={styles.defaultBadgeText}>Default</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={styles.addressPhone}>{selectedAddress.recipient_phone}</Text>
-                      </View>
-                      <View style={[styles.addressRadio, styles.addressRadioSelected]} />
-                    </View>
-
-                    <Text style={styles.addressFull} numberOfLines={2}>
-                      {selectedAddress.full_address}
+          <View style={styles.paymentMethods}>
+            {paymentMethods.map((method) => {
+              const methodName = typeof method.name === 'function' 
+                ? method.name(formData.shippingMethod) 
+                : method.name;
+              const methodDescription = typeof method.description === 'function'
+                ? method.description(formData.shippingMethod)
+                : method.description;
+              const isSelected = formData.paymentMethod === methodName;
+              const IconComponent = method.iconSet === 'FontAwesome5' ? FontAwesome5 : 
+                                 method.iconSet === 'FontAwesome' ? FontAwesome : MaterialIcons;
+              
+              return (
+                <TouchableOpacity
+                  key={method.id}
+                  style={[
+                    styles.paymentMethodCard,
+                    isSelected && styles.paymentMethodCardSelected
+                  ]}
+                  onPress={() => handlePaymentMethodChange(method.id)}
+                >
+                  <View style={styles.paymentMethodIcon}>
+                    <IconComponent 
+                      name={method.icon as any} 
+                      size={20} 
+                      color={isSelected ? '#EA580C' : '#6B7280'} 
+                    />
+                  </View>
+                  
+                  <View style={styles.paymentMethodInfo}>
+                    <Text style={[
+                      styles.paymentMethodName,
+                      isSelected && styles.paymentMethodNameSelected
+                    ]}>
+                      {methodName}
                     </Text>
+                    <Text style={styles.paymentMethodDescription}>
+                      {methodDescription}
+                    </Text>
+                  </View>
+                  
+                  <View style={[
+                    styles.paymentRadio,
+                    isSelected && styles.paymentRadioSelected
+                  ]} />
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
 
-                    {selectedAddress.instructions && (
-                      <Text style={styles.addressInstructions} numberOfLines={1}>
-                        📝 {selectedAddress.instructions}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity onPress={() => setIsAddressModalVisible(true)} style={{ marginTop: 8 }}>
-                    <Text style={styles.changeLink}>Change</Text>
-                  </TouchableOpacity>
+        {/* Vouchers & Discounts */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionIcon}>
+              <MaterialIcons name="local-offer" size={24} color="#EA580C" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={styles.voucherHeaderRow}>
+                <View>
+                  <Text style={styles.sectionTitle}>Voucher & Discounts</Text>
+                  <Text style={styles.sectionSubtitle}>Apply a voucher code to save on your order</Text>
                 </View>
-              ) : (
-                <View style={styles.noAddressContainer}>
-                  <MaterialIcons name="location-off" size={48} color="#D1D5DB" />
-                  <Text style={styles.noAddressTitle}>No Shipping Addresses</Text>
-                  <Text style={styles.noAddressText}>
-                    You need to add a shipping address for delivery orders.
-                  </Text>
+                {allVouchers.length > 0 && (
                   <TouchableOpacity 
-                    style={styles.addAddressButton}
-                    onPress={() => router.push('/customer/create/add-address')}
+                    style={styles.viewAllButton}
+                    onPress={() => setIsVoucherModalVisible(true)}
                   >
-                    <MaterialIcons name="add" size={20} color="#FFFFFF" />
-                    <Text style={styles.addAddressText}>Add Shipping Address</Text>
+                    <Text style={styles.viewAllButtonText}>View All</Text>
                   </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          </View>
+
+          {appliedVoucher ? (
+            <View style={styles.appliedVoucherCard}>
+              <View style={styles.appliedVoucherHeader}>
+                <View style={styles.appliedVoucherIcon}>
+                  <MaterialIcons name="check-circle" size={24} color="#059669" />
+                </View>
+                <View style={styles.appliedVoucherInfo}>
+                  <View style={styles.voucherCodeRow}>
+                    <Text style={styles.appliedVoucherCode}>{appliedVoucher.code}</Text>
+                    {appliedVoucher.customer_tier && appliedVoucher.customer_tier !== 'all' && (
+                      getTierBadge(appliedVoucher.customer_tier)
+                    )}
+                  </View>
+                  <Text style={styles.appliedVoucherName}>{appliedVoucher.name}</Text>
+                  <Text style={styles.appliedVoucherDiscount}>
+                    -₱{summary.discount.toFixed(2)} discount applied
+                  </Text>
+                </View>
+                <TouchableOpacity 
+                  style={styles.removeVoucherButton}
+                  onPress={handleRemoveVoucher}
+                >
+                  <MaterialIcons name="close" size={20} color="#DC2626" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : !showVoucherInput ? (
+            <TouchableOpacity 
+              style={styles.enterVoucherButton}
+              onPress={() => setShowVoucherInput(true)}
+            >
+              <MaterialIcons name="local-offer" size={20} color="#EA580C" />
+              <Text style={styles.enterVoucherText}>Enter Voucher Code</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.voucherInputContainer}>
+              <View style={styles.voucherInputRow}>
+                <TextInput
+                  style={styles.voucherInput}
+                  placeholder="Enter voucher code (e.g., SUMMER2024)"
+                  placeholderTextColor="#9CA3AF"
+                  value={voucherCode}
+                  onChangeText={(text) => setVoucherCode(text.toUpperCase())}
+                  editable={!voucherLoading}
+                  autoCapitalize="characters"
+                />
+                <TouchableOpacity 
+                  style={[
+                    styles.applyVoucherButton,
+                    (!voucherCode.trim() || voucherLoading) && styles.applyVoucherButtonDisabled
+                  ]}
+                  onPress={handleApplyVoucher}
+                  disabled={!voucherCode.trim() || voucherLoading}
+                >
+                  {voucherLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.applyVoucherText}>Apply</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+              
+              {voucherError && (
+                <View style={styles.voucherErrorCard}>
+                  <MaterialIcons name="error-outline" size={20} color="#DC2626" />
+                  <Text style={styles.voucherErrorText}>{voucherError}</Text>
                 </View>
               )}
             </View>
           )}
 
-          {/* Pickup Location (for Pickup from Store) */}
-          {formData.shippingMethod === 'Pickup from Store' && shopAddresses.length > 0 && (
-            <View style={styles.sectionCard}>
-              <View style={styles.sectionHeader}>
-                <View style={styles.sectionIcon}>
-                  <MaterialIcons name="store" size={24} color="#EA580C" />
-                </View>
-                <View>
-                  <Text style={styles.sectionTitle}>Pickup Location</Text>
-                  <Text style={styles.sectionSubtitle}>Where to pick up your order</Text>
-                </View>
-              </View>
-
-              {shopAddresses.map((shop, index) => (
-                <View key={index} style={styles.pickupLocationCard}>
-                  <View style={styles.pickupShopHeader}>
-                    <MaterialIcons name="storefront" size={20} color="#374151" />
-                    <Text style={styles.pickupShopName}>{shop.shop_name}</Text>
-                  </View>
-                  <Text style={styles.pickupAddress}>{shop.shop_address}</Text>
-                  {shop.shop_contact_number && (
-                    <Text style={styles.pickupContact}>
-                      Contact: {shop.shop_contact_number}
+          {/* Show some available vouchers */}
+          {allVouchers.length > 0 && !appliedVoucher && (
+            <View style={styles.availableVouchersPreview}>
+              <Text style={styles.availableVouchersTitle}>
+                Available Vouchers ({allVouchers.length})
+              </Text>
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                style={styles.vouchersPreviewScroll}
+              >
+                {allVouchers.slice(0, 3).map((voucher, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.voucherPreviewCard}
+                    onPress={() => {
+                      setVoucherCode(voucher.code);
+                      handleApplyVoucher();
+                    }}
+                  >
+                    <View style={styles.voucherPreviewHeader}>
+                      <MaterialIcons 
+                        name={voucher.discount_type === 'percentage' ? 'percent' : 'attach-money'} 
+                        size={20} 
+                        color="#EA580C" 
+                      />
+                      <Text style={styles.voucherPreviewCode}>{voucher.code}</Text>
+                    </View>
+                    <Text style={styles.voucherPreviewDescription} numberOfLines={2}>
+                      {voucher.description}
                     </Text>
-                  )}
-                </View>
-              ))}
-              
-              <View style={styles.pickupInstructions}>
-                <MaterialIcons name="info" size={16} color="#EA580C" />
-                <Text style={styles.pickupInstructionsText}>
-                  Orders are typically ready within 1-2 hours. Please bring your order confirmation when picking up.
-                </Text>
-              </View>
+                    <Text style={styles.voucherPreviewSavings}>
+                      Save ₱{voucher.potential_savings.toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
           )}
+        </View>
 
-          {/* Vouchers & Discounts */}
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionIcon}>
-                <MaterialIcons name="local-offer" size={24} color="#EA580C" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={styles.voucherHeaderRow}>
-                  <View>
-                    <Text style={styles.sectionTitle}>Voucher & Discounts</Text>
-                    <Text style={styles.sectionSubtitle}>Apply a voucher code to save on your order</Text>
-                  </View>
-                  {allVouchers.length > 0 && (
-                    <TouchableOpacity 
-                      style={styles.viewAllButton}
-                      onPress={() => setIsVoucherModalVisible(true)}
-                    >
-                      <Text style={styles.viewAllButtonText}>View All</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
+        {/* Order Remarks */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Order Remarks (Optional)</Text>
+          <TextInput
+            style={styles.remarksInput}
+            placeholder="Any special instructions for this order? (Max 500 characters)"
+            placeholderTextColor="#9CA3AF"
+            value={formData.remarks}
+            onChangeText={(text) => handleInputChange('remarks', text)}
+            multiline
+            maxLength={500}
+          />
+          <Text style={styles.remarksCounter}>
+            {formData.remarks.length}/500 characters
+          </Text>
+        </View>
+
+        {/* Order Summary */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Order Summary</Text>
+          
+          <View style={styles.orderSummary}>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Subtotal ({checkoutData.checkout_items.length} items)</Text>
+              <Text style={styles.summaryValue}>₱{summary.subtotal.toFixed(2)}</Text>
             </View>
-
-            {appliedVoucher ? (
-              <View style={styles.appliedVoucherCard}>
-                <View style={styles.appliedVoucherHeader}>
-                  <View style={styles.appliedVoucherIcon}>
-                    <MaterialIcons name="check-circle" size={24} color="#059669" />
-                  </View>
-                  <View style={styles.appliedVoucherInfo}>
-                    <View style={styles.voucherCodeRow}>
-                      <Text style={styles.appliedVoucherCode}>{appliedVoucher.code}</Text>
-                      {appliedVoucher.customer_tier && appliedVoucher.customer_tier !== 'all' && (
-                        <View style={styles.tierBadge}>
-                          <Text style={styles.tierBadgeText}>{appliedVoucher.customer_tier}</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={styles.appliedVoucherName}>{appliedVoucher.name}</Text>
-                    <Text style={styles.appliedVoucherDiscount}>
-                      -₱{appliedVoucher.potential_savings.toFixed(2)} discount applied
-                    </Text>
-                  </View>
-                  <TouchableOpacity 
-                    style={styles.removeVoucherButton}
-                    onPress={handleRemoveVoucher}
-                  >
-                    <MaterialIcons name="close" size={20} color="#DC2626" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : !showVoucherInput ? (
-              <TouchableOpacity 
-                style={styles.enterVoucherButton}
-                onPress={() => setShowVoucherInput(true)}
-              >
-                <MaterialIcons name="local-offer" size={20} color="#EA580C" />
-                <Text style={styles.enterVoucherText}>Enter Voucher Code</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.voucherInputContainer}>
-                <View style={styles.voucherInputRow}>
-                  <TextInput
-                    style={styles.voucherInput}
-                    placeholder="Enter voucher code (e.g., SUMMER2024)"
-                    placeholderTextColor="#9CA3AF"
-                    value={voucherCode}
-                    onChangeText={(text) => setVoucherCode(text.toUpperCase())}
-                    editable={!voucherLoading}
-                    autoCapitalize="characters"
-                  />
-                  <TouchableOpacity 
-                    style={[
-                      styles.applyVoucherButton,
-                      (!voucherCode.trim() || voucherLoading) && styles.applyVoucherButtonDisabled
-                    ]}
-                    onPress={handleApplyVoucher}
-                    disabled={!voucherCode.trim() || voucherLoading}
-                  >
-                    {voucherLoading ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <Text style={styles.applyVoucherText}>Apply</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-                
-                {voucherError && (
-                  <View style={styles.voucherErrorCard}>
-                    <MaterialIcons name="error-outline" size={20} color="#DC2626" />
-                    <Text style={styles.voucherErrorText}>{voucherError}</Text>
-                  </View>
-                )}
+            
+            {appliedVoucher && (
+              <View style={styles.discountRow}>
+                <Text style={styles.discountLabel}>
+                  Discount {appliedVoucher.code}
+                  {appliedVoucher.customer_tier && appliedVoucher.customer_tier !== 'all' && (
+                    getTierBadge(appliedVoucher.customer_tier)
+                  )}
+                </Text>
+                <Text style={styles.discountValue}>-₱{summary.discount.toFixed(2)}</Text>
               </View>
             )}
+            
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Shipping</Text>
+              <Text style={styles.summaryValue}>
+                {summary.delivery === 0 ? 'FREE' : `₱${summary.delivery.toFixed(2)}`}
+              </Text>
+            </View>
+            
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Total</Text>
+              <View style={styles.totalRight}>
+                <Text style={styles.totalValue}>₱{summary.total.toFixed(2)}</Text>
+                <Text style={styles.totalVat}>Including VAT</Text>
+                {appliedVoucher && (
+                  <Text style={styles.savingsText}>
+                    You saved ₱{summary.discount.toFixed(2)} with {appliedVoucher.code}
+                  </Text>
+                )}
+                {!appliedVoucher && allVouchers.length > 0 && (
+                  <Text style={styles.savingsText}>
+                    💡 Apply a voucher to save up to ₱{Math.max(...allVouchers.map((v: any) => v.potential_savings || 0)).toFixed(2)}
+                  </Text>
+                )}
+              </View>
+            </View>
+          </View>
+        </View>
 
-            {/* Show some available vouchers */}
-            {allVouchers.length > 0 && !appliedVoucher && (
-              <View style={styles.availableVouchersPreview}>
-                <Text style={styles.availableVouchersTitle}>
-                  Available Vouchers ({allVouchers.length})
-                </Text>
+        {/* Terms and Conditions */}
+        <View style={styles.sectionCard}>
+          <TouchableOpacity 
+            style={styles.termsRow}
+            onPress={() => handleInputChange('agreeTerms', !formData.agreeTerms)}
+          >
+            <View style={[
+              styles.checkbox,
+              formData.agreeTerms && styles.checkboxChecked
+            ]}>
+              {formData.agreeTerms && (
+                <MaterialIcons name="check" size={16} color="#FFFFFF" />
+              )}
+            </View>
+            <Text style={styles.termsText}>
+              I agree to the Terms of Service and Privacy Policy
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Validation messages */}
+        {!formData.agreeTerms && (
+          <View style={styles.validationMessage}>
+            <MaterialIcons name="warning" size={16} color="#D97706" />
+            <Text style={styles.validationText}>
+              Please agree to the Terms of Service and Privacy Policy
+            </Text>
+          </View>
+        )}
+        
+        {formData.shippingMethod === 'Standard Delivery' && !formData.selectedAddressId && (
+          <View style={styles.validationMessage}>
+            <MaterialIcons name="warning" size={16} color="#D97706" />
+            <Text style={styles.validationText}>
+              Please select a shipping address for delivery
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+
+      {/* Footer with Place Order button */}
+      <View style={styles.footer}>
+        <View style={styles.orderSummaryFooter}>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Total</Text>
+            <Text style={styles.summaryValue}>₱{summary.total.toFixed(2)}</Text>
+          </View>
+          <Text style={styles.totalVat}>Including VAT</Text>
+        </View>
+        
+        <TouchableOpacity
+          style={[
+            styles.checkoutButton,
+            (!formData.agreeTerms || (formData.shippingMethod === 'Standard Delivery' && !formData.selectedAddressId) || processingOrder) &&
+              styles.checkoutButtonDisabled
+          ]}
+          onPress={handlePlaceOrder}
+          disabled={!formData.agreeTerms || (formData.shippingMethod === 'Standard Delivery' && !formData.selectedAddressId) || processingOrder}
+        >
+          {processingOrder ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={styles.checkoutButtonText}>{getPlaceOrderButtonText()}</Text>
+          )}
+        </TouchableOpacity>
+        
+        <View style={styles.footerNotes}>
+          <MaterialIcons name="security" size={14} color="#6B7280" />
+          <Text style={styles.footerNoteText}>Secure checkout • Your payment information is encrypted</Text>
+        </View>
+      </View>
+
+      {/* Address Selection Modal */}
+      <Modal
+        visible={isAddressModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsAddressModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Shipping Address</Text>
+              <TouchableOpacity 
+                onPress={() => setIsAddressModalVisible(false)}
+                style={styles.modalCloseButton}
+              >
+                <MaterialIcons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.modalContent}>
+              {checkoutData.shipping_addresses.map((address) => {
+                const isSelected = formData.selectedAddressId === address.id;
+                return (
+                  <TouchableOpacity
+                    key={address.id}
+                    style={[
+                      styles.modalAddressCard,
+                      isSelected && styles.modalAddressCardSelected
+                    ]}
+                    onPress={() => {
+                      handleInputChange('selectedAddressId', address.id);
+                      setIsAddressModalVisible(false);
+                    }}
+                  >
+                    <View style={styles.modalAddressHeader}>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.modalAddressNameRow}>
+                          <Text style={styles.modalAddressName}>{address.recipient_name}</Text>
+                          {address.is_default && (
+                            <View style={styles.modalDefaultBadge}>
+                              <Text style={styles.modalDefaultBadgeText}>Default</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={styles.modalAddressPhone}>{address.recipient_phone}</Text>
+                      </View>
+                      <View style={[
+                        styles.modalAddressRadio,
+                        isSelected && styles.modalAddressRadioSelected
+                      ]} />
+                    </View>
+                    
+                    <Text style={styles.modalAddressFull}>{address.full_address}</Text>
+                    
+                    {address.instructions && (
+                      <Text style={styles.modalAddressInstructions}>
+                        📝 {address.instructions}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+              
+              <TouchableOpacity 
+                style={styles.addNewAddressButton}
+                onPress={() => {
+                  setIsAddressModalVisible(false);
+                  router.push('/customer/create/add-address');
+                }}
+              >
+                <MaterialIcons name="add" size={24} color="#EA580C" />
+                <Text style={styles.addNewAddressText}>Add New Address</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Voucher Selection Modal */}
+      <Modal
+        visible={isVoucherModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsVoucherModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Available Vouchers</Text>
+              <TouchableOpacity 
+                onPress={() => setIsVoucherModalVisible(false)}
+                style={styles.modalCloseButton}
+              >
+                <MaterialIcons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.modalContent}>
+              {/* Voucher Categories */}
+              {checkoutData.available_vouchers.length > 0 && (
                 <ScrollView 
                   horizontal 
                   showsHorizontalScrollIndicator={false}
-                  style={styles.vouchersPreviewScroll}
+                  style={styles.voucherCategoryScroll}
                 >
-                  {allVouchers.slice(0, 3).map((voucher, index) => (
+                  <TouchableOpacity
+                    style={[
+                      styles.voucherCategoryButton,
+                      activeVoucherCategory === 'all' && styles.voucherCategoryButtonActive
+                    ]}
+                    onPress={() => setActiveVoucherCategory('all')}
+                  >
+                    <Text style={[
+                      styles.voucherCategoryText,
+                      activeVoucherCategory === 'all' && styles.voucherCategoryTextActive
+                    ]}>
+                      All Vouchers
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  {checkoutData.available_vouchers.map((category, index) => (
                     <TouchableOpacity
                       key={index}
-                      style={styles.voucherPreviewCard}
-                      onPress={() => {
-                        setVoucherCode(voucher.code);
-                        handleApplyVoucher();
-                      }}
+                      style={[
+                        styles.voucherCategoryButton,
+                        activeVoucherCategory === category.category && styles.voucherCategoryButtonActive
+                      ]}
+                      onPress={() => setActiveVoucherCategory(category.category)}
                     >
-                      <View style={styles.voucherPreviewHeader}>
-                        <MaterialIcons 
-                          name={voucher.discount_type === 'percentage' ? 'percent' : 'attach-money'} 
-                          size={20} 
-                          color="#EA580C" 
-                        />
-                        <Text style={styles.voucherPreviewCode}>{voucher.code}</Text>
-                      </View>
-                      <Text style={styles.voucherPreviewDescription} numberOfLines={2}>
-                        {voucher.description}
-                      </Text>
-                      <Text style={styles.voucherPreviewSavings}>
-                        Save ₱{voucher.potential_savings.toFixed(2)}
+                      <Text style={[
+                        styles.voucherCategoryText,
+                        activeVoucherCategory === category.category && styles.voucherCategoryTextActive
+                      ]}>
+                        {category.category.split(' ')[0]}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
-              </View>
-            )}
-          </View>
-
-          {/* Payment Method */}
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionIcon}>
-                <MaterialIcons name="payment" size={24} color="#EA580C" />
-              </View>
-              <View>
-                <Text style={styles.sectionTitle}>Payment Method</Text>
-                <Text style={styles.sectionSubtitle}>Choose your preferred payment option</Text>
-              </View>
-            </View>
-
-            <View style={styles.paymentMethods}>
-              {paymentMethods.map((method) => {
-                const methodName = typeof method.name === 'function' 
-                  ? method.name(formData.shippingMethod) 
-                  : method.name;
-                const isSelected = formData.paymentMethod === methodName;
-                const IconComponent = method.iconSet === 'FontAwesome5' ? FontAwesome5 : 
-                                   method.iconSet === 'FontAwesome' ? FontAwesome : MaterialIcons;
-                
-                return (
-                  <TouchableOpacity
-                    key={method.id}
-                    style={[
-                      styles.paymentMethodCard,
-                      isSelected && styles.paymentMethodCardSelected
-                    ]}
-                    onPress={() => handlePaymentMethodChange(method.id)}
-                  >
-                    <View style={styles.paymentMethodIcon}>
-                      <IconComponent 
-                        name={method.icon as any} 
-                        size={20} 
-                        color={isSelected ? '#EA580C' : '#6B7280'} 
-                      />
-                    </View>
-                    
-                    <View style={styles.paymentMethodInfo}>
-                      <Text style={[
-                        styles.paymentMethodName,
-                        isSelected && styles.paymentMethodNameSelected
-                      ]}>
-                        {methodName}
-                      </Text>
-                      <Text style={styles.paymentMethodDescription}>
-                        {typeof method.description === 'function' 
-                          ? method.description(formData.shippingMethod) 
-                          : method.description}
-                      </Text>
-                    </View>
-                    
-                    <View style={[
-                      styles.paymentRadio,
-                      isSelected && styles.paymentRadioSelected
-                    ]} />
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* E-wallet details */}
-            {currentPaymentMethod?.requiresDetails && (
-              <View style={styles.ewalletDetailsCard}>
-                <View style={styles.ewalletHeader}>
-                  <MaterialIcons name="smartphone" size={20} color="#EA580C" />
-                  <Text style={styles.ewalletTitle}>
-                    {currentPaymentMethodName} Details
-                  </Text>
-                </View>
-                
-                <Text style={styles.ewalletDescription}>
-                  Please provide your {currentPaymentMethodName} account information for payment verification.
-                </Text>
-
-                <View style={styles.ewalletForm}>
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>
-                      {currentPaymentMethod.placeholder.name}
-                    </Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder={currentPaymentMethod.placeholder.name}
-                      placeholderTextColor="#9CA3AF"
-                      value={formData.ewalletName}
-                      onChangeText={(text) => handleInputChange('ewalletName', text)}
-                    />
-                  </View>
-
-                  {currentPaymentMethod.id !== 'paypal' && (
-                    <View style={styles.formGroup}>
-                      <Text style={styles.formLabel}>
-                        {currentPaymentMethod.placeholder.number}
-                      </Text>
-                      <TextInput
-                        style={styles.formInput}
-                        placeholder={currentPaymentMethod.placeholder.number}
-                        placeholderTextColor="#9CA3AF"
-                        value={formData.ewalletNumber}
-                        onChangeText={(text) => handleInputChange('ewalletNumber', text)}
-                        keyboardType="phone-pad"
-                      />
-                    </View>
-                  )}
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>
-                      {currentPaymentMethod.placeholder.email}
-                    </Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder={currentPaymentMethod.placeholder.email}
-                      placeholderTextColor="#9CA3AF"
-                      value={formData.ewalletEmail}
-                      onChangeText={(text) => handleInputChange('ewalletEmail', text)}
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.securityNote}>
-                  <MaterialIcons name="security" size={16} color="#059669" />
-                  <Text style={styles.securityText}>
-                    Your payment information is secure and encrypted.
-                  </Text>
-                </View>
-              </View>
-            )}
-          </View>
-
-          {/* Order Remarks */}
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Order Remarks (Optional)</Text>
-            <TextInput
-              style={styles.remarksInput}
-              placeholder="Any special instructions for this order? (Max 500 characters)"
-              placeholderTextColor="#9CA3AF"
-              value={formData.remarks}
-              onChangeText={(text) => handleInputChange('remarks', text)}
-              multiline
-              maxLength={500}
-            />
-            <Text style={styles.remarksCounter}>
-              {formData.remarks.length}/500 characters
-            </Text>
-          </View>
-
-          {/* Terms and Conditions */}
-          <View style={styles.sectionCard}>
-            <TouchableOpacity 
-              style={styles.termsRow}
-              onPress={() => handleInputChange('agreeTerms', !formData.agreeTerms)}
-            >
-              <View style={[
-                styles.checkbox,
-                formData.agreeTerms && styles.checkboxChecked
-              ]}>
-                {formData.agreeTerms && (
-                  <MaterialIcons name="check" size={16} color="#FFFFFF" />
-                )}
-              </View>
-              <Text style={styles.termsText}>
-                I agree to the Terms of Service and Privacy Policy
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Validation messages */}
-          {!formData.agreeTerms && (
-            <View style={styles.validationMessage}>
-              <MaterialIcons name="warning" size={16} color="#D97706" />
-              <Text style={styles.validationText}>
-                Please agree to the Terms of Service and Privacy Policy
-              </Text>
-            </View>
-          )}
-          
-          {currentPaymentMethod?.requiresDetails && !isEwalletFieldsValid() && (
-            <View style={styles.validationMessage}>
-              <MaterialIcons name="warning" size={16} color="#D97706" />
-              <Text style={styles.validationText}>
-                Please fill in all required {currentPaymentMethodName} details
-              </Text>
-            </View>
-          )}
-          
-          {formData.shippingMethod === 'Standard Delivery' && !formData.selectedAddressId && (
-            <View style={styles.validationMessage}>
-              <MaterialIcons name="warning" size={16} color="#D97706" />
-              <Text style={styles.validationText}>
-                Please select a shipping address for delivery
-              </Text>
-            </View>
-          )}
-
-          {/* Compact total summary */}
-          <View style={styles.compactSummaryContainer}>
-            <View style={styles.compactSummaryRow}>
-              <Text style={styles.compactSummaryLabel}>Total</Text>
-              <Text style={styles.compactSummaryAmount}>₱{total.toFixed(2)}</Text>
-            </View>
-            <Text style={styles.compactSummaryVat}>Including VAT</Text>
-          </View>
-
-        </ScrollView>
-
-        {/* Footer with compact Place Order button */}
-        <View style={styles.footer}>
-          <TouchableOpacity
-            style={[
-              styles.placeOrderButton,
-              (!formData.agreeTerms || !formData.selectedAddressId || !isEwalletFieldsValid() || processingOrder) &&
-                styles.placeOrderButtonDisabled
-            ]}
-            onPress={handlePlaceOrder}
-            disabled={!formData.agreeTerms || !formData.selectedAddressId || !isEwalletFieldsValid() || processingOrder}
-          >
-            {processingOrder ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Text style={styles.placeOrderButtonText}>Place Order</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Address Selection Modal */}
-        <Modal
-          visible={isAddressModalVisible}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => setIsAddressModalVisible(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Select Shipping Address</Text>
-                <TouchableOpacity 
-                  onPress={() => setIsAddressModalVisible(false)}
-                  style={styles.modalCloseButton}
-                >
-                  <MaterialIcons name="close" size={24} color="#374151" />
-                </TouchableOpacity>
-              </View>
+              )}
               
-              <ScrollView style={styles.modalContent}>
-                {checkoutData.shipping_addresses.map((address) => {
-                  const isSelected = formData.selectedAddressId === address.id;
-                  return (
-                    <TouchableOpacity
-                      key={address.id}
-                      style={[
-                        styles.modalAddressCard,
-                        isSelected && styles.modalAddressCardSelected
-                      ]}
-                      onPress={() => {
-                        handleInputChange('selectedAddressId', address.id);
-                        setIsAddressModalVisible(false);
-                      }}
-                    >
-                      <View style={styles.modalAddressHeader}>
-                        <View style={{ flex: 1 }}>
-                          <View style={styles.modalAddressNameRow}>
-                            <Text style={styles.modalAddressName}>{address.recipient_name}</Text>
-                            {address.is_default && (
-                              <View style={styles.modalDefaultBadge}>
-                                <Text style={styles.modalDefaultBadgeText}>Default</Text>
+              {/* Vouchers List */}
+              {loadingVouchers ? (
+                <View style={styles.loadingVouchers}>
+                  <ActivityIndicator size="large" color="#EA580C" />
+                  <Text style={styles.loadingVouchersText}>Loading vouchers...</Text>
+                </View>
+              ) : filteredVouchers.length > 0 ? (
+                filteredVouchers.map((voucher, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.modalVoucherCard}
+                    onPress={() => {
+                      setVoucherCode(voucher.code);
+                      handleApplyVoucher();
+                    }}
+                  >
+                    <View style={styles.modalVoucherHeader}>
+                      <View style={styles.modalVoucherLeft}>
+                        <View style={styles.modalVoucherIcon}>
+                          {voucher.discount_type === 'percentage' ? (
+                            <MaterialIcons name="percent" size={24} color="#EA580C" />
+                          ) : (
+                            <MaterialIcons name="attach-money" size={24} color="#EA580C" />
+                          )}
+                        </View>
+                        <View style={styles.modalVoucherInfo}>
+                          <View style={styles.modalVoucherCodeRow}>
+                            <Text style={styles.modalVoucherCode}>{voucher.code}</Text>
+                            {voucher.is_recommended && (
+                              <View style={styles.recommendedBadge}>
+                                <MaterialIcons name="bolt" size={12} color="#FFFFFF" />
+                                <Text style={styles.recommendedBadgeText}>Recommended</Text>
                               </View>
                             )}
+                            {voucher.customer_tier && voucher.customer_tier !== 'all' && (
+                              getTierBadge(voucher.customer_tier)
+                            )}
                           </View>
-                          <Text style={styles.modalAddressPhone}>{address.recipient_phone}</Text>
+                          <Text style={styles.modalVoucherName}>{voucher.name}</Text>
+                          <Text style={styles.modalVoucherDescription}>{voucher.description}</Text>
+                          
+                          <View style={styles.modalVoucherDetails}>
+                            <View style={styles.modalVoucherDetail}>
+                              <MaterialIcons name="store" size={14} color="#6B7280" />
+                              <Text style={styles.modalVoucherDetailText}>{voucher.shop_name}</Text>
+                            </View>
+                            <View style={styles.modalVoucherDetail}>
+                              <Text style={styles.modalVoucherDetailText}>
+                                Min: ₱{voucher.minimum_spend.toFixed(2)}
+                              </Text>
+                            </View>
+                          </View>
                         </View>
-                        <View style={[
-                          styles.modalAddressRadio,
-                          isSelected && styles.modalAddressRadioSelected
-                        ]} />
                       </View>
                       
-                      <Text style={styles.modalAddressFull}>{address.full_address}</Text>
-                      
-                      {address.instructions && (
-                        <Text style={styles.modalAddressInstructions}>
-                          📝 {address.instructions}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-                
-                <TouchableOpacity 
-                  style={styles.addNewAddressButton}
-                  onPress={() => {
-                    setIsAddressModalVisible(false);
-                    router.push('/customer/create/add-address');
-                  }}
-                >
-                  <MaterialIcons name="add" size={24} color="#EA580C" />
-                  <Text style={styles.addNewAddressText}>Add New Address</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Voucher Selection Modal */}
-        <Modal
-          visible={isVoucherModalVisible}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => setIsVoucherModalVisible(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Available Vouchers</Text>
-                <TouchableOpacity 
-                  onPress={() => setIsVoucherModalVisible(false)}
-                  style={styles.modalCloseButton}
-                >
-                  <MaterialIcons name="close" size={24} color="#374151" />
-                </TouchableOpacity>
-              </View>
-              
-              <ScrollView style={styles.modalContent}>
-                {/* Voucher Categories */}
-                {checkoutData.available_vouchers.length > 0 && (
-                  <ScrollView 
-                    horizontal 
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.voucherCategoryScroll}
-                  >
-                    <TouchableOpacity
-                      style={[
-                        styles.voucherCategoryButton,
-                        activeVoucherCategory === 'all' && styles.voucherCategoryButtonActive
-                      ]}
-                      onPress={() => setActiveVoucherCategory('all')}
-                    >
-                      <Text style={[
-                        styles.voucherCategoryText,
-                        activeVoucherCategory === 'all' && styles.voucherCategoryTextActive
-                      ]}>
-                        All Vouchers
-                      </Text>
-                    </TouchableOpacity>
-                    
-                    {checkoutData.available_vouchers.map((category, index) => (
-                      <TouchableOpacity
-                        key={index}
-                        style={[
-                          styles.voucherCategoryButton,
-                          activeVoucherCategory === category.category && styles.voucherCategoryButtonActive
-                        ]}
-                        onPress={() => setActiveVoucherCategory(category.category)}
-                      >
-                        <Text style={[
-                          styles.voucherCategoryText,
-                          activeVoucherCategory === category.category && styles.voucherCategoryTextActive
-                        ]}>
-                          {category.category.split(' ')[0]}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                )}
-                
-                {/* Vouchers List */}
-                {loadingVouchers ? (
-                  <View style={styles.loadingVouchers}>
-                    <ActivityIndicator size="large" color="#EA580C" />
-                    <Text style={styles.loadingVouchersText}>Loading vouchers...</Text>
-                  </View>
-                ) : filteredVouchers.length > 0 ? (
-                  filteredVouchers.map((voucher, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      style={styles.modalVoucherCard}
-                      onPress={() => {
-                        setVoucherCode(voucher.code);
-                        handleApplyVoucher();
-                      }}
-                    >
-                      <View style={styles.modalVoucherHeader}>
-                        <View style={styles.modalVoucherLeft}>
-                          <View style={styles.modalVoucherIcon}>
-                            {voucher.discount_type === 'percentage' ? (
-                              <MaterialIcons name="percent" size={24} color="#EA580C" />
-                            ) : (
-                              <MaterialIcons name="attach-money" size={24} color="#EA580C" />
-                            )}
-                          </View>
-                          <View style={styles.modalVoucherInfo}>
-                            <View style={styles.modalVoucherCodeRow}>
-                              <Text style={styles.modalVoucherCode}>{voucher.code}</Text>
-                              {voucher.is_recommended && (
-                                <View style={styles.recommendedBadge}>
-                                  <MaterialIcons name="bolt" size={12} color="#FFFFFF" />
-                                  <Text style={styles.recommendedBadgeText}>Recommended</Text>
-                                </View>
-                              )}
-                              {voucher.customer_tier && voucher.customer_tier !== 'all' && (
-                                <View style={[
-                                  styles.tierBadge,
-                                  voucher.customer_tier === 'platinum' && styles.tierBadgePlatinum,
-                                  voucher.customer_tier === 'gold' && styles.tierBadgeGold,
-                                  voucher.customer_tier === 'silver' && styles.tierBadgeSilver,
-                                ]}>
-                                  <Text style={styles.tierBadgeText}>{voucher.customer_tier}</Text>
-                                </View>
-                              )}
-                            </View>
-                            <Text style={styles.modalVoucherName}>{voucher.name}</Text>
-                            <Text style={styles.modalVoucherDescription}>{voucher.description}</Text>
-                            
-                            <View style={styles.modalVoucherDetails}>
-                              <View style={styles.modalVoucherDetail}>
-                                <MaterialIcons name="store" size={14} color="#6B7280" />
-                                <Text style={styles.modalVoucherDetailText}>{voucher.shop_name}</Text>
-                              </View>
-                              <View style={styles.modalVoucherDetail}>
-                                <Text style={styles.modalVoucherDetailText}>
-                                  Min: ₱{voucher.minimum_spend.toFixed(2)}
-                                </Text>
-                              </View>
-                            </View>
-                          </View>
+                      <View style={styles.modalVoucherRight}>
+                        <View style={styles.modalVoucherDiscount}>
+                          <Text style={styles.modalVoucherDiscountValue}>
+                            {voucher.discount_type === 'percentage' 
+                              ? `${voucher.value}%` 
+                              : `₱${voucher.value}`}
+                          </Text>
+                          <Text style={styles.modalVoucherDiscountLabel}>OFF</Text>
                         </View>
                         
-                        <View style={styles.modalVoucherRight}>
-                          <View style={styles.modalVoucherDiscount}>
-                            <Text style={styles.modalVoucherDiscountValue}>
-                              {voucher.discount_type === 'percentage' 
-                                ? `${voucher.value}%` 
-                                : `₱${voucher.value}`}
-                            </Text>
-                            <Text style={styles.modalVoucherDiscountLabel}>OFF</Text>
-                          </View>
-                          
-                          {voucher.potential_savings > 0 && (
-                            <Text style={styles.modalVoucherSavings}>
-                              Save ₱{voucher.potential_savings.toFixed(2)}
-                            </Text>
-                          )}
-                          
-                          <TouchableOpacity 
-                            style={styles.modalApplyButton}
-                            onPress={() => {
-                              setVoucherCode(voucher.code);
-                              handleApplyVoucher();
-                            }}
-                          >
-                            <Text style={styles.modalApplyButtonText}>Apply</Text>
-                          </TouchableOpacity>
-                        </View>
+                        {voucher.potential_savings > 0 && (
+                          <Text style={styles.modalVoucherSavings}>
+                            Save ₱{voucher.potential_savings.toFixed(2)}
+                          </Text>
+                        )}
+                        
+                        <TouchableOpacity 
+                          style={styles.modalApplyButton}
+                          onPress={() => {
+                            setVoucherCode(voucher.code);
+                            handleApplyVoucher();
+                          }}
+                        >
+                          <Text style={styles.modalApplyButtonText}>Apply</Text>
+                        </TouchableOpacity>
                       </View>
-                    </TouchableOpacity>
-                  ))
-                ) : (
-                  <View style={styles.noVouchersContainer}>
-                    <MaterialIcons name="local-offer" size={48} color="#D1D5DB" />
-                    <Text style={styles.noVouchersTitle}>No Vouchers Available</Text>
-                    <Text style={styles.noVouchersText}>
-                      No vouchers available for your current order amount.
-                    </Text>
-                  </View>
-                )}
-              </ScrollView>
-            </View>
+                    </View>
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <View style={styles.noVouchersContainer}>
+                  <MaterialIcons name="local-offer" size={48} color="#D1D5DB" />
+                  <Text style={styles.noVouchersTitle}>No Vouchers Available</Text>
+                  <Text style={styles.noVouchersText}>
+                    No vouchers available for your current order amount.
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
           </View>
-        </Modal>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1597,7 +1596,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
-  headerSafeArea: { backgroundColor: '#FFF', paddingTop: Platform.OS === 'android' ? 40 : 0 } ,
+  headerSafeArea: { 
+    backgroundColor: '#FFF', 
+    paddingTop: Platform.OS === 'android' ? 40 : 0 
+  },
   backButton: {
     padding: 8,
   },
@@ -1803,6 +1805,7 @@ const styles = StyleSheet.create({
   addressHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 12,
   },
   manageButton: {
@@ -1820,17 +1823,11 @@ const styles = StyleSheet.create({
     color: '#374151',
     fontWeight: '500',
   },
-  addressesScroll: {
-    marginHorizontal: -16,
-    paddingHorizontal: 16,
-  },
   addressCard: {
-    width: 280,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 8,
     padding: 12,
-    marginRight: 12,
   },
   addressCardSelected: {
     borderColor: '#EA580C',
@@ -1845,6 +1842,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginBottom: 4,
   },
   addressName: {
     fontSize: 14,
@@ -1865,7 +1863,6 @@ const styles = StyleSheet.create({
   addressPhone: {
     fontSize: 12,
     color: '#6B7280',
-    marginTop: 2,
   },
   addressRadio: {
     width: 18,
@@ -1888,6 +1885,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6B7280',
     fontStyle: 'italic',
+  },
+  changeLink: {
+    color: '#3B82F6',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'right',
+    marginTop: 8,
   },
   noAddressContainer: {
     alignItems: 'center',
@@ -1962,6 +1966,57 @@ const styles = StyleSheet.create({
     color: '#92400E',
     lineHeight: 16,
   },
+  paymentMethods: {
+    gap: 12,
+  },
+  paymentMethodCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    padding: 16,
+  },
+  paymentMethodCardSelected: {
+    borderColor: '#EA580C',
+    backgroundColor: '#FFF7ED',
+  },
+  paymentMethodIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  paymentMethodInfo: {
+    flex: 1,
+  },
+  paymentMethodName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  paymentMethodNameSelected: {
+    color: '#EA580C',
+  },
+  paymentMethodDescription: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  paymentRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+  },
+  paymentRadioSelected: {
+    borderColor: '#EA580C',
+    backgroundColor: '#EA580C',
+  },
   voucherHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2022,10 +2077,18 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   tierBadge: {
-    backgroundColor: '#D97706',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+  },
+  tierBadgePlatinum: {
+    backgroundColor: '#92400E',
+  },
+  tierBadgeGold: {
+    backgroundColor: '#D97706',
+  },
+  tierBadgeSilver: {
+    backgroundColor: '#6B7280',
   },
   tierBadgeText: {
     fontSize: 10,
@@ -2141,115 +2204,6 @@ const styles = StyleSheet.create({
     color: '#059669',
     fontWeight: '600',
   },
-  paymentMethods: {
-    gap: 12,
-  },
-  paymentMethodCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    padding: 16,
-  },
-  paymentMethodCardSelected: {
-    borderColor: '#EA580C',
-    backgroundColor: '#FFF7ED',
-  },
-  paymentMethodIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  paymentMethodInfo: {
-    flex: 1,
-  },
-  paymentMethodName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  paymentMethodNameSelected: {
-    color: '#EA580C',
-  },
-  paymentMethodDescription: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  paymentRadio: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
-  },
-  paymentRadioSelected: {
-    borderColor: '#EA580C',
-    backgroundColor: '#EA580C',
-  },
-  ewalletDetailsCard: {
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    borderRadius: 8,
-    padding: 16,
-    backgroundColor: '#FFFBEB',
-  },
-  ewalletHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  ewalletTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#92400E',
-  },
-  ewalletDescription: {
-    fontSize: 12,
-    color: '#92400E',
-    marginBottom: 16,
-  },
-  ewalletForm: {
-    gap: 12,
-  },
-  formGroup: {
-    gap: 4,
-  },
-  formLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  formInput: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#111827',
-  },
-  securityNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 16,
-    padding: 12,
-    backgroundColor: '#F0FDF4',
-    borderRadius: 6,
-  },
-  securityText: {
-    flex: 1,
-    fontSize: 11,
-    color: '#065F46',
-  },
   remarksInput: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
@@ -2267,47 +2221,6 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'right',
     marginTop: 4,
-  },
-  termsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  checkboxChecked: {
-    backgroundColor: '#EA580C',
-    borderColor: '#EA580C',
-  },
-  termsText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#374151',
-  },
-  footer: {
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 10,
-    paddingHorizontal: 0,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 8,
-      },
-    }),
   },
   orderSummary: {
     gap: 8,
@@ -2377,6 +2290,50 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
   },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  checkboxChecked: {
+    backgroundColor: '#EA580C',
+    borderColor: '#EA580C',
+  },
+  termsText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#374151',
+  },
+  footer: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
+  },
+  orderSummaryFooter: {
+    marginBottom: 16,
+  },
   checkoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2384,7 +2341,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#EA580C',
     paddingVertical: 16,
     borderRadius: 12,
-    gap: 8,
   },
   checkoutButtonDisabled: {
     backgroundColor: '#9CA3AF',
@@ -2532,11 +2488,6 @@ const styles = StyleSheet.create({
     color: '#EA580C',
     fontWeight: '600',
   },
-  changeLink: {
-    color: '#3B82F6',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   voucherCategoryScroll: {
     marginHorizontal: -20,
     paddingHorizontal: 20,
@@ -2616,15 +2567,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '600',
   },
-  tierBadgePlatinum: {
-    backgroundColor: '#92400E',
-  },
-  tierBadgeGold: {
-    backgroundColor: '#D97706',
-  },
-  tierBadgeSilver: {
-    backgroundColor: '#6B7280',
-  },
   modalVoucherName: {
     fontSize: 13,
     color: '#374151',
@@ -2699,63 +2641,5 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     paddingHorizontal: 20,
-  },
-
-  compactSummaryContainer: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    alignItems: 'flex-start',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.03,
-        shadowRadius: 2,
-      },
-      android: {
-        elevation: 1,
-      },
-    }),
-  },
-  compactSummaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    alignItems: 'center',
-  },
-  compactSummaryLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '500',
-  },
-  compactSummaryAmount: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  compactSummaryVat: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 4,
-  },
-  placeOrderButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#111827',
-    paddingVertical: 12,
-    borderRadius: 10,
-    marginHorizontal: 16,
-  },
-  placeOrderButtonDisabled: {
-    backgroundColor: '#9CA3AF',
-  },
-  placeOrderButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
   },
 });
