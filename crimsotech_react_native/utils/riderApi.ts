@@ -21,6 +21,7 @@ export interface DeliveryItem {
   status: string;
   distance_km?: number;
   estimated_minutes?: number;
+  delivery_fee?: number;
   order: {
     total_amount: number;
     delivery_address_text?: string;
