@@ -82,6 +82,7 @@ export default function CreateProductFormMobile() {
   const { userId, shopId } = useAuth();
   const generateId = () => Math.random().toString(36).substring(2) + Date.now().toString(36);
   const previousMediaCountRef = React.useRef(0);
+  const [productComparePrice, setProductComparePrice] = useState<string>('');
 
   // Form state
   const [productName, setProductName] = useState('');
@@ -377,6 +378,7 @@ export default function CreateProductFormMobile() {
       const sanitizeNumber = (s?: string) => String(s || '').replace(/,/g, '').replace(/[^0-9.\-]/g, '').trim();
       const rawQuantity = sanitizeNumber(productQuantity);
       const rawPrice = sanitizeNumber(productPrice);
+      const rawComparePrice = sanitizeNumber(productComparePrice);
 
       const formData = new FormData();
 
@@ -385,6 +387,9 @@ export default function CreateProductFormMobile() {
       formData.append('description', productDescription);
       formData.append('quantity', rawQuantity || '0');
       formData.append('price', rawPrice || '0');
+      if (rawComparePrice) {
+        formData.append('compare_price', rawComparePrice);
+      }
       formData.append('condition', productCondition);
       formData.append('shop', shopId);
       formData.append('status', 'active'); // match web behavior
@@ -558,33 +563,6 @@ export default function CreateProductFormMobile() {
             </View>
           </View>
 
-          {/* Quantity and Price in row */}
-          <View style={styles.row}>
-            <View style={[styles.inputGroup, styles.flex1, styles.marginRight]}>
-              <Text style={styles.label}>Quantity *</Text>
-              <TextInput
-                style={[styles.input, showPrediction && predictionResult && styles.inputSuccess]}
-                value={productQuantity}
-                onChangeText={setProductQuantity}
-                placeholder="0"
-                keyboardType="numeric"
-                placeholderTextColor="#9ca3af"
-              />
-            </View>
-
-            <View style={[styles.inputGroup, styles.flex1]}>
-              <Text style={styles.label}>Price *</Text>
-              <TextInput
-                style={[styles.input, showPrediction && predictionResult && styles.inputSuccess]}
-                value={productPrice}
-                onChangeText={setProductPrice}
-                placeholder="0.00"
-                keyboardType="decimal-pad"
-                placeholderTextColor="#9ca3af"
-              />
-            </View>
-          </View>
-
           {/* Description */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Description *</Text>
@@ -599,6 +577,10 @@ export default function CreateProductFormMobile() {
               placeholderTextColor="#9ca3af"
             />
           </View>
+
+          <Text style={styles.stepHint}>
+            Category prediction is image-based. Upload a cover image in Step 2 and tap "Analyze All Images".
+          </Text>
 
         </View>
       </View>
@@ -855,66 +837,103 @@ export default function CreateProductFormMobile() {
         </View>
       </View>
 
-      {/* Step 4: Refundable Option (for non-variant products) */}
+      {/* Step 4: Pricing & Stock (for non-variant products) */}
       {!showVariants && (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Step 4: Refund Options</Text>
-            <Text style={styles.cardDescription}>
-              Configure refund eligibility for this product
-            </Text>
-          </View>
-
-          <View style={styles.cardContent}>
-            <View style={styles.switchRow}>
-              <View style={styles.flex1}>
-                <Text style={styles.switchLabel}>Refundable</Text>
-                <Text style={styles.switchDescription}>
-                  Whether this product is eligible for refunds
-                </Text>
-              </View>
-              <Switch value={isRefundable} onValueChange={setIsRefundable} />
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* Step 5: Critical Stock Alert (for non-variant products) */}
-      {!showVariants && (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Step 5: Stock Alerts</Text>
-            <Text style={styles.cardDescription}>
-              Set up low stock notifications
-            </Text>
-          </View>
-
-          <View style={styles.cardContent}>
-            <View style={styles.switchRow}>
-              <View style={styles.flex1}>
-                <Text style={styles.switchLabel}>Critical Stock Trigger ⚠️</Text>
-                <Text style={styles.switchDescription}>
-                  Receive notification when stock is low
-                </Text>
-              </View>
-              <Switch value={enableCriticalTrigger} onValueChange={setEnableCriticalTrigger} />
+        <>
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Step 4: Pricing</Text>
+              <Text style={styles.cardDescription}>
+                Set the base price and compare price for the product
+              </Text>
             </View>
 
-            {enableCriticalTrigger && (
+            <View style={styles.cardContent}>
+              <View style={styles.row}>
+                <View style={[styles.inputGroup, styles.flex1, styles.marginRight]}>
+                  <Text style={styles.label}>Price *</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={productPrice}
+                    onChangeText={setProductPrice}
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+
+                <View style={[styles.inputGroup, styles.flex1]}>
+                  <Text style={styles.label}>Compare Price (Optional)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={productComparePrice}
+                    onChangeText={setProductComparePrice}
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.switchRow}>
+                <View style={styles.flex1}>
+                  <Text style={styles.switchLabel}>Refundable</Text>
+                  <Text style={styles.switchDescription}>
+                    Whether this product is eligible for refunds
+                  </Text>
+                </View>
+                <Switch value={isRefundable} onValueChange={setIsRefundable} />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Step 4: Stock</Text>
+              <Text style={styles.cardDescription}>
+                Set initial stock quantity and configure low stock alerts.
+              </Text>
+            </View>
+
+            <View style={styles.cardContent}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Critical Threshold</Text>
+                <Text style={styles.label}>Quantity *</Text>
                 <TextInput
                   style={styles.input}
-                  value={criticalThreshold}
-                  onChangeText={setCriticalThreshold}
-                  placeholder="e.g., 5"
+                  value={productQuantity}
+                  onChangeText={setProductQuantity}
+                  placeholder="0"
                   keyboardType="numeric"
                   placeholderTextColor="#9ca3af"
                 />
               </View>
-            )}
+
+              <View style={styles.switchRow}>
+                <View style={styles.flex1}>
+                  <Text style={styles.switchLabel}>Critical Stock Trigger ⚠️</Text>
+                  <Text style={styles.switchDescription}>
+                    Receive notification when stock is low
+                  </Text>
+                </View>
+                <Switch value={enableCriticalTrigger} onValueChange={setEnableCriticalTrigger} />
+              </View>
+
+              {enableCriticalTrigger && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Critical Threshold</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={criticalThreshold}
+                    onChangeText={setCriticalThreshold}
+                    placeholder="e.g., 5"
+                    keyboardType="numeric"
+                    placeholderTextColor="#9ca3af"
+                  />
+                </View>
+              )}
+            </View>
           </View>
-        </View>
+        </>
       )}
 
       {/* SKU Combinations (for variant products) */}
@@ -1265,6 +1284,10 @@ const styles = StyleSheet.create({
   },
   cardContent: {
     padding: 16,
+  },
+  stepHint: {
+    fontSize: 12,
+    color: '#6b7280',
   },
   inputGroup: {
     marginBottom: 16,

@@ -5,6 +5,8 @@ import uuid
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.contrib.contenttypes.models import ContentType
 
 class User(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -979,6 +981,29 @@ class Delivery(models.Model):
 
     def __str__(self):
         return f"Delivery {self.id} for Order {self.order.order}"
+
+class Proof(models.Model):
+    PROOF_TYPE_CHOICES = [
+        ('delivery', 'Delivery'),
+        ('seller', 'Seller'),
+        ('pickup', 'Pickup'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    delivery = models.ForeignKey(Delivery, on_delete=models.CASCADE)
+    proof_type = models.CharField(max_length=20, choices=PROOF_TYPE_CHOICES)
+    file_data = models.FileField(upload_to="delivery/proofs/")
+    file_type = models.CharField(max_length=50)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['delivery', 'uploaded_at']),
+            models.Index(fields=['uploaded_at']),
+        ]
+
+    def __str__(self):
+        return f"Proof {self.id} for Delivery {self.delivery.id}"
 
 class Payment(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -26,7 +26,7 @@ export default function SellerHeader({ title = 'My Shop', subtitle, onSettings, 
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.notificationButton}
-            onPress={() => (onNotifications ? onNotifications() : router.push('/seller/notifications' as any))}
+            onPress={() => (onNotifications ? onNotifications() : router.push('/seller/notification' as any))}
           >
             <Ionicons name="notifications-outline" size={22} color="#4F46E5" />
             {notificationsCount > 0 && (
