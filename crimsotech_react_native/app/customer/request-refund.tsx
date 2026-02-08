@@ -183,6 +183,7 @@ const refundMethods: RefundMethod[] = [
 
 const returnReasons = [
   'Product arrived damaged',
+  'Item not delivered / missing',
   'Wrong item received',
   'Item defective or not working',
   'Product not as described',
