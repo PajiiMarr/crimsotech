@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
-import { Search, Plus, Edit, Trash2, Eye, Store, Tag, MoreHorizontal, Package, AlertCircle } from "lucide-react";
+import { Search, Plus, Edit, Trash2, Eye, Store, Tag, MoreHorizontal, Package, AlertCircle, Loader2 } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import { type ColumnDef } from "@tanstack/react-table";
 import AxiosInstance from '~/components/axios/Axios';
@@ -88,7 +88,6 @@ interface ProductListResponse {
   };
 }
 
-// Add loader function to get session data
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
   await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
@@ -160,12 +159,10 @@ export default function SellerProductList() {
 
   const handleEditProduct = (productId: string) => {
     console.log('Edit product:', productId);
-    // Navigate to edit page or open edit modal
   };
 
   const handleViewProduct = (productId: string) => {
     console.log('View product:', productId);
-    // Navigate to product detail page
   };
 
   const handleDeleteProduct = async (productId: string) => {
@@ -174,11 +171,7 @@ export default function SellerProductList() {
     }
 
     try {
-      // Add your delete API call here
       console.log('Delete product:', productId);
-      // await AxiosInstance.delete(`/seller-products/${productId}/`);
-      
-      // Remove product from local state
       setProducts(prev => prev.filter(p => p.id !== productId));
     } catch (error) {
       console.error('Error deleting product:', error);
@@ -189,11 +182,6 @@ export default function SellerProductList() {
   const handleToggleStatus = async (productId: string, currentStatus: string) => {
     try {
       const newStatus = currentStatus.toLowerCase() === 'active' ? 'inactive' : 'active';
-      // Add your status update API call here
-      console.log('Toggle status:', productId, newStatus);
-      // await AxiosInstance.patch(`/seller-products/${productId}/`, { status: newStatus });
-      
-      // Update local state
       setProducts(prev => prev.map(p => 
         p.id === productId ? { ...p, status: newStatus } : p
       ));
@@ -240,11 +228,6 @@ export default function SellerProductList() {
     );
   };
 
-  const hasVariants = (product: Product) => {
-    return product.variants && product.variants.length > 0;
-  };
-
-  // Define columns for the data table
   const columns: ColumnDef<Product>[] = [
     {
       accessorKey: "name",
@@ -258,7 +241,9 @@ export default function SellerProductList() {
               <Tag className={`h-5 w-5 ${isRemoved ? 'text-red-600' : 'text-muted-foreground'}`} />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="font-medium truncate">{product.name}</div>
+              <div className="font-medium truncate">
+                {product.name}
+              </div>
               {isRemoved && (
                 <div className="flex items-center gap-1 mt-1">
                   <Badge variant="destructive" className="text-xs">
@@ -419,7 +404,6 @@ export default function SellerProductList() {
     },
   ];
 
-  // Configuration for filters
   const filterConfig = {
     status: {
       options: ["active", "inactive", "draft", "sold"],
@@ -441,7 +425,10 @@ export default function SellerProductList() {
         <div className="p-6">
           <Card>
             <CardContent className="p-6">
-              <div className="text-center">Loading products...</div>
+              <div className="text-center flex flex-col items-center gap-4">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                <div>Loading products...</div>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -494,7 +481,7 @@ export default function SellerProductList() {
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="p-4">
               <div className="text-2xl font-bold">{products.length}</div>
@@ -507,6 +494,14 @@ export default function SellerProductList() {
                 {products.filter(p => p.status.toLowerCase() === 'active').length}
               </div>
               <div className="text-sm text-muted-foreground">Active Products</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="text-2xl font-bold text-red-600">
+                {products.filter(p => p.is_removed).length}
+              </div>
+              <div className="text-sm text-muted-foreground">Removed Products</div>
             </CardContent>
           </Card>
           <Card>
@@ -554,7 +549,7 @@ export default function SellerProductList() {
                   defaultSorting={[
                     {
                       id: "created_at",
-                      desc: true, // Sort by newest first
+                      desc: true,
                     },
                   ]}
                 />

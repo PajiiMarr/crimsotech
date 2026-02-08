@@ -10,7 +10,9 @@ import {
   RotateCcw,
   Gift,
   Bell,
-  AlertTriangle
+  AlertTriangle,
+  Bolt,
+  Zap
 } from "lucide-react";
 
 import { Link, useLocation } from 'react-router'
@@ -44,6 +46,7 @@ export default function SellerSidebar() {
       children: [
         { title: "Dashboard", url: "/seller/dashboard", icon: Home },
         { title: "Products", url: "/seller/seller-product-list", icon: Package },
+        { title: "Boosts", url: "/seller/seller-boosts", icon: Zap },
         { title: "Orders", url: "/seller/seller-order-list", icon: ClipboardList },
         { title: "Gifts", url: "/seller/gift", icon: Gift },
       ],

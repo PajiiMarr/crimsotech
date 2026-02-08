@@ -72,6 +72,8 @@ export default [
     ...prefix("seller", [
         route("dashboard", "routes/seller/dashboard.tsx"), 
         route("seller-product-list", "routes/seller/seller-product-list.tsx"), 
+        route("seller-boosts", "routes/seller/seller-boosts.tsx"), 
+        route("seller-boosts/:boostPlanId", "routes/seller/select-boost/seller-select-boost-product.tsx"), 
         route("seller-create-product", "routes/seller/seller-create-product.tsx"), 
         route("seller-order-list", "routes/seller/seller-order-list.tsx"), 
         route("seller-return-refund-cancel", "routes/seller/seller-return-refund-cancel.tsx"), 
