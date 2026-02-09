@@ -20112,6 +20112,39 @@ class PurchasesBuyer(viewsets.ViewSet):
         return Response(order_data)
 
     
+    # Add: return rider info for an order
+    @action(detail=True, methods=['get'], url_path='get-rider-info')
+    def get_rider_info(self, request, pk=None):
+        """Return rider(s) assigned to deliveries for an order. URL: /purchases-buyer/{order_id}/get-rider-info/"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            order = Order.objects.get(order=pk, user=user)
+        except (User.DoesNotExist, Order.DoesNotExist):
+            return Response({'error': 'Order not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+
+        deliveries = Delivery.objects.filter(order=order).select_related('rider__rider')
+        riders_data = []
+        for delivery in deliveries:
+            rider_link = getattr(delivery, 'rider', None)
+            if rider_link and getattr(rider_link, 'rider', None):
+                r = rider_link.rider
+                riders_data.append({
+                    "id": str(r.id),
+                    "rider_id": str(r.id),
+                    "user": {
+                        "id": str(r.id),
+                        "first_name": r.first_name,
+                        "last_name": r.last_name,
+                        "phone": r.contact_number or ""
+                    }
+                })
+
+        return Response({"success": True, "order_id": str(order.order), "riders": riders_data})
+
     # These helper methods should be at the same level as get_delivery_proofs_for_customer
     def _get_status_display(self, status):
         status_map = {
