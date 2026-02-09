@@ -19349,7 +19349,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             }
         }
         
-        return Response(response_data)
+        return Response(response_data)\
     
     def _get_status_display(self, status):
         status_map = {
@@ -20111,6 +20111,31 @@ class PurchasesBuyer(viewsets.ViewSet):
         
         return Response(order_data)
 
+    
+    # These helper methods should be at the same level as get_delivery_proofs_for_customer
+    def _get_status_display(self, status):
+        status_map = {
+            'pending': 'Pending',
+            'processing': 'Processing',
+            'shipped': 'Shipped',
+            'delivered': 'Delivered',
+            'completed': 'Completed',
+            'cancelled': 'Cancelled',
+            'refunded': 'Refunded',
+        }
+        return status_map.get(status, status)
+    
+    def _get_status_color(self, status):
+        color_map = {
+            'pending': '#F59E0B',  # Amber
+            'processing': '#F59E0B',  # Amber
+            'shipped': '#3B82F6',  # Blue
+            'delivered': '#10B981',  # Green
+            'completed': '#10B981',  # Green
+            'cancelled': '#EF4444',  # Red
+            'refunded': '#EF4444',  # Red
+        }
+        return color_map.get(status, '#6B7280')
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
@@ -21171,6 +21196,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "updated_at": delivery.updated_at.isoformat(),
                 "time_elapsed": f"{hours}h {minutes}m",
                 "is_late": hours > 2 and delivery.status == 'pending',
+                "proofs_count": Proof.objects.filter(delivery=delivery).count(),
             }
             deliveries_data.append(delivery_info)
         
@@ -21508,6 +21534,272 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "delivered_at": delivery.delivered_at.isoformat(),
             }
         })
+
+    
+class ProofManagementViewSet(viewsets.ViewSet):
+    """ViewSet for managing delivery proofs"""
+    
+    def _get_rider(self, request):
+        """Get rider instance from authenticated user"""
+        try:
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return None
+            return Rider.objects.get(rider_id=user_id)
+        except (Rider.DoesNotExist, ValueError):
+            return None
+    
+    @action(detail=False, methods=['get'])
+    def get_delivery_proofs(self, request):
+        """
+        Get all proofs for a specific delivery (rider-facing)
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response({"success": False, "error": "Rider not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        delivery_id = request.GET.get('delivery_id')
+        if not delivery_id:
+            return Response({"success": False, "error": "delivery_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            delivery_uuid = uuid.UUID(str(delivery_id))
+        except (ValueError, AttributeError):
+            return Response({"success": False, "error": "Invalid delivery_id format"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            delivery = Delivery.objects.get(id=delivery_uuid, rider=rider)
+        except Delivery.DoesNotExist:
+            return Response({"success": False, "error": "Delivery not found or not assigned to you"}, status=status.HTTP_404_NOT_FOUND)
+        
+        proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+        proofs_data = []
+        for proof in proofs:
+            # Get file URL
+            file_url = None
+            if proof.file_data:
+                try:
+                    file_url = proof.file_data.url
+                    if file_url and file_url.startswith('/'):
+                        file_url = request.build_absolute_uri(file_url)
+                except Exception as e:
+                    print(f"Error getting file URL for proof {proof.id}: {e}")
+                    file_url = None
+            
+            file_name = None
+            if proof.file_data:
+                file_name = proof.file_data.name.split('/')[-1] if '/' in proof.file_data.name else proof.file_data.name
+            
+            proofs_data.append({
+                "id": str(proof.id),
+                "proof_type": proof.proof_type,
+                "file_type": proof.file_type,
+                "file_name": file_name or f"proof_{proof.id}",
+                "file_url": file_url,
+                "uploaded_at": proof.uploaded_at.isoformat(),
+                "delivery_id": str(proof.delivery.id)
+            })
+        
+        return Response({"success": True, "delivery_id": str(delivery.id), "total_proofs": len(proofs_data), "all_proofs": proofs_data})
+
+    @action(detail=False, methods=['get'], url_path='get_delivery_proofs_by_order')
+    def get_delivery_proofs_by_order(self, request):
+        """Get proofs by order_id (customer use). Expects ?order_id=<order_uuid>"""
+        order_id = request.GET.get('order_id')
+        if not order_id:
+            return Response({"success": False, "error": "order_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            order_uuid = uuid.UUID(str(order_id))
+        except (ValueError, AttributeError):
+            return Response({"success": False, "error": "Invalid order_id format"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            order = Order.objects.get(order=order_uuid)
+        except Order.DoesNotExist:
+            return Response({"success": False, "error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        proofs_qs = Proof.objects.filter(delivery__order=order).order_by('-uploaded_at')
+        proofs_data = []
+        for proof in proofs_qs:
+            file_url = None
+            if proof.file_data:
+                try:
+                    file_url = proof.file_data.url
+                    if file_url and file_url.startswith('/'):
+                        file_url = request.build_absolute_uri(file_url)
+                except Exception as e:
+                    print(f"Error getting file URL for proof {proof.id}: {e}")
+                    file_url = None
+            file_name = None
+            if proof.file_data:
+                file_name = proof.file_data.name.split('/')[-1] if '/' in proof.file_data.name else proof.file_data.name
+
+            proofs_data.append({
+                "id": str(proof.id),
+                "file_name": file_name,
+                "file_type": proof.file_type,
+                "file_url": file_url,
+                "uploaded_at": proof.uploaded_at.isoformat(),
+                "delivery_id": str(proof.delivery.id)
+            })
+
+        return Response({"success": True, "order_id": str(order_id), "total_proofs": len(proofs_data), "proofs": proofs_data})
+    
+    @action(detail=False, methods=['post'])
+    def upload_proofs(self, request):
+        """
+        Upload multiple proofs for a delivery with different types
+        Expects: delivery_id, proofs (list of files), proof_type (optional), notes (optional)
+        Can handle mixed proof types in one request
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        delivery_id = request.data.get('delivery_id')
+        if not delivery_id:
+            return Response(
+                {"success": False, "error": "delivery_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            delivery_uuid = uuid.UUID(str(delivery_id))
+        except (ValueError, AttributeError):
+            return Response(
+                {"success": False, "error": "Invalid delivery_id format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            delivery = Delivery.objects.get(id=delivery_uuid, rider=rider)
+        except Delivery.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Delivery not found or not assigned to you"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if delivery can accept proofs - allow adding proofs for delivered deliveries
+        if delivery.status in ['cancelled']:
+            return Response(
+                {"success": False, "error": "Cannot add proofs to cancelled deliveries"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        proof_files = request.FILES.getlist('proofs')
+        if not proof_files:
+            return Response(
+                {"success": False, "error": "At least one proof file is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get proof type (default to 'delivery')
+        proof_type = request.data.get('proof_type', 'delivery')
+        
+        # Validate proof type
+        valid_proof_types = ['delivery', 'seller', 'pickup']
+        if proof_type not in valid_proof_types:
+            return Response(
+                {"success": False, "error": f"Invalid proof type. Must be one of: {', '.join(valid_proof_types)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get notes (optional)
+        notes = request.data.get('notes', '')
+        
+        created_proofs = []
+        try:
+            with transaction.atomic():
+                for file in proof_files:
+                    # Get file type
+                    file_name = file.name
+                    file_extension = file_name.split('.')[-1].lower() if '.' in file_name else ''
+                    file_type = self._get_file_type(file_extension, file.content_type)
+                    
+                    # Create proof record
+                    proof = Proof.objects.create(
+                        delivery=delivery,
+                        proof_type=proof_type,
+                        file_data=file,
+                        file_type=file_type
+                    )
+                    
+                    created_proofs.append({
+                        "id": str(proof.id),
+                        "file_type": proof.file_type,
+                        "file_name": file.name,
+                        "file_size": file.size,
+                        "proof_type": proof.proof_type,
+                        "uploaded_at": proof.uploaded_at.isoformat(),
+                    })
+                
+                # Update delivery notes if provided
+                if notes:
+                    if delivery.notes:
+                        # Append to existing notes
+                        delivery.notes = f"{delivery.notes}\n\n[{timezone.now().strftime('%Y-%m-%d %H:%M:%S')}] Proof Uploaded: {notes}"
+                    else:
+                        delivery.notes = f"[{timezone.now().strftime('%Y-%m-%d %H:%M:%S')}] Proof Uploaded: {notes}"
+                    delivery.save()
+                
+                # Get total proofs count for this delivery
+                total_proofs = Proof.objects.filter(delivery=delivery).count()
+                
+                return Response({
+                    "success": True,
+                    "message": f"Successfully uploaded {len(created_proofs)} proof(s)",
+                    "proofs": created_proofs,
+                    "delivery": {
+                        "id": str(delivery.id),
+                        "status": delivery.status,
+                        "total_proofs": total_proofs
+                    }
+                }, status=status.HTTP_201_CREATED)
+                
+        except Exception as e:
+            # Rollback: Delete any created proofs if there's an error
+            for proof_data in created_proofs:
+                try:
+                    Proof.objects.filter(id=proof_data['id']).delete()
+                except:
+                    pass
+            
+            return Response({
+                "success": False,
+                "error": f"Failed to upload proofs: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _get_file_type(self, extension, content_type):
+        """Helper method to determine file type"""
+        image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic']
+        video_extensions = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv', 'webm', '3gp']
+        document_extensions = ['pdf', 'doc', 'docx', 'txt', 'rtf', 'odt']
+        
+        # Check by content type first (more reliable)
+        if content_type:
+            if 'image' in content_type:
+                return 'image'
+            elif 'video' in content_type:
+                return 'video'
+            elif 'pdf' in content_type:
+                return 'document'
+            elif 'msword' in content_type or 'officedocument' in content_type:
+                return 'document'
+            elif 'text/' in content_type:
+                return 'document'
+        
+        # Fall back to extension checking
+        if extension in image_extensions:
+            return 'image'
+        elif extension in video_extensions:
+            return 'video'
+        elif extension in document_extensions:
+            return 'document'
+        else:
+            return 'other'
+
 
 
 class SwapViewset(viewsets.ViewSet):
