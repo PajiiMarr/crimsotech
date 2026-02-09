@@ -1348,6 +1348,8 @@ class Refund(models.Model):
     processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_refunds')
     requested_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='requested_refunds')
     buyer_notified_at = models.DateTimeField(null=True, blank=True)
+    reject_reason_code = models.CharField(max_length=100, blank=True, null=True)
+    reject_reason_details = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
         indexes = [
