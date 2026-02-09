@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -10,23 +10,23 @@ import {
   StatusBar,
   Image,
   ActivityIndicator,
-} from 'react-native';
-import { Ionicons, Feather, MaterialIcons } from '@expo/vector-icons';
-import { useAuth } from '../../contexts/AuthContext';
-import { router, useNavigation } from 'expo-router';
-import RiderHeader from './includes/riderHeader';
-import { getRiderProfile } from '../../utils/riderApi';
+} from "react-native";
+import { Ionicons, Feather, MaterialIcons } from "@expo/vector-icons";
+import { useAuth } from "../../contexts/AuthContext";
+import { router, useNavigation } from "expo-router";
+import RiderHeader from "./includes/riderHeader";
+import { getRiderProfile } from "../../utils/riderApi";
 
 // --- Theme Colors ---
 const COLORS = {
-  primary: '#DC2626',
-  bg: '#FFFFFF',
-  card: '#FFFFFF',
-  text: '#1E293B',
-  subText: '#64748B',
-  border: '#E2E8F0',
-  danger: '#DC2626',
-  iconBg: '#FEE2E2',
+  primary: "#1F2937",
+  bg: "#FFFFFF",
+  card: "#FFFFFF",
+  text: "#1F2937",
+  subText: "#6B7280",
+  border: "#F3F4F6",
+  danger: "#EF4444",
+  iconBg: "#F3F4F6",
 };
 
 export default function SettingsPage() {
@@ -42,34 +42,38 @@ export default function SettingsPage() {
 
   const fetchProfile = async () => {
     if (!userId) return;
-    
+
     try {
       setLoading(true);
       const data = await getRiderProfile(userId);
       setProfileData(data);
     } catch (error: any) {
-      console.error('Error fetching profile:', error);
+      console.error("Error fetching profile:", error);
     } finally {
       setLoading(false);
     }
   };
 
   // Extract user data from profile
-  const userData = profileData ? {
-    name: `${profileData.user?.first_name || ''} ${profileData.user?.last_name || ''}`.trim() || 'Rider',
-    id: profileData.rider?.id || 'N/A',
-    email: profileData.user?.email || '',
-    avatar: profileData.user?.profile_picture || null,
-    phone: profileData.user?.contact_number || '',
-    verified: profileData.rider?.verified || false,
-  } : {
-    name: 'Rider',
-    id: 'N/A',
-    email: '',
-    avatar: null,
-    phone: '',
-    verified: false,
-  };
+  const userData = profileData
+    ? {
+        name:
+          `${profileData.user?.first_name || ""} ${profileData.user?.last_name || ""}`.trim() ||
+          "Rider",
+        id: profileData.rider?.id || "N/A",
+        email: profileData.user?.email || "",
+        avatar: profileData.user?.profile_picture || null,
+        phone: profileData.user?.contact_number || "",
+        verified: profileData.rider?.verified || false,
+      }
+    : {
+        name: "Rider",
+        id: "N/A",
+        email: "",
+        avatar: null,
+        phone: "",
+        verified: false,
+      };
 
   useEffect(() => {
     if (navigation && (navigation as any).setOptions) {
@@ -78,17 +82,17 @@ export default function SettingsPage() {
   }, [navigation]);
 
   const handleLogout = () => {
-    Alert.alert('Log Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert("Log Out", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
       {
-        text: 'Log Out',
-        style: 'destructive',
+        text: "Log Out",
+        style: "destructive",
         onPress: async () => {
           try {
             await clearAuthData();
-            router.replace('/(auth)/login');
+            router.replace("/(auth)/login");
           } catch (err) {
-            console.error('Logout error:', err);
+            console.error("Logout error:", err);
           }
         },
       },
@@ -98,13 +102,13 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
+        <ActivityIndicator size="small" color={COLORS.primary} />
         <Text style={styles.message}>Loading...</Text>
       </SafeAreaView>
     );
   }
 
-  if (userRole && userRole !== 'rider') {
+  if (userRole && userRole !== "rider") {
     return (
       <SafeAreaView style={styles.center}>
         <Text style={styles.message}>Not authorized to view this page</Text>
@@ -113,39 +117,48 @@ export default function SettingsPage() {
   }
 
   // --- Reusable Setting Item Component ---
-  const SettingItem = ({ 
-    icon, 
-    iconColor = COLORS.primary, 
-    title, 
+  const SettingItem = ({
+    icon,
+    iconColor = COLORS.primary,
+    title,
     subtitle,
-    onPress, 
+    onPress,
     isDestructive = false,
-    showChevron = true
-  }: { 
-    icon: any; 
-    iconColor?: string; 
-    title: string; 
+    showChevron = true,
+  }: {
+    icon: any;
+    iconColor?: string;
+    title: string;
     subtitle?: string;
-    onPress?: () => void; 
+    onPress?: () => void;
     isDestructive?: boolean;
     showChevron?: boolean;
   }) => (
-    <TouchableOpacity 
-      style={styles.item} 
-      onPress={onPress} 
-      activeOpacity={0.7}
-    >
+    <TouchableOpacity style={styles.item} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.itemLeft}>
-        <View style={[styles.iconContainer, { backgroundColor: isDestructive ? '#FEF2F2' : COLORS.iconBg }]}>
-          <Feather name={icon} size={20} color={isDestructive ? COLORS.danger : iconColor} />
+        <View
+          style={[
+            styles.iconContainer,
+            { backgroundColor: isDestructive ? "#FEF2F2" : COLORS.iconBg },
+          ]}
+        >
+          <Feather
+            name={icon}
+            size={16}
+            color={isDestructive ? COLORS.danger : iconColor}
+          />
         </View>
         <View>
-          <Text style={[styles.itemText, isDestructive && styles.destructiveText]}>{title}</Text>
+          <Text
+            style={[styles.itemText, isDestructive && styles.destructiveText]}
+          >
+            {title}
+          </Text>
           {subtitle && <Text style={styles.itemSubtitle}>{subtitle}</Text>}
         </View>
       </View>
       {showChevron && (
-        <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
       )}
     </TouchableOpacity>
   );
@@ -153,21 +166,26 @@ export default function SettingsPage() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
-      
-      <RiderHeader 
+
+      <RiderHeader
         title="Settings"
         showBackButton={true}
         showNotifications={false}
       />
-      
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        
+
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+      >
         {/* --- Profile Card --- */}
         <View style={styles.profileSection}>
           <View style={styles.profileCard}>
             <View style={styles.avatarContainer}>
               {userData.avatar ? (
-                <Image source={{ uri: userData.avatar }} style={styles.avatar} />
+                <Image
+                  source={{ uri: userData.avatar }}
+                  style={styles.avatar}
+                />
               ) : (
                 <Text style={styles.avatarText}>JR</Text>
               )}
@@ -177,16 +195,20 @@ export default function SettingsPage() {
               <Text style={styles.profileId}>ID: {userData.id}</Text>
               {userData.verified && (
                 <View style={styles.verifiedBadge}>
-                  <MaterialIcons name="verified" size={14} color={COLORS.primary} />
+                  <MaterialIcons
+                    name="verified"
+                    size={12}
+                    color={COLORS.primary}
+                  />
                   <Text style={styles.verifiedText}>Verified Rider</Text>
                 </View>
               )}
             </View>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.editProfileBtn}
-              onPress={() => router.push('/rider/edit-profile')}
+              onPress={() => router.push("/rider/edit-profile")}
             >
-              <Feather name="edit-2" size={18} color={COLORS.subText} />
+              <Feather name="edit-2" size={16} color={COLORS.subText} />
             </TouchableOpacity>
           </View>
         </View>
@@ -194,78 +216,78 @@ export default function SettingsPage() {
         {/* --- Account Section --- */}
         <Text style={styles.sectionTitle}>Account</Text>
         <View style={styles.sectionGroup}>
-          <SettingItem 
-            icon="user" 
-            title="Personal Information" 
-            subtitle={userData.phone ? `${userData.email}, ${userData.phone}` : userData.email}
-            onPress={() => router.push('/rider/edit-profile')} 
+          <SettingItem
+            icon="user"
+            title="Personal Information"
+            subtitle={
+              userData.phone
+                ? `${userData.email}, ${userData.phone}`
+                : userData.email
+            }
+            onPress={() => router.push("/rider/edit-profile")}
           />
           <View style={styles.separator} />
-          <SettingItem 
-            icon="shield" 
-            title="Login & Security" 
-            onPress={() => {}} 
+          <SettingItem
+            icon="shield"
+            title="Login & Security"
+            onPress={() => {}}
           />
           <View style={styles.separator} />
-          <SettingItem 
-            icon="credit-card" 
-            title="Bank Accounts & Cards" 
-            onPress={() => {}} 
+          <SettingItem
+            icon="credit-card"
+            title="Bank Accounts & Cards"
+            onPress={() => {}}
           />
         </View>
 
         {/* --- App Preferences --- */}
         <Text style={styles.sectionTitle}>App Preferences</Text>
         <View style={styles.sectionGroup}>
-          <SettingItem 
-            icon="bell" 
-            title="Notifications" 
-            onPress={() => {}} 
+          <SettingItem
+            icon="bell"
+            title="Notifications"
+            onPress={() => router.push("/rider/notification")}
           />
           <View style={styles.separator} />
-          <SettingItem 
-            icon="map-pin" 
-            title="Navigation Settings" 
-            onPress={() => {}} 
+          <SettingItem
+            icon="map-pin"
+            title="Navigation Settings"
+            onPress={() => {}}
           />
           <View style={styles.separator} />
-          <SettingItem 
-            icon="moon" 
-            title="Appearance" 
+          <SettingItem
+            icon="moon"
+            title="Appearance"
             subtitle="System Default"
-            onPress={() => {}} 
+            onPress={() => {}}
           />
         </View>
 
         {/* --- Support --- */}
         <Text style={styles.sectionTitle}>Support</Text>
         <View style={styles.sectionGroup}>
-          <SettingItem 
-            icon="help-circle" 
-            title="Help Center" 
-            onPress={() => {}} 
+          <SettingItem
+            icon="help-circle"
+            title="Help Center"
+            onPress={() => {}}
           />
           <View style={styles.separator} />
-          <SettingItem 
-            icon="file-text" 
-            title="Terms & Policies" 
-            onPress={() => {}} 
+          <SettingItem
+            icon="file-text"
+            title="Terms & Policies"
+            onPress={() => {}}
           />
         </View>
 
         {/* --- Logout --- */}
         <View style={[styles.sectionGroup, styles.logoutGroup]}>
-          <SettingItem 
-            icon="log-out" 
-            title="Log Out" 
+          <SettingItem
+            icon="log-out"
+            title="Log Out"
             isDestructive={true}
             showChevron={false}
             onPress={handleLogout}
           />
-        </View>
-
-        <View style={styles.versionContainer}>
-          <Text style={styles.versionText}>Electronics Delivery App v1.0.0</Text>
         </View>
 
         {/* Extra spacing for bottom */}
@@ -282,156 +304,153 @@ const styles = StyleSheet.create({
   },
   center: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   scrollView: {
     flex: 1,
   },
   message: {
-    fontSize: 16,
+    fontSize: 13,
     color: COLORS.subText,
   },
-  
+
   // Profile Card
   profileSection: {
-    padding: 16,
+    padding: 12,
   },
   profileCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    borderRadius: 8,
+    padding: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   avatarContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
   },
   avatarText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFF',
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#FFF",
   },
   profileInfo: {
     flex: 1,
   },
   profileName: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: "600",
     color: COLORS.text,
   },
   profileId: {
-    fontSize: 11,
+    fontSize: 10,
     color: COLORS.subText,
-    marginTop: 2,
+    marginTop: 1,
   },
   verifiedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-    backgroundColor: '#FEF2F2',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 3,
+    backgroundColor: "#F3F4F6",
+    alignSelf: "flex-start",
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3,
   },
   verifiedText: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 9,
+    fontWeight: "600",
     color: COLORS.primary,
-    marginLeft: 4,
+    marginLeft: 3,
   },
   editProfileBtn: {
-    padding: 6,
+    padding: 4,
   },
 
   // Sections
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: "600",
     color: COLORS.subText,
-    marginLeft: 16,
-    marginBottom: 8,
-    marginTop: 12,
-    textTransform: 'uppercase',
+    marginLeft: 12,
+    marginBottom: 6,
+    marginTop: 8,
+    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   sectionGroup: {
     backgroundColor: COLORS.card,
     borderRadius: 8,
-    marginHorizontal: 16,
-    overflow: 'hidden',
+    marginHorizontal: 12,
+    overflow: "hidden",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   logoutGroup: {
-    marginTop: 16,
-    borderColor: '#FECACA',
+    marginTop: 12,
+    borderColor: "#FEE2E2",
   },
-  
+
   // Setting Item
   item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
   },
   itemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   iconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    justifyContent: "center",
+    alignItems: "center",
   },
   itemText: {
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: "500",
     color: COLORS.text,
   },
   itemSubtitle: {
-    fontSize: 11,
+    fontSize: 10,
     color: COLORS.subText,
-    marginTop: 2,
+    marginTop: 1,
   },
   destructiveText: {
     color: COLORS.danger,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   separator: {
     height: 1,
-    backgroundColor: '#E2E8F0',
-    marginLeft: 56,
+    backgroundColor: "#F3F4F6",
+    marginLeft: 48,
   },
 
   // Footer
   versionContainer: {
-    paddingVertical: 24,
-    alignItems: 'center',
+    paddingVertical: 16,
+    alignItems: "center",
   },
   versionText: {
-    fontSize: 11,
+    fontSize: 10,
     color: COLORS.subText,
   },
 });
