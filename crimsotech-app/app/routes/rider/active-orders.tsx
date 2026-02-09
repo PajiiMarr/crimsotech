@@ -93,6 +93,7 @@ interface Delivery {
     created_at: string;
   };
   status: string;
+  proofs_count?: number;
   picked_at: string | null;
   delivered_at: string | null;
   created_at: string;
@@ -567,6 +568,20 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                     Deliver
                   </Button>
                 )}
+
+                {delivery.status === 'delivered' && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="text-xs"
+                    asChild
+                  >
+                    <Link to={`/rider/delivery/${delivery.id}/add-delivery-media`}>
+                      {(delivery.proofs_count || 0) > 0 ? 'View Proofs' : 'Provide Proof'}
+                    </Link>
+                  </Button>
+                )}
+
                 <Button 
                   size="sm" 
                   variant="ghost" 
@@ -613,6 +628,18 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                       >
                         <CheckCircle className="w-4 h-4 mr-2" />
                         Mark as Delivered
+                      </Button>
+                    )}
+                    {delivery.status === 'delivered' && (
+                      <Button 
+                        size="sm" 
+                        variant="secondary" 
+                        className="w-full justify-start"
+                        asChild
+                      >
+                        <Link to={`/rider/delivery/${delivery.id}/add-delivery-media`}>
+                          {(delivery.proofs_count || 0) > 0 ? 'View Proofs' : 'Provide Proof'}
+                        </Link>
                       </Button>
                     )}
                     <Button 

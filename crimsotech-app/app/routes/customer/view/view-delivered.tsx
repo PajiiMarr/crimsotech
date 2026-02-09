@@ -1,20 +1,93 @@
   "use client";
 
-  import React from "react";
+  import React, { useState, useEffect } from "react";
   import { Button } from "~/components/ui/button";
   import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
   import { Badge } from "~/components/ui/badge";
   import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
-  import { Truck, CheckCircle, RotateCcw, MessageCircle, CreditCard, Phone } from "lucide-react";
+  import Breadcrumbs from "~/components/ui/breadcrumbs";
+  import { Dialog, DialogContent, DialogHeader, DialogTitle } from "~/components/ui/dialog";
+  import { Truck, CheckCircle, RotateCcw, MessageCircle, CreditCard, Phone, Eye } from "lucide-react";
+  import AxiosInstance from '~/components/axios/Axios';
 
-
-
-  export default function ViewDelivered({ orderDetails, formatCurrency, formatDate, onRequestRefund }: any) {
+  export default function ViewDelivered({ orderDetails, formatCurrency, formatDate, onRequestRefund, userId }: any) {
     const order = orderDetails.order;
+    const [selectedProof, setSelectedProof] = useState<any | null>(null);
+    const [fetchedProofs, setFetchedProofs] = useState<any[] | null>(null);
+
     // Use backend_status to determine whether this is an actual delivered (arrived) or still out-for-delivery
     const backendStatus = (order.backend_status || '').toString();
     const isDelivered = backendStatus === 'delivered' || backendStatus === 'completed';
-    
+
+    // Prefer server-fetched proofs when available
+    const defaultProofs = order.delivery_proofs || (order.delivery_evidence || []).map((url: string) => ({ file_url: url }));
+    const proofs = fetchedProofs !== null ? fetchedProofs : defaultProofs;
+
+    // Debug: log proofs to DevTools to verify data availability
+    console.debug('ViewDelivered defaultProofs:', defaultProofs, 'fetchedProofs:', fetchedProofs);
+
+    useEffect(() => {
+      let cancelled = false;
+      if (!isDelivered || !order?.id) return;
+
+      const fetchProofs = async () => {
+        try {
+          // Try the purchases-buyer endpoint first
+          try {
+            const res = await AxiosInstance.get(`/purchases-buyer/${order.id}/get-delivery-proofs/`, {
+              headers: { 'X-User-Id': userId || '' }
+            });
+            if (res.data && res.data.success) {
+              const proofsData = res.data.all_proofs || res.data.proofs || [];
+              const mapped = proofsData.map((p: any) => ({ file_url: p.file_url, file_name: p.file_name, uploaded_at: p.uploaded_at, file_type: p.file_type }));
+              console.debug('Fetched delivery proofs (purchases-buyer):', mapped);
+              setFetchedProofs(mapped);
+              return;
+            }
+          } catch (err) {
+            console.debug('purchases-buyer get-delivery-proofs returned error or 404, falling back to proof-management by order', err);
+          }
+
+          // Fallback: ask proof-management for proofs by order id
+          const res2 = await AxiosInstance.get(`/proof-management/get_delivery_proofs_by_order/?order_id=${order.id}`, {
+            headers: { 'X-User-Id': userId || '' }
+          });
+          if (res2.data && res2.data.success) {
+            const proofsData2 = res2.data.proofs || res2.data.all_proofs || [];
+            const mapped2 = proofsData2.map((p: any) => ({ file_url: p.file_url, file_name: p.file_name, uploaded_at: p.uploaded_at, file_type: p.file_type }));
+            console.debug('Fetched delivery proofs (proof-management):', mapped2);
+            setFetchedProofs(mapped2);
+            return;
+          }
+          console.debug('No proofs from fallback endpoints for order', order.id);
+
+          if (cancelled) return;
+
+          if (res.data && res.data.success) {
+            const proofsData = res.data.proofs || [];
+            const mapped = proofsData.map((p: any) => ({
+              file_url: p.file_url,
+              file_name: p.file_name,
+              uploaded_at: p.uploaded_at,
+              file_type: p.file_type
+            }));
+            console.debug('Fetched delivery proofs:', mapped);
+            setFetchedProofs(mapped);
+          } else {
+            console.debug('No proofs returned from API for order', order.id, res.data);
+            setFetchedProofs([]);
+          }
+        } catch (err) {
+          console.error('Error fetching delivery proofs:', err);
+          setFetchedProofs([]);
+        }
+      };
+
+      fetchProofs();
+
+      return () => { cancelled = true; };
+    }, [order?.id, isDelivered, userId]);
+
     return (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
@@ -63,14 +136,25 @@
                     <p className="text-xs text-muted-foreground">N/A</p>
                   )}
 
-                  {order.delivery_evidence && order.delivery_evidence.length > 0 && (
+                  {/* Proof thumbnails */}
+                  {isDelivered && (
                     <>
                       <p className="text-xs text-muted-foreground mt-3">Delivery Evidence</p>
-                      <div className="flex gap-2 mt-2">
-                        {order.delivery_evidence.map((img: string, idx: number) => (
-                          <img key={idx} src={img} alt={`evidence-${idx}`} className="w-16 h-12 object-cover rounded" />
-                        ))}
-                      </div>
+
+                      {proofs && proofs.length > 0 ? (
+                        <div className="flex gap-2 mt-2">
+                          {proofs.map((p: any, idx: number) => (
+                            <button key={idx} onClick={() => setSelectedProof(p)} className="w-16 h-12 rounded overflow-hidden border bg-gray-100 focus:outline-none">
+                              <img src={p.file_url} alt={p.file_name || `proof-${idx}`} className="w-full h-full object-cover" />
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-xs text-muted-foreground mt-2 italic">No delivery evidence available</p>
+                          <p className="text-xs text-muted-foreground mt-1">Attempting to fetch latest evidence...</p>
+                        </>
+                      )}
                     </>
                   )}
                 </div>
@@ -150,6 +234,37 @@
             </CardContent>
           </Card>
         </div>
+
+        {/* Proof Preview Dialog */}
+        <Dialog open={!!selectedProof} onOpenChange={() => setSelectedProof(null)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>{selectedProof?.file_name || 'Delivery Evidence'}</DialogTitle>
+            </DialogHeader>
+            <div className="mt-4">
+              {selectedProof && selectedProof.file_url ? (
+                <img src={selectedProof.file_url} alt={selectedProof.file_name} className="w-full max-h-[60vh] object-contain" />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-48">
+                  <Eye className="h-6 w-6 text-gray-400" />
+                  <p className="mt-4 text-sm">No preview available</p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-between items-center text-sm">
+              <div>
+                <div className="text-xs text-muted-foreground">Uploaded</div>
+                <div className="font-medium">{selectedProof?.uploaded_at ? formatDate(selectedProof.uploaded_at) : 'Unknown'}</div>
+              </div>
+              <div>
+                {selectedProof?.file_url && (
+                  <a href={selectedProof.file_url} target="_blank" rel="noopener noreferrer" className="text-sm underline">Open file in new tab</a>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }

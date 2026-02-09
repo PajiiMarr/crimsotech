@@ -338,6 +338,10 @@ export default function ViewOrder({ loaderData }: any) {
             notes: backendData.order?.delivery_notes || null,
             date: backendData.order?.delivery_date || null,
           },
+          // delivery_evidence is an array of image/file URLs for quick UI use
+          delivery_evidence: backendData.order?.delivery_evidence || [],
+          // delivery_proofs contains detailed metadata if needed
+          delivery_proofs: backendData.delivery_proofs || [],
           timeline: backendData.timeline || [],
           can_request_refund: backendData.actions?.can_return || false,
           can_cancel: backendData.actions?.can_cancel || false,
@@ -486,6 +490,8 @@ export default function ViewOrder({ loaderData }: any) {
       onCompleteOrder: handleCompleteOrder,
       // alias for components expecting `onComplete` prop
       onComplete: handleCompleteOrder,
+      // include user id for child components that need to call customer endpoints
+      userId: normalizedUserId,
     };
 
     // Special-case: If backend status is explicitly "pending" and delivery method

@@ -69,6 +69,7 @@ router.register(r'reviews', Reviews, basename='reviews')
 router.register(r'rider-dashboard', RiderDashboardViewSet, basename='rider-dashboard')
 router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-history')
 router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')  # ← ADD THIS LINE
+router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
