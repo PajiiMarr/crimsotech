@@ -30339,3 +30339,511 @@ class ProfileView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class SellerBoosts(viewsets.ViewSet):
+    """ViewSet for seller boost operations"""
+    
+    @action(detail=False, methods=['get'])
+    def plans(self, request):
+        """Get all active boost plans with features"""
+        try:
+            boost_plans = BoostPlan.objects.filter(
+                status='active'
+            ).order_by('price')
+            
+            plans_data = []
+            for plan in boost_plans:
+                plan_features = BoostPlanFeature.objects.filter(
+                    boost_plan=plan
+                ).select_related('feature')
+                
+                features_data = []
+                plan_limit = 1
+                
+                for pf in plan_features:
+                    features_data.append({
+                        'id': str(pf.id),
+                        'feature_id': str(pf.feature.id),
+                        'feature_name': pf.feature.name,
+                        'description': pf.feature.description,
+                        'value': pf.value
+                    })
+                    
+                    # Extract product limit from "Product Highlights" feature
+                    if 'product' in pf.feature.name.lower() and pf.value:
+                        match = re.search(r'\d+', pf.value)
+                        if match:
+                            plan_limit = int(match.group())
+                
+                plans_data.append({
+                    'id': str(plan.id),
+                    'name': plan.name,
+                    'price': float(plan.price),
+                    'duration': plan.duration,
+                    'time_unit': plan.time_unit,
+                    'status': plan.status,
+                    'features': features_data,
+                    'product_limit': plan_limit,
+                    'created_at': plan.created_at.isoformat()
+                })
+            
+            return Response({
+                'success': True,
+                'plans': plans_data,
+                'message': 'Boost plans retrieved successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'plans': [],
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def plan_detail(self, request, pk=None):
+        """Get single boost plan by ID"""
+        try:
+            plan = BoostPlan.objects.get(id=pk, status='active')
+            plan_features = BoostPlanFeature.objects.filter(
+                boost_plan=plan
+            ).select_related('feature')
+            
+            features_data = []
+            plan_limit = 1
+            
+            for pf in plan_features:
+                features_data.append({
+                    'id': str(pf.id),
+                    'feature_name': pf.feature.name,
+                    'value': pf.value
+                })
+                
+                # Extract product limit from "Product Highlights" feature
+                if 'product' in pf.feature.name.lower() and pf.value:
+                    match = re.search(r'\d+', pf.value)
+                    if match:
+                        plan_limit = int(match.group())
+            
+            return Response({
+                'success': True,
+                'plan': {
+                    'id': str(plan.id),
+                    'name': plan.name,
+                    'price': float(plan.price),
+                    'duration': plan.duration,
+                    'time_unit': plan.time_unit,
+                    'status': plan.status,
+                    'features': features_data,
+                    'description': plan.name,
+                    'product_limit': plan_limit,
+                    'popular': False
+                },
+                'message': 'Boost plan retrieved successfully'
+            })
+            
+        except BoostPlan.DoesNotExist:
+            return Response({
+                'success': False,
+                'plan': None,
+                'message': 'Boost plan not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'plan': None,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def active(self, request):
+        """Get active boosts for seller's products"""
+        try:
+            customer_id = request.query_params.get('customer_id')
+            shop_id = request.query_params.get('shop_id')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'boosts': [],
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get active boosts for this customer
+            active_boosts = Boost.objects.filter(
+                Q(customer_id=customer_id) | Q(shop_id=shop_id),
+                status='active',
+                end_date__gt=timezone.now()
+            ).select_related('boost_plan', 'product')
+            
+            boosts_data = []
+            for boost in active_boosts:
+                boosts_data.append({
+                    'id': str(boost.id),
+                    'product_id': str(boost.product.id) if boost.product else None,
+                    'boost_plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
+                    'status': boost.status,
+                    'start_date': boost.start_date.isoformat(),
+                    'end_date': boost.end_date.isoformat(),
+                    'plan_name': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                    'plan_price': float(boost.boost_plan.price) if boost.boost_plan else 0
+                })
+            
+            return Response({
+                'success': True,
+                'boosts': boosts_data,
+                'message': 'Active boosts retrieved successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'boosts': [],
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def create(self, request):
+        """Create a new boost for a product (single or bulk)"""
+        try:
+            data = request.data
+            customer_id = data.get('customer_id')
+            shop_id = data.get('shop_id')
+            boost_plan_id = data.get('boost_plan_id')
+            
+            # Check if single product or multiple products
+            product_ids = data.get('product_ids', [])
+            single_product_id = data.get('product_id')
+            
+            if single_product_id:
+                product_ids = [single_product_id]
+            
+            if not product_ids:
+                return Response({
+                    'success': False,
+                    'message': 'No products selected'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate required fields
+            required_fields = ['customer_id', 'boost_plan_id']
+            for field in required_fields:
+                if not data.get(field):
+                    return Response({
+                        'success': False,
+                        'message': f'{field} is required'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check if boost plan exists and is active
+            try:
+                boost_plan = BoostPlan.objects.get(id=boost_plan_id, status='active')
+            except BoostPlan.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Boost plan not found or inactive'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get customer
+            try:
+                customer = Customer.objects.get(customer_id=customer_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Customer not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # VALIDATION: Get plan product limit
+            product_limit_feature = BoostPlanFeature.objects.filter(
+                boost_plan=boost_plan,
+                feature__name__icontains='product'
+            ).first()
+            
+            plan_limit = 1  # Default limit
+            
+            if product_limit_feature and product_limit_feature.value:
+                match = re.search(r'\d+', product_limit_feature.value)
+                if match:
+                    plan_limit = int(match.group())
+            
+            # Check if we're selecting more products than the plan allows
+            if len(product_ids) > plan_limit:
+                return Response({
+                    'success': False,
+                    'message': f'You selected {len(product_ids)} products but this plan only allows {plan_limit} product{"s" if plan_limit != 1 else ""}.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Count active boosts with this plan for this customer
+            active_boosts_count = Boost.objects.filter(
+                customer=customer,
+                boost_plan=boost_plan,
+                status='active',
+                end_date__gt=timezone.now()
+            ).count()
+            
+            # Check if adding new boosts would exceed the limit
+            if active_boosts_count + len(product_ids) > plan_limit:
+                return Response({
+                    'success': False,
+                    'message': f'You already have {active_boosts_count} active boosts. Adding {len(product_ids)} more would exceed the limit of {plan_limit} product{"s" if plan_limit != 1 else ""} for this boost plan.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get shop (optional)
+            shop = None
+            if shop_id:
+                try:
+                    shop = Shop.objects.get(id=shop_id, customer=customer)
+                except Shop.DoesNotExist:
+                    pass
+            
+            # Validate and collect products
+            valid_products = []
+            validation_errors = []
+            
+            for product_id in product_ids:
+                try:
+                    product = Product.objects.get(id=product_id, customer_id=customer_id)
+                    
+                    # Check if product can be boosted
+                    product_errors = []
+                    
+                    if product.quantity <= 0:
+                        product_errors.append("Product is out of stock")
+                    
+                    if product.upload_status != 'published':
+                        product_errors.append(f"Product must be published (current: {product.upload_status})")
+                    
+                    if product.status != 'active':
+                        product_errors.append(f"Product must be active (current: {product.status})")
+                    
+                    if product.is_removed:
+                        product_errors.append("Product has been removed")
+                    
+                    # Check if product already has an active boost
+                    existing_boost = Boost.objects.filter(
+                        product_id=product_id,
+                        status='active',
+                        end_date__gt=timezone.now()
+                    ).first()
+                    if existing_boost:
+                        product_errors.append("Product already has an active boost")
+                    
+                    if product_errors:
+                        validation_errors.append({
+                            'product_id': str(product_id),
+                            'product_name': product.name,
+                            'errors': product_errors
+                        })
+                    else:
+                        valid_products.append(product)
+                        
+                except Product.DoesNotExist:
+                    validation_errors.append({
+                        'product_id': str(product_id),
+                        'product_name': 'Unknown',
+                        'errors': ['Product not found or unauthorized']
+                    })
+            
+            # If there are validation errors for any products, return them
+            if validation_errors:
+                return Response({
+                    'success': False,
+                    'message': 'Some products cannot be boosted',
+                    'errors': validation_errors,
+                    'valid_products_count': len(valid_products),
+                    'total_selected': len(product_ids)
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Calculate end date based on boost plan
+            start_date = timezone.now()
+            duration_map = {
+                'hours': timedelta(hours=boost_plan.duration),
+                'days': timedelta(days=boost_plan.duration),
+                'weeks': timedelta(weeks=boost_plan.duration),
+                'months': timedelta(days=boost_plan.duration * 30)
+            }
+            end_date = start_date + duration_map.get(
+                boost_plan.time_unit, 
+                timedelta(days=30)
+            )
+            
+            # Create boosts for all valid products
+            created_boosts = []
+            for product in valid_products:
+                boost = Boost.objects.create(
+                    product=product,
+                    boost_plan=boost_plan,
+                    shop=shop,
+                    customer=customer,
+                    status='active',
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                created_boosts.append({
+                    'id': str(boost.id),
+                    'product_id': str(boost.product.id),
+                    'product_name': boost.product.name,
+                    'boost_plan_id': str(boost.boost_plan.id),
+                    'status': boost.status,
+                    'start_date': boost.start_date.isoformat(),
+                    'end_date': boost.end_date.isoformat()
+                })
+            
+            return Response({
+                'success': True,
+                'boosts': created_boosts,
+                'message': f'Successfully boosted {len(created_boosts)} product{"s" if len(created_boosts) != 1 else ""}'
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def create_bulk(self, request):
+        """Create multiple boosts at once (alias for create method)"""
+        return self.create(request)
+    
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Get boost statistics for seller"""
+        try:
+            customer_id = request.query_params.get('customer_id')
+            shop_id = request.query_params.get('shop_id')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get all boosts for this customer
+            boosts = Boost.objects.filter(
+                Q(customer_id=customer_id) | Q(shop_id=shop_id)
+            ).select_related('boost_plan', 'product')
+            
+            # Count active boosts
+            active_boosts = boosts.filter(
+                status='active',
+                end_date__gt=timezone.now()
+            ).count()
+            
+            # Count expired boosts
+            expired_boosts = boosts.filter(
+                status='expired'
+            ).count()
+            
+            # Count pending boosts
+            pending_boosts = boosts.filter(
+                status='pending'
+            ).count()
+            
+            # Get total spent on boosts
+            total_spent = sum(
+                float(boost.boost_plan.price) 
+                for boost in boosts 
+                if boost.boost_plan
+            )
+            
+            # Get active boost details
+            active_boost_details = []
+            for boost in boosts.filter(status='active', end_date__gt=timezone.now()):
+                if boost.product:
+                    active_boost_details.append({
+                        'product_name': boost.product.name,
+                        'plan_name': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                        'end_date': boost.end_date.isoformat(),
+                        'days_remaining': (boost.end_date - timezone.now()).days
+                    })
+            
+            return Response({
+                'success': True,
+                'stats': {
+                    'total_boosts': boosts.count(),
+                    'active_boosts': active_boosts,
+                    'expired_boosts': expired_boosts,
+                    'pending_boosts': pending_boosts,
+                    'total_spent': total_spent,
+                    'active_boost_details': active_boost_details
+                },
+                'message': 'Boost statistics retrieved successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['patch'])
+    def cancel(self, request, pk=None):
+        """Cancel an active boost"""
+        try:
+            customer_id = request.data.get('customer_id')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the boost
+            try:
+                boost = Boost.objects.get(
+                    id=pk,
+                    customer_id=customer_id,
+                    status='active'
+                )
+            except Boost.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Boost not found or unauthorized'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Cancel the boost
+            boost.status = 'cancelled'
+            boost.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Boost cancelled successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def debug_features(self, request):
+        """Debug endpoint to check feature structure"""
+        try:
+            plan_id = request.query_params.get('plan_id')
+            if not plan_id:
+                return Response({'error': 'plan_id required'}, status=400)
+            
+            features = BoostPlanFeature.objects.filter(
+                boost_plan_id=plan_id
+            ).select_related('feature')
+            
+            data = []
+            for f in features:
+                data.append({
+                    'id': str(f.id),
+                    'feature_id': str(f.feature.id),
+                    'feature_name': f.feature.name,
+                    'value': f.value,
+                    'is_product_feature': 'product' in f.feature.name.lower(),
+                    'extracted_number': re.search(r'\d+', f.value).group() if f.value and re.search(r'\d+', f.value) else None
+                })
+            
+            return Response({
+                'success': True,
+                'features': data,
+                'plan_id': plan_id
+            })
+            
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+
+            
