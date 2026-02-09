@@ -14,20 +14,20 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router'; // Ensure this is imported for navigation
 
-// --- Color Palette (Orange Theme) ---
+// --- Color Palette (Minimalist Theme - Softened) ---
 const COLORS = {
-  primary: '#F97316',
-  primaryDark: '#C2410C',
-  primaryLight: '#FFF7ED',
-  secondary: '#111827',
-  muted: '#6B7280',
-  bg: '#F9FAFB',
+  primary: '#1F2937',
+  primaryDark: '#111827',
+  primaryLight: '#F9FAFB',
+  secondary: '#374151',
+  muted: '#9CA3AF',
+  bg: '#FFFFFF',
   cardBg: '#FFFFFF',
-  dangerBg: '#FEF2F2',
-  dangerText: '#DC2626',
-  bookedBg: '#EFF6FF',
-  bookedText: '#2563EB',
-  surge: '#F59E0B',
+  dangerBg: '#F9FAFB',
+  dangerText: '#374151',
+  bookedBg: '#F3F4F6',
+  bookedText: '#1F2937',
+  surge: '#4B5563',
 };
 
 // --- Types & Mock Data ---
@@ -57,21 +57,21 @@ const SHIFT_DATA: Record<string, Shift[]> = {
 const StatusBadge = ({ status, surge }: { status: ShiftStatus; surge?: number }) => {
   const getStyle = () => {
     switch (status) {
-      case 'available': return { bg: COLORS.primaryLight, text: COLORS.primaryDark, label: 'Open' };
-      case 'booked': return { bg: COLORS.bookedBg, text: COLORS.bookedText, label: 'Booked' };
-      case 'completed': return { bg: '#F3F4F6', text: COLORS.muted, label: 'Completed' };
-      case 'full': return { bg: COLORS.dangerBg, text: COLORS.dangerText, label: 'Full' };
-      default: return { bg: '#eee', text: '#000', label: status };
+      case 'available': return { bg: '#F3F4F6', text: '#374151', label: 'Open' };
+      case 'booked': return { bg: '#E5E7EB', text: '#1F2937', label: 'Booked' };
+      case 'completed': return { bg: '#F9FAFB', text: '#9CA3AF', label: 'Done' };
+      case 'full': return { bg: '#F9FAFB', text: '#6B7280', label: 'Full' };
+      default: return { bg: '#F3F4F6', text: '#374151', label: status };
     }
   };
 
   const style = getStyle();
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
       {surge && (
         <View style={styles.surgeBadge}>
-          <Feather name="zap" size={10} color="#FFFFFF" />
+          <Feather name="zap" size={9} color="#FFFFFF" />
           <Text style={styles.surgeText}>{surge}x</Text>
         </View>
       )}
@@ -136,7 +136,7 @@ export default function SchedulePage() {
           <View style={styles.headerActions}>
             <TouchableOpacity 
               style={styles.iconBtn} 
-              onPress={() => console.log('Open Notifications')}
+              onPress={() => router.push("/rider/notification")}
             >
               <Feather name="bell" size={22} color={COLORS.secondary} />
               <View style={styles.notifBadge} />
@@ -256,81 +256,81 @@ export default function SchedulePage() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  messageTitle: { fontSize: 18, fontWeight: '700', color: COLORS.secondary, marginTop: 16 },
-  messageSub: { fontSize: 14, color: COLORS.muted, textAlign: 'center', marginTop: 8 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 },
+  messageTitle: { fontSize: 15, fontWeight: '700', color: COLORS.secondary, marginTop: 10 },
+  messageSub: { fontSize: 12, color: COLORS.muted, textAlign: 'center', marginTop: 4 },
   
   // Header
-  header: { padding: 20, backgroundColor: COLORS.cardBg, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  greeting: { fontSize: 24, fontWeight: '700', color: COLORS.secondary },
-  subHeader: { fontSize: 14, color: COLORS.muted },
+  header: { padding: 12, paddingHorizontal: 16, backgroundColor: COLORS.cardBg, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  greeting: { fontSize: 18, fontWeight: '700', color: COLORS.secondary },
+  subHeader: { fontSize: 11, color: COLORS.muted },
   
   // New Header Actions
-  headerActions: { flexDirection: 'row', gap: 8 },
+  headerActions: { flexDirection: 'row', gap: 6 },
   iconBtn: { 
-    padding: 10, 
+    padding: 6, 
     backgroundColor: '#F3F4F6', 
-    borderRadius: 12,
+    borderRadius: 8,
     position: 'relative' 
   },
   notifBadge: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.dangerText,
-    borderWidth: 1.5,
+    top: 6,
+    right: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#6B7280',
+    borderWidth: 1,
     borderColor: '#FFFFFF',
   },
 
   // Stats
-  statsRow: { flexDirection: 'row', gap: 12 },
-  statCard: { flex: 1, borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  statIconBg: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
-  statIconBgWhite: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
-  statLabel: { fontSize: 12, color: COLORS.muted, fontWeight: '500' },
-  statValue: { fontSize: 16, fontWeight: '700', color: COLORS.secondary },
-  statLabelLight: { fontSize: 12, color: 'rgba(255,255,255,0.9)', fontWeight: '500' },
-  statValueLight: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  statsRow: { flexDirection: 'row', gap: 6 },
+  statCard: { flex: 1, borderRadius: 8, padding: 8, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statIconBg: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
+  statIconBgWhite: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
+  statLabel: { fontSize: 9, color: COLORS.muted, fontWeight: '500' },
+  statValue: { fontSize: 13, fontWeight: '700', color: COLORS.secondary },
+  statLabelLight: { fontSize: 9, color: 'rgba(255,255,255,0.9)', fontWeight: '500' },
+  statValueLight: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
 
   // Date Strip
-  dateStripContainer: { backgroundColor: COLORS.cardBg, paddingVertical: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2, zIndex: 10 },
-  dateStrip: { paddingHorizontal: 20, gap: 12 },
-  dateItem: { width: 56, height: 72, borderRadius: 12, backgroundColor: '#F9FAFB', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6' },
+  dateStripContainer: { backgroundColor: COLORS.cardBg, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  dateStrip: { paddingHorizontal: 16, gap: 6 },
+  dateItem: { width: 44, height: 54, borderRadius: 8, backgroundColor: '#F9FAFB', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6' },
   dateItemActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  dayText: { fontSize: 12, color: COLORS.muted, marginBottom: 4 },
+  dayText: { fontSize: 9, color: COLORS.muted, marginBottom: 1 },
   dayTextActive: { color: 'rgba(255,255,255,0.9)' },
-  dateText: { fontSize: 18, fontWeight: '700', color: COLORS.secondary },
+  dateText: { fontSize: 14, fontWeight: '700', color: COLORS.secondary },
   dateTextActive: { color: '#FFFFFF' },
-  activeDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#FFFFFF', position: 'absolute', bottom: 6 },
+  activeDot: { width: 2, height: 2, borderRadius: 1, backgroundColor: '#FFFFFF', position: 'absolute', bottom: 3 },
 
   // List
-  listContent: { padding: 20, paddingBottom: 40 },
-  emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 60 },
-  emptyText: { marginTop: 16, fontSize: 16, color: '#6B7280' },
+  listContent: { padding: 12, paddingBottom: 24 },
+  emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 32 },
+  emptyText: { marginTop: 10, fontSize: 13, color: '#9CA3AF' },
 
   // Cards
-  card: { backgroundColor: COLORS.cardBg, borderRadius: 16, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2, borderLeftWidth: 4, borderLeftColor: COLORS.primary },
-  cardDimmed: { opacity: 0.7, borderLeftColor: '#9CA3AF' },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  earningsText: { fontSize: 16, fontWeight: '700', color: COLORS.primaryDark },
-  badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  badgeText: { fontSize: 12, fontWeight: '600' },
-  surgeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surge, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6, gap: 2 },
-  surgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
-  cardBody: { marginBottom: 16 },
-  timeText: { fontSize: 18, fontWeight: '700', color: COLORS.secondary, marginBottom: 4 },
+  card: { backgroundColor: COLORS.cardBg, borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#F3F4F6' },
+  cardDimmed: { opacity: 0.6 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  earningsText: { fontSize: 13, fontWeight: '700', color: COLORS.secondary },
+  badge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
+  badgeText: { fontSize: 9, fontWeight: '600' },
+  surgeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#6B7280', paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4, gap: 2 },
+  surgeText: { color: '#FFFFFF', fontSize: 8, fontWeight: '700' },
+  cardBody: { marginBottom: 10 },
+  timeText: { fontSize: 13, fontWeight: '700', color: COLORS.secondary, marginBottom: 1 },
   zoneRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  zoneText: { fontSize: 14, color: COLORS.muted },
-  cardFooter: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 12 },
-  actionBtnPrimary: { backgroundColor: COLORS.primary, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
-  actionBtnTextPrimary: { color: '#FFFFFF', fontWeight: '600', fontSize: 14 },
-  actionBtnSecondary: { backgroundColor: COLORS.dangerBg, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
-  actionBtnTextSecondary: { color: COLORS.dangerText, fontWeight: '600', fontSize: 14 },
-  completedRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingTop: 4 },
-  completedText: { color: COLORS.primary, fontWeight: '600' },
-  lockedText: { color: COLORS.muted, fontWeight: '500' },
+  zoneText: { fontSize: 11, color: COLORS.muted },
+  cardFooter: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 8 },
+  actionBtnPrimary: { backgroundColor: COLORS.primary, paddingVertical: 6, borderRadius: 6, alignItems: 'center' },
+  actionBtnTextPrimary: { color: '#FFFFFF', fontWeight: '600', fontSize: 12 },
+  actionBtnSecondary: { backgroundColor: '#F3F4F6', paddingVertical: 6, borderRadius: 6, alignItems: 'center' },
+  actionBtnTextSecondary: { color: '#000000', fontWeight: '600', fontSize: 12 },
+  completedRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingTop: 1 },
+  completedText: { color: '#9CA3AF', fontSize: 11, fontWeight: '600' },
+  lockedText: { color: COLORS.muted, fontSize: 11, fontWeight: '500' },
 });

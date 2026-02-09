@@ -28817,6 +28817,156 @@ class RiderEarningsViewSet(viewsets.ViewSet):
             )
 
 
+class RiderProfileViewSet(viewsets.ViewSet):
+    """
+    Rider Profile API - Get and update rider personal information
+    """
+    
+    def _get_user_from_header(self, request):
+        """Extract and validate user from X-User-Id header"""
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            raise ValueError('X-User-Id header is required')
+        
+        try:
+            user = User.objects.get(id=user_id)
+            return user
+        except User.DoesNotExist:
+            raise ValueError(f'User with ID {user_id} does not exist')
+    
+    @action(detail=False, methods=['get'])
+    def profile(self, request):
+        """Get rider profile information"""
+        try:
+            user = self._get_user_from_header(request)
+            
+            # Check if user is a rider
+            if not hasattr(user, 'rider'):
+                return Response({
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            rider = user.rider
+            
+            # Return comprehensive profile data
+            profile_data = {
+                'user': {
+                    'id': str(user.id),
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name or '',
+                    'last_name': user.last_name or '',
+                    'contact_number': user.contact_number or '',
+                    'profile_picture': user.profile_picture.url if user.profile_picture else None,
+                    'date_of_birth': user.date_of_birth,
+                    'gender': user.gender,
+                    'bio': user.bio or '',
+                    # Address fields
+                    'country': user.country or '',
+                    'province': user.province or '',
+                    'city': user.city or '',
+                    'barangay': user.barangay or '',
+                    'street': user.street or '',
+                    'zip_code': user.zip_code or '',
+                },
+                'rider': {
+                    'id': str(rider.id),
+                    'vehicle_type': rider.vehicle_type or '',
+                    'plate_number': rider.plate_number or '',
+                    'vehicle_brand': rider.vehicle_brand or '',
+                    'vehicle_model': rider.vehicle_model or '',
+                    'vehicle_image': rider.vehicle_image.url if rider.vehicle_image else None,
+                    'license_number': rider.license_number or '',
+                    'verified': rider.verified,
+                    'availability_status': rider.availability_status,
+                    'is_accepting_deliveries': rider.is_accepting_deliveries,
+                }
+            }
+            
+            return Response(profile_data, status=status.HTTP_200_OK)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['put', 'patch'])
+    def update_profile(self, request):
+        """Update rider profile information"""
+        try:
+            user = self._get_user_from_header(request)
+            
+            # Check if user is a rider
+            if not hasattr(user, 'rider'):
+                return Response({
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            rider = user.rider
+            data = request.data
+            
+            # Update user fields
+            user_fields = ['first_name', 'last_name', 'email', 'contact_number', 
+                          'date_of_birth', 'gender', 'bio', 'country', 'province', 
+                          'city', 'barangay', 'street', 'zip_code']
+            
+            for field in user_fields:
+                if field in data:
+                    setattr(user, field, data[field])
+            
+            # Handle profile picture upload
+            if 'profile_picture' in request.FILES:
+                user.profile_picture = request.FILES['profile_picture']
+            
+            user.save()
+            
+            # Update rider-specific fields
+            rider_fields = ['vehicle_type', 'plate_number', 'vehicle_brand', 
+                           'vehicle_model', 'license_number']
+            
+            for field in rider_fields:
+                if field in data:
+                    setattr(rider, field, data[field])
+            
+            # Handle vehicle image upload
+            if 'vehicle_image' in request.FILES:
+                rider.vehicle_image = request.FILES['vehicle_image']
+            
+            rider.save()
+            
+            # Return updated profile
+            return Response({
+                'message': 'Profile updated successfully',
+                'user': {
+                    'id': str(user.id),
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name or '',
+                    'last_name': user.last_name or '',
+                    'contact_number': user.contact_number or '',
+                    'profile_picture': user.profile_picture.url if user.profile_picture else None,
+                }
+            }, status=status.HTTP_200_OK)
+        
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class RiderDeliveryActionsViewSet(viewsets.ViewSet):
     """
     Rider Delivery Actions API - Mark pickups and deliveries with proof
