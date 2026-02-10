@@ -30502,6 +30502,272 @@ class SellerBoosts(viewsets.ViewSet):
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['get'])
+    def products(self, request):
+        """Get seller's products with boost status"""
+        try:
+            customer_id = request.query_params.get('customer_id')
+            shop_id = request.query_params.get('shop_id')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'products': [],
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get products for this customer/shop
+            products_query = Product.objects.filter(
+                customer_id=customer_id,
+                is_removed=False,
+                upload_status='published'
+            )
+            
+            if shop_id:
+                products_query = products_query.filter(shop_id=shop_id)
+            
+            # Annotate each product with boost status
+            now = timezone.now()
+            
+            # Create subquery to check for active boosts
+            active_boost_subquery = Boost.objects.filter(
+                product_id=OuterRef('id'),
+                status='active',
+                end_date__gt=now
+            )
+            
+            # Create subquery to get boost details
+            boost_details_subquery = Boost.objects.filter(
+                product_id=OuterRef('id'),
+                status='active',
+                end_date__gt=now
+            ).select_related('boost_plan')
+            
+            # Annotate products with boost information
+            products = products_query.annotate(
+                is_boosted=Exists(active_boost_subquery)
+            ).order_by('-created_at')
+            
+            products_data = []
+            for product in products:
+                boost_info = None
+                
+                if product.is_boosted:
+                    # Get the active boost details
+                    boost = boost_details_subquery.filter(product_id=product.id).first()
+                    if boost:
+                        boost_info = {
+                            'boost_id': str(boost.id),
+                            'plan_name': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                            'plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
+                            'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                            'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                            'days_remaining': (boost.end_date - now).days if boost.end_date else 0,
+                            'status': boost.status
+                        }
+                
+                product_data = {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description,
+                    'price': float(product.price),
+                    'quantity': product.quantity,
+                    'status': product.status,
+                    'upload_status': product.upload_status,
+                    'is_boosted': product.is_boosted,
+                    'boost_info': boost_info,
+                    'category': str(product.category.name) if product.category else None,
+                    'created_at': product.created_at.isoformat(),
+                    'can_be_boosted': self._can_product_be_boosted(product)
+                }
+                
+                # Add shop info if available
+                if product.shop:
+                    product_data['shop_id'] = str(product.shop.id)
+                    product_data['shop_name'] = product.shop.name
+                
+                products_data.append(product_data)
+            
+            # Get boost eligibility stats
+            eligible_products = [p for p in products_data if p['can_be_boosted']]
+            already_boosted = [p for p in products_data if p['is_boosted']]
+            
+            return Response({
+                'success': True,
+                'products': products_data,
+                'stats': {
+                    'total_products': len(products_data),
+                    'eligible_for_boost': len(eligible_products),
+                    'already_boosted': len(already_boosted),
+                    'not_eligible': len(products_data) - len(eligible_products)
+                },
+                'message': 'Products with boost status retrieved successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'products': [],
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def product_boost_status(self, request, pk=None):
+        """Get detailed boost status for a specific product"""
+        try:
+            customer_id = request.query_params.get('customer_id')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the product
+            try:
+                product = Product.objects.get(
+                    id=pk,
+                    customer_id=customer_id
+                )
+            except Product.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Product not found or unauthorized'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check for active boosts
+            now = timezone.now()
+            active_boost = Boost.objects.filter(
+                product_id=pk,
+                status='active',
+                end_date__gt=now
+            ).select_related('boost_plan').first()
+            
+            boost_info = None
+            if active_boost:
+                boost_info = {
+                    'boost_id': str(active_boost.id),
+                    'plan_name': active_boost.boost_plan.name if active_boost.boost_plan else 'Unknown',
+                    'plan_id': str(active_boost.boost_plan.id) if active_boost.boost_plan else None,
+                    'start_date': active_boost.start_date.isoformat() if active_boost.start_date else None,
+                    'end_date': active_boost.end_date.isoformat() if active_boost.end_date else None,
+                    'days_remaining': (active_boost.end_date - now).days if active_boost.end_date else 0,
+                    'status': active_boost.status,
+                    'plan_details': {
+                        'duration': active_boost.boost_plan.duration if active_boost.boost_plan else 0,
+                        'time_unit': active_boost.boost_plan.time_unit if active_boost.boost_plan else '',
+                        'price': float(active_boost.boost_plan.price) if active_boost.boost_plan else 0
+                    }
+                }
+            
+            # Check eligibility
+            eligibility = self._check_product_eligibility(product)
+            
+            # Get product's boost history
+            boost_history = Boost.objects.filter(
+                product_id=pk
+            ).select_related('boost_plan').order_by('-created_at')[:10]
+            
+            history_data = []
+            for boost in boost_history:
+                history_data.append({
+                    'id': str(boost.id),
+                    'plan_name': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                    'status': boost.status,
+                    'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                    'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                    'created_at': boost.created_at.isoformat() if boost.created_at else None
+                })
+            
+            return Response({
+                'success': True,
+                'product': {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'is_boosted': active_boost is not None,
+                    'boost_info': boost_info,
+                    'eligibility': eligibility,
+                    'product_details': {
+                        'quantity': product.quantity,
+                        'upload_status': product.upload_status,
+                        'status': product.status,
+                        'is_removed': product.is_removed
+                    },
+                    'boost_history': history_data,
+                    'can_be_boosted': self._can_product_be_boosted(product)
+                },
+                'message': 'Product boost status retrieved successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _can_product_be_boosted(self, product):
+        """Check if a product can be boosted"""
+        if product.quantity <= 0:
+            return False
+        if product.upload_status != 'published':
+            return False
+        if product.status != 'active':
+            return False
+        if product.is_removed:
+            return False
+        
+        # Check if already has active boost
+        now = timezone.now()
+        has_active_boost = Boost.objects.filter(
+            product_id=product.id,
+            status='active',
+            end_date__gt=now
+        ).exists()
+        
+        return not has_active_boost
+    
+    def _check_product_eligibility(self, product):
+        """Detailed eligibility check for a product"""
+        eligibility = {
+            'is_eligible': True,
+            'issues': []
+        }
+        
+        if product.quantity <= 0:
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append("Product is out of stock")
+        
+        if product.upload_status != 'published':
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append(f"Product must be published (current: {product.upload_status})")
+        
+        if product.status != 'active':
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append(f"Product must be active (current: {product.status})")
+        
+        if product.is_removed:
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append("Product has been removed")
+        
+        # Check for active boosts
+        now = timezone.now()
+        existing_boost = Boost.objects.filter(
+            product_id=product.id,
+            status='active',
+            end_date__gt=now
+        ).first()
+        
+        if existing_boost:
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append("Product already has an active boost")
+            eligibility['existing_boost'] = {
+                'boost_id': str(existing_boost.id),
+                'end_date': existing_boost.end_date.isoformat() if existing_boost.end_date else None,
+                'days_remaining': (existing_boost.end_date - now).days if existing_boost.end_date else 0
+            }
+        
+        return eligibility
+    
     def create(self, request):
         """Create a new boost for a product (single or bulk)"""
         try:
@@ -30602,34 +30868,14 @@ class SellerBoosts(viewsets.ViewSet):
                     product = Product.objects.get(id=product_id, customer_id=customer_id)
                     
                     # Check if product can be boosted
-                    product_errors = []
+                    eligibility = self._check_product_eligibility(product)
                     
-                    if product.quantity <= 0:
-                        product_errors.append("Product is out of stock")
-                    
-                    if product.upload_status != 'published':
-                        product_errors.append(f"Product must be published (current: {product.upload_status})")
-                    
-                    if product.status != 'active':
-                        product_errors.append(f"Product must be active (current: {product.status})")
-                    
-                    if product.is_removed:
-                        product_errors.append("Product has been removed")
-                    
-                    # Check if product already has an active boost
-                    existing_boost = Boost.objects.filter(
-                        product_id=product_id,
-                        status='active',
-                        end_date__gt=timezone.now()
-                    ).first()
-                    if existing_boost:
-                        product_errors.append("Product already has an active boost")
-                    
-                    if product_errors:
+                    if not eligibility['is_eligible']:
                         validation_errors.append({
                             'product_id': str(product_id),
                             'product_name': product.name,
-                            'errors': product_errors
+                            'errors': eligibility['issues'],
+                            'existing_boost': eligibility.get('existing_boost')
                         })
                     else:
                         valid_products.append(product)
@@ -30755,6 +31001,31 @@ class SellerBoosts(viewsets.ViewSet):
                         'days_remaining': (boost.end_date - timezone.now()).days
                     })
             
+            # Get product statistics
+            products = Product.objects.filter(
+                customer_id=customer_id,
+                is_removed=False
+            )
+            
+            if shop_id:
+                products = products.filter(shop_id=shop_id)
+            
+            total_products = products.count()
+            eligible_products = 0
+            already_boosted = 0
+            
+            for product in products:
+                if self._can_product_be_boosted(product):
+                    eligible_products += 1
+                
+                # Check if already boosted
+                if Boost.objects.filter(
+                    product_id=product.id,
+                    status='active',
+                    end_date__gt=timezone.now()
+                ).exists():
+                    already_boosted += 1
+            
             return Response({
                 'success': True,
                 'stats': {
@@ -30763,7 +31034,13 @@ class SellerBoosts(viewsets.ViewSet):
                     'expired_boosts': expired_boosts,
                     'pending_boosts': pending_boosts,
                     'total_spent': total_spent,
-                    'active_boost_details': active_boost_details
+                    'active_boost_details': active_boost_details,
+                    'product_stats': {
+                        'total_products': total_products,
+                        'eligible_for_boost': eligible_products,
+                        'already_boosted': already_boosted,
+                        'not_eligible': total_products - eligible_products
+                    }
                 },
                 'message': 'Boost statistics retrieved successfully'
             })
@@ -30806,6 +31083,90 @@ class SellerBoosts(viewsets.ViewSet):
             return Response({
                 'success': True,
                 'message': 'Boost cancelled successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def check_products(self, request):
+        """Check boost status for multiple products at once"""
+        try:
+            customer_id = request.query_params.get('customer_id')
+            product_ids = request.query_params.getlist('product_ids')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not product_ids:
+                return Response({
+                    'success': False,
+                    'message': 'product_ids is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            now = timezone.now()
+            results = []
+            
+            for product_id in product_ids:
+                try:
+                    product = Product.objects.get(
+                        id=product_id,
+                        customer_id=customer_id
+                    )
+                    
+                    # Check for active boost
+                    active_boost = Boost.objects.filter(
+                        product_id=product_id,
+                        status='active',
+                        end_date__gt=now
+                    ).select_related('boost_plan').first()
+                    
+                    eligibility = self._check_product_eligibility(product)
+                    
+                    results.append({
+                        'product_id': product_id,
+                        'product_name': product.name,
+                        'is_boosted': active_boost is not None,
+                        'boost_info': {
+                            'boost_id': str(active_boost.id) if active_boost else None,
+                            'plan_name': active_boost.boost_plan.name if active_boost and active_boost.boost_plan else None,
+                            'end_date': active_boost.end_date.isoformat() if active_boost else None,
+                            'days_remaining': (active_boost.end_date - now).days if active_boost else None
+                        } if active_boost else None,
+                        'eligibility': eligibility,
+                        'can_be_boosted': self._can_product_be_boosted(product)
+                    })
+                    
+                except Product.DoesNotExist:
+                    results.append({
+                        'product_id': product_id,
+                        'product_name': 'Unknown',
+                        'is_boosted': False,
+                        'boost_info': None,
+                        'eligibility': {
+                            'is_eligible': False,
+                            'issues': ['Product not found or unauthorized']
+                        },
+                        'can_be_boosted': False,
+                        'error': 'Product not found'
+                    })
+            
+            return Response({
+                'success': True,
+                'results': results,
+                'summary': {
+                    'total_checked': len(results),
+                    'boosted': len([r for r in results if r['is_boosted']]),
+                    'can_be_boosted': len([r for r in results if r['can_be_boosted']]),
+                    'not_eligible': len([r for r in results if not r['can_be_boosted']])
+                },
+                'message': 'Products checked successfully'
             })
             
         except Exception as e:
