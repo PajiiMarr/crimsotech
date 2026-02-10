@@ -9,7 +9,9 @@ import { Badge } from "~/components/ui/badge";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Switch } from "~/components/ui/switch";
 import { Separator } from "~/components/ui/separator";
-import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles, Calculator, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
 import { useFetcher } from "react-router"
@@ -133,7 +135,13 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
   const [productName, setProductName] = useState('');
   const [productDescription, setProductDescription] = useState('');
   const [productQuantity, setProductQuantity] = useState<number | ''>('');
-  const [productPrice, setProductPrice] = useState<number | ''>('');
+  
+  // New pricing state
+  const [originalPrice, setOriginalPrice] = useState<number | ''>('');
+  const [usageTime, setUsageTime] = useState<number | ''>('');
+  const [usageUnit, setUsageUnit] = useState<'months' | 'years'>('months');
+  const [calculatedPrice, setCalculatedPrice] = useState<number | ''>('');
+  
   const [productCondition, setProductCondition] = useState('');
 
 
@@ -196,6 +204,30 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
   const [apiResponseError, setApiResponseError] = useState<string | null>(null);
   const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(null);
   const predictionAbortController = useRef<AbortController | null>(null);
+
+  // Calculate depreciation function
+  const calculateDepreciation = useCallback((original: number, time: number, unit: 'months' | 'years') => {
+    if (!original || !time) return '';
+    
+    let years = unit === 'years' ? time : time / 12;
+    const depreciationRate = 0.20; // 20% per year
+    
+    // Calculate depreciated value: original * (1 - depreciationRate)^years
+    const depreciatedValue = original * Math.pow((1 - depreciationRate), years);
+    
+    // Round to 2 decimal places
+    return Math.max(0, parseFloat(depreciatedValue.toFixed(2)));
+  }, []);
+
+  // Update calculated price when original price or usage time changes
+  useEffect(() => {
+    if (originalPrice && usageTime) {
+      const calculated = calculateDepreciation(originalPrice, usageTime, usageUnit);
+      setCalculatedPrice(calculated);
+    } else {
+      setCalculatedPrice('');
+    }
+  }, [originalPrice, usageTime, usageUnit, calculateDepreciation]);
 
   // Note: Prediction is image-based now. Validation is performed when an image is provided.
 
@@ -538,7 +570,7 @@ const analyzeImages = async (files: File[]) => {
     let combos: any[] = [];
     arrays.forEach((arr, idx) => {
       if (idx === 0) {
-        combos = arr.map((a) => ({ option_ids: [a.id], option_map: { [variantGroups[0].id]: a.id }, price: productPrice || '', quantity: productQuantity || '' }));
+        combos = arr.map((a) => ({ option_ids: [a.id], option_map: { [variantGroups[0].id]: a.id }, price: calculatedPrice || '', quantity: productQuantity || '' }));
       } else {
         const groupId = variantGroups[idx].id;
         const newCombos: any[] = [];
@@ -547,7 +579,7 @@ const analyzeImages = async (files: File[]) => {
             newCombos.push({
               option_ids: [...existing.option_ids, a.id],
               option_map: { ...existing.option_map, [groupId]: a.id },
-              price: existing.price ?? productPrice ?? '',
+              price: existing.price ?? calculatedPrice ?? '',
               compare_price: existing.compare_price ?? undefined,
               quantity: existing.quantity ?? productQuantity ?? '',
               length: existing.length ?? productLength ?? '',
@@ -571,7 +603,7 @@ const analyzeImages = async (files: File[]) => {
           id: found?.id || generateId(),
           option_ids: c.option_ids,
           option_map: c.option_map,
-          price: found?.price ?? c.price ?? productPrice ?? '',
+          price: found?.price ?? c.price ?? calculatedPrice ?? '',
           compare_price: found?.compare_price ?? c.compare_price ?? undefined,
           quantity: found?.quantity ?? c.quantity ?? 0,
           length: found?.length ?? c.length ?? productLength ?? '',
@@ -597,11 +629,11 @@ const analyzeImages = async (files: File[]) => {
 
       return preserved;
     });
-  }, [variantGroups, productPrice]);
+  }, [variantGroups, calculatedPrice]);
 
   useEffect(() => {
     generateSkuCombinations();
-  }, [variantGroups, productPrice]);
+  }, [variantGroups, calculatedPrice]);
 
 
 
@@ -844,185 +876,224 @@ if (selectedCategoryName?.trim()) {
     <form 
       ref={formRef}
       onSubmit={handleSubmit}
-      className="space-y-8"
+      className="space-y-6"
     >
-      {/* No hidden category ID field; map class name to ID on submit */}
+      {/* Hidden input for the calculated price to be submitted */}
+      <input type="hidden" name="price" value={calculatedPrice} />
       
-      {/* STEP 1: AI Category Prediction Section */}
-      <Card id="ai-category-prediction">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-purple-600" />
-            Step 1: AI Category Prediction
-          </CardTitle>
-          <CardDescription>
-            Fill in these basic details first. Our AI will suggest the best category for your product.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="space-y-6">
-            {/* Model Required Fields Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Product Name */}
-              <div className="space-y-2">
-                <Label htmlFor="name">Product Name *</Label>
-                <Input 
-                  type="text" 
-                  id="name" 
-                  name="name" 
-                  required 
-                  placeholder="Enter product name"
-                  value={productName}
-                  onChange={(e) => setProductName(e.target.value)}
-                  className={showPrediction && predictionResult ? 'border-green-500' : ''}
-                />
-                {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
-              </div>
+      {/* Progress Steps */}
+      <div className="flex items-center space-x-2 mb-6">
+        <Badge variant="default" className="px-3 py-1">1. Basic Info</Badge>
+        <div className="h-0.5 w-8 bg-gray-300"></div>
+        <Badge variant={mainMedia.length > 0 ? "default" : "outline"} className="px-3 py-1">2. Media</Badge>
+        <div className="h-0.5 w-8 bg-gray-300"></div>
+        <Badge variant={showVariants ? "default" : "outline"} className="px-3 py-1">3. Variations</Badge>
+        <div className="h-0.5 w-8 bg-gray-300"></div>
+        <Badge variant={calculatedPrice ? "default" : "outline"} className="px-3 py-1">4. Pricing & Stock</Badge>
+      </div>
 
-              {/* Condition */}
-              <div className="space-y-2">
-                <Label htmlFor="condition">Condition *</Label>
-                <Select 
-                  name="condition" 
-                  required
-                  value={productCondition}
-                  onValueChange={setProductCondition}
-                >
-                  <SelectTrigger className={showPrediction && predictionResult ? 'border-green-500' : ''}>
-                    <SelectValue placeholder="Select condition" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Like New">Like New</SelectItem>
-                    <SelectItem value="New">New</SelectItem>
-                    <SelectItem value="Refurbished">Refurbished</SelectItem>
-                    <SelectItem value="Used - Excellent">Used - Excellent</SelectItem>
-                    <SelectItem value="Used - Good">Used - Good</SelectItem>
-                  </SelectContent>
-                </Select>
-                {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
-              </div>
+      {/* STEP 1: Basic Information */}
+      <div className="rounded-lg border bg-white p-6 shadow-sm">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100">
+            <Sparkles className="h-4 w-4 text-purple-600" />
+          </div>
+          <div>
+            <h2 className="text-xl font-semibold">Basic Information</h2>
+            <p className="text-sm text-gray-500">Start with product details. AI will suggest a category when you upload images.</p>
+          </div>
+        </div>
 
-
-            </div>
-
-            {/* Description */}
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Product Name */}
             <div className="space-y-2">
-              <Label htmlFor="description">Description *</Label>
-              <Textarea 
-                id="description" 
-                name="description" 
+              <Label htmlFor="name" className="flex items-center gap-1">
+                Product Name *
+                <Info className="h-3 w-3 text-gray-400" />
+              </Label>
+              <Input 
+                type="text" 
+                id="name" 
+                name="name" 
                 required 
-                rows={4} 
-                placeholder="Enter detailed product description"
-                value={productDescription}
-                onChange={(e) => setProductDescription(e.target.value)}
+                placeholder="Enter product name"
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
                 className={showPrediction && predictionResult ? 'border-green-500' : ''}
               />
-              {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
+              {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
             </div>
 
-            <div className="flex justify-end">
-              <p className="text-sm text-gray-500">Category prediction is image-based. Upload a cover image in Step 2 and click "Analyze Cover Image".</p>
+            {/* Condition */}
+            <div className="space-y-2">
+              <Label htmlFor="condition">Condition *</Label>
+              <Select 
+                name="condition" 
+                required
+                value={productCondition}
+                onValueChange={setProductCondition}
+              >
+                <SelectTrigger className={showPrediction && predictionResult ? 'border-green-500' : ''}>
+                  <SelectValue placeholder="Select condition" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Like New">Like New</SelectItem>
+                  <SelectItem value="New">New</SelectItem>
+                  <SelectItem value="Refurbished">Refurbished</SelectItem>
+                  <SelectItem value="Used - Excellent">Used - Excellent</SelectItem>
+                  <SelectItem value="Used - Good">Used - Good</SelectItem>
+                </SelectContent>
+              </Select>
+              {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      {/* STEP 2: Product Media */}
-      <Card id="media">
-        <CardHeader>
-          <CardTitle>Step 2: Product Media</CardTitle>
-          <CardDescription>
-            Upload main product images and videos (max 9 files, 50MB each)
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  * First image/video will be used as the cover image
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-xs">
-                  {mainMedia.length}/9
-                </Badge>
-                <Button type="button" variant="outline" size="sm" onClick={() => analyzeImages(mainMedia.map(m => m.file))} disabled={mainMedia.length === 0 || isPredicting}>
-                  {isPredicting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    'Analyze All Images'
-                  )}
+          {/* Description */}
+          <div className="space-y-2">
+            <Label htmlFor="description" className="flex items-center gap-1">
+              Description *
+              <Info className="h-3 w-3 text-gray-400" />
+            </Label>
+            <Textarea 
+              id="description" 
+              name="description" 
+              required 
+              rows={4} 
+              placeholder="Describe your product in detail..."
+              value={productDescription}
+              onChange={(e) => setProductDescription(e.target.value)}
+              className={showPrediction && predictionResult ? 'border-green-500' : ''}
+            />
+            {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* STEP 2: Product Media & Category */}
+      <div className="rounded-lg border bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100">
+              <ImageIcon className="h-4 w-4 text-blue-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Product Media</h2>
+              <p className="text-sm text-gray-500">Upload images/videos (max 9). First image is the cover.</p>
+            </div>
+          </div>
+          <Badge variant="outline" className="text-xs">
+            {mainMedia.length}/9
+          </Badge>
+        </div>
+
+        <div className="space-y-6">
+          {/* Media Upload Area */}
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
+            <div className="text-center">
+              <Upload className="h-10 w-10 text-gray-400 mx-auto mb-3" />
+              <Label htmlFor="main-media-upload" className="flex justify-center flex-col text-center cursor-pointer">
+                <div className="text-xs text-gray-500 mb-4">Images or videos (max 9 files, 50MB each)</div>
+                <Button type="button" variant="outline" size="sm">
+                  Choose Files
                 </Button>
-              </div>
-            </div> 
-            
-            <div className="flex flex-col gap-4">
-              <div className="flex-1">
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-                  {mainMedia.map((item, index) => (
-                    <div key={index} className="relative group aspect-square border rounded-md overflow-hidden">
-                      {item.type === 'image' ? (
-                        <img
-                          src={item.preview}
-                          alt={`Preview ${index + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-gray-100 flex items-center justify-center">
-                          <Video className="h-6 w-6 text-gray-400" />
-                        </div>
-                      )}
-                      {index === 0 && (
-                        <Badge className="absolute bottom-0 left-0 rounded-none bg-black/80 text-white px-1.5 py-0.5 text-[10px]">
-                          Cover
-                        </Badge>
-                      )}
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="sm"
-                        className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                        onClick={() => removeMainMedia(index)}
-                      >
-                        <X className="h-2.5 w-2.5" />
-                      </Button>
-                    </div>
-                  ))}
-                  
-                  {mainMedia.length < 9 && (
-                    <div className="aspect-square">
-                      <Input 
-                        ref={fileInputRef}
-                        type="file" 
-                        id="main-media-upload" 
-                        name="media_files"
-                        multiple 
-                        accept="image/*,video/*" 
-                        onChange={handleMainMediaChange}
-                        className="hidden" 
-                      />
-                      <Label htmlFor="main-media-upload" className="cursor-pointer flex flex-col items-center justify-center aspect-square border-2 border-dashed border-gray-300 rounded-md text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50 transition-colors h-full w-full p-2">
-                        <Upload className="h-5 w-5 mb-1" />
-                        <span className="text-xs text-center">Add Picture/Video</span>
-                      </Label>
+              </Label>
+              <Input 
+                ref={fileInputRef}
+                type="file" 
+                id="main-media-upload" 
+                name="media_files"
+                multiple 
+                accept="image/*,video/*" 
+                onChange={handleMainMediaChange}
+                className="hidden" 
+              />
+            </div>
+          </div>
+
+          {/* Media Preview Grid */}
+          {mainMedia.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              {mainMedia.map((item, index) => (
+                <div key={index} className="relative group aspect-square border rounded-lg overflow-hidden">
+                  {item.type === 'image' ? (
+                    <img
+                      src={item.preview}
+                      alt={`Preview ${index + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+                      <Video className="h-8 w-8 text-gray-400" />
                     </div>
                   )}
+                  {index === 0 && (
+                    <Badge className="absolute top-2 left-2 bg-black/80 text-white px-1.5 py-0.5 text-[10px]">
+                      Cover
+                    </Badge>
+                  )}
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="absolute top-2 right-2 h-6 w-6 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => removeMainMedia(index)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+              
+              {mainMedia.length < 9 && (
+                <Label htmlFor="main-media-upload" className="cursor-pointer flex flex-col items-center justify-center aspect-square border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50 transition-colors p-4">
+                  <Plus className="h-6 w-6 mb-2" />
+                  <span className="text-xs text-center">Add More</span>
+                </Label>
+              )}
+            </div>
+          )}
+
+          {/* AI Analysis Section */}
+          <Collapsible className="border rounded-lg">
+            <CollapsibleTrigger className="flex w-full items-center justify-between p-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-purple-600" />
+                <span className="font-medium">AI Category Prediction</span>
+                {predictionResult && (
+                  <Badge variant="outline" className="ml-2 bg-green-50 text-green-700">
+                    Ready
+                  </Badge>
+                )}
+              </div>
+              {predictionResult ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </CollapsibleTrigger>
+            <CollapsibleContent className="px-4 pb-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-600">Analyze images to get AI category suggestions</p>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => analyzeImages(mainMedia.map(m => m.file))} 
+                    disabled={mainMedia.length === 0 || isPredicting}
+                  >
+                    {isPredicting ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-2" />
+                    ) : null}
+                    {isPredicting ? 'Analyzing...' : 'Analyze Images'}
+                  </Button>
                 </div>
 
-                {/* Inline: Category Panel (below images) */}
-                <div className="mt-4 p-3 border rounded bg-gray-50 space-y-2">
-                  <div className="text-sm font-medium">Category</div>
+                {/* Category Selection */}
+                <div className="space-y-2">
+                  <Label htmlFor="category">Category</Label>
                   <Select value={selectedCategoryName} onValueChange={handleCategoryChange}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="others">Others</SelectItem>
-
                       {modelClasses && modelClasses.length > 0 ? (
                         modelClasses.map((name) => (
                           <SelectItem key={name} value={name}>
@@ -1031,610 +1102,515 @@ if (selectedCategoryName?.trim()) {
                         ))
                       ) : (
                         <SelectItem value="none" disabled>
-                          No model classes available
+                          No categories available
                         </SelectItem>
                       )}
                     </SelectContent>
                   </Select>
-
-                  {/* If selected name isn't among the model classes, show it explicitly so the user sees the AI suggestion */}
+                  
                   {selectedCategoryName && (!modelClasses || !modelClasses.includes(selectedCategoryName)) && (
-                    <div className="text-xs text-gray-600 mt-1">Selected: {selectedCategoryName}</div>
-                  )}
-
-
-
-      
-
-                  <p className="text-xs text-gray-500">Select a category here to override AI suggestion or to set it manually.</p>
-
-                  {predictionError && (
-                    <div className="mt-2 p-2 border rounded bg-red-50 text-sm text-red-700">
-                      {predictionError}
-                    </div>
+                    <p className="text-xs text-gray-600">Selected: {selectedCategoryName}</p>
                   )}
 
                   {predictionResult && !predictionError && (
-                    <div className="mt-2 p-2 border rounded bg-green-50 text-sm text-green-800 space-y-2">
-                      <div className="font-medium">Suggested Category</div>
-                      <div>
-                        {predictionResult.predicted_category?.category_name || 'Unknown'}
-                        {typeof predictionResult.predicted_category?.confidence === 'number' && (
-                          <span className="ml-1 text-green-700">(
-                            {Math.round((predictionResult.predicted_category.confidence || 0) * 100)}%
-                          )</span>
-                        )}
+                    <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
+                      <div className="font-medium text-sm text-green-800 mb-1">AI Suggestion</div>
+                      <div className="text-sm text-green-700">
+                        <span className="font-medium">{predictionResult.predicted_category?.category_name}</span>
+                        <span className="ml-2 text-green-600">
+                          ({Math.round((predictionResult.predicted_category?.confidence || 0) * 100)}% confidence)
+                        </span>
                       </div>
                       {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
-                        <div className="text-xs text-green-700">
-                          Alternatives: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
+                        <div className="text-xs text-green-600 mt-1">
+                          Also considered: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
                         </div>
                       )}
-                      <div className="space-y-2">
-                        
+                    </div>
+                  )}
 
-                        {closestMatch && (
-                          <div className="mt-2 p-2 border rounded bg-yellow-50 text-sm text-yellow-800">
-                            Closest match: <strong>{closestMatch.name}</strong> ({Math.round(closestMatch.score * 100)}%)
-                            <div className="mt-2">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedCategoryName(closestMatch.name);
-                                  setAppliedCategory(globalCategories.find(gc => gc.name === closestMatch.name) || null);
-                                  setClosestMatch(null);
-                                  setPredictionError(null);
-                                }}
-                              >
-                                Use Closest Match
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                  {predictionError && (
+                    <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                      <div className="text-sm text-red-700">{predictionError}</div>
                     </div>
                   )}
                 </div>
               </div>
-            </div>
-
-          </div>
-        </CardContent>
-      </Card>
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
+      </div>
 
       {/* STEP 3: Variations */}
-      <Card id="variations">
-        <CardHeader>
-          <CardTitle>Step 3: Variations (Optional)</CardTitle>
-          <CardDescription>
-            Define product variants like size or color with individual images and dimensions.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-medium">Enable Product Variations</h3>
-                <p className="text-sm text-muted-foreground">
-                  Enable this to add variant groups (e.g., Size, Color) with individual images and dimensions.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Label htmlFor="variant-toggle">Enable Variations</Label>
-                <Switch
-                  id="variant-toggle"
-                  checked={showVariants}
-                  onCheckedChange={(checked) => {
-                    setShowVariants(checked);
-                    if (checked && variantGroups.length === 0) {
-                      setVariantGroups([
-                        {
-                          id: generateId(),
-                          title: "Size",
-                          options: [
-                            {
-                              id: generateId(),
-                              title: "Small",
-                            },
-                          ],
-                        },
-                      ]);
-                    }
-                  }}
-                />
-              </div>
+      <div className="rounded-lg border bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100">
+              <Package className="h-4 w-4 text-amber-600" />
             </div>
+            <div>
+              <h2 className="text-xl font-semibold">Product Variations</h2>
+              <p className="text-sm text-gray-500">Add options like size, color, etc. (Optional)</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="variant-toggle" className="text-sm">Enable Variations</Label>
+            <Switch
+              id="variant-toggle"
+              checked={showVariants}
+              onCheckedChange={(checked) => {
+                setShowVariants(checked);
+                if (checked && variantGroups.length === 0) {
+                  addVariantGroup();
+                }
+              }}
+            />
+          </div>
+        </div>
 
-            {showVariants ? (
-              <div className="space-y-6 p-4 border rounded-lg bg-gray-50">
-                
-                {/* Variant Options Definition */}
-                <div className="space-y-4">
-                  {variantGroups.map((group) => (
-                    <div key={group.id} className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4 text-sm font-medium text-gray-700">
-                        <div>Option type</div>
-                        <div>Option value</div>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-4 items-start">
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="text"
-                            value={group.title}
-                            onChange={(e) => updateVariantGroupTitle(group.id, e.target.value)}
-                            placeholder="e.g., Size, Color"
-                            className="flex-1"
-                          />
-                          <Button 
-                            type="button" 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => removeVariantGroup(group.id)}
-                            disabled={variantGroups.length === 1}
-                            className="h-8 w-8 p-0 text-gray-500 hover:text-red-500"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                        
-                        <div className="min-h-[2.5rem] px-3 py-2 border rounded-md bg-white flex flex-wrap items-center gap-1">
-                          {group.options.map((option, index) => (
-                            <div key={option.id} className="flex items-center">
-                              <span className="text-sm px-2 py-1 bg-gray-100 rounded">
-                                {option.title}
-                              </span>
-                              {index < group.options.length - 1 && (
-                                <span className="mx-1 text-gray-400">×</span>
-                              )}
-                            </div>
-                          ))}
-                          <input
-                            type="text"
-                            className="flex-1 min-w-[100px] text-sm border-0 focus:outline-none focus:ring-0 px-2 py-1"
-                            placeholder="Type and press Enter..."
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                // Prevent form submission when pressing Enter
-                                e.preventDefault();
-                                if (e.currentTarget.value.trim()) {
-                                  addOption(group.id, e.currentTarget.value.trim());
-                                  e.currentTarget.value = '';
-                                }
-                              } else if (e.key === 'Backspace' && e.currentTarget.value === '' && group.options.length > 0) {
-                                const lastOption = group.options[group.options.length - 1];
-                                removeOption(group.id, lastOption.id);
-                              }
-                            }}
-                            onBlur={(e) => {
-                              if (e.target.value.trim()) {
-                                addOption(group.id, e.target.value.trim());
-                                e.target.value = '';
-                              }
-                            }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Variant Dimensions */}
-                <div className="space-y-4 pt-4 border-t">
-                  <h4 className="font-medium">Variant Dimensions</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Dimensions and weights are now set per generated combination in the "Generated Combinations" table below.
-                  </p>
-                </div>
-
-                <Button 
-                  type="button" 
-                  onClick={addVariantGroup}
-                  variant="outline"
-                  className="w-full border-dashed mt-4"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add more option type
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {/* Single Product Dimensions (when variants disabled) */}
-                <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
-                  <h3 className="text-lg font-medium">Product Dimensions & Weight</h3>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="length">Length (cm)</Label>
-                      <Input
-                        type="number"
-                        id="length"
-                        name="length"
-                        min="0"
-                        step="0.1"
-                        placeholder="0.0"
-                        value={productLength}
-                        onChange={(e) => setProductLength(parseFloat(e.target.value) || '')}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="width">Width (cm)</Label>
-                      <Input
-                        type="number"
-                        id="width"
-                        name="width"
-                        min="0"
-                        step="0.1"
-                        placeholder="0.0"
-                        value={productWidth}
-                        onChange={(e) => setProductWidth(parseFloat(e.target.value) || '')}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="height">Height (cm)</Label>
-                      <Input
-                        type="number"
-                        id="height"
-                        name="height"
-                        min="0"
-                        step="0.1"
-                        placeholder="0.0"
-                        value={productHeight}
-                        onChange={(e) => setProductHeight(parseFloat(e.target.value) || '')}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="weight">Weight</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          type="number"
-                          id="weight"
-                          name="weight"
-                          min="0"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={productWeight}
-                          onChange={(e) => setProductWeight(parseFloat(e.target.value) || '')}
-                          className="flex-1"
-                        />
-                        <Select value={productWeightUnit} onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => setProductWeightUnit(value)}>
-                          <SelectTrigger className="w-20">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="g">g</SelectItem>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="lb">lb</SelectItem>
-                            <SelectItem value="oz">oz</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        {/* Hidden input to include product weight unit in FormData */}
-                        <input type="hidden" name="weight_unit" value={productWeightUnit} />
-                      </div>
-                    </div>
+        {showVariants ? (
+          <div className="space-y-6">
+            {/* Variant Groups */}
+            {variantGroups.map((group) => (
+              <div key={group.id} className="border rounded-lg p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="text"
+                      value={group.title}
+                      onChange={(e) => updateVariantGroupTitle(group.id, e.target.value)}
+                      placeholder="e.g., Size, Color"
+                      className="w-32 font-medium"
+                    />
                   </div>
+                  <Button 
+                    type="button" 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => removeVariantGroup(group.id)}
+                    disabled={variantGroups.length === 1}
+                    className="h-8 w-8 p-0 text-gray-500 hover:text-red-500"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                
+                <div className="space-y-3">
+                  <div className="text-sm font-medium text-gray-700">Options:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {group.options.map((option) => (
+                      <div key={option.id} className="flex items-center gap-1 bg-gray-100 rounded-full px-3 py-1">
+                        <span className="text-sm">{option.title}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeOption(group.id, option.id)}
+                          className="h-4 w-4 p-0 hover:bg-transparent"
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))}
+                    <input
+                      type="text"
+                      className="flex-1 min-w-[120px] text-sm border-0 focus:outline-none focus:ring-0 px-3 py-1"
+                      placeholder="Add option..."
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (e.currentTarget.value.trim()) {
+                            addOption(group.id, e.currentTarget.value.trim());
+                            e.currentTarget.value = '';
+                          }
+                        }
+                      }}
+                      onBlur={(e) => {
+                        if (e.target.value.trim()) {
+                          addOption(group.id, e.target.value.trim());
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            <Button 
+              type="button" 
+              onClick={addVariantGroup}
+              variant="outline"
+              className="w-full"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Another Option Type
+            </Button>
+
+            {/* Generated SKU Combinations */}
+            {skuCombinations.length > 0 && (
+              <div className="mt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-medium">Generated Combinations ({skuCombinations.length})</h3>
+                  <Badge variant="outline">{skuCombinations.length} SKUs</Badge>
+                </div>
+                <div className="overflow-x-auto border rounded-lg">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 font-medium text-left">Combination</th>
+                        <th className="px-3 py-2 font-medium text-left">Price</th>
+                        <th className="px-3 py-2 font-medium text-left">Qty</th>
+                        <th className="px-3 py-2 font-medium text-left">SKU</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {skuCombinations.slice(0, 5).map((sku) => (
+                        <tr key={sku.id} className="border-t">
+                          <td className="px-3 py-2">
+                            {variantGroups.map((g) => (
+                              <span key={g.id} className="text-xs bg-gray-100 rounded px-2 py-1 mr-1">
+                                {g.options.find(o => o.id === sku.option_map[g.id])?.title}
+                              </span>
+                            ))}
+                          </td>
+                          <td className="px-3 py-2">
+                            <Input 
+                              type="number" 
+                              min="0" 
+                              step="0.01" 
+                              value={sku.price || ''} 
+                              onChange={(e) => updateSkuField(sku.id, 'price', parseFloat(e.target.value) || '')}
+                              className="w-24"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <Input 
+                              type="number" 
+                              min="0" 
+                              value={sku.quantity || ''} 
+                              onChange={(e) => updateSkuField(sku.id, 'quantity', parseInt(e.target.value) || '')}
+                              className="w-20"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <Input 
+                              type="text" 
+                              value={sku.sku_code || ''} 
+                              onChange={(e) => updateSkuField(sku.id, 'sku_code', e.target.value)}
+                              placeholder="SKU"
+                              className="w-32"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      {skuCombinations.length > 5 && (
+                        <tr className="border-t bg-gray-50">
+                          <td colSpan={4} className="px-3 py-2 text-center text-sm text-gray-500">
+                            + {skuCombinations.length - 5} more combinations
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
           </div>
-        </CardContent>
-      </Card>
+        ) : (
+          <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
+            <Package className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+            <h3 className="font-medium text-gray-700 mb-1">No Variations</h3>
+            <p className="text-sm text-gray-500 mb-4">Enable variations to add options like size, color, etc.</p>
+            <Button 
+              type="button" 
+              variant="outline"
+              onClick={() => {
+                setShowVariants(true);
+                if (variantGroups.length === 0) {
+                  addVariantGroup();
+                }
+              }}
+            >
+              Enable Variations
+            </Button>
+          </div>
+        )}
+      </div>
 
       {/* STEP 4: Pricing & Stock */}
-      {!showVariants && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Pricing Card (only for non-variant products) */}
-        <Card id="pricing">
-          <CardHeader>
-            <CardTitle>Step 4: Pricing</CardTitle>
-            <CardDescription>
-              Set the base price and compare price for the product
-            </CardDescription>
-          </CardHeader>
-          
-          <CardContent>
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <Label htmlFor="price">Price *</Label>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Pricing Section */}
+        <div className="rounded-lg border bg-white p-6 shadow-sm">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
+              <Calculator className="h-4 w-4 text-green-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Pricing</h2>
+              <p className="text-sm text-gray-500">Set original price and usage time for depreciation calculation</p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Original Price */}
+            <div className="space-y-2">
+              <Label htmlFor="original_price" className="flex items-center gap-1">
+                Original Price *
+                <Info className="h-3 w-3 text-gray-400" />
+              </Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">$</span>
+                <Input
+                  type="number"
+                  id="original_price"
+                  name="original_price"
+                  required
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={originalPrice}
+                  onChange={(e) => setOriginalPrice(parseFloat(e.target.value) || '')}
+                  className="pl-8"
+                />
+              </div>
+              {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
+            </div>
+
+            {/* Usage Time */}
+            <div className="space-y-2">
+              <Label htmlFor="usage_time" className="flex items-center gap-1">
+                Usage Time *
+                <Info className="h-3 w-3 text-gray-400" />
+              </Label>
+              <div className="flex gap-3">
+                <div className="flex-1">
                   <Input
                     type="number"
-                    id="price"
-                    name="price"
+                    id="usage_time"
+                    name="usage_time"
                     required
                     min="0"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={productPrice}
-                    onChange={(e) => setProductPrice(parseFloat(e.target.value) || '')}
+                    step="0.1"
+                    placeholder="0"
+                    value={usageTime}
+                    onChange={(e) => setUsageTime(parseFloat(e.target.value) || '')}
                   />
-                  {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
+                </div>
+                <Select value={usageUnit} onValueChange={(value: 'months' | 'years') => setUsageUnit(value)}>
+                  <SelectTrigger className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="months">Months</SelectItem>
+                    <SelectItem value="years">Years</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="text-xs text-gray-500">How long the product has been used</p>
+            </div>
 
-                  {/* Product-level refundable toggle for non-variant products */}
-                  <div className="flex items-center justify-between mt-3">
-                    <div>
-                      <h4 className="font-medium">Refundable</h4>
-                      <p className="text-sm text-muted-foreground">Allow customers to request refunds for this product.</p>
-                    </div>
+            {/* Calculated Price */}
+            <div className="space-y-2">
+              <Label htmlFor="calculated_price">Calculated Selling Price</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">$</span>
+                <Input
+                  type="number"
+                  id="calculated_price"
+                  name="calculated_price_display"
+                  readOnly
+                  value={calculatedPrice}
+                  className="pl-8 bg-gray-50 font-medium"
+                />
+                <Badge 
+                  variant={calculatedPrice ? "default" : "outline"} 
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2"
+                >
+                  {calculatedPrice ? 'Auto-calculated' : 'Enter values'}
+                </Badge>
+              </div>
+            </div>
+
+
+            {/* Refundable Toggle */}
+            <div className="flex items-center justify-between pt-4 border-t">
+              <div className="space-y-1">
+                <div className="font-medium">Refundable</div>
+                <div className="text-sm text-gray-500">Allow customers to request refunds</div>
+              </div>
+              <Switch 
+                id="product-refundable" 
+                checked={productRefundable} 
+                onCheckedChange={setProductRefundable} 
+              />
+            </div>
+
+            {/* Hidden inputs for FormData */}
+            <input type="hidden" name="price" value={calculatedPrice} />
+            <input type="hidden" name="usage_unit" value={usageUnit} />
+            <input type="hidden" name="refundable" value={productRefundable ? 'true' : 'false'} />
+          </div>
+        </div>
+
+        {/* Stock Section */}
+        <div className="rounded-lg border bg-white p-6 shadow-sm">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100">
+              <Package className="h-4 w-4 text-red-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold">Stock & Inventory</h2>
+              <p className="text-sm text-gray-500">Set quantity and low stock alerts</p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Quantity */}
+            <div className="space-y-2">
+              <Label htmlFor="quantity" className="flex items-center gap-1">
+                Quantity *
+                <Info className="h-3 w-3 text-gray-400" />
+              </Label>
+              <Input
+                type="number"
+                id="quantity"
+                name="quantity"
+                required
+                min="0"
+                placeholder="0"
+                value={productQuantity}
+                onChange={(e) => setProductQuantity(parseInt(e.target.value) || '')}
+              />
+              {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
+            </div>
+
+            {/* Critical Stock Alert */}
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <div className="font-medium flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-600" />
+                    Low Stock Alert
+                  </div>
+                  <div className="text-sm text-gray-500">Get notified when stock is low</div>
+                </div>
+                <Switch
+                  checked={enableCriticalTrigger}
+                  onCheckedChange={setEnableCriticalTrigger}
+                />
+              </div>
+
+              {enableCriticalTrigger && (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="critical_threshold">Alert When Stock Reaches</Label>
                     <div className="flex items-center gap-2">
-                      <Label htmlFor="product-refundable">Refundable</Label>
-                      <Switch id="product-refundable" checked={productRefundable} onCheckedChange={setProductRefundable} />
+                      <Input
+                        type="number"
+                        id="critical_threshold"
+                        name="critical_threshold"
+                        min="1"
+                        placeholder="e.g., 5"
+                        value={criticalThreshold}
+                        onChange={(e) => setCriticalThreshold(parseInt(e.target.value) || '')}
+                        className="flex-1"
+                      />
+                      <span className="text-sm text-gray-500">units</span>
                     </div>
                   </div>
-
-                  {/* Hidden input so the value is included in FormData */}
-                  <input type="hidden" name="refundable" value={productRefundable ? 'true' : 'false'} />
+                  <div className="text-xs text-gray-500">
+                    You'll receive a notification when stock falls to or below this level
+                  </div>
                 </div>
-                
+              )}
+            </div>
+
+            {/* Weight & Dimensions */}
+            <div className="space-y-4 pt-4 border-t">
+              <div className="font-medium">Shipping Details</div>
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="compare_price">Compare Price (Optional)</Label>
-                  <Input
-                    type="number"
-                    id="compare_price"
-                    name="compare_price"
-                    min="0"
-                    step="0.01"
-                    placeholder="0.00"
-                  />
-                  <p className="text-xs text-gray-500">
-                    Original price to show as crossed out
-                  </p>
+                  <Label htmlFor="weight">Weight</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      id="weight"
+                      name="weight"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={productWeight}
+                      onChange={(e) => setProductWeight(parseFloat(e.target.value) || '')}
+                      className="flex-1"
+                    />
+                    <Select value={productWeightUnit} onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => setProductWeightUnit(value)}>
+                      <SelectTrigger className="w-20">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="g">g</SelectItem>
+                        <SelectItem value="kg">kg</SelectItem>
+                        <SelectItem value="lb">lb</SelectItem>
+                        <SelectItem value="oz">oz</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <input type="hidden" name="weight_unit" value={productWeightUnit} />
+                  </div>
                 </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
-
-
-
-        {/* Stock Card */}
-        <Card id="stock">
-          <CardHeader>
-            <CardTitle>Step 4: Stock</CardTitle>
-            <CardDescription>
-              Set initial stock quantity and configure low stock alerts.
-            </CardDescription>
-          </CardHeader>
-          
-          <CardContent>
-            <div className="space-y-6">
-              {/* Main Product Stock (when variants disabled) */}
-              {!showVariants && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label htmlFor="quantity">Quantity *</Label>
-                      <Input
-                        type="number"
-                        id="quantity"
-                        name="quantity"
-                        required
-                        min="0"
-                        placeholder="0"
-                        value={productQuantity}
-                        onChange={(e) => setProductQuantity(parseInt(e.target.value) || '')}
-                      />
-                      {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
-                    </div>
-                    
-                    <div className="space-y-4 border p-4 rounded-lg bg-red-50/50">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="font-medium">Critical Stock Trigger ⚠️</h4>
-                          <p className="text-sm text-muted-foreground">
-                            Receive notification when stock is low
-                          </p>
-                        </div>
-                        <Switch
-                          checked={enableCriticalTrigger}
-                          onCheckedChange={setEnableCriticalTrigger}
-                        />
-                      </div>
-
-                      {enableCriticalTrigger && (
-                        <div className="space-y-2">
-                          <Label htmlFor="critical_threshold">Critical Threshold</Label>
-                          <Input
-                            type="number"
-                            id="critical_threshold"
-                            name="critical_threshold"
-                            min="1"
-                            placeholder="e.g., 5"
-                            value={criticalThreshold}
-                            onChange={(e) => setCriticalThreshold(parseInt(e.target.value) || '')}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Variant Stock (when variants enabled) */}
-              {showVariants && variantGroups.length > 0 && (
-                <div className="space-y-4">
-                  <Label className="text-lg font-medium">Variant Stock</Label>
-                  
-                  {variantGroups.map((group) => (
-                    <div key={group.id} className="space-y-3">
-                      <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
-                      
-                      {group.options.map((option, optionIndex) => (
-                        <div key={option.id} className="flex items-center justify-between gap-3">
-                          {/* Option Label */}
-                          <div>
-                            <span className="text-sm font-medium">{group.title}: {option.title}</span>
-                          </div>
-
-                          {/* Variant Image Uploader */}
-                          <div>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) => handleVariantImageChange(group.id, option.id, e)}
-                              className="text-sm"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
-      )}
-
-      {/* Generated Combinations (SKUs) */}
-      {showVariants && variantGroups.length > 0 && (
-        <Card id="generated-combinations">
-          <CardHeader>
-            <CardTitle>Generated Combinations</CardTitle>
-            <CardDescription>
-              All combinations generated from your variant choices. Edit per-combination price, quantity, dimensions, or SKU code before saving.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="text-left">
-                    <th className="px-2 py-2 font-medium">Image</th>
-                    {variantGroups.map((g) => (
-                      <th key={g.id} className="px-2 py-2 font-medium">{g.title}</th>
-                    ))}
-                    <th className="px-2 py-2 font-medium">Price</th>
-                    <th className="px-2 py-2 font-medium">Compare Price</th>
-                    <th className="px-2 py-2 font-medium">Quantity</th>
-                    <th className="px-2 py-2 font-medium">Critical</th>
-                    <th className="px-2 py-2 font-medium">L (cm)</th>
-                    <th className="px-2 py-2 font-medium">W (cm)</th>
-                    <th className="px-2 py-2 font-medium">H (cm)</th>
-                    <th className="px-2 py-2 font-medium">Weight</th>
-                    <th className="px-2 py-2 font-medium">Unit</th>
-                    <th className="px-2 py-2 font-medium">SKU Code</th>
-                    <th className="px-2 py-2 font-medium">Refundable</th>
-                    <th className="px-2 py-2 font-medium">Active</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {skuCombinations.map((sku) => (
-                    <tr key={sku.id} className="border-t">
-                      <td className="px-2 py-2 align-top">
-                        <div className="relative w-12 h-12 rounded overflow-hidden bg-gray-100 flex items-center justify-center">
-                          {sku.imagePreview ? (
-                            <img src={sku.imagePreview} alt="sku" className="w-full h-full object-cover" />
-                          ) : (
-                            <ImageIcon className="h-5 w-5 text-gray-400" />
-                          )}
-
-                          <input
-                            type="file"
-                            id={`sku_image_${sku.id}`}
-                            accept="image/*"
-                            onChange={(e) => handleSkuImageChange(sku.id, e)}
-                            className="absolute inset-0 opacity-0 cursor-pointer"
-                          />
-                        </div>
-                        {sku.imagePreview && (
-                          <div className="mt-1">
-                            <Button type="button" variant="ghost" size="sm" onClick={() => updateSkuField(sku.id, 'image', null)}>Remove</Button>
-                          </div>
-                        )}
-                      </td>
-                      {variantGroups.map((g) => (
-                        <td key={g.id} className="px-2 py-2 align-top">
-                          {g.options.find(o => o.id === sku.option_map[g.id])?.title || ''}
-                        </td>
-                      ))}
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.01" value={sku.price || ''} onChange={(e) => updateSkuField(sku.id, 'price', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.01" value={sku.compare_price || ''} onChange={(e) => updateSkuField(sku.id, 'compare_price', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" value={sku.quantity || ''} onChange={(e) => updateSkuField(sku.id, 'quantity', parseInt(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="1" placeholder="Threshold" value={sku.critical_trigger || ''} onChange={(e) => updateSkuField(sku.id, 'critical_trigger', parseInt(e.target.value) || '')} className="w-20 text-xs" />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.1" value={sku.length || ''} onChange={(e) => updateSkuField(sku.id, 'length', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.1" value={sku.width || ''} onChange={(e) => updateSkuField(sku.id, 'width', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.1" value={sku.height || ''} onChange={(e) => updateSkuField(sku.id, 'height', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.01" value={sku.weight || ''} onChange={(e) => updateSkuField(sku.id, 'weight', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <select className="border rounded p-1 text-sm" value={sku.weight_unit || ''} onChange={(e) => updateSkuField(sku.id, 'weight_unit', e.target.value as any)}>
-                          <option value="">Unit</option>
-                          <option value="g">g</option>
-                          <option value="kg">kg</option>
-                          <option value="lb">lb</option>
-                          <option value="oz">oz</option>
-                        </select>
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="text" value={sku.sku_code || ''} onChange={(e) => updateSkuField(sku.id, 'sku_code', e.target.value)} />
-                      </td>
-
-                      {/* Refundable toggle per SKU (seller can mark if this SKU is refundable) */}
-                      <td className="px-2 py-2">
-                        <Switch checked={sku.refundable ?? false} onCheckedChange={(checked) => updateSkuField(sku.id, 'refundable', checked)} />
-                      </td>
-
-                      <td className="px-2 py-2">
-                        <Switch checked={sku.is_active ?? true} onCheckedChange={(checked) => updateSkuField(sku.id, 'is_active', checked)} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-
 
       {/* Submit Button */}
-      <div className="pt-6 space-y-3">
-        <Button
-          type="submit"
-          disabled={!selectedShop || fetcher.state === 'submitting'}
-          variant="default"
-          size="lg"
-          className="w-full"
-        >
-          {fetcher.state === 'submitting' ? 'Creating...' : (selectedShop ? 'Create Product' : 'Create Shop First')}
-        </Button>
+      <div className="sticky bottom-6 bg-white border rounded-lg shadow-lg p-6">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="font-medium">Ready to create your product?</div>
+            <div className="text-sm text-gray-500">
+              {selectedShop ? `Creating product for: ${selectedShop.name}` : 'Please create a shop first'}
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => window.history.back()}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={!selectedShop || fetcher.state === 'submitting'}
+              variant="default"
+              size="lg"
+              className="min-w-[140px]"
+            >
+              {fetcher.state === 'submitting' ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Creating...
+                </>
+              ) : (
+                'Create Product'
+              )}
+            </Button>
+          </div>
+        </div>
 
         {apiResponseError && (
-          <div className="p-3 border rounded bg-red-50 text-sm text-red-700">
-            <div className="font-medium">Failed to create product</div>
-            <div className="mt-1 whitespace-pre-wrap">{apiResponseError}</div>
-          </div>
+          <Alert variant="destructive" className="mt-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{apiResponseError}</AlertDescription>
+          </Alert>
         )}
 
         {apiResponseMessage && (
-          <div className="p-3 border rounded bg-green-50 text-sm text-green-800">
-            {apiResponseMessage}
-          </div>
+          <Alert className="mt-4 bg-green-50 border-green-200 text-green-800">
+            <AlertDescription>{apiResponseMessage}</AlertDescription>
+          </Alert>
         )}
       </div>
     </form>
