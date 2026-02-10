@@ -31357,4 +31357,58 @@ class SellerBoosts(viewsets.ViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=500)
 
+
+class HomeBoosts(viewsets.ViewSet):
+    """ViewSet for showing boosted products on home page"""
+    
+    @action(detail=False, methods=['get'])
+    def other_users(self, request):
+        """Get all boosted products that do NOT belong to the logged-in user"""
+        try:
+            # Get logged-in user ID from request
+            user_id = request.query_params.get('user_id')
             
+            if not user_id:
+                return Response({
+                    'success': False,
+                    'message': 'user_id is required'
+                }, status=400)
+            
+            # Get current time
+            now = timezone.now()
+            
+            # Get active boosts excluding user's products
+            boosts = Boost.objects.filter(
+                status='active',
+                end_date__gt=now
+            ).exclude(
+                product__customer__customer__id=user_id
+            ).select_related('product', 'product__customer__customer', 'boost_plan')[:20]
+            
+            # Build response
+            boosted_products = []
+            for boost in boosts:
+                product = boost.product
+                seller = product.customer.customer if product.customer else None
+                
+                boosted_products.append({
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'product_price': float(product.price),
+                    'seller_username': seller.username if seller else None,
+                    'boost_plan': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                    'days_remaining': (boost.end_date - now).days
+                })
+            
+            return Response({
+                'success': True,
+                'products': boosted_products,
+                'count': len(boosted_products),
+                'message': 'Success'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=500)

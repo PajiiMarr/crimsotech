@@ -3,10 +3,20 @@ import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider'
 import { useState, useEffect } from "react"
-import { Search, X, Heart, Handshake, Gift } from 'lucide-react'
+import { Search, X, Heart, Handshake, Gift, Flame, ShoppingBasket, Zap, Package } from 'lucide-react'
 import { Input } from '~/components/ui/input'
 import { useNavigate } from 'react-router'
 import AxiosInstance from '~/components/axios/Axios'
+import { Button } from '~/components/ui/button'
+import { Badge } from '~/components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '~/components/ui/dialog'
 
 // ----------------------------
 // Meta
@@ -68,6 +78,18 @@ interface Category {
     id: string
     username: string
   } | null
+}
+
+// ----------------------------
+// Hot Item type
+// ----------------------------
+interface HotItem {
+  product_id: string
+  product_name: string
+  product_price: number
+  seller_username: string
+  boost_plan: string
+  days_remaining: number
 }
 
 // ----------------------------
@@ -185,20 +207,20 @@ const CompactProductCard = ({
     try {
       if (!isFavorite) {
         await AxiosInstance.post('/customer-favorites/', { 
-          product: product.id, 
+          product: product.id,  // FIXED: Use product.id instead of productId
           customer: user.user_id 
         }, { 
           headers: { 'X-User-Id': user.user_id } 
         });
         setIsFavorite(true);
-        onToggleFavorite && onToggleFavorite(product.id, true);
+        onToggleFavorite && onToggleFavorite(product.id, true);  // FIXED: Use product.id instead of productId
       } else {
         await AxiosInstance.delete('/customer-favorites/', { 
-          data: { product: product.id, customer: user.user_id }, 
+          data: { product: product.id, customer: user.user_id },  // FIXED: Use product.id instead of productId
           headers: { 'X-User-Id': user.user_id } 
         });
         setIsFavorite(false);
-        onToggleFavorite && onToggleFavorite(product.id, false);
+        onToggleFavorite && onToggleFavorite(product.id, false);  // FIXED: Use product.id instead of productId
       }
     } catch (err) {
       console.error('Failed to update favorite:', err);
@@ -415,6 +437,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
     return {
       user,
+      userId,
       products,
       categories,
       appliedGiftIds: hiddenGiftIds || [],
@@ -424,6 +447,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     console.error('Error in loader:', error);
     return {
       user,
+      userId: null,
       products: [],
       categories: [],
     };
@@ -434,15 +458,22 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 // Home Component
 // ----------------------------
 export default function Home({ loaderData }: any) {
-  const { user, products, categories, appliedGiftIds = [], giftDetails = {} } = loaderData;
+  const { user, userId, products, categories, appliedGiftIds = [], giftDetails = {} } = loaderData;
   const [searchTerm, setSearchTerm] = useState("");
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [minPrice, setMinPrice] = useState<string>('');
   const [maxPrice, setMaxPrice] = useState<string>('');
   const [selectedCondition, setSelectedCondition] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
-  // View mode: show all products or only gifts (price === 0)
   const [viewMode, setViewMode] = useState<'all' | 'gifts'>('all');
+  
+  // State for Hot Items modal
+  const [showHotItemsModal, setShowHotItemsModal] = useState(false);
+  const [hotItems, setHotItems] = useState<HotItem[]>([]);
+  const [loadingHotItems, setLoadingHotItems] = useState(false);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
+  const [manualTriggerLoading, setManualTriggerLoading] = useState(false);
+  const navigate = useNavigate();
 
   // Fetch favorites
   const fetchFavorites = async () => {
@@ -458,6 +489,88 @@ export default function Home({ loaderData }: any) {
     } catch (err) {
       console.error('Failed to fetch favorites:', err);
     }
+  };
+
+  // Fetch hot items (boosted products from other users)
+  const fetchHotItems = async () => {
+    if (!userId) return false;
+    
+    try {
+      setLoadingHotItems(true);
+      const response = await AxiosInstance.get(`/home-boosts/other_users/?user_id=${userId}`);
+      
+      if (response.data.success) {
+        setHotItems(response.data.products || []);
+        return response.data.products && response.data.products.length > 0;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error fetching hot items:', error);
+      return false;
+    } finally {
+      setLoadingHotItems(false);
+    }
+  };
+
+  // Handle manual trigger of hot items (from "Show Hot Items" button)
+  const handleManualShowHotItems = async () => {
+    if (!userId || manualTriggerLoading) return;
+    
+    try {
+      setManualTriggerLoading(true);
+      const hasHotItems = await fetchHotItems();
+      
+      if (hasHotItems) {
+        setShowHotItemsModal(true);
+      } else {
+        // If no hot items, show the modal with empty state
+        setShowHotItemsModal(true);
+      }
+    } finally {
+      setManualTriggerLoading(false);
+    }
+  };
+
+  // Check and show hot items modal on component mount
+  useEffect(() => {
+    const checkAndShowHotItems = async () => {
+      // Check localStorage for "don't show again" preference
+      const dontShow = localStorage.getItem('dontShowHotItems');
+      
+      // Only show if user hasn't clicked "Don't show again"
+      if (!dontShow && userId) {
+        const hasHotItems = await fetchHotItems();
+        if (hasHotItems) {
+          setShowHotItemsModal(true);
+        }
+        // Don't show modal if response is empty
+      }
+      
+      // Load the "don't show again" preference from localStorage
+      if (dontShow) {
+        setDontShowAgain(true);
+      }
+    };
+
+    // Small delay to let page load first
+    const timer = setTimeout(() => {
+      checkAndShowHotItems();
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [userId]);
+
+  // Handle "Don't show again" button click
+  const handleDontShowAgain = () => {
+    localStorage.setItem('dontShowHotItems', 'true');
+    setDontShowAgain(true);
+    setShowHotItemsModal(false);
+  };
+
+  // Handle "Show again" if user changes their mind
+  const handleShowAgain = () => {
+    localStorage.removeItem('dontShowHotItems');
+    setDontShowAgain(false);
   };
 
   // Log applied gift ids for debugging
@@ -517,9 +630,45 @@ export default function Home({ loaderData }: any) {
     return matchesSearch && matchesMin && matchesMax && matchesCondition && matchesCategory && matchesView;
   });
 
+  // Format currency for display
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-PH', {
+      style: 'currency',
+      currency: 'PHP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
   return (
     <UserProvider user={user}>
       <SidebarLayout>
+        {/* Attractive "Show Hot Items" button */}
+        {dontShowAgain && (
+          <div className="mb-4">
+            <Button
+              onClick={handleManualShowHotItems}
+              disabled={manualTriggerLoading}
+              className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-0.5"
+            >
+              {manualTriggerLoading ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                  <span>Loading Hot Items...</span>
+                </>
+              ) : (
+                <>
+                  <div className="relative">
+                    <Flame className="h-5 w-5 animate-pulse" />
+                    <div className="absolute -top-1 -right-1 h-2 w-2 bg-red-400 rounded-full animate-ping"></div>
+                  </div>
+                  <span className="font-semibold">🔥 Show Hot Items</span>
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
         <section className="w-full p-3">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <div className="w-full md:w-auto">
@@ -671,6 +820,157 @@ export default function Home({ loaderData }: any) {
             )}
           </div>
         </section>
+
+        {/* Attractive Hot Items Modal */}
+        <Dialog open={showHotItemsModal} onOpenChange={setShowHotItemsModal}>
+          <DialogContent className="sm:max-w-xl max-h-[80vh] overflow-y-auto border-0 shadow-2xl">
+            {/* Gradient header */}
+            <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-6 rounded-t-lg">
+              <DialogHeader className="text-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white/20 rounded-full">
+                      <Flame className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <DialogTitle className="text-2xl font-bold">Hot Items 🔥</DialogTitle>
+                      <DialogDescription className="text-orange-100">
+                        Boosted by other sellers
+                      </DialogDescription>
+                    </div>
+                  </div>
+                </div>
+              </DialogHeader>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {loadingHotItems ? (
+                <div className="text-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-4 border-orange-200 border-t-orange-600 mx-auto mb-4"></div>
+                  <p className="text-lg font-medium text-gray-700">Finding hot items...</p>
+                  <p className="text-sm text-gray-500 mt-2">Discovering boosted products just for you</p>
+                </div>
+              ) : hotItems.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-orange-100 to-red-100 flex items-center justify-center">
+                    <Package className="h-10 w-10 text-orange-500" />
+                  </div>
+                  <h3 className="text-xl font-bold text-gray-800 mb-2">No Hot Items Yet</h3>
+                  <p className="text-gray-600 max-w-md mx-auto">
+                    No boosted products available at the moment. Check back later for trending items!
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-4">
+                    {hotItems.map((item, index) => (
+                      <div 
+                        key={index} 
+                        className="group relative bg-white border border-gray-200 rounded-xl p-4 hover:shadow-lg hover:border-orange-300 transition-all duration-300 cursor-pointer"
+                        onClick={() => {
+                          navigate(`/product/${item.product_id}`);
+                          setShowHotItemsModal(false);
+                        }}
+                      >
+                        {/* Hot badge */}
+                        <div className="absolute -top-2 -left-2">
+                          <Badge className="bg-gradient-to-r from-orange-500 to-red-500 text-white border-0 shadow-lg px-3 py-1">
+                            <Zap className="h-3 w-3 mr-1" />
+                            BOOSTED
+                          </Badge>
+                        </div>
+                        
+                        {/* Days remaining indicator */}
+                        <div className="absolute -top-2 -right-2">
+                          <div className="bg-blue-50 text-blue-700 text-xs font-medium px-2 py-1 rounded-full border border-blue-200">
+                            {item.days_remaining} days left
+                          </div>
+                        </div>
+
+                        <div className="flex items-start gap-4">
+                          {/* Product info */}
+                          <div className="flex-1">
+                            <h4 className="font-bold text-gray-900 group-hover:text-orange-600 transition-colors line-clamp-2">
+                              {item.product_name}
+                            </h4>
+                            <div className="mt-2 flex items-center gap-3">
+                              <span className="text-sm text-gray-600">
+                                by <span className="font-medium">{item.seller_username}</span>
+                              </span>
+                              <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-700 rounded-full">
+                                {item.boost_plan}
+                              </span>
+                            </div>
+                            <div className="mt-4 flex items-center justify-between">
+                              <span className="text-2xl font-bold text-gray-900">
+                                {formatCurrency(item.product_price)}
+                              </span>
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                className="border-orange-300 text-orange-600 hover:bg-orange-50 hover:text-orange-700 transition-colors"
+                              >
+                                <ShoppingBasket className="h-4 w-4 mr-2" />
+                                View
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Summary */}
+                  <div className="bg-gradient-to-r from-orange-50 to-red-50 rounded-lg p-4 border border-orange-100">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-gray-600">Showing <span className="font-bold text-orange-600">{hotItems.length}</span> boosted products</p>
+                        <p className="text-xs text-gray-500">From various sellers</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-medium text-gray-700">Boosted with:</p>
+                        <p className="text-xs text-gray-600">Premium visibility</p>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <DialogFooter className="px-6 pb-6 pt-4 border-t border-gray-100">
+              <div className="flex flex-col sm:flex-row items-center justify-between w-full gap-4">
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <span>Want to boost your own products?</span>
+                  <Button
+                    variant="link"
+                    className="text-orange-600 hover:text-orange-700 p-0 h-auto"
+                    onClick={() => {
+                      navigate('/seller/seller-boosts');
+                      setShowHotItemsModal(false);
+                    }}
+                  >
+                    Try Boost Plans →
+                  </Button>
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={handleDontShowAgain}
+                    className="border-gray-300 hover:bg-gray-50 text-gray-700"
+                  >
+                    Don't show again
+                  </Button>
+                  <Button 
+                    onClick={() => setShowHotItemsModal(false)}
+                    className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg"
+                  >
+                    Got it!
+                  </Button>
+                </div>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </SidebarLayout>
     </UserProvider>
   )
