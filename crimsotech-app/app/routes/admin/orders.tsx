@@ -1,3 +1,4 @@
+import { toast } from 'sonner';
 import type { Route } from './+types/orders';
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -38,6 +39,14 @@ import {
   Eye,
   MoreHorizontal,
   ExternalLink,
+  Truck,
+  CheckCheck,
+  RotateCcw,
+  AlertTriangle,
+  RefreshCw,
+  PlayCircle,
+  PauseCircle,
+  Ban
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
@@ -46,6 +55,13 @@ import DateRangeFilter from '~/components/ui/date-range-filter';
 import { useState, useEffect } from 'react';
 import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
 import { Link } from 'react-router';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select"
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -86,6 +102,7 @@ interface OrderItem {
   total_amount: number;
   status: string;
   created_at: string;
+  is_removed?: boolean;
 }
 
 interface Order {
@@ -104,6 +121,7 @@ interface Order {
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+  is_removed?: boolean;
 }
 
 interface LoaderData {
@@ -118,6 +136,13 @@ interface LoaderData {
     monthly_orders: number;
     avg_order_value: number;
     success_rate: number;
+    growth_metrics?: {
+      order_growth?: number;
+      revenue_growth?: number;
+      previous_period_total?: number;
+      previous_period_revenue?: number;
+      period_days?: number;
+    };
   };
   orders: Order[];
   dateRange: {
@@ -125,6 +150,130 @@ interface LoaderData {
     end: string;
     rangeType: string;
   };
+}
+
+// Helper function to normalize order status
+const normalizeOrderStatus = (status: string): string => {
+  if (!status) return 'Unknown';
+  const lowerStatus = status.toLowerCase();
+  
+  switch (lowerStatus) {
+    case 'completed':
+    case 'delivered':
+    case 'paid':
+      return 'Completed';
+    case 'pending':
+    case 'processing':
+      return 'Pending';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'failed':
+    case 'refunded':
+      return 'Failed';
+    case 'shipped':
+    case 'in_transit':
+      return 'Shipped';
+    case 'awaiting_payment':
+      return 'Awaiting Payment';
+    case 'on_hold':
+      return 'On Hold';
+    case 'removed':
+    case 'is_removed':
+      return 'Removed';
+    default:
+      return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+  }
+};
+
+// Helper function to get order status badge styling
+const getOrderStatusConfig = (status: string) => {
+  const normalizedStatus = normalizeOrderStatus(status);
+  
+  switch (normalizedStatus) {
+    case 'Completed':
+    case 'Delivered':
+      return {
+        variant: 'default' as const,
+        className: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',
+        icon: CheckCheck,
+        iconClassName: 'text-green-600'
+      };
+    case 'Pending':
+    case 'Processing':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100',
+        icon: Clock,
+        iconClassName: 'text-yellow-600'
+      };
+    case 'Shipped':
+    case 'In Transit':
+      return {
+        variant: 'default' as const,
+        className: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
+        icon: Truck,
+        iconClassName: 'text-blue-600'
+      };
+    case 'Cancelled':
+      return {
+        variant: 'destructive' as const,
+        className: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',
+        icon: XCircle,
+        iconClassName: 'text-red-600'
+      };
+    case 'Failed':
+    case 'Refunded':
+      return {
+        variant: 'destructive' as const,
+        className: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
+        icon: AlertTriangle,
+        iconClassName: 'text-rose-600'
+      };
+    case 'Awaiting Payment':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
+        icon: CreditCard,
+        iconClassName: 'text-purple-600'
+      };
+    case 'On Hold':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: PauseCircle,
+        iconClassName: 'text-gray-600'
+      };
+    case 'Removed':
+      return {
+        variant: 'destructive' as const,
+        className: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
+        icon: Ban,
+        iconClassName: 'text-rose-600'
+      };
+    default:
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: AlertCircle,
+        iconClassName: 'text-gray-600'
+      };
+  }
+};
+
+// Order Status Badge Component
+function OrderStatusBadge({ status }: { status: string }) {
+  const config = getOrderStatusConfig(status);
+  const Icon = config.icon;
+  
+  return (
+    <Badge 
+      variant={config.variant} 
+      className={`flex items-center gap-1.5 ${config.className}`}
+    >
+      <Icon className={`w-3 h-3 ${config.iconClassName}`} />
+      {normalizeOrderStatus(status)}
+    </Badge>
+  );
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
@@ -174,17 +323,20 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     monthly_orders: 0,
     avg_order_value: 0,
     success_rate: 0,
+    growth_metrics: {}
   };
 
   let ordersList: Order[] = [];
 
   try {
+    // Build query parameters
+    const params = new URLSearchParams();
+    params.append('start_date', validStart.toISOString().split('T')[0]);
+    params.append('end_date', validEnd.toISOString().split('T')[0]);
+    params.append('range_type', rangeType);
+
     // Fetch real data from API with date range parameters
-    const response = await AxiosInstance.get('/admin-orders/get_metrics/', {
-      params: {
-        start_date: validStart.toISOString(),
-        end_date: validEnd.toISOString()
-      },
+    const response = await AxiosInstance.get(`/admin-orders/get_metrics/?${params.toString()}`, {
       headers: {
         "X-User-Id": session.get("userId")
       }
@@ -193,9 +345,19 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     if (response.data.success) {
       orderMetrics = response.data.metrics || orderMetrics;
       ordersList = response.data.orders || [];
+      
+      // Normalize order statuses for consistency
+      ordersList = ordersList.map(order => ({
+        ...order,
+        status: normalizeOrderStatus(order.status),
+        items: order.items.map(item => ({
+          ...item,
+          status: normalizeOrderStatus(item.status)
+        }))
+      }));
     }
   } catch (error) {
-    console.log('API fetch failed, using empty data fallback');
+    console.log('API fetch failed, using empty data fallback:', error);
     // Empty fallback - no mock data
   }
 
@@ -266,6 +428,50 @@ export default function Checkouts() {
     });
   };
 
+  // Function to update order status
+  const updateOrderStatus = async (orderId: string, itemId: string, actionType: string, reason?: string) => {
+    setIsLoading(true);
+    try {
+      const payload = {
+        order_id: orderId,
+        order_item_id: itemId,
+        action_type: actionType,
+        user_id: user?.id,
+        ...(reason && { reason })
+      };
+
+      const response = await AxiosInstance.put('/admin-orders/update_order_status/', payload, {
+        headers: {
+          "X-User-Id": user?.id || ''
+        }
+      });
+
+      if (response.data.success || response.data.message) {
+        toast.success(response.data.message || 'Order status updated successfully');
+        
+        // Refresh the page to get updated data
+        window.location.reload();
+        return true;
+      } else {
+        toast.error(response.data.error || 'Failed to update order status');
+        return false;
+      }
+    } catch (error: any) {
+      console.error('Error updating order status:', error);
+      
+      if (error.response?.data?.error) {
+        toast.error(error.response.data.error);
+      } else if (error.response?.data?.message) {
+        toast.error(error.response.data.message);
+      } else {
+        toast.error('Failed to update order status');
+      }
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Reset loading state when loader data changes
   useEffect(() => {
     setIsLoading(false);
@@ -292,6 +498,15 @@ export default function Checkouts() {
     success_rate: 0,
   };
 
+  // Format percentage for display
+  const formatPercentage = (value: number) => {
+    if (value === undefined || value === null) return 'N/A';
+    return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+  };
+
+  // Get growth metrics
+  const growthMetrics = safeMetrics.growth_metrics || {};
+
   // Flatten orders into individual items for the table
   const orderItems = safeOrders.flatMap(order => 
     order.items.map(item => ({
@@ -301,7 +516,8 @@ export default function Checkouts() {
       payment_method: order.payment_method,
       delivery_address: order.delivery_address,
       order_created_at: order.created_at,
-      order_status: order.status
+      order_status: order.status,
+      order_is_removed: order.is_removed
     }))
   );
 
@@ -381,6 +597,16 @@ export default function Checkouts() {
                       <div>
                         <p className="text-sm text-muted-foreground">Total Orders</p>
                         <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_orders}</p>
+                        {!isLoading && growthMetrics.order_growth !== undefined && (
+                          <div className={`flex items-center gap-1 mt-2 text-sm ${
+                            growthMetrics.order_growth >= 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            <span>{formatPercentage(growthMetrics.order_growth)}</span>
+                            <span className="text-xs text-muted-foreground">
+                              vs previous {growthMetrics.period_days || 7} days
+                            </span>
+                          </div>
+                        )}
                         <p className="text-xs text-muted-foreground mt-2">{safeMetrics.today_orders} today</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
@@ -396,6 +622,16 @@ export default function Checkouts() {
                       <div>
                         <p className="text-sm text-muted-foreground">Total Revenue</p>
                         <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.total_revenue.toLocaleString()}</p>
+                        {!isLoading && growthMetrics.revenue_growth !== undefined && (
+                          <div className={`flex items-center gap-1 mt-2 text-sm ${
+                            growthMetrics.revenue_growth >= 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            <span>{formatPercentage(growthMetrics.revenue_growth)}</span>
+                            <span className="text-xs text-muted-foreground">
+                              vs previous {growthMetrics.period_days || 7} days
+                            </span>
+                          </div>
+                        )}
                         <p className="text-xs text-muted-foreground mt-2">From all orders</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-green-100 rounded-full">
@@ -655,39 +891,7 @@ const columns: ColumnDef<any>[] = [
     header: "Item Status",
     cell: ({ row }: { row: any}) => {
       const status = row.getValue("status") as string;
-      const getColor = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'completed': return '#10b981';
-          case 'paid': return '#3b82f6';
-          case 'pending': return '#f59e0b';
-          case 'cancelled': return '#ef4444';
-          case 'failed': return '#6b7280';
-          default: return '#6b7280';
-        }
-      };
-      const getIcon = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'completed': return <CheckCircle className="w-3 h-3" />;
-          case 'paid': return <PhilippinePeso className="w-3 h-3" />;
-          case 'pending': return <Clock className="w-3 h-3" />;
-          case 'cancelled': return <XCircle className="w-3 h-3" />;
-          case 'failed': return <AlertCircle className="w-3 h-3" />;
-          default: return <AlertCircle className="w-3 h-3" />;
-        }
-      };
-      const color = getColor(status);
-      const icon = getIcon(status);
-      
-      return (
-        <Badge 
-          variant="secondary"
-          className="text-xs capitalize flex items-center gap-1"
-          style={{ backgroundColor: `${color}20`, color: color }}
-        >
-          {icon}
-          {status || 'Unknown'}
-        </Badge>
-      );
+      return <OrderStatusBadge status={status} />;
     },
   },
   {
@@ -695,39 +899,7 @@ const columns: ColumnDef<any>[] = [
     header: "Order Status",
     cell: ({ row }: { row: any}) => {
       const status = row.getValue("order_status") as string;
-      const getColor = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'completed': return '#10b981';
-          case 'paid': return '#3b82f6';
-          case 'pending': return '#f59e0b';
-          case 'cancelled': return '#ef4444';
-          case 'failed': return '#6b7280';
-          default: return '#6b7280';
-        }
-      };
-      const getIcon = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'completed': return <CheckCircle className="w-3 h-3" />;
-          case 'paid': return <PhilippinePeso className="w-3 h-3" />;
-          case 'pending': return <Clock className="w-3 h-3" />;
-          case 'cancelled': return <XCircle className="w-3 h-3" />;
-          case 'failed': return <AlertCircle className="w-3 h-3" />;
-          default: return <AlertCircle className="w-3 h-3" />;
-        }
-      };
-      const color = getColor(status);
-      const icon = getIcon(status);
-      
-      return (
-        <Badge 
-          variant="secondary"
-          className="text-xs capitalize flex items-center gap-1"
-          style={{ backgroundColor: `${color}20`, color: color }}
-        >
-          {icon}
-          {status || 'Unknown'}
-        </Badge>
-      );
+      return <OrderStatusBadge status={status} />;
     },
   },
   {
@@ -762,83 +934,134 @@ const columns: ColumnDef<any>[] = [
       );
     },
   },
-
-    {
+  {
     id: "actions",
-    header: "Actions",
-    cell: ({ row }: { row: any }) => {
-      const order = row.original;
-      const itemId = order.id;
-      const orderId = order.order_id;
-      const itemStatus = order.status;
+    cell: ({ row }) => {
+      const orderItem = row.original;
+      const itemId = orderItem.id;
+      const orderId = orderItem.order_id;
+      const itemStatus = normalizeOrderStatus(orderItem.status);
       
-      // Handler functions for actions
-      const handleAccept = () => {
-        // Add your accept logic here
-        console.log('Accepting order item:', itemId);
-        
-        // Example API call:
-        // AxiosInstance.patch(`/admin-orders/${itemId}/accept/`)
-        //   .then(response => {
-        //     // Handle success
-        //   })
-        //   .catch(error => {
-        //     // Handle error
-        //   });
+      const handleAction = async (actionType: string) => {
+        let reason = '';
+
+        if (actionType === 'cancel' || actionType === 'reject' || actionType === 'refund') {
+          reason = prompt(`Enter reason for ${actionType}:`) || '';
+          if (!reason) {
+            toast.error('Reason is required');
+            return;
+          }
+        }
+
+        try {
+          // Get user ID from localStorage or global context
+          const sessionUserId = localStorage.getItem('userId') || 
+                               (window as any).user?.id || 
+                               '';
+          
+          const payload = {
+            order_id: orderId,
+            order_item_id: itemId,
+            action_type: actionType,
+            user_id: sessionUserId,
+            ...(reason && { reason })
+          };
+
+          const response = await AxiosInstance.put('/admin-orders/update_order_status/', payload);
+          
+          if (response.data.success || response.data.message) {
+            toast.success(response.data.message || 'Order status updated successfully');
+            // Trigger a page refresh or data reload
+            window.location.reload();
+          } else {
+            toast.error(response.data.error || 'Failed to update order status');
+          }
+        } catch (error: any) {
+          console.error('Error updating order status:', error);
+          toast.error(error.response?.data?.error || 'Failed to update order status');
+        }
       };
-      
-      const handleReject = () => {
-        // Add your reject logic here
-        console.log('Rejecting order item:', itemId);
+
+      // Function to determine available actions based on order state
+      const getAvailableActions = () => {
+        const actions = [];
         
-        // Example API call:
-        // AxiosInstance.patch(`/admin-orders/${itemId}/reject/`)
-        //   .then(response => {
-        //     // Handle success
-        //   })
-        //   .catch(error => {
-        //     // Handle error
-        //   });
+        // Pending order items
+        if (itemStatus === 'Pending') {
+          actions.push({ label: 'Accept Order', action: 'accept', variant: 'default' as const });
+          actions.push({ label: 'Reject Order', action: 'reject', variant: 'destructive' as const });
+          actions.push({ label: 'Put On Hold', action: 'hold', variant: 'secondary' as const });
+        }
+        
+        // Accepted/Pending payment orders
+        if (itemStatus === 'Awaiting Payment') {
+          actions.push({ label: 'Mark as Paid', action: 'mark_paid', variant: 'default' as const });
+          actions.push({ label: 'Cancel Order', action: 'cancel', variant: 'destructive' as const });
+        }
+        
+        // Paid orders
+        if (itemStatus === 'Paid' || itemStatus === 'Completed') {
+          actions.push({ label: 'Mark as Shipped', action: 'ship', variant: 'default' as const });
+          actions.push({ label: 'Refund Order', action: 'refund', variant: 'destructive' as const });
+        }
+        
+        // Shipped orders
+        if (itemStatus === 'Shipped') {
+          actions.push({ label: 'Mark as Delivered', action: 'deliver', variant: 'default' as const });
+          actions.push({ label: 'Mark as Failed', action: 'fail_delivery', variant: 'destructive' as const });
+        }
+        
+        // On Hold orders
+        if (itemStatus === 'On Hold') {
+          actions.push({ label: 'Resume Order', action: 'resume', variant: 'default' as const });
+          actions.push({ label: 'Cancel Order', action: 'cancel', variant: 'destructive' as const });
+        }
+        
+        // Cancelled orders
+        if (itemStatus === 'Cancelled') {
+          actions.push({ label: 'Restore Order', action: 'restore', variant: 'default' as const });
+        }
+        
+        // Failed orders
+        if (itemStatus === 'Failed') {
+          actions.push({ label: 'Retry Order', action: 'retry', variant: 'default' as const });
+          actions.push({ label: 'Refund Order', action: 'refund', variant: 'destructive' as const });
+        }
+        
+        // Removed orders
+        if (orderItem.is_removed || orderItem.order_is_removed) {
+          actions.push({ label: 'Restore Order', action: 'restore_removed', variant: 'default' as const });
+        }
+        
+        return actions;
       };
-      
+
+      const actions = getAvailableActions();
+
       return (
-        <div className="flex items-center gap-2">
-          {/* Accept Button - only show for pending items */}
-          {itemStatus === 'pending' && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleAccept}
-              className="h-8 px-2 border-green-500 text-green-700 hover:bg-green-50 hover:text-green-800"
-              title="Accept Order Item"
-            >
-              <Check className="h-4 w-4" />
-            </Button>
-          )}
-          
-          {/* Reject Button - only show for pending items */}
-          {itemStatus === 'pending' && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleReject}
-              className="h-8 px-2 border-red-500 text-red-700 hover:bg-red-50 hover:text-red-800"
-              title="Reject Order Item"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-          
-          <Link to={`${orderId}`}>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 px-2 border-blue-500 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
-              title="View Order Details"
-            >
-              <Eye className="h-4 w-4" />
-            </Button>
+        <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
+          <Link 
+            to={`/admin/orders/${orderId}`}
+            className="text-primary hover:underline text-xs sm:text-sm flex items-center gap-1"
+            title="View Order Details"
+          >
+            <Eye className="w-3 h-3 sm:w-4 sm:h-4" />
           </Link>
+          
+          {actions.length > 0 && (
+            <Select onValueChange={(value) => handleAction(value)}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="Actions" />
+              </SelectTrigger>
+              <SelectContent>
+                {actions.map((action) => (
+                  <SelectItem key={action.action} value={action.action}>
+                    {action.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
       );
     },
