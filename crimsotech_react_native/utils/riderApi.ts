@@ -308,3 +308,52 @@ export const exportOrderHistory = async (
     handleAxiosError(error, 'Failed to export history');
   }
 };
+
+/**
+ * Get rider profile information
+ */
+export const getRiderProfile = async (userId: string) => {
+  try {
+    const response = await AxiosInstance.get('/rider-profile/profile/', {
+      ...getUserHeaders(userId),
+    });
+
+    return response.data;
+  } catch (error: any) {
+    console.error('Get rider profile error:', error);
+    handleAxiosError(error, 'Failed to get rider profile');
+  }
+};
+
+/**
+ * Update rider profile information
+ */
+export const updateRiderProfile = async (userId: string, profileData: any) => {
+  try {
+    const formData = new FormData();
+    
+    // Add all profile fields to FormData
+    Object.keys(profileData).forEach((key) => {
+      if (profileData[key] !== null && profileData[key] !== undefined) {
+        formData.append(key, profileData[key]);
+      }
+    });
+
+    const response = await AxiosInstance.put(
+      '/rider-profile/update_profile/',
+      formData,
+      {
+        ...getUserHeaders(userId),
+        headers: {
+          ...getUserHeaders(userId).headers,
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+
+    return response.data;
+  } catch (error: any) {
+    console.error('Update rider profile error:', error);
+    handleAxiosError(error, 'Failed to update rider profile');
+  }
+};

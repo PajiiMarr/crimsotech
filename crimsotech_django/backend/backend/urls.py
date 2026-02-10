@@ -67,6 +67,9 @@ router.register(r'customer-gift', CustomerGiftViewSet, basename='customer-gift')
 router.register(r'reviews', Reviews, basename='reviews')
 
 router.register(r'rider-dashboard', RiderDashboardViewSet, basename='rider-dashboard')
+router.register(r'rider-earnings', RiderEarningsViewSet, basename='rider-earnings')
+router.register(r'rider-profile', RiderProfileViewSet, basename='rider-profile')
+router.register(r'rider-delivery-actions', RiderDeliveryActionsViewSet, basename='rider-delivery-actions')
 router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-history')
 router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')  # ← ADD THIS LINE
 router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')

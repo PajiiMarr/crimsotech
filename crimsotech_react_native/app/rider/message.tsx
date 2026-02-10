@@ -17,13 +17,13 @@ import { useAuth } from '../../contexts/AuthContext';
 
 // --- Types & Colors ---
 const COLORS = {
-  primary: '#DC2626',
+  primary: '#1F2937',
   bg: '#FFFFFF',
-  textMain: '#1E293B',
-  textMuted: '#64748B',
+  textMain: '#374151',
+  textMuted: '#9CA3AF',
   bubbleLeft: '#F3F4F6',
-  badgeFragile: '#FEF2F2',
-  badgeFragileText: '#DC2626',
+  badgeGray: '#F9FAFB',
+  badgeText: '#4B5563',
 };
 
 // --- Mock Data ---
@@ -97,7 +97,7 @@ export default function MessagePage() {
         )}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <MaterialCommunityIcons name="message-outline" size={60} color="#D1D5DB" />
+            <MaterialCommunityIcons name="message-outline" size={48} color={COLORS.badgeGray} />
             <Text style={styles.emptyTitle}>No messages yet</Text>
             <Text style={styles.emptySub}>Messages from customers will appear here.</Text>
           </View>
@@ -115,12 +115,12 @@ export default function MessagePage() {
       {/* Chat Header */}
       <View style={styles.chatHeader}>
         <TouchableOpacity onPress={() => setSelectedChat(null)}>
-          <Feather name="arrow-left" size={24} color={COLORS.textMain} />
+          <Feather name="arrow-left" size={20} color={COLORS.textMain} />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
           <Text style={styles.headerName}>{selectedChat?.name}</Text>
           <View style={styles.headerSubRow}>
-            <Feather name="box" size={12} color={COLORS.primary} />
+            <Feather name="box" size={10} color={COLORS.primary} />
             <Text style={styles.headerSubtext}>Electronics Delivery in Progress</Text>
           </View>
         </View>
@@ -128,7 +128,7 @@ export default function MessagePage() {
 
       {/* Safety Reminder */}
       <View style={styles.safetyBanner}>
-        <Feather name="alert-triangle" size={16} color={COLORS.badgeFragileText} />
+        <Feather name="alert-triangle" size={14} color={COLORS.badgeText} />
         <Text style={styles.safetyText}>Do not open the parcel. Report damage immediately.</Text>
       </View>
 
@@ -146,11 +146,11 @@ export default function MessagePage() {
         <View style={styles.msgRight}>
           <View style={styles.photoAttachment}>
             <View style={styles.photoPlaceholder}>
-              <Feather name="image" size={24} color="#FFF" />
+              <Feather name="image" size={20} color="#FFF" />
             </View>
             <View style={styles.photoLabelRow}>
               <Text style={styles.photoLabel}>Condition Photo</Text>
-              <Feather name="check-circle" size={12} color={COLORS.primary} />
+              <Feather name="check-circle" size={10} color={COLORS.primary} />
             </View>
           </View>
         </View>
@@ -175,7 +175,7 @@ export default function MessagePage() {
         </ScrollView>
         <View style={styles.inputBar}>
           <TouchableOpacity style={styles.cameraBtn}>
-            <Feather name="camera" size={22} color={COLORS.textMuted} />
+            <Feather name="camera" size={20} color={COLORS.textMuted} />
           </TouchableOpacity>
           <TextInput 
             style={styles.input} 
@@ -184,7 +184,7 @@ export default function MessagePage() {
             onChangeText={setInputText}
           />
           <TouchableOpacity style={styles.sendBtn}>
-            <Feather name="send" size={20} color="#FFF" />
+            <Feather name="send" size={18} color="#FFF" />
           </TouchableOpacity>
         </View>
       </View>
@@ -202,60 +202,60 @@ export default function MessagePage() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  message: { fontSize: 16, color: COLORS.textMuted },
+  message: { fontSize: 14, color: COLORS.textMuted },
 
   // Inbox List
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
-  topBarTitle: { fontSize: 18, fontWeight: '600', color: COLORS.textMain },
-  chatRow: { flexDirection: 'row', padding: 12, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#FEE2E2', justifyContent: 'center', alignItems: 'center' },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  topBarTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textMain },
+  chatRow: { flexDirection: 'row', padding: 12, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' },
   chatInfo: { flex: 1, marginLeft: 10 },
   chatHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 },
-  senderName: { fontSize: 14, fontWeight: '600', color: COLORS.textMain },
-  chatTime: { fontSize: 11, color: COLORS.textMuted },
-  lastMsg: { fontSize: 12, color: COLORS.textMuted },
-  statusBadgeInbox: { marginTop: 4, backgroundColor: COLORS.badgeFragile, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
-  statusBadgeText: { fontSize: 9, color: COLORS.badgeFragileText, fontWeight: '600' },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.primary },
+  senderName: { fontSize: 13, fontWeight: '600', color: COLORS.textMain },
+  chatTime: { fontSize: 10, color: COLORS.textMuted },
+  lastMsg: { fontSize: 11, color: COLORS.textMuted },
+  statusBadgeInbox: { marginTop: 4, backgroundColor: COLORS.badgeGray, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
+  statusBadgeText: { fontSize: 9, color: COLORS.badgeText, fontWeight: '600' },
+  unreadDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.primary },
 
   // Chat Interface
-  chatHeader: { flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  headerTitleContainer: { marginLeft: 12 },
-  headerName: { fontSize: 14, fontWeight: '600', color: COLORS.textMain },
-  headerSubRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  headerSubtext: { fontSize: 10, color: COLORS.textMuted },
+  chatHeader: { flexDirection: 'row', alignItems: 'center', padding: 10, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  headerTitleContainer: { marginLeft: 10 },
+  headerName: { fontSize: 13, fontWeight: '600', color: COLORS.textMain },
+  headerSubRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  headerSubtext: { fontSize: 9, color: COLORS.textMuted },
 
-  safetyBanner: { flexDirection: 'row', backgroundColor: COLORS.badgeFragile, padding: 8, alignItems: 'center', justifyContent: 'center', gap: 6 },
-  safetyText: { fontSize: 10, color: COLORS.badgeFragileText, fontWeight: '600' },
+  safetyBanner: { flexDirection: 'row', backgroundColor: COLORS.badgeGray, padding: 6, alignItems: 'center', justifyContent: 'center', gap: 6 },
+  safetyText: { fontSize: 9, color: COLORS.badgeText, fontWeight: '600' },
 
   chatScroll: { padding: 12 },
-  systemMsg: { textAlign: 'center', color: COLORS.textMuted, fontSize: 11, marginVertical: 12, fontWeight: '500' },
+  systemMsg: { textAlign: 'center', color: COLORS.textMuted, fontSize: 10, marginVertical: 8, fontWeight: '500' },
 
-  msgLeft: { alignSelf: 'flex-start', maxWidth: '80%', marginBottom: 10 },
-  bubbleLeft: { backgroundColor: COLORS.bubbleLeft, padding: 10, borderRadius: 12, borderTopLeftRadius: 4 },
-  textLeft: { fontSize: 12, color: COLORS.textMain },
+  msgLeft: { alignSelf: 'flex-start', maxWidth: '80%', marginBottom: 8 },
+  bubbleLeft: { backgroundColor: COLORS.bubbleLeft, padding: 8, borderRadius: 10, borderTopLeftRadius: 3 },
+  textLeft: { fontSize: 11, color: COLORS.textMain },
 
-  msgRight: { alignSelf: 'flex-end', maxWidth: '80%', marginBottom: 10 },
-  bubbleRight: { backgroundColor: COLORS.primary, padding: 10, borderRadius: 12, borderTopRightRadius: 4 },
-  textRight: { fontSize: 12, color: '#FFF' },
+  msgRight: { alignSelf: 'flex-end', maxWidth: '80%', marginBottom: 8 },
+  bubbleRight: { backgroundColor: COLORS.primary, padding: 8, borderRadius: 10, borderTopRightRadius: 3 },
+  textRight: { fontSize: 11, color: '#FFF' },
 
-  photoAttachment: { backgroundColor: '#F9FAFB', borderRadius: 8, padding: 6, borderWidth: 1, borderColor: '#E2E8F0' },
-  photoPlaceholder: { width: 140, height: 90, backgroundColor: '#D1D5DB', borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
-  photoLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 },
-  photoLabel: { fontSize: 10, fontWeight: '700', color: COLORS.textMuted },
+  photoAttachment: { backgroundColor: '#F9FAFB', borderRadius: 8, padding: 5, borderWidth: 1, borderColor: '#F3F4F6' },
+  photoPlaceholder: { width: 120, height: 80, backgroundColor: '#E5E7EB', borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+  photoLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+  photoLabel: { fontSize: 9, fontWeight: '700', color: COLORS.textMuted },
 
   // Input Area
-  inputWrapper: { padding: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
-  chipScroll: { marginBottom: 8 },
-  chip: { backgroundColor: '#FEF2F2', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 16, marginRight: 6, borderWidth: 1, borderColor: '#FECACA' },
-  chipText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
-  inputBar: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cameraBtn: { padding: 6 },
-  input: { flex: 1, backgroundColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, fontSize: 12 },
-  sendBtn: { backgroundColor: COLORS.primary, width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+  inputWrapper: { padding: 8, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  chipScroll: { marginBottom: 6 },
+  chip: { backgroundColor: '#F3F4F6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, marginRight: 6, borderWidth: 1, borderColor: '#E5E7EB' },
+  chipText: { fontSize: 10, color: COLORS.textMain, fontWeight: '600' },
+  inputBar: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cameraBtn: { padding: 4 },
+  input: { flex: 1, backgroundColor: '#F9FAFB', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 6, fontSize: 11 },
+  sendBtn: { backgroundColor: COLORS.primary, width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
 
   // Empty State
-  emptyState: { alignItems: 'center', marginTop: 64 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: COLORS.textMain, marginTop: 12 },
-  emptySub: { fontSize: 12, color: COLORS.textMuted, textAlign: 'center', paddingHorizontal: 32, marginTop: 6 },
+  emptyState: { alignItems: 'center', marginTop: 48 },
+  emptyTitle: { fontSize: 15, fontWeight: '600', color: COLORS.textMain, marginTop: 10 },
+  emptySub: { fontSize: 11, color: COLORS.textMuted, textAlign: 'center', paddingHorizontal: 30, marginTop: 4 },
 });
