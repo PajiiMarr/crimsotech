@@ -1,4 +1,5 @@
 // app/routes/admin/boosts.tsx
+import { toast } from 'sonner';
 import type { Route } from './+types/boosting'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -29,9 +30,19 @@ import {
   DollarSign,
   Eye,
   EyeOff,
+  Trash2,
+  PlayCircle,
+  PauseCircle,
+  CheckCircle,
+  XCircle,
+  RefreshCw,
+  ExternalLink,
+  Ban,
+  AlertTriangle
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
+import { Link } from 'react-router';
 import AxiosInstance from '~/components/axios/Axios';
 import DateRangeFilter from '~/components/ui/date-range-filter';
 import {
@@ -40,6 +51,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select"
 import { useState, useEffect } from 'react';
 
 export function meta(): Route.MetaDescriptors {
@@ -54,9 +72,12 @@ interface Boost {
   id: string;
   shopName: string;
   shopOwner: string;
+  shop_id?: string;
   productName: string;
+  product_id?: string;
   boostType: string;
-  status: 'active' | 'expired' | 'pending' | 'cancelled';
+  boost_plan_id?: string;
+  status: 'active' | 'expired' | 'pending' | 'cancelled' | 'suspended' | 'completed';
   startDate: string;
   endDate: string;
   duration: number;
@@ -65,6 +86,8 @@ interface Boost {
   createdAt: string;
   customerName: string;
   customerEmail: string;
+  customer_id?: string;
+  is_removed?: boolean;
 }
 
 interface BoostPlan {
@@ -73,14 +96,16 @@ interface BoostPlan {
   price: number;
   duration: number;
   timeUnit: 'hours' | 'days' | 'weeks' | 'months';
-  status: 'active' | 'inactive' | 'archived';
+  status: 'active' | 'inactive' | 'archived' | 'draft' | 'removed';
   description: string;
   features: string[];
   usageCount: number;
   revenue: number;
   createdBy: string;
+  createdBy_id?: string;
   createdAt: string;
   updatedAt: string;
+  is_removed?: boolean;
 }
 
 interface BoostMetrics {
@@ -88,6 +113,13 @@ interface BoostMetrics {
   active_boosts: number;
   total_revenue: number;
   most_popular_boost: string;
+  growth_metrics?: {
+    boost_growth?: number;
+    revenue_growth?: number;
+    previous_period_total?: number;
+    previous_period_revenue?: number;
+    period_days?: number;
+  };
 }
 
 interface PlansSummary {
@@ -101,21 +133,181 @@ interface LoaderData {
   user: any;
 }
 
-export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
-  const { registrationMiddleware } = await import("~/middleware/registration.server");
-  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
-
-  const { requireRole } = await import("~/middleware/role-require.server");
-  const { fetchUserRole } = await import("~/middleware/role.server");
-
-  let user = (context as any).user;
-  if (!user) {
-    user = await fetchUserRole({ request, context });
+// Helper function to normalize status
+const normalizeBoostStatus = (status: string): string => {
+  if (!status) return 'Unknown';
+  const lowerStatus = status.toLowerCase();
+  
+  switch (lowerStatus) {
+    case 'active':
+      return 'Active';
+    case 'expired':
+      return 'Expired';
+    case 'pending':
+      return 'Pending';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'suspended':
+      return 'Suspended';
+    case 'completed':
+      return 'Completed';
+    default:
+      return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
   }
+};
 
-  await requireRole(request, context, ["isAdmin"]);
+// Helper function to normalize boost plan status
+const normalizePlanStatus = (status: string): string => {
+  if (!status) return 'Unknown';
+  const lowerStatus = status.toLowerCase();
+  
+  switch (lowerStatus) {
+    case 'active':
+      return 'Active';
+    case 'inactive':
+      return 'Inactive';
+    case 'archived':
+      return 'Archived';
+    case 'draft':
+      return 'Draft';
+    case 'removed':
+    case 'is_removed':
+      return 'Removed';
+    default:
+      return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+  }
+};
 
-  return { user };
+// Helper function to get boost status badge styling
+const getBoostStatusConfig = (status: string) => {
+  const normalizedStatus = normalizeBoostStatus(status);
+  
+  switch (normalizedStatus) {
+    case 'Active':
+      return {
+        variant: 'default' as const,
+        className: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',
+        icon: PlayCircle,
+        iconClassName: 'text-green-600'
+      };
+    case 'Pending':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100',
+        icon: Clock,
+        iconClassName: 'text-yellow-600'
+      };
+    case 'Expired':
+      return {
+        variant: 'outline' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: Calendar,
+        iconClassName: 'text-gray-600'
+      };
+    case 'Cancelled':
+      return {
+        variant: 'destructive' as const,
+        className: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',
+        icon: XCircle,
+        iconClassName: 'text-red-600'
+      };
+    case 'Suspended':
+      return {
+        variant: 'destructive' as const,
+        className: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',
+        icon: PauseCircle,
+        iconClassName: 'text-amber-600'
+      };
+    case 'Completed':
+      return {
+        variant: 'default' as const,
+        className: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
+        icon: CheckCircle,
+        iconClassName: 'text-blue-600'
+      };
+    default:
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: Clock,
+        iconClassName: 'text-gray-600'
+      };
+  }
+};
+
+// Helper function to get plan status badge styling
+const getPlanStatusConfig = (status: string) => {
+  const normalizedStatus = normalizePlanStatus(status);
+  
+  switch (normalizedStatus) {
+    case 'Active':
+      return {
+        variant: 'default' as const,
+        className: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',
+        icon: PlayCircle,
+        iconClassName: 'text-green-600'
+      };
+    case 'Inactive':
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: PauseCircle,
+        iconClassName: 'text-gray-600'
+      };
+    case 'Archived':
+      return {
+        variant: 'outline' as const,
+        className: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
+        icon: Archive,
+        iconClassName: 'text-purple-600'
+      };
+    case 'Removed':
+      return {
+        variant: 'destructive' as const,
+        className: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',
+        icon: Trash2,
+        iconClassName: 'text-rose-600'
+      };
+    default:
+      return {
+        variant: 'secondary' as const,
+        className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+        icon: Clock,
+        iconClassName: 'text-gray-600'
+      };
+  }
+};
+
+// Boost Status Badge Component
+function BoostStatusBadge({ status }: { status: string }) {
+  const config = getBoostStatusConfig(status);
+  const Icon = config.icon;
+  
+  return (
+    <Badge 
+      variant={config.variant} 
+      className={`flex items-center gap-1.5 ${config.className}`}
+    >
+      <Icon className={`w-3 h-3 ${config.iconClassName}`} />
+      {normalizeBoostStatus(status)}
+    </Badge>
+  );
+}
+
+// Plan Status Badge Component
+function PlanStatusBadge({ status }: { status: string }) {
+  const config = getPlanStatusConfig(status);
+  const Icon = config.icon;
+  
+  return (
+    <Badge 
+      variant={config.variant} 
+      className={`flex items-center gap-1.5 ${config.className}`}
+    >
+      <Icon className={`w-3 h-3 ${config.iconClassName}`} />
+      {normalizePlanStatus(status)}
+    </Badge>
+  );
 }
 
 // Helper functions
@@ -176,6 +368,23 @@ function calculateRevenueForPlan(price: number, usageCount: number): number {
   return price * usageCount;
 }
 
+export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
+  const { registrationMiddleware } = await import("~/middleware/registration.server");
+  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
+
+  const { requireRole } = await import("~/middleware/role-require.server");
+  const { fetchUserRole } = await import("~/middleware/role.server");
+
+  let user = (context as any).user;
+  if (!user) {
+    user = await fetchUserRole({ request, context });
+  }
+
+  await requireRole(request, context, ["isAdmin"]);
+
+  return { user };
+}
+
 export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
   const { user } = loaderData;
 
@@ -202,19 +411,19 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
   });
 
   // Fetch data function
-  const fetchBoostData = async (start: Date, end: Date) => {
+  const fetchBoostData = async (start: Date, end: Date, rangeType: string = 'weekly') => {
     try {
       setIsLoading(true);
 
-      const params = {
-        start_date: start.toISOString(),
-        end_date: end.toISOString()
-      };
+      const params = new URLSearchParams();
+      params.append('start_date', start.toISOString().split('T')[0]);
+      params.append('end_date', end.toISOString().split('T')[0]);
+      params.append('range_type', rangeType);
 
       const [metricsResponse, boostsResponse, plansResponse] = await Promise.all([
-        AxiosInstance.get('/admin-boosting/get_metrics/', { params }),
-        AxiosInstance.get('/admin-boosting/get_active_boosts/', { params }),
-        AxiosInstance.get('/admin-boosting/get_boost_plans/', { params })
+        AxiosInstance.get(`/admin-boosting/get_metrics/?${params.toString()}`),
+        AxiosInstance.get(`/admin-boosting/get_active_boosts/?${params.toString()}`),
+        AxiosInstance.get(`/admin-boosting/get_boost_plans/?${params.toString()}`)
       ]);
 
       if (metricsResponse.data.success) {
@@ -231,8 +440,11 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
             id: boost.boost_id,
             shopName: boost.shop_name,
             shopOwner: boost.customer_name,
+            shop_id: boost.shop_id,
             productName: boost.product_name,
+            product_id: boost.product_id,
             boostType: boost.boost_plan_name,
+            boost_plan_id: boost.boost_plan_id,
             status: boost.status,
             startDate: boost.start_date,
             endDate: boost.end_date,
@@ -241,7 +453,9 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
             clicks: Math.floor(Math.random() * 500) + 50,
             createdAt: boost.created_at,
             customerName: boost.customer_name,
-            customerEmail: boost.customer_email
+            customerEmail: boost.customer_email,
+            customer_id: boost.customer_id,
+            is_removed: boost.is_removed || false
           };
         });
         setBoosts(transformedBoosts);
@@ -254,20 +468,28 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
           price: typeof plan.price === 'string' ? parseFloat(plan.price) : plan.price,
           duration: plan.duration,
           timeUnit: (plan.time_unit as 'hours' | 'days' | 'weeks' | 'months') || 'days',
-          status: (plan.status as 'active' | 'inactive' | 'archived') || 'active',
+          status: plan.status,
           description: generateDescriptionForPlan(plan.name, plan.price, plan.duration, plan.time_unit),
           features: generateFeaturesForPlan(plan.name, plan.duration, plan.time_unit),
           usageCount: plan.usage_count || 0,
           revenue: calculateRevenueForPlan(plan.price, plan.usage_count),
           createdBy: plan.user_name || 'Admin',
+          createdBy_id: plan.user_id,
           createdAt: plan.created_at,
-          updatedAt: plan.updated_at
+          updatedAt: plan.updated_at,
+          is_removed: plan.is_removed || false
         }));
         setBoostPlans(transformedPlans);
 
-        const activePlans = transformedPlans.filter((p: { status: string; }) => p.status === 'active').length;
-        const inactivePlans = transformedPlans.filter((p: { status: string; }) => p.status === 'inactive').length;
-        const archivedPlans = transformedPlans.filter((p: { status: string; }) => p.status === 'archived').length;
+        // Fix: Compare normalized statuses for consistency
+        const normalizedPlans = transformedPlans.map((plan: BoostPlan) => ({
+          ...plan,
+          normalizedStatus: normalizePlanStatus(plan.status)
+        }));
+        
+        const activePlans = normalizedPlans.filter((p: any) => p.normalizedStatus === 'Active').length;
+        const inactivePlans = normalizedPlans.filter((p: any) => p.normalizedStatus === 'Inactive').length;
+        const archivedPlans = normalizedPlans.filter((p: any) => p.normalizedStatus === 'Archived').length;
         
         setPlansSummary({
           total_plans: transformedPlans.length,
@@ -297,18 +519,114 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
     }
   };
 
+  // Initial data fetch
   useEffect(() => {
-    fetchBoostData(dateRange.start, dateRange.end);
+    fetchBoostData(dateRange.start, dateRange.end, dateRange.rangeType);
   }, []);
 
+  // Handle date range change
   const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
     setDateRange({
       start: range.start,
       end: range.end,
       rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
     });
-    fetchBoostData(range.start, range.end);
+    fetchBoostData(range.start, range.end, range.rangeType);
   };
+
+  // Function to update boost status
+  const updateBoostStatus = async (boostId: string, actionType: string, reason?: string) => {
+    setIsLoading(true);
+    try {
+      const payload = {
+        boost_id: boostId,
+        action_type: actionType,
+        user_id: user?.id,
+        ...(reason && { reason })
+      };
+
+      const response = await AxiosInstance.put('/admin-boosting/update_boost_status/', payload, {
+        headers: {
+          "X-User-Id": user?.id || ''
+        }
+      });
+
+      if (response.data.success || response.data.message) {
+        toast.success(response.data.message || 'Boost status updated successfully');
+        
+        // Refresh the boosts data
+        await fetchBoostData(dateRange.start, dateRange.end, dateRange.rangeType);
+        return true;
+      } else {
+        toast.error(response.data.error || 'Failed to update boost status');
+        return false;
+      }
+    } catch (error: any) {
+      console.error('Error updating boost status:', error);
+      
+      if (error.response?.data?.error) {
+        toast.error(error.response.data.error);
+      } else if (error.response?.data?.message) {
+        toast.error(error.response.data.message);
+      } else {
+        toast.error('Failed to update boost status');
+      }
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Function to update boost plan status
+  const updateBoostPlanStatus = async (planId: string, actionType: string) => {
+    setIsLoading(true);
+    try {
+      const payload = {
+        boost_plan_id: planId,
+        action_type: actionType,
+        user_id: user?.id
+      };
+
+      const response = await AxiosInstance.put('/admin-boosting/update_boost_plan_status/', payload, {
+        headers: {
+          "X-User-Id": user?.id || ''
+        }
+      });
+
+      if (response.data.success || response.data.message) {
+        toast.success(response.data.message || 'Boost plan status updated successfully');
+        
+        // Refresh the boost plans data
+        await fetchBoostData(dateRange.start, dateRange.end, dateRange.rangeType);
+        return true;
+      } else {
+        toast.error(response.data.error || 'Failed to update boost plan status');
+        return false;
+      }
+    } catch (error: any) {
+      console.error('Error updating boost plan status:', error);
+      
+      if (error.response?.data?.error) {
+        toast.error(error.response.data.error);
+      } else if (error.response?.data?.message) {
+        toast.error(error.response.data.message);
+      } else {
+        toast.error('Failed to update boost plan status');
+      }
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Format percentage for display
+  const formatPercentage = (value: number) => {
+    if (value === undefined || value === null) return 'N/A';
+    return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+  };
+
+  // Get growth metrics
+  const growthMetrics = boostMetrics.growth_metrics || {};
 
   const boostFilterConfig = {
     status: {
@@ -322,15 +640,6 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
     shopOwner: {
       options: [...new Set(boosts.map(boost => boost.shopOwner))],
       placeholder: 'Shop Owner'
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch(status) {
-      case 'active': return 'bg-green-100 text-green-800 border-green-200';
-      case 'inactive': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'archived': return 'bg-gray-100 text-gray-800 border-gray-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
     }
   };
 
@@ -430,6 +739,16 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                       <div>
                         <p className="text-sm text-muted-foreground">Total Boosts</p>
                         <p className="text-xl sm:text-2xl font-bold mt-1">{boostMetrics.total_boosts}</p>
+                        {!isLoading && growthMetrics.boost_growth !== undefined && (
+                          <div className={`flex items-center gap-1 mt-2 text-sm ${
+                            growthMetrics.boost_growth >= 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            <span>{formatPercentage(growthMetrics.boost_growth)}</span>
+                            <span className="text-xs text-muted-foreground">
+                              vs previous {growthMetrics.period_days || 7} days
+                            </span>
+                          </div>
+                        )}
                         <p className="text-xs text-muted-foreground mt-2">{boostMetrics.active_boosts} active</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
@@ -445,6 +764,16 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                       <div>
                         <p className="text-sm text-muted-foreground">Total Revenue</p>
                         <p className="text-xl sm:text-2xl font-bold mt-1">₱{boostMetrics.total_revenue.toLocaleString()}</p>
+                        {!isLoading && growthMetrics.revenue_growth !== undefined && (
+                          <div className={`flex items-center gap-1 mt-2 text-sm ${
+                            growthMetrics.revenue_growth >= 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            <span>{formatPercentage(growthMetrics.revenue_growth)}</span>
+                            <span className="text-xs text-muted-foreground">
+                              vs previous {growthMetrics.period_days || 7} days
+                            </span>
+                          </div>
+                        )}
                         <p className="text-xs text-muted-foreground mt-2">From all boosts</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-green-100 rounded-full">
@@ -519,19 +848,18 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {boostPlans.map((plan) => (
+                {boostPlans.map((plan) => {
+                  // Get normalized status for display and comparison
+                  const normalizedStatus = normalizePlanStatus(plan.status);
+                  
+                  return (
                   <Card key={plan.id} className="overflow-hidden hover:shadow-md transition-shadow">
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between">
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
                             <CardTitle className="text-base">{plan.name}</CardTitle>
-                            <Badge 
-                              variant="outline" 
-                              className={`text-xs ${getStatusColor(plan.status)} px-2 py-0.5`}
-                            >
-                              {plan.status.charAt(0).toUpperCase()}
-                            </Badge>
+                            <PlanStatusBadge status={plan.status} />
                           </div>
                           <p className="text-xs text-muted-foreground line-clamp-1">
                             {plan.description}
@@ -544,12 +872,17 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => console.log('Edit plan:', plan.id)}>
                               <Edit className="mr-2 h-3.5 w-3.5" />
                               Edit
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              {plan.status === 'active' ? (
+                            <DropdownMenuItem 
+                              onClick={async () => {
+                                const actionType = normalizedStatus === 'Active' ? 'deactivate' : 'activate';
+                                await updateBoostPlanStatus(plan.id, actionType);
+                              }}
+                            >
+                              {normalizedStatus === 'Active' ? (
                                 <>
                                   <EyeOff className="mr-2 h-3.5 w-3.5" />
                                   Deactivate
@@ -561,6 +894,22 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                                 </>
                               )}
                             </DropdownMenuItem>
+                            {normalizedStatus !== 'Archived' && (
+                              <DropdownMenuItem 
+                                onClick={async () => await updateBoostPlanStatus(plan.id, 'archive')}
+                              >
+                                <Archive className="mr-2 h-3.5 w-3.5" />
+                                Archive
+                              </DropdownMenuItem>
+                            )}
+                            {normalizedStatus === 'Archived' && (
+                              <DropdownMenuItem 
+                                onClick={async () => await updateBoostPlanStatus(plan.id, 'restore')}
+                              >
+                                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                                Restore
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -631,7 +980,8 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                       </div>
                     </CardFooter>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -678,7 +1028,14 @@ const columns: ColumnDef<Boost>[] = [
     cell: ({ row }) => (
       <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
         <Store className="w-3 h-3 sm:w-4 sm:h-4 text-muted-foreground flex-shrink-0" />
-        <div className="font-medium text-xs sm:text-sm truncate">{row.getValue("shopName")}</div>
+        <div className="font-medium text-xs sm:text-sm truncate">
+          <Link 
+            to={`/admin/shops/${row.original.shop_id}`}
+            className="hover:underline"
+          >
+            {row.getValue("shopName")}
+          </Link>
+        </div>
       </div>
     ),
   },
@@ -698,6 +1055,21 @@ const columns: ColumnDef<Boost>[] = [
       <div className="flex items-center gap-1 px-2 sm:px-4 py-2 text-xs sm:text-sm">
         <User className="w-3 h-3 text-muted-foreground flex-shrink-0" />
         <span className="truncate">{row.getValue("shopOwner")}</span>
+      </div>
+    ),
+  },
+  {
+    accessorKey: "productName",
+    header: "Product",
+    cell: ({ row }) => (
+      <div className="px-2 sm:px-4 py-2 text-xs sm:text-sm truncate">
+        <Link 
+          to={`/admin/products/${row.original.product_id}`}
+          className="hover:underline flex items-center gap-1"
+        >
+          <Package className="w-3 h-3 text-muted-foreground" />
+          {row.getValue("productName")}
+        </Link>
       </div>
     ),
   },
@@ -734,26 +1106,7 @@ const columns: ColumnDef<Boost>[] = [
     header: "Status",
     cell: ({ row }) => {
       const status = row.getValue("status") as string;
-      const getColor = (status: string) => {
-        switch(status) {
-          case 'active': return '#10b981';
-          case 'expired': return '#6b7280';
-          case 'pending': return '#f59e0b';
-          case 'cancelled': return '#ef4444';
-          default: return '#6b7280';
-        }
-      };
-      const color = getColor(status);
-      
-      return (
-        <Badge 
-          variant="secondary"
-          className="text-xs px-2 capitalize"
-          style={{ backgroundColor: `${color}20`, color: color }}
-        >
-          {status}
-        </Badge>
-      );
+      return <BoostStatusBadge status={status} />;
     },
   },
   {
@@ -848,5 +1201,115 @@ const columns: ColumnDef<Boost>[] = [
         ₱{parseFloat(row.getValue("cost")).toLocaleString()}
       </div>
     ),
+  },
+  {
+    id: "actions",
+    cell: ({ row }) => {
+      const boost = row.original;
+      
+      const handleAction = async (actionType: string) => {
+        let reason = '';
+
+        if (actionType === 'suspend' || actionType === 'cancel') {
+          reason = prompt(`Enter reason for ${actionType}:`) || '';
+          if (!reason) {
+            toast.error('Reason is required');
+            return;
+          }
+        }
+
+        try {
+          // Get user ID from localStorage or global context
+          const sessionUserId = localStorage.getItem('userId') || 
+                               (window as any).user?.id || 
+                               '';
+          
+          const payload = {
+            boost_id: boost.id,
+            action_type: actionType,
+            user_id: sessionUserId,
+            ...(reason && { reason })
+          };
+
+          const response = await AxiosInstance.put('/admin-boosting/update_boost_status/', payload);
+          
+          if (response.data.success || response.data.message) {
+            toast.success(response.data.message || 'Boost status updated successfully');
+            // Trigger a page refresh or data reload
+            window.location.reload();
+          } else {
+            toast.error(response.data.error || 'Failed to update boost status');
+          }
+        } catch (error: any) {
+          console.error('Error updating boost status:', error);
+          toast.error(error.response?.data?.error || 'Failed to update boost status');
+        }
+      };
+
+      // Function to determine available actions based on boost state
+      const getAvailableActions = () => {
+        const actions = [];
+        const normalizedStatus = normalizeBoostStatus(boost.status);
+        
+        // Active boosts
+        if (normalizedStatus === 'Active') {
+          actions.push({ label: 'Suspend Boost', action: 'suspend', variant: 'destructive' as const });
+          actions.push({ label: 'Cancel Boost', action: 'cancel', variant: 'destructive' as const });
+        }
+        
+        // Pending boosts
+        if (normalizedStatus === 'Pending') {
+          actions.push({ label: 'Approve Boost', action: 'approve', variant: 'default' as const });
+          actions.push({ label: 'Reject Boost', action: 'reject', variant: 'destructive' as const });
+        }
+        
+        // Suspended boosts
+        if (normalizedStatus === 'Suspended') {
+          actions.push({ label: 'Resume Boost', action: 'resume', variant: 'default' as const });
+          actions.push({ label: 'Cancel Boost', action: 'cancel', variant: 'destructive' as const });
+        }
+        
+        // Expired boosts
+        if (normalizedStatus === 'Expired') {
+          actions.push({ label: 'Renew Boost', action: 'renew', variant: 'default' as const });
+        }
+        
+        // Cancelled boosts
+        if (normalizedStatus === 'Cancelled') {
+          actions.push({ label: 'Restore Boost', action: 'restore', variant: 'default' as const });
+        }
+        
+        return actions;
+      };
+
+      const actions = getAvailableActions();
+
+      return (
+        <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
+          <Link 
+            to={`/admin/boosts/${boost.id}`}
+            className="text-primary hover:underline text-xs sm:text-sm flex items-center gap-1"
+            title="View Details"
+          >
+            <Eye className="w-3 h-3 sm:w-4 sm:h-4" />
+          </Link>
+          
+          {actions.length > 0 && (
+            <Select onValueChange={(value) => handleAction(value)}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="Actions" />
+              </SelectTrigger>
+              <SelectContent>
+                {actions.map((action) => (
+                  <SelectItem key={action.action} value={action.action}>
+                    {action.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+      );
+    },
   },
 ];

@@ -295,6 +295,19 @@ class Category(models.Model):
         return f"{self.name}"
 
 class Product(models.Model):
+    USAGE_UNIT_CHOICES = [
+        ('months', 'Months'),
+        ('years', 'Years'),
+    ]
+    
+    CONDITION_CHOICES = [
+        ('Like New', 'Like New'),
+        ('New', 'New'),
+        ('Refurbished', 'Refurbished'),
+        ('Used - Excellent', 'Used - Excellent'),
+        ('Used - Good', 'Used - Good'),
+    ]
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     shop = models.ForeignKey(
         'Shop',
@@ -327,10 +340,35 @@ class Product(models.Model):
     name = models.CharField(max_length=100)
     description = models.CharField(max_length=1000)
     quantity = models.IntegerField(default=0)
+    
+    # New pricing fields
+    original_price = models.DecimalField(
+        decimal_places=2, 
+        max_digits=9,
+        null=True,
+        blank=True,
+        help_text="Original price of the product when new"
+    )
+    usage_time = models.DecimalField(
+        decimal_places=2,
+        max_digits=6,
+        null=True,
+        blank=True,
+        help_text="How long the product has been used"
+    )
+    usage_unit = models.CharField(
+        max_length=10,
+        choices=USAGE_UNIT_CHOICES,
+        default='months',
+        help_text="Unit of measurement for usage time"
+    )
+    
+    # Current selling price (calculated from depreciation)
     price = models.DecimalField(decimal_places=2, max_digits=9)
+    
     upload_status = models.CharField(max_length=20, choices=[('draft','Draft'),('published','Published'),('archived','Archived')], default='draft')
     status = models.TextField()
-    condition = models.CharField(max_length=50)
+    condition = models.CharField(max_length=50, choices=CONDITION_CHOICES)
     compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     is_refundable = models.BooleanField(null=True,blank=True)
     length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
@@ -353,6 +391,7 @@ class Product(models.Model):
             models.Index(fields=['upload_status', 'created_at']),
             models.Index(fields=['category', 'upload_status']),
             models.Index(fields=['price']),
+            models.Index(fields=['original_price']),
             models.Index(fields=['created_at']),
             models.Index(fields=['is_removed', 'removed_at']),
         ]
@@ -360,13 +399,51 @@ class Product(models.Model):
     @property
     def active_report_count(self):
         return self.reports_against.filter(status__in=['pending', 'under_review']).count()
+    
+    @property
+    def calculated_price(self):
+        """
+        Calculate the depreciated price based on original price and usage time.
+        Uses 20% annual depreciation.
+        """
+        if not self.original_price or not self.usage_time:
+            return self.price
+        
+        # Convert usage time to years
+        if self.usage_unit == 'months':
+            years = self.usage_time / Decimal('12.0')
+        else:  # years
+            years = self.usage_time
+        
+        # Calculate depreciation: original * (1 - 0.20)^years
+        depreciation_rate = Decimal('0.20')
+        depreciated_value = self.original_price * ((Decimal('1.0') - depreciation_rate) ** years)
+        
+        # Ensure price doesn't go below 0
+        return max(Decimal('0.00'), depreciated_value.quantize(Decimal('0.01')))
 
     def clean(self):
         if self.customer and not self.customer.can_add_product():
             raise ValidationError(f"Customer cannot add more than {self.customer.product_limit} products")
+        
+        # Validate usage time if provided
+        if self.usage_time is not None and self.usage_time < 0:
+            raise ValidationError("Usage time cannot be negative")
+        
+        # Validate original price if provided
+        if self.original_price is not None and self.original_price <= 0:
+            raise ValidationError("Original price must be positive")
+        
+        # Validate price
+        if self.price is not None and self.price < 0:
+            raise ValidationError("Price cannot be negative")
 
     def save(self, *args, **kwargs):
         is_new = self._state.adding
+        
+        # Auto-calculate price if original price and usage time are provided
+        if self.original_price and self.usage_time:
+            self.price = self.calculated_price
         
         if is_new and self.customer:
             self.customer.increment_product_count()

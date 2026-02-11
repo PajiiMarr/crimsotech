@@ -8,7 +8,6 @@ import CreateProductForm from '~/components/customer/seller-create-product-form'
 import { useState } from 'react';
 import { Button } from '~/components/ui/button';
 
-// --- BACKEND/SERVER FUNCTIONS (UPDATED) ---
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -19,7 +18,6 @@ export function meta(): Route.MetaDescriptors {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  // ... (Loader content remains exactly the same) ...
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
@@ -127,6 +125,9 @@ export async function action({ request }: Route.ActionArgs) {
   const quantity = String(formData.get("quantity"));
   const used_for = String(formData.get("used_for") || "General use");
   const price = String(formData.get("price"));
+  const original_price = String(formData.get("original_price") || "");
+  const usage_time = String(formData.get("usage_time") || "");
+  const usage_unit = String(formData.get("usage_unit") || "months");
 
   // Detect if variants/skus are provided in the form; if so, product-level quantity/price can be optional
   const hasVariants = Boolean(formData.get('variants') || formData.get('skus') || Array.from(formData.keys()).some(k => k.startsWith('variant_') || k.startsWith('sku_')));
@@ -177,9 +178,29 @@ export async function action({ request }: Route.ActionArgs) {
   const sanitizeNumber = (s: string) => String(s || '').replace(/,/g, '').replace(/[^0-9.\-]/g, '').trim();
   const rawQuantity = sanitizeNumber(quantity);
   const rawPrice = sanitizeNumber(price);
+  const rawOriginalPrice = sanitizeNumber(original_price);
+  const rawUsageTime = sanitizeNumber(usage_time);
+  
   console.log('Quantity (raw):', quantity, '=> sanitized:', rawQuantity);
-  console.log('Price (raw):', price, '=> sanitized:', rawPrice);
+  console.log('Price (calculated):', price, '=> sanitized:', rawPrice);
+  console.log('Original Price:', original_price, '=> sanitized:', rawOriginalPrice);
+  console.log('Usage Time:', usage_time, '=> sanitized:', rawUsageTime);
 
+  // Validate original price (required field)
+  if (!rawOriginalPrice) {
+    errors.original_price = "Original price is required";
+  } else if (isNaN(Number(rawOriginalPrice)) || Number(rawOriginalPrice) <= 0) {
+    errors.original_price = "Please enter a valid original price";
+  }
+
+  // Validate usage time (required field)
+  if (!rawUsageTime) {
+    errors.usage_time = "Usage time is required";
+  } else if (isNaN(Number(rawUsageTime)) || Number(rawUsageTime) < 0) {
+    errors.usage_time = "Please enter a valid usage time";
+  }
+
+  // Validate calculated price (required for non-variant products)
   if (!hasVariants) {
     if (!rawQuantity) {
       errors.quantity = "Quantity is required";
@@ -188,22 +209,27 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     if (!rawPrice) {
-      errors.price = "Price is required";
-    } else if (isNaN(Number(rawPrice)) || Number(rawPrice) <= 0) {
-      errors.price = "Please enter a valid price";
+      errors.price = "Calculated price is required";
+    } else if (isNaN(Number(rawPrice)) || Number(rawPrice) < 0) {
+      errors.price = "Please enter a valid calculated price";
     }
   } else {
     // Variants present: if product-level quantity/price provided, validate; otherwise it's allowed to be empty
     if (rawQuantity && (isNaN(Number(rawQuantity)) || Number(rawQuantity) < 0)) {
       errors.quantity = "Please enter a valid quantity";
     }
-    if (rawPrice && (isNaN(Number(rawPrice)) || Number(rawPrice) <= 0)) {
-      errors.price = "Please enter a valid price";
+    if (rawPrice && (isNaN(Number(rawPrice)) || Number(rawPrice) < 0)) {
+      errors.price = "Please enter a valid calculated price";
     }
   }
 
   if (!condition.trim()) {
     errors.condition = "Condition is required";
+  }
+
+  // Validate usage unit
+  if (usage_unit && !['months', 'years'].includes(usage_unit)) {
+    errors.usage_unit = "Usage unit must be either 'months' or 'years'";
   }
 
   // Validate media files
@@ -218,6 +244,14 @@ export async function action({ request }: Route.ActionArgs) {
       }
     }
   });
+
+  // Validate critical threshold if provided
+  if (critical_threshold) {
+    const threshold = Number(critical_threshold);
+    if (isNaN(threshold) || threshold <= 0) {
+      errors.critical_threshold = "Critical threshold must be a positive number";
+    }
+  }
 
   if (Object.keys(errors).length > 0) {
     console.log("Product validation errors:", errors);
@@ -236,6 +270,7 @@ export async function action({ request }: Route.ActionArgs) {
     // Append basic fields
     apiFormData.append('name', name.trim());
     apiFormData.append('description', description.trim());
+    
     // If variants/skus are present, default product-level quantity/price to 0 when not provided.
     // Use sanitized numeric values so backend receives clean numbers.
     const apiQuantity = (hasVariants && !rawQuantity) ? '0' : (rawQuantity || '0');
@@ -244,6 +279,12 @@ export async function action({ request }: Route.ActionArgs) {
     apiFormData.append('quantity', apiQuantity);
     apiFormData.append('used_for', used_for.trim());
     apiFormData.append('price', apiPrice);
+    
+    // Append new pricing fields
+    apiFormData.append('original_price', rawOriginalPrice);
+    apiFormData.append('usage_time', rawUsageTime);
+    apiFormData.append('usage_unit', usage_unit);
+    
     apiFormData.append('condition', condition.trim());
     apiFormData.append('shop', shop_id ?? "");
     apiFormData.append('status', "active");
@@ -266,7 +307,9 @@ export async function action({ request }: Route.ActionArgs) {
     console.log("Category admin ID:", category_admin_id);
     console.log("Category admin name:", category_admin_name);
 
-
+    // Append dimension fields if provided
+    if (length) apiFormData.append('length', String(length));
+    if (width) apiFormData.append('width', String(width));
     if (height) apiFormData.append('height', String(height));
     if (weight) apiFormData.append('weight', String(weight));
 
@@ -358,8 +401,6 @@ export async function action({ request }: Route.ActionArgs) {
       apiFormData.append('skus', String(skusRaw));
     }
 
-
-
     // Handle variant images and per-SKU images by forwarding their original keys
     // variant_image_<groupId>_<optionId> and sku_image_<skuId>
     for (const [key, value] of formData.entries()) {
@@ -372,10 +413,6 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     // Append product-level dimensions/weight unit if available
-    if (length) apiFormData.append('length', String(length));
-    if (width) apiFormData.append('width', String(width));
-    if (height) apiFormData.append('height', String(height));
-    if (weight) apiFormData.append('weight', String(weight));
     const weightUnitVal = String(formData.get('weight_unit') || 'kg');
     apiFormData.append('weight_unit', weightUnitVal);
 
@@ -416,6 +453,9 @@ export async function action({ request }: Route.ActionArgs) {
     console.log("Category admin ID:", category_admin_id);
     console.log("Variants count:", variantGroups.size);
     console.log("Shipping zones count:", formattedShippingZones.length);
+    console.log("Original Price:", rawOriginalPrice);
+    console.log("Usage Time:", rawUsageTime);
+    console.log("Usage Unit:", usage_unit);
 
     // Debug: inspect entries in apiFormData before sending to API
     try {
@@ -477,6 +517,9 @@ interface FormErrors {
   description?: string;
   quantity?: string;
   price?: string;
+  original_price?: string;
+  usage_time?: string;
+  usage_unit?: string;
   condition?: string;
   shop?: string;
   category_admin_id?: string;
