@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import *
 from django.contrib.auth.hashers import make_password
 from django.db.models import Avg
+from api.utils.storage_utils import convert_s3_to_public_url
 
 # Existing serializers (don't modify)
 class UserSerializer(serializers.ModelSerializer):
@@ -130,25 +131,20 @@ class FavoritesSerializer(serializers.ModelSerializer):
         model = Favorites
         fields = '__all__'
 
+
 class ProductMediaSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     
     class Meta:
         model = ProductMedia
         fields = ['id', 'file_data', 'file_type', 'file_url']
-        
+    
     def get_file_url(self, obj):
         if obj.file_data:
-            request = self.context.get('request')
-            url = obj.file_data.url
-            if request:
-                try:
-                    return request.build_absolute_uri(url)
-                except Exception:
-                    return url
-            return url
+            # Convert S3 URL to public URL
+            return convert_s3_to_public_url(obj.file_data.url)
         return None
-    
+       
 class VariantOptionsSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
     compare_price = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)

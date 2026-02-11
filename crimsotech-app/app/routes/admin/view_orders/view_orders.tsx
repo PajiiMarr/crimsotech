@@ -23,7 +23,8 @@ import {
   Download,
   Eye,
   CheckCircle,
-  XCircle
+  XCircle,
+  Image
 } from 'lucide-react';
 import AxiosInstance from "~/components/axios/Axios";
 import { useState } from 'react';
@@ -54,6 +55,14 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "~/components/ui/drawer";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "~/components/ui/dialog";
 
 export function meta(): Route.MetaDescriptors {
     return [
@@ -171,8 +180,9 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
     const [loading, setLoading] = useState(false);
     const [showApprovalDialog, setShowApprovalDialog] = useState(false);
     const [approvalAction, setApprovalAction] = useState<'accept' | 'reject' | null>(null);
+    const [showReceiptDialog, setShowReceiptDialog] = useState(false);
     const isMobile = useIsMobile();
-    const baseUrl = import.meta.env.VITE_MEDIA_URL;
+    const baseUrl = import.meta.env.VITE_MEDIA_URL || 'http://localhost:8000/media/';
     const { toast } = useToast();
 
     const getStatusBadge = (status: string) => {
@@ -203,7 +213,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
 
     const handleViewReceipt = () => {
         if (order?.receipt) {
-            window.open(baseUrl + order.receipt, '_blank');
+            setShowReceiptDialog(true);
         }
     };
 
@@ -211,25 +221,40 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
         if (order?.receipt) {
             const link = document.createElement('a');
             link.href = baseUrl + order.receipt;
-            link.download = `receipt_${order.order_id}.pdf`;
+            link.download = `receipt_${order.order_id}.${getFileExtension(order.receipt)}`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            toast({
+                title: "Download Started",
+                description: "Receipt download has started",
+                variant: "success",
+            });
         }
     };
 
     const getFileExtension = (filename: string) => {
-        return filename?.split('.').pop()?.toLowerCase() || '';
+        if (!filename) return '';
+        return filename.split('.').pop()?.toLowerCase() || '';
     };
 
     const isImageFile = (filename: string) => {
         const ext = getFileExtension(filename);
-        return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext);
+        return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
+    };
+
+    const isPdfFile = (filename: string) => {
+        const ext = getFileExtension(filename);
+        return ext === 'pdf';
+    };
+
+    const getFileName = (filepath: string) => {
+        if (!filepath) return 'receipt';
+        return filepath.split('/').pop() || 'receipt';
     };
 
     const canApproveOrder = () => {
         if (!order) return false;
-        // Can approve if: has receipt, payment method is e-wallet, and approval is pending
         return (
             order.receipt && 
             order.payment_method.toLowerCase().includes('wallet') &&
@@ -259,7 +284,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                     variant: "success",
                 });
 
-                // Update local order state
                 setOrder({
                     ...order,
                     approval: approvalAction === 'accept' ? 'accepted' : 'rejected'
@@ -283,6 +307,110 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
         if (loading) return;
         setShowApprovalDialog(false);
         setApprovalAction(null);
+    };
+
+    const renderReceiptPreview = () => {
+        if (!order?.receipt) return null;
+
+        const fileName = getFileName(order.receipt);
+        const isImage = isImageFile(order.receipt);
+        const isPdf = isPdfFile(order.receipt);
+        const receiptUrl = baseUrl + order.receipt;
+
+        return (
+            <Dialog open={showReceiptDialog} onOpenChange={setShowReceiptDialog}>
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Receipt className="w-5 h-5" />
+                            Payment Receipt - Order #{order.order_id.slice(0, 8)}...
+                        </DialogTitle>
+                        <DialogDescription>
+                            Provided by customer: {order.user.first_name} {order.user.last_name}
+                        </DialogDescription>
+                    </DialogHeader>
+                    
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="text-sm text-muted-foreground">
+                                File: {fileName}
+                            </div>
+                            <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={handleDownloadReceipt}
+                            >
+                                <Download className="w-4 h-4 mr-2" />
+                                Download
+                            </Button>
+                        </div>
+
+                        <div className="bg-muted/50 rounded-lg p-4 border">
+                            {isImage ? (
+                                <div className="flex justify-center">
+                                    <img
+                                        src={receiptUrl}
+                                        alt="Payment Receipt"
+                                        className="max-w-full max-h-[70vh] object-contain rounded"
+                                        loading="lazy"
+                                    />
+                                </div>
+                            ) : isPdf ? (
+                                <div className="flex flex-col items-center justify-center p-8">
+                                    <FileText className="w-16 h-16 text-muted-foreground mb-3" />
+                                    <p className="text-sm font-medium text-center mb-2">
+                                        PDF Document
+                                    </p>
+                                    <p className="text-xs text-muted-foreground text-center mb-4">
+                                        Click "Download" to view the receipt
+                                    </p>
+                                    <Button 
+                                        variant="default"
+                                        onClick={() => window.open(receiptUrl, '_blank')}
+                                    >
+                                        <Eye className="w-4 h-4 mr-2" />
+                                        Open PDF in New Tab
+                                    </Button>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center p-8">
+                                    <FileText className="w-16 h-16 text-muted-foreground mb-3" />
+                                    <p className="text-sm font-medium text-center mb-2">
+                                        {getFileExtension(order.receipt).toUpperCase()} Document
+                                    </p>
+                                    <Button 
+                                        variant="default"
+                                        onClick={() => window.open(receiptUrl, '_blank')}
+                                    >
+                                        <Eye className="w-4 h-4 mr-2" />
+                                        Open File
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="text-sm space-y-2">
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Order ID:</span>
+                                <span className="font-medium">{order.order_id}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Amount:</span>
+                                <span className="font-medium text-primary">₱{order.total_amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Payment Method:</span>
+                                <span className="font-medium">{order.payment_method}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Uploaded:</span>
+                                <span className="font-medium">{new Date(order.updated_at).toLocaleString()}</span>
+                            </div>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+        );
     };
 
     const renderApprovalDialogContent = () => {
@@ -634,7 +762,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
 
                         <Separator />
 
-                        {/* Receipt Preview */}
+                        {/* Receipt Section */}
                         {order.receipt && (
                             <>
                                 <div>
@@ -642,29 +770,42 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                         <Receipt className="w-4 h-4" />
                                         Payment Receipt
                                     </h3>
-                                    <div className="bg-muted/50 rounded-lg overflow-hidden">
+                                    <div className="bg-muted/50 rounded-lg overflow-hidden border">
                                         {isImageFile(order.receipt) ? (
-                                            <div className="relative w-full max-w-md mx-auto">
+                                            <div className="relative group cursor-pointer" onClick={handleViewReceipt}>
                                                 <img
-                                                    src={baseUrl + order.receipt}
+                                                    src={order.receipt}
                                                     alt="Payment Receipt"
-                                                    className="w-full h-auto object-contain bg-white"
+                                                    className="w-full h-auto max-h-64 object-contain bg-white"
                                                     loading="lazy"
                                                 />
+                                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+                                                    <div className="text-white text-center p-4">
+                                                        <Eye className="w-8 h-8 mx-auto mb-2" />
+                                                        <p className="text-sm font-medium">Click to view full receipt</p>
+                                                    </div>
+                                                </div>
                                             </div>
                                         ) : (
-                                            <div className="flex flex-col items-center justify-center p-8 bg-muted">
+                                            <div 
+                                                className="flex flex-col items-center justify-center p-8 bg-muted cursor-pointer" 
+                                                onClick={handleViewReceipt}
+                                            >
                                                 <FileText className="w-16 h-16 text-muted-foreground mb-3" />
                                                 <p className="text-sm font-medium text-center mb-1">
                                                     {getFileExtension(order.receipt).toUpperCase()} Document
                                                 </p>
-                                                <p className="text-xs text-muted-foreground text-center">
-                                                    Preview not available for this file type
+                                                <p className="text-xs text-muted-foreground text-center mb-3">
+                                                    Click to view receipt
                                                 </p>
+                                                <Button size="sm" variant="outline">
+                                                    <Eye className="w-3 h-3 mr-2" />
+                                                    View Receipt
+                                                </Button>
                                             </div>
                                         )}
                                     </div>
-                                    <div className="flex gap-2 mt-3">
+                                    <div className="flex gap-2 mt-3 flex-wrap">
                                         <Button 
                                             variant="outline" 
                                             size="sm" 
@@ -672,7 +813,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                             onClick={handleViewReceipt}
                                         >
                                             <Eye className="w-3 h-3 sm:w-4 sm:h-4 mr-2" />
-                                            View Full
+                                            View Receipt
                                         </Button>
                                         <Button 
                                             variant="outline" 
@@ -683,7 +824,21 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                             <Download className="w-3 h-3 sm:w-4 sm:h-4 mr-2" />
                                             Download
                                         </Button>
+                                        {isImageFile(order.receipt) && (
+                                            <Button 
+                                                variant="outline" 
+                                                size="sm" 
+                                                className="text-xs sm:text-sm"
+                                                onClick={() => window.open(baseUrl + order.receipt, '_blank')}
+                                            >
+                                                <Image className="w-3 h-3 sm:w-4 sm:h-4 mr-2" />
+                                                Open Original
+                                            </Button>
+                                        )}
                                     </div>
+                                    <p className="text-xs text-muted-foreground mt-2">
+                                        Uploaded by customer on {new Date(order.updated_at).toLocaleDateString()}
+                                    </p>
                                 </div>
                                 <Separator />
                             </>
@@ -769,9 +924,23 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 <User className="w-3 h-3 sm:w-4 sm:h-4 mr-2" />
                                 Contact Customer
                             </Button>
+                            {order.receipt && (
+                                <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="text-xs sm:text-sm"
+                                    onClick={handleViewReceipt}
+                                >
+                                    <Receipt className="w-3 h-3 sm:w-4 sm:h-4 mr-2" />
+                                    View Receipt
+                                </Button>
+                            )}
                         </div>
                     </CardContent>
                 </Card>
+
+                {/* Receipt Dialog */}
+                {renderReceiptPreview()}
 
                 {/* Responsive Approval Dialog/Drawer */}
                 {isMobile ? renderMobileApprovalDrawer() : renderDesktopApprovalDialog()}

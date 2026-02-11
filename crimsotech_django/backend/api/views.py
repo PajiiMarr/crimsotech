@@ -49,6 +49,8 @@ from django.core.files.storage import FileSystemStorage
 import os
 from .utils.model_handler import ElectronicsClassifier
 import json
+from api.utils.storage_utils import convert_s3_to_public_url
+
 
 # Initialize classifier once (Django will cache this)
 MODEL_PATH = os.path.join('model', 'electronics_classifier3.keras')
@@ -3392,7 +3394,7 @@ class AdminProduct(viewsets.ViewSet):
             product_data["media"] = [
                 {
                     "id": str(media.id),
-                    "file_data": media.file_data.url if media.file_data else None,
+                    "file_data": convert_s3_to_public_url(media.file_data.url) if media.file_data else None,
                     "file_type": media.file_type,
                 }
                 for media in product.productmedia_set.all()
@@ -15900,6 +15902,15 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         except Exception:
             pass
         
+        # Convert media URLs to public format
+        if data.get('primary_image'):
+            data['primary_image'] = convert_s3_to_public_url(data['primary_image'])
+        
+        if data.get('media_files'):
+            for media in data['media_files']:
+                if media.get('file_data'):
+                    media['file_data'] = convert_s3_to_public_url(media['file_data'])
+        
         # Manually enhance variant options with SKU images and price info
         if data.get('variants') and data.get('skus'):
             # Build a map of option_id -> list of SKUs containing that option
@@ -15942,7 +15953,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                                 break
                         
                         if sku_with_image and sku_with_image.image:
-                            option['image'] = request.build_absolute_uri(sku_with_image.image.url)
+                            sku_image_url = request.build_absolute_uri(sku_with_image.image.url)
+                            option['image'] = convert_s3_to_public_url(sku_image_url)
                         else:
                             option['image'] = None
                     else:
@@ -15992,13 +16004,18 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         
         if matching_sku:
             # Build response with SKU details
+            image_url = None
+            if matching_sku.image:
+                image_url = request.build_absolute_uri(matching_sku.image.url)
+                image_url = convert_s3_to_public_url(image_url)
+            
             response_data = {
                 'id': str(matching_sku.id),
                 'sku_code': matching_sku.sku_code,
                 'price': float(matching_sku.price) if matching_sku.price else None,
                 'compare_price': float(matching_sku.compare_price) if matching_sku.compare_price else None,
                 'quantity': matching_sku.quantity,
-                'image': request.build_absolute_uri(matching_sku.image.url) if matching_sku.image else None,
+                'image': image_url,
                 'length': float(matching_sku.length) if matching_sku.length else None,
                 'width': float(matching_sku.width) if matching_sku.width else None,
                 'height': float(matching_sku.height) if matching_sku.height else None,
@@ -16052,9 +16069,9 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 if all(oid in sku_option_ids for oid in option_ids):
                     return Response({"sku_id": str(sku.id), "fallback": True})
 
-        return Response({"sku_id": None, "message": "No matching SKU found"}, status=404)
+        return Response({"sku_id": None, "message": "No matching SKU found"}, status=404) 
     
-    
+
 class AddToCartView(APIView):
 
     def post(self, request):
