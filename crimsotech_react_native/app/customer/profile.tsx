@@ -507,9 +507,7 @@ export default function ProfileScreen() {
         >
           {/* Modern Profile Header */}
           <View style={styles.gradientHeaderContainer}>
-            <View
-              style={[styles.gradientHeader, { backgroundColor: "#b15412" }]}
-            >
+            <View style={styles.gradientHeader}>
               <View style={styles.headerContent}>
                 <View style={styles.avatarContainer}>
                   <View style={styles.avatarWrapper}>
@@ -531,7 +529,7 @@ export default function ProfileScreen() {
                     <Text style={styles.userName}>{getUserDisplayName()}</Text>
                     {profile?.shop && (
                       <View style={styles.verifiedBadge}>
-                        <MaterialIcons name="store" size={16} color="#fff" />
+                        <MaterialIcons name="store" size={16} color="#F97316" />
                       </View>
                     )}
                   </View>
@@ -541,7 +539,7 @@ export default function ProfileScreen() {
                     <View
                       style={[
                         styles.modernShopBadge,
-                        { backgroundColor: "rgba(255,255,255,0.25)" },
+                        { backgroundColor: "#F97316" },
                       ]}
                     >
                       <MaterialIcons name="store" size={14} color="#fff" />
@@ -556,7 +554,7 @@ export default function ProfileScreen() {
                   style={styles.editProfileButton}
                   onPress={() => pushRoute("/customer/account-profile")}
                 >
-                  <MaterialIcons name="edit" size={20} color="#fff" />
+                  <MaterialIcons name="edit" size={20} color="#374151" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -874,6 +872,7 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 32,
     paddingHorizontal: 20,
+    backgroundColor: "#FFFFFF",
   },
   headerContent: {
     flexDirection: "row",
@@ -889,24 +888,24 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
+    backgroundColor: "#F5F5F4",
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 3,
-    borderColor: "#fff",
+    borderColor: "#E5E7EB",
   },
   avatarGlow: {
     position: "absolute",
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    backgroundColor: "rgba(0, 0, 0, 0.05)",
     top: 0,
     left: 0,
   },
   avatarText: {
     fontSize: 28,
-    color: "#FFFFFF",
+    color: "#374151",
     fontWeight: "700",
   },
   headerTextContainer: {
@@ -920,17 +919,17 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 22,
     fontWeight: "700",
-    color: "#FFFFFF",
+    color: "#374151",
     marginRight: 8,
   },
   verifiedBadge: {
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
+    backgroundColor: "#F5F5F4",
     borderRadius: 12,
     padding: 4,
   },
   userEmail: {
     fontSize: 14,
-    color: "rgba(255, 255, 255, 0.9)",
+    color: "#374151",
     marginBottom: 8,
   },
   shopBadgeContainer: {
@@ -953,7 +952,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    backgroundColor: "#F5F5F4",
     justifyContent: "center",
     alignItems: "center",
   },

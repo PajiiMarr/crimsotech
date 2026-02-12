@@ -26,7 +26,7 @@ export default function BottomTab() {
             style={styles.tabButton}
             onPress={() => router.push(tab.route as any)}
           >
-            <Ionicons name={iconName as any} size={24} color={isActive ? '#4F46E5' : '#666'} />
+            <Ionicons name={iconName as any} size={24} color={isActive ? '#EE4D2D' : '#666'} />
             <Text style={[styles.tabLabel, isActive && styles.activeLabel]}>{tab.name}</Text>
           </TouchableOpacity>
         );
@@ -47,5 +47,5 @@ const styles = StyleSheet.create({
   },
   tabButton: { alignItems: 'center' },
   tabLabel: { fontSize: 10, color: '#666', marginTop: 2 },
-  activeLabel: { color: '#4F46E5', fontWeight: '600' },
+  activeLabel: { color: '#EE4D2D', fontWeight: '600' },
 });
