@@ -125,6 +125,9 @@ class Landing(viewsets.ViewSet):
         """
         Get landing page data including stats, categories, and featured products.
         STRICTLY respects data model integrity - all data comes from database.
+        Fetches ALL product images from ProductMedia model.
+        Hero products are ACTUAL products with images, not categories.
+        ONLY PUBLISHED PRODUCTS ARE FETCHED.
         """
         try:
             # 1. MARKETPLACE STATS (respects model constraints)
@@ -149,7 +152,7 @@ class Landing(viewsets.ViewSet):
             )
             avg_rating = avg_rating_result['avg_rating'] if avg_rating_result['avg_rating'] else 4.8
             
-            # Show all categories, even without products
+            # 2. CATEGORIES with product counts - ONLY PUBLISHED PRODUCTS COUNTED
             categories_with_products = Category.objects.annotate(
                 product_count=Count('products', filter=Q(
                     products__upload_status='published',
@@ -157,9 +160,7 @@ class Landing(viewsets.ViewSet):
                 ))
             ).order_by('-product_count')[:10]
             
-            # 3. FEATURED PRODUCTS (respects all model constraints)
-            # Featured products (include all published products regardless of stock;
-            # frontend will mark out-of-stock items using the `stock` field)
+            # 3. FEATURED PRODUCTS with ALL images - ONLY PUBLISHED
             featured_products = Product.objects.annotate(
                 sku_total=Coalesce(Sum('skus__quantity', filter=Q(skus__is_active=True)), 0)
             ).filter(
@@ -173,8 +174,7 @@ class Landing(viewsets.ViewSet):
                 'productmedia_set'
             ).order_by('-created_at')[:15]
             
-            # 4. TRENDING SHOPS (respects model relationships)
-            # Create the base queryset WITHOUT slicing first
+            # 4. TRENDING SHOPS - ONLY WITH PUBLISHED PRODUCTS
             trending_shops_queryset = Shop.objects.filter(
                 verified=True,
                 is_suspended=False,
@@ -189,52 +189,136 @@ class Landing(viewsets.ViewSet):
                 active_product_count__gt=0
             ).order_by('-follower_count', '-total_sales')
             
-            # Check if any shops have followers BEFORE slicing
             has_shops_with_followers = trending_shops_queryset.filter(
                 follower_count__gt=0
             ).exists()
             
-            # Now slice the queryset
             trending_shops = list(trending_shops_queryset[:10])
             
-            # 5. HERO SECTIONS (dynamic based on actual data)
+            # 5. HERO PRODUCTS - ONLY PUBLISHED PRODUCTS WITH IMAGES
+            hero_products_list = []
+            
+            # Get products with images for hero section - ONLY PUBLISHED
+            products_with_images = Product.objects.filter(
+                upload_status='published',
+                is_removed=False,
+                productmedia__isnull=False,
+                shop__isnull=False,
+                shop__is_suspended=False,
+                shop__verified=True,
+                shop__status='Active'
+            ).select_related('shop').prefetch_related(
+                'productmedia_set'
+            ).distinct().order_by('-created_at')[:12]  # Get 12 products for hero
+            
+            for product in products_with_images:
+                # Get first image
+                media = product.productmedia_set.first()
+                if media and media.file_data:
+                    image_url = request.build_absolute_uri(media.file_data.url)
+                    
+                    hero_products_list.append({
+                        'id': str(product.id),
+                        'title': product.name,
+                        'link': f'/products/{product.id}',
+                        'thumbnail': image_url,
+                        'description': product.description[:100] + '...' if len(product.description) > 100 else product.description,
+                        'price': float(product.price),
+                        'shop_name': product.shop.name if product.shop else 'No Shop',
+                        'is_product': True  # Flag to identify this is a real product
+                    })
+            
+            # If we don't have enough products with images, supplement with boosted products - ONLY PUBLISHED
+            if len(hero_products_list) < 8:
+                boosted_products = Boost.objects.filter(
+                    status='active',
+                    end_date__gt=timezone.now(),
+                    product__isnull=False,
+                    product__upload_status='published',  # ONLY PUBLISHED
+                    product__is_removed=False,
+                    product__productmedia__isnull=False
+                ).select_related('product', 'product__shop').prefetch_related(
+                    'product__productmedia_set'
+                ).distinct()[:8 - len(hero_products_list)]
+                
+                for boost in boosted_products:
+                    product = boost.product
+                    if product.upload_status == 'published' and not product.is_removed:  # Double-check
+                        media = product.productmedia_set.first()
+                        if media and media.file_data:
+                            image_url = request.build_absolute_uri(media.file_data.url)
+                            hero_products_list.append({
+                                'id': str(product.id),
+                                'title': f"🔥 {product.name}",
+                                'link': f'/products/{product.id}',
+                                'thumbnail': image_url,
+                                'description': f"Boosted • {product.description[:80]}..." if len(product.description) > 80 else f"Boosted • {product.description}",
+                                'price': float(product.price),
+                                'shop_name': product.shop.name if product.shop else 'No Shop',
+                                'is_product': True,
+                                'is_boosted': True
+                            })
+            
+            # If STILL not enough, get any products with images - ONLY PUBLISHED
+            if len(hero_products_list) < 6:
+                any_products = Product.objects.filter(
+                    upload_status='published',  # ONLY PUBLISHED
+                    is_removed=False,
+                    productmedia__isnull=False
+                ).exclude(
+                    id__in=[p['id'] for p in hero_products_list if 'id' in p]
+                ).select_related('shop').prefetch_related(
+                    'productmedia_set'
+                ).order_by('?')[:6 - len(hero_products_list)]  # Random products
+                
+                for product in any_products:
+                    media = product.productmedia_set.first()
+                    if media and media.file_data:
+                        image_url = request.build_absolute_uri(media.file_data.url)
+                        hero_products_list.append({
+                            'id': str(product.id),
+                            'title': product.name,
+                            'link': f'/products/{product.id}',
+                            'thumbnail': image_url,
+                            'description': product.description[:100] + '...' if len(product.description) > 100 else product.description,
+                            'price': float(product.price),
+                            'shop_name': product.shop.name if product.shop else 'No Shop',
+                            'is_product': True
+                        })
+            
+            # 6. HERO SECTIONS - NOW ONLY FOR NON-PRODUCT LINKS
             hero_sections = []
             
-            # Trending shops (only if we have shops with followers)
             if has_shops_with_followers:
                 hero_sections.append({
                     'title': 'Trending Shops',
                     'link': '/shops/trending',
-                    'description': 'Discover the most popular shops this week'
+                    'description': 'Discover the most popular shops this week',
+                    'is_category': False,
+                    'is_product': False
                 })
             
-            # Boosted products (only if we have active boosts)
             if boosted_count > 0:
                 hero_sections.append({
                     'title': 'Boosted Products',
                     'link': '/boosts',
-                    'description': 'Featured products with maximum visibility'
+                    'description': 'Featured products with maximum visibility',
+                    'is_category': False,
+                    'is_product': False
                 })
             
-            # New arrivals (always relevant)
-            hero_sections.append({
-                'title': 'New Arrivals',
-                'link': '/products/new',
-                'description': 'Fresh products just added'
-            })
-            
-            # Top rated (only if we have 5-star reviews)
             has_top_rated = Review.objects.filter(rating=5).exists()
             if has_top_rated:
                 hero_sections.append({
                     'title': 'Top Rated',
                     'link': '/products/top-rated',
-                    'description': '5-star favorites from the community'
+                    'description': '5-star favorites from the community',
+                    'is_category': False,
+                    'is_product': False
                 })
             
-            # Best deals (products with compare_price > price)
             has_deals = Product.objects.filter(
-                upload_status='published',
+                upload_status='published',  # ONLY PUBLISHED
                 is_removed=False,
                 compare_price__isnull=False,
                 compare_price__gt=F('price')
@@ -243,23 +327,14 @@ class Landing(viewsets.ViewSet):
                 hero_sections.append({
                     'title': 'Best Deals',
                     'link': '/deals',
-                    'description': 'Save big on amazing offers'
+                    'description': 'Save big on amazing offers',
+                    'is_category': False,
+                    'is_product': False
                 })
             
-            # Add popular categories as hero sections
-            # Convert queryset to list before slicing
-            categories_list = list(categories_with_products)
-            for category in categories_list[:3]:
-                hero_sections.append({
-                    'title': category.name,
-                    'link': f'/category/{slugify(category.name)}',
-                    'description': f'Browse {category.product_count} products'
-                })
-            
-            # 6. TRUST BADGES (from actual verification data)
+            # 7. TRUST BADGES
             trust_badges = []
             
-            # Verified shops count
             verified_shops_count = Shop.objects.filter(
                 verified=True,
                 is_suspended=False
@@ -271,7 +346,6 @@ class Landing(viewsets.ViewSet):
                     'icon': '✓'
                 })
             
-            # Secure payments (completed orders)
             completed_orders = Order.objects.filter(
                 status__in=['delivered', 'completed']
             ).count()
@@ -282,7 +356,6 @@ class Landing(viewsets.ViewSet):
                     'icon': '🛡️'
                 })
             
-            # Verified riders
             verified_riders = Rider.objects.filter(
                 verified=True,
                 rider__is_suspended=False
@@ -294,7 +367,8 @@ class Landing(viewsets.ViewSet):
                     'icon': '🚚'
                 })
             
-            # Format data for response
+            # 8. FORMAT CATEGORIES
+            categories_list = list(categories_with_products)
             category_list = [
                 {
                     'id': str(cat.id),
@@ -304,17 +378,27 @@ class Landing(viewsets.ViewSet):
                     'shop_id': str(cat.shop.id) if cat.shop else None,
                     'user_id': str(cat.user.id) if cat.user else None
                 }
-                for cat in categories_list  # Use the list instead of queryset
+                for cat in categories_list
             ]
             
+            # 9. FORMAT PRODUCTS WITH ALL IMAGES - ONLY PUBLISHED
             product_list = []
             for product in featured_products:
-                image_url = None
-                media = product.productmedia_set.first()
-                if media and media.file_data:
-                    image_url = request.build_absolute_uri(media.file_data.url)
+                all_images = []
+                media_files = product.productmedia_set.all()
                 
-                # Prefer SKU totals for stock if available
+                for media in media_files:
+                    if media and media.file_data:
+                        image_url = request.build_absolute_uri(media.file_data.url)
+                        all_images.append({
+                            'id': str(media.id),
+                            'url': image_url,
+                            'file_type': media.file_type,
+                            'is_primary': len(all_images) == 0
+                        })
+                
+                primary_image_url = all_images[0]['url'] if all_images else None
+                
                 try:
                     sku_total = int(getattr(product, 'sku_total', 0) or 0)
                 except Exception:
@@ -332,12 +416,15 @@ class Landing(viewsets.ViewSet):
                     'shop_name': product.shop.name if product.shop else 'No Shop',
                     'category_id': str(product.category.id) if product.category else None,
                     'category_name': product.category.name if product.category else None,
-                    'image_url': image_url,
+                    'primary_image': primary_image_url,
+                    'all_images': all_images,
+                    'image_count': len(all_images),
                     'stock': stock,
                     'is_out_of_stock': stock <= 0,
                     'created_at': product.created_at.isoformat()
                 })
             
+            # 10. FORMAT TRENDING SHOPS
             trending_shop_list = [
                 {
                     'id': str(shop.id),
@@ -353,6 +440,7 @@ class Landing(viewsets.ViewSet):
                 for shop in trending_shops
             ]
             
+            # 11. BUILD RESPONSE
             response_data = {
                 'stats': {
                     'products_count': products_count,
@@ -363,8 +451,9 @@ class Landing(viewsets.ViewSet):
                 'categories': category_list,
                 'featured_products': product_list,
                 'trending_shops': trending_shop_list,
+                'hero_products': hero_products_list,  # CONTAINS REAL PRODUCTS - ONLY PUBLISHED
                 'ui_data': {
-                    'hero_products': hero_sections,
+                    'hero_sections': hero_sections,  # Non-product links
                     'trust_badges': trust_badges
                 }
             }
@@ -387,14 +476,12 @@ class Landing(viewsets.ViewSet):
                 'categories': [],
                 'featured_products': [],
                 'trending_shops': [],
+                'hero_products': [],
                 'ui_data': {
-                    'hero_products': [],
+                    'hero_sections': [],
                     'trust_badges': []
                 }
-            }, status=status.HTTP_200_OK)
-        
-
-        
+            }, status=status.HTTP_200_OK)        
 class UserView(APIView):
     def get(self, request):
         user = [{"user_id": user.id, "username": user.username, "email": user.email, "registration_stage": user.registration_stage, "is_rider": user.is_rider} for user in User.objects.all()]

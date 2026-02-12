@@ -394,7 +394,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
   // Determine main display image
   const mainImageFromSKU = currentSKU?.image ? resolveImageUrl(currentSKU.image) : null;
-  const displayImageUrl = (mainImageFromSKU ?? thumbnailUrls[activeImage]?.url) ?? '/appliances.jpg';
+  const displayImageUrl = (mainImageFromSKU ?? thumbnailUrls[activeImage]?.url) ?? '/Crimsotech.png';
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
