@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import {
   SafeAreaView,
   View,
@@ -9,66 +9,34 @@ import {
   Alert,
   StatusBar,
   Image,
-  ActivityIndicator,
 } from 'react-native';
 import { Ionicons, Feather, MaterialIcons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router, useNavigation } from 'expo-router';
 import RiderHeader from './includes/riderHeader';
-import { getRiderProfile } from '../../utils/riderApi';
 
 // --- Theme Colors ---
 const COLORS = {
-  primary: '#DC2626',
-  bg: '#FFFFFF',
+  primary: '#F97316',
+  bg: '#F3F4F6', // Light gray background
   card: '#FFFFFF',
-  text: '#1E293B',
-  subText: '#64748B',
-  border: '#E2E8F0',
-  danger: '#DC2626',
-  iconBg: '#FEE2E2',
+  text: '#111827',
+  subText: '#6B7280',
+  border: '#E5E7EB',
+  danger: '#EF4444',
+  iconBg: '#FFF7ED', // Light orange for icon backgrounds
 };
 
 export default function SettingsPage() {
-  const { userId, userRole, clearAuthData } = useAuth();
+  const { userRole, clearAuthData } = useAuth();
   const navigation = useNavigation();
-  const [loading, setLoading] = useState(true);
-  const [profileData, setProfileData] = useState<any>(null);
 
-  // Fetch profile data
-  useEffect(() => {
-    fetchProfile();
-  }, [userId]);
-
-  const fetchProfile = async () => {
-    if (!userId) return;
-    
-    try {
-      setLoading(true);
-      const data = await getRiderProfile(userId);
-      setProfileData(data);
-    } catch (error: any) {
-      console.error('Error fetching profile:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Extract user data from profile
-  const userData = profileData ? {
-    name: `${profileData.user?.first_name || ''} ${profileData.user?.last_name || ''}`.trim() || 'Rider',
-    id: profileData.rider?.id || 'N/A',
-    email: profileData.user?.email || '',
-    avatar: profileData.user?.profile_picture || null,
-    phone: profileData.user?.contact_number || '',
-    verified: profileData.rider?.verified || false,
-  } : {
-    name: 'Rider',
-    id: 'N/A',
-    email: '',
-    avatar: null,
-    phone: '',
-    verified: false,
+  // Mock User Data (Replace with real data from Context or API)
+  const userData = {
+    name: 'John Rider',
+    id: 'RID-2024-001',
+    email: 'john.rider@example.com',
+    avatar: null, // or URL
   };
 
   useEffect(() => {
@@ -94,15 +62,6 @@ export default function SettingsPage() {
       },
     ]);
   };
-
-  if (loading) {
-    return (
-      <SafeAreaView style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.message}>Loading...</Text>
-      </SafeAreaView>
-    );
-  }
 
   if (userRole && userRole !== 'rider') {
     return (
@@ -175,17 +134,12 @@ export default function SettingsPage() {
             <View style={styles.profileInfo}>
               <Text style={styles.profileName}>{userData.name}</Text>
               <Text style={styles.profileId}>ID: {userData.id}</Text>
-              {userData.verified && (
-                <View style={styles.verifiedBadge}>
-                  <MaterialIcons name="verified" size={14} color={COLORS.primary} />
-                  <Text style={styles.verifiedText}>Verified Rider</Text>
-                </View>
-              )}
+              <View style={styles.verifiedBadge}>
+                <MaterialIcons name="verified" size={14} color={COLORS.primary} />
+                <Text style={styles.verifiedText}>Verified Rider</Text>
+              </View>
             </View>
-            <TouchableOpacity 
-              style={styles.editProfileBtn}
-              onPress={() => router.push('/rider/edit-profile')}
-            >
+            <TouchableOpacity style={styles.editProfileBtn}>
               <Feather name="edit-2" size={18} color={COLORS.subText} />
             </TouchableOpacity>
           </View>
@@ -197,8 +151,8 @@ export default function SettingsPage() {
           <SettingItem 
             icon="user" 
             title="Personal Information" 
-            subtitle={userData.phone ? `${userData.email}, ${userData.phone}` : userData.email}
-            onPress={() => router.push('/rider/edit-profile')} 
+            subtitle="Name, Email, Phone"
+            onPress={() => {}} 
           />
           <View style={styles.separator} />
           <SettingItem 
@@ -295,36 +249,36 @@ const styles = StyleSheet.create({
   
   // Profile Card
   profileSection: {
-    padding: 16,
+    padding: 20,
   },
   profileCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 16,
+    padding: 20,
     flexDirection: 'row',
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowRadius: 8,
+    elevation: 2,
   },
   avatarContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: COLORS.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 16,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
   },
   avatarText: {
-    fontSize: 18,
+    fontSize: 24,
     fontWeight: '700',
     color: '#FFF',
   },
@@ -332,12 +286,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   profileName: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: COLORS.text,
   },
   profileId: {
-    fontSize: 11,
+    fontSize: 13,
     color: COLORS.subText,
     marginTop: 2,
   },
@@ -345,7 +299,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 4,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#FFF7ED',
     alignSelf: 'flex-start',
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -358,31 +312,31 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   editProfileBtn: {
-    padding: 6,
+    padding: 8,
   },
 
   // Sections
   sectionTitle: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
     color: COLORS.subText,
-    marginLeft: 16,
+    marginLeft: 20,
     marginBottom: 8,
-    marginTop: 12,
+    marginTop: 16,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   sectionGroup: {
     backgroundColor: COLORS.card,
-    borderRadius: 8,
-    marginHorizontal: 16,
+    borderRadius: 12,
+    marginHorizontal: 20,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   logoutGroup: {
-    marginTop: 16,
-    borderColor: '#FECACA',
+    marginTop: 24,
+    borderColor: '#FECACA', // Light red border
   },
   
   // Setting Item
@@ -390,8 +344,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
   },
   itemLeft: {
     flexDirection: 'row',
@@ -399,19 +353,19 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   iconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
   itemText: {
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '500',
     color: COLORS.text,
   },
   itemSubtitle: {
-    fontSize: 11,
+    fontSize: 12,
     color: COLORS.subText,
     marginTop: 2,
   },
@@ -421,8 +375,8 @@ const styles = StyleSheet.create({
   },
   separator: {
     height: 1,
-    backgroundColor: '#E2E8F0',
-    marginLeft: 56,
+    backgroundColor: '#F3F4F6',
+    marginLeft: 64, // Indent separator to align with text
   },
 
   // Footer
@@ -431,7 +385,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   versionText: {
-    fontSize: 11,
+    fontSize: 13,
     color: COLORS.subText,
   },
 });

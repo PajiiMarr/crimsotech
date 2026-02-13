@@ -41,9 +41,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   // Extract data from dashboard response
-  const fullName = user?.first_name && user?.last_name 
-    ? `${user.first_name} ${user.last_name}` 
-    : user?.first_name || user?.username || "Rider";
+  const fullName = user?.username || "Rider";
   const stats = dashboardData?.metrics || {
     total_deliveries: 0,
     delivered: 0,
@@ -161,7 +159,7 @@ export default function Home() {
         </View>
         
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/rider/notification')}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => console.log('Notifications')}>
             <Feather name="bell" size={22} color={COLORS.secondary} />
             <View style={styles.notifBadge} />
           </TouchableOpacity>
