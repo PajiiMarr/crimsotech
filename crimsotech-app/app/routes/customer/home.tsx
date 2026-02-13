@@ -19,6 +19,43 @@ import {
 } from '~/components/ui/dialog'
 
 // ----------------------------
+// URL Conversion Utility
+// ----------------------------
+const convertS3ToPublicUrl = (s3Url: string | null | undefined): string | null => {
+  if (!s3Url) return null;
+  
+  try {
+    // Convert Supabase S3 URL to public URL format
+    // S3 URL: https://project-ref.storage.supabase.co/storage/v1/s3/bucket-name/file-path
+    // Public URL: https://project-ref.supabase.co/storage/v1/object/public/bucket-name/file-path
+    
+    // Method 1: Regex extraction
+    const match = s3Url.match(/https:\/\/([^\.]+)\.storage\.supabase\.co\/storage\/v1\/s3\/([^\/]+)\/(.+)/);
+    
+    if (match) {
+      const projectRef = match[1];  // e.g., "nkbunzcxponphxlrzvfh"
+      const bucketName = match[2];  // e.g., "crimsotech_medias"
+      const filePath = match[3];    // e.g., "product/Screenshot_2026-02-05_at_5.13.35PM.png"
+      
+      // Construct public URL
+      return `https://${projectRef}.supabase.co/storage/v1/object/public/${bucketName}/${filePath}`;
+    }
+    
+    // Method 2: Simple string replacement
+    if (s3Url.includes("/s3/")) {
+      let publicUrl = s3Url.replace("/s3/", "/object/public/");
+      publicUrl = publicUrl.replace(".storage.supabase.co", ".supabase.co");
+      return publicUrl;
+    }
+    
+  } catch (error) {
+    console.error('Error converting URL:', error, s3Url);
+  }
+  
+  return s3Url; // Return original if conversion fails
+};
+
+// ----------------------------
 // Meta
 // ----------------------------
 export function meta(): Route.MetaDescriptors {
@@ -127,47 +164,26 @@ const CompactSearchBar = ({
 }
 
 // ----------------------------
-// Get image URL helper
-// ----------------------------
-const getImageUrl = (url: string | null | undefined): string => {
-  const baseUrl = import.meta.env.VITE_MEDIA_URL || 'http://127.0.0.1:8000';
-  
-  if (!url) {
-    return '/phon.jpg';
-  }
-  
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url;
-  }
-  
-  if (url.startsWith('/media/')) {
-    return `${baseUrl}${url}`;
-  }
-  
-  if (url.startsWith('/')) {
-    return `${baseUrl}${url}`;
-  }
-  
-  return `${baseUrl}/media/${url}`;
-}
-
-// ----------------------------
-// Get product image helper
+// Get product image helper (Simplified)
 // ----------------------------
 const getProductImage = (product: Product): string => {
+  // Try primary image first
   if (product.primary_image?.url) {
-    return getImageUrl(product.primary_image.url);
+    const publicUrl = convertS3ToPublicUrl(product.primary_image.url);
+    return publicUrl || '/Crimsotech.png';
   }
   
+  // Try media files
   if (product.media_files && product.media_files.length > 0) {
-    return getImageUrl(product.media_files[0].file_data);
+    const firstMedia = product.media_files[0];
+    if (firstMedia?.file_data) {
+      const publicUrl = convertS3ToPublicUrl(firstMedia.file_data);
+      return publicUrl || '/Crimsotech.png';
+    }
   }
   
-  if (product.shop?.shop_picture) {
-    return getImageUrl(product.shop.shop_picture);
-  }
-  
-  return '/phon.jpg';
+  // Default fallback
+  return '/Crimsotech.png';
 }
 
 // ----------------------------
@@ -187,10 +203,17 @@ const CompactProductCard = ({
   const navigate = useNavigate();
   const [isFavorite, setIsFavorite] = useState(favoriteIds.includes(product.id));
   const [loadingFav, setLoadingFav] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string>('/Crimsotech.png');
 
   useEffect(() => {
     setIsFavorite(favoriteIds.includes(product.id));
   }, [favoriteIds, product.id]);
+
+  // Load and convert image URL
+  useEffect(() => {
+    const url = getProductImage(product);
+    setImageUrl(url);
+  }, [product]);
 
   const handleClick = () => {
     navigate(`/product/${product.id}`);
@@ -207,20 +230,20 @@ const CompactProductCard = ({
     try {
       if (!isFavorite) {
         await AxiosInstance.post('/customer-favorites/', { 
-          product: product.id,  // FIXED: Use product.id instead of productId
+          product: product.id,
           customer: user.user_id 
         }, { 
           headers: { 'X-User-Id': user.user_id } 
         });
         setIsFavorite(true);
-        onToggleFavorite && onToggleFavorite(product.id, true);  // FIXED: Use product.id instead of productId
+        onToggleFavorite && onToggleFavorite(product.id, true);
       } else {
         await AxiosInstance.delete('/customer-favorites/', { 
-          data: { product: product.id, customer: user.user_id },  // FIXED: Use product.id instead of productId
+          data: { product: product.id, customer: user.user_id },
           headers: { 'X-User-Id': user.user_id } 
         });
         setIsFavorite(false);
-        onToggleFavorite && onToggleFavorite(product.id, false);  // FIXED: Use product.id instead of productId
+        onToggleFavorite && onToggleFavorite(product.id, false);
       }
     } catch (err) {
       console.error('Failed to update favorite:', err);
@@ -257,13 +280,13 @@ const CompactProductCard = ({
 
       <div className="aspect-square w-full overflow-hidden bg-gray-100">
         <img
-          src={getProductImage(product)}
+          src={imageUrl}
           alt={product.name}
           className="w-full h-full object-cover"
           onError={(e) => {
             const el = e.currentTarget as HTMLImageElement;
             el.onerror = null;
-            el.src = '/crimsonity.png';
+            el.src = '/Crimsotech.png';
           }}
         />
       </div>
@@ -339,7 +362,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     if (productsResponse.status === 200) {
       const productsData = productsResponse.data;
       
-      // FIX: Check if the response is an array or has a different structure
       if (Array.isArray(productsData)) {
         products = productsData.map((p: any) => ({
           id: p.id,
@@ -365,7 +387,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           open_for_swap: p.open_for_swap || false,
         }));
       } else if (productsData.products && Array.isArray(productsData.products)) {
-        // If response has a 'products' field
         products = productsData.products.map((p: any) => ({
           id: p.id,
           name: p.name,
@@ -392,7 +413,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
       
       console.log(`Loaded ${products.length} products`);
-      console.log('Products with open_for_swap:', products.filter(p => p.open_for_swap).length);
     }
 
     // Fetch categories
@@ -409,9 +429,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     let hiddenGiftIds: string[] = [];
     let giftDetails: Record<string, any> = {};
 
-    // Fetch active applied gift product IDs and filter out gift products that are currently
-    // used as applied gifts (i.e., gift products that are assigned to active promotions
-    // and have eligible products defined). We only hide gift products (price === 0).
+    // Fetch active applied gift product IDs
     try {
       const giftsResp = await AxiosInstance.get('/customer-gift/active-applied-gift-product-ids/');
       hiddenGiftIds = (giftsResp.data && giftsResp.data.gift_product_ids) || [];
@@ -431,7 +449,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         console.log(`Filtered out ${hiddenGiftIds.length} gift products that are applied to promotions`);
       }
     } catch (err) {
-      // Non-fatal: if this fails, keep showing products as before
       console.warn('Failed to fetch active applied gift product ids, skipping gift filtering:', err);
     }
 
@@ -523,7 +540,6 @@ export default function Home({ loaderData }: any) {
       if (hasHotItems) {
         setShowHotItemsModal(true);
       } else {
-        // If no hot items, show the modal with empty state
         setShowHotItemsModal(true);
       }
     } finally {
@@ -534,25 +550,20 @@ export default function Home({ loaderData }: any) {
   // Check and show hot items modal on component mount
   useEffect(() => {
     const checkAndShowHotItems = async () => {
-      // Check localStorage for "don't show again" preference
       const dontShow = localStorage.getItem('dontShowHotItems');
       
-      // Only show if user hasn't clicked "Don't show again"
       if (!dontShow && userId) {
         const hasHotItems = await fetchHotItems();
         if (hasHotItems) {
           setShowHotItemsModal(true);
         }
-        // Don't show modal if response is empty
       }
       
-      // Load the "don't show again" preference from localStorage
       if (dontShow) {
         setDontShowAgain(true);
       }
     };
 
-    // Small delay to let page load first
     const timer = setTimeout(() => {
       checkAndShowHotItems();
     }, 1000);
@@ -594,7 +605,6 @@ export default function Home({ loaderData }: any) {
       product.name.toLowerCase().includes(q) || 
       product.description.toLowerCase().includes(q);
 
-    // Price filter
     const p = Number(product.price || 0);
     const min = minPrice === '' ? null : Number(minPrice);
     const max = maxPrice === '' ? null : Number(maxPrice);
@@ -602,11 +612,9 @@ export default function Home({ loaderData }: any) {
     const matchesMin = min === null || (!isNaN(min) && p >= min);
     const matchesMax = max === null || (!isNaN(max) && p <= max);
 
-    // Condition filter
     const matchesCondition = selectedCondition === '' || 
       (product.condition && product.condition === selectedCondition);
 
-    // Category filter
     let prodCatId;
     if (typeof product.category === 'string') {
       prodCatId = product.category;
@@ -619,12 +627,10 @@ export default function Home({ loaderData }: any) {
     const matchesCategory = selectedCategory === '' || 
       (prodCatId && prodCatId === selectedCategory);
 
-    // Exclude applied gift products (always hide gifts that are already applied)
     const isGift = Number(product.price || 0) === 0;
     const appliedSet = appliedGiftIds.map(String);
     if (isGift && appliedSet.includes(String(product.id))) return false;
 
-    // View mode filter: if 'gifts', only include products with zero price
     const matchesView = viewMode === 'gifts' ? isGift : true;
 
     return matchesSearch && matchesMin && matchesMax && matchesCondition && matchesCategory && matchesView;

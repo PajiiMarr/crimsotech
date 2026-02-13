@@ -288,8 +288,6 @@ const actionConfigs = {
 
 export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) {
   const { user, product: initialProduct, error: initialError } = loaderData;
-  const baseUrl = import.meta.env.VITE_MEDIA_URL;
-  console.log("Base URL:", baseUrl);
   
   // State for dynamic product data
   const [product, setProduct] = useState<ProductData | null>(initialProduct);
@@ -841,7 +839,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                               <div className="h-full flex items-center justify-center">
                                 <div className="aspect-square w-full rounded-lg overflow-hidden">
                                   <img
-                                    src={baseUrl + media.file_data || "/api/placeholder/600/400"}
+                                    src={media.file_data || "/api/placeholder/600/400"}
                                     alt={product.name}
                                     className="w-full h-full object-cover"
                                     loading="lazy"

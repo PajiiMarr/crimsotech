@@ -1,22 +1,15 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   SafeAreaView,
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
-  RefreshControl,
   StatusBar,
-  ActivityIndicator,
+  ScrollView,
 } from "react-native";
 import { MaterialIcons, Feather } from "@expo/vector-icons";
-import { useAuth } from "../../contexts/AuthContext";
 import { router } from "expo-router";
-import {
-  getRiderOrderHistory,
-  acceptDeliveryOrder,
-} from "../../utils/riderApi";
 
 // --- Theme Colors (Minimalist Softened) ---
 const COLORS = {
@@ -25,315 +18,170 @@ const COLORS = {
   muted: "#9CA3AF",
   bg: "#FFFFFF",
   cardBg: "#FFFFFF",
-  danger: "#EF4444",
-  success: "#10B981",
-  warning: "#F59E0B",
-  border: "#F3F4F6",
+  danger: "#EF4444", // Red
+  success: "#10B981", // Green
+  warning: "#F59E0B", // Orange
+  info: "#3B82F6", // Blue
+  border: "#E5E7EB",
+  lightGray: "#F9FAFB",
 };
 
+// --- Dummy Data (Electronics Context) ---
+const EXAMPLE_ORDERS = [
+  {
+    id: "DEV-8821",
+    store: "Power Mac Center",
+    price: "₱84,990.00",
+    status: "pending",
+    items: "1x iPhone 15 Pro Max (256GB) - Natural Titanium",
+    itemName: "iPhone 15 Pro Max (256GB) - Natural Titanium",
+    category: "Electronics",
+    size: "Small",
+    weight: "0.5 kg",
+    deliveryFee: "₱150.00",
+    specialHandling: "Fragile, Handle with care",
+  },
+  {
+    id: "DEV-8822",
+    store: "Samsung Experience Store",
+    price: "₱12,990.00",
+    status: "accepted",
+    items: "1x Galaxy Watch 6, 1x Strap",
+    itemName: "Galaxy Watch 6 with Strap",
+    category: "Electronics",
+    size: "Small",
+    weight: "0.3 kg",
+    deliveryFee: "₱100.00",
+    specialHandling: "Fragile",
+  },
+  {
+    id: "DEV-8823",
+    store: "Datablitz",
+    price: "₱28,500.00",
+    status: "picked_up",
+    items: "1x PlayStation 5 Slim Console",
+    itemName: "PlayStation 5 Slim Console",
+    category: "Electronics",
+    size: "Medium",
+    weight: "3.2 kg",
+    deliveryFee: "₱200.00",
+    specialHandling: "Handle with care",
+  },
+  {
+    id: "DEV-8824",
+    store: "Beyond the Box",
+    price: "₱69,990.00",
+    status: "on_the_way",
+    items: "1x MacBook Air M2 (Midnight)",
+    itemName: "MacBook Air M2 (Midnight)",
+    category: "Electronics",
+    size: "Medium",
+    weight: "1.2 kg",
+    deliveryFee: "₱180.00",
+    specialHandling: "Fragile, Handle with care",
+  },
+  {
+    id: "DEV-8825",
+    store: "Octagon",
+    price: "₱4,500.00",
+    status: "delivered",
+    items: "1x Logitech MX Master 3S Mouse",
+    itemName: "Logitech MX Master 3S Mouse",
+    category: "Electronics",
+    size: "Small",
+    weight: "0.2 kg",
+    deliveryFee: "₱80.00",
+    specialHandling: "None",
+  },
+  {
+    id: "DEV-8826",
+    store: "Dyson Demo Store",
+    price: "₱32,900.00",
+    status: "cancelled",
+    items: "1x Dyson Airwrap Multi-styler",
+    itemName: "Dyson Airwrap Multi-styler",
+    category: "Electronics",
+    size: "Medium",
+    weight: "1.5 kg",
+    deliveryFee: "₱150.00",
+    specialHandling: "Fragile",
+  },
+  {
+    id: "DEV-8827",
+    store: "Xiaomi Store",
+    price: "₱899.00",
+    status: "pending",
+    items: "2x Mi Smart Bulb, 1x Motion Sensor",
+    itemName: "Mi Smart Bulbs and Motion Sensor",
+    category: "Electronics",
+    size: "Small",
+    weight: "0.4 kg",
+    deliveryFee: "₱90.00",
+    specialHandling: "Fragile",
+  },
+];
+
 export default function OrdersPage() {
-  const { userRole, userId } = useAuth();
-  const [activeTab, setActiveTab] = useState<"pending" | "delivered">(
-    "pending",
+  const [activeStatus, setActiveStatus] = useState<string>("accepted");
+
+  const statuses = [
+    { id: "accepted", label: "Accepted" },
+    { id: "picked_up", label: "Picked Up" },
+    { id: "on_the_way", label: "On the Way" },
+    { id: "delivered", label: "Delivered" },
+    { id: "cancelled", label: "Cancelled" },
+  ];
+
+  // Filter logic
+  const filteredOrders = EXAMPLE_ORDERS.filter(
+    (order) => order.status === activeStatus,
   );
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [deliveries, setDeliveries] = useState<any[]>([]);
-  const [error, setError] = useState<string | null>(null);
 
-  // Fetch deliveries from API
-  const fetchDeliveries = async () => {
-    if (!userId) return;
+  // Count pending orders for badge
+  const pendingCount = EXAMPLE_ORDERS.filter(
+    (order) => order.status === "pending",
+  ).length;
 
-    try {
-      setError(null);
-      const data = await getRiderOrderHistory(userId, { status: "all" });
-      setDeliveries(data.deliveries || []);
-    } catch (err: any) {
-      console.error("Error fetching deliveries:", err);
-      setError(err.message || "Failed to load orders");
-    } finally {
-      setLoading(false);
+  const handleOrderPress = (order: any) => {
+    router.push({
+      pathname: "/rider/delivery-status",
+      params: { order: encodeURIComponent(JSON.stringify(order)) },
+    });
+  };
+
+  // Helper for status colors
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "delivered":
+        return COLORS.success;
+      case "cancelled":
+        return COLORS.danger;
+      case "on_the_way":
+        return COLORS.info;
+      case "pending":
+        return COLORS.warning;
+      case "picked_up":
+        return COLORS.info;
+      default:
+        return COLORS.muted;
     }
   };
-
-  useEffect(() => {
-    fetchDeliveries();
-  }, [userId]);
-
-  // Filter orders based on active tab
-  const pendingOrders = deliveries.filter(
-    (d) =>
-      d.status === "pending" ||
-      d.status === "pending_offer" ||
-      d.status === "picked_up" ||
-      d.status === "in_progress",
-  );
-  const deliveredOrders = deliveries.filter((d) => d.status === "delivered");
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchDeliveries();
-    setRefreshing(false);
-  };
-
-  const handleAcceptOrder = async (deliveryId: string, order: any) => {
-    if (!userId) return;
-
-    try {
-      await acceptDeliveryOrder(userId, deliveryId);
-      // After accepting, navigate to delivery details
-      const deliveryData = {
-        id: order.id,
-        order_id: order.order_id,
-        customer_name: order.customer_name || order.order?.user?.first_name,
-        delivery_location:
-          order.delivery_location || order.order?.delivery_address_text,
-        distance_km: order.distance_km,
-        estimated_minutes: order.estimated_minutes,
-        delivery_fee: order.delivery_fee,
-        status: "pending", // Status remains pending until pickup photo taken
-        order: order.order,
-      };
-
-      router.push({
-        pathname: "/rider/delivery-details",
-        params: { delivery: encodeURIComponent(JSON.stringify(deliveryData)) },
-      });
-    } catch (err: any) {
-      alert("Failed to accept order: " + err.message);
-    }
-  };
-
-  const formatCurrency = (amount: number | string) => {
-    const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
-    return `₱${(numAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-  };
-
-  const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  };
-
-  if (userRole && userRole !== "rider") {
-    return (
-      <SafeAreaView style={styles.center}>
-        <Text style={styles.message}>Not authorized to view this page</Text>
-      </SafeAreaView>
-    );
-  }
-
-  if (loading) {
-    return (
-      <SafeAreaView style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Loading orders...</Text>
-      </SafeAreaView>
-    );
-  }
-
-  if (error) {
-    return (
-      <SafeAreaView style={[styles.container, styles.center]}>
-        <MaterialIcons name="error-outline" size={48} color={COLORS.danger} />
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={fetchDeliveries}>
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-    );
-  }
-
-  const renderOrderCard = (order: any, isToDeliver: boolean = false) => {
-    const customerName = order.order?.user
-      ? `${order.order.user.first_name} ${order.order.user.last_name}`.trim()
-      : order.customer_name || "Customer";
-
-    const address =
-      order.order?.delivery_address_text ||
-      order.delivery_location ||
-      "Address not available";
-    const amount = order.order?.total_amount || order.order_amount || 0;
-    const orderId = order.order_id || order.id;
-    const deliveryFee =
-      typeof order.delivery_fee === "string"
-        ? parseFloat(order.delivery_fee)
-        : order.delivery_fee || 0;
-
-    return (
-      <TouchableOpacity key={order.id} style={styles.orderCard}>
-        <View style={styles.orderHeader}>
-          <View style={styles.orderIdContainer}>
-            <MaterialIcons name="receipt" size={14} color={COLORS.muted} />
-            <Text style={styles.orderId}>Order #{orderId.substring(0, 8)}</Text>
-          </View>
-          <View
-            style={[
-              styles.statusBadge,
-              isToDeliver ? styles.deliverBadge : styles.pendingBadge,
-            ]}
-          >
-            <Text
-              style={[
-                styles.statusText,
-                isToDeliver
-                  ? { color: COLORS.success }
-                  : { color: COLORS.primary },
-              ]}
-            >
-              {isToDeliver ? "Delivered" : "Pending"}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.orderDetails}>
-          <View style={styles.detailRow}>
-            <MaterialIcons name="person" size={14} color={COLORS.muted} />
-            <Text style={styles.detailText}>{customerName}</Text>
-          </View>
-
-          <View style={styles.detailRow}>
-            <MaterialIcons name="location-on" size={14} color={COLORS.muted} />
-            <Text style={styles.detailText} numberOfLines={1}>
-              {address}
-            </Text>
-          </View>
-
-          <View style={styles.detailRow}>
-            <MaterialIcons name="schedule" size={14} color={COLORS.muted} />
-            <Text style={styles.detailText}>
-              {order.scheduled_delivery_time
-                ? `Deliver by: ${formatTime(order.scheduled_delivery_time)}`
-                : "Time not set"}
-            </Text>
-          </View>
-
-          {!isToDeliver && order.picked_at && (
-            <View style={styles.detailRow}>
-              <MaterialIcons name="inventory" size={14} color={COLORS.muted} />
-              <Text style={styles.detailText}>
-                Picked: {formatTime(order.picked_at)}
-              </Text>
-            </View>
-          )}
-
-          {isToDeliver && order.delivered_at && (
-            <View style={styles.detailRow}>
-              <MaterialIcons
-                name="check-circle"
-                size={14}
-                color={COLORS.success}
-              />
-              <Text style={styles.detailText}>
-                Done: {formatTime(order.delivered_at)}
-              </Text>
-            </View>
-          )}
-
-          <View style={styles.detailRow}>
-            <MaterialIcons
-              name="directions-bike"
-              size={14}
-              color={COLORS.muted}
-            />
-            <Text style={styles.detailText}>
-              {order.distance_km ? `${order.distance_km} km away` : "N/A"}
-            </Text>
-          </View>
-
-          {deliveryFee > 0 && (
-            <View style={styles.detailRow}>
-              <MaterialIcons name="payments" size={14} color={COLORS.success} />
-              <Text
-                style={[
-                  styles.detailText,
-                  { color: COLORS.success, fontWeight: "600" },
-                ]}
-              >
-                Fee: {formatCurrency(deliveryFee)}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.orderFooter}>
-          <View style={styles.orderInfo}>
-            <Text style={styles.orderAmount}>{formatCurrency(amount)}</Text>
-            <Text style={styles.orderItems}>{order.items_count || 1} item</Text>
-          </View>
-
-          {!isToDeliver && (
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => {
-                if (
-                  order.status === "pending" ||
-                  order.status === "pending_offer"
-                ) {
-                  handleAcceptOrder(order.id, order);
-                } else {
-                  const deliveryData = {
-                    id: order.id,
-                    order_id: order.order_id,
-                    customer_name:
-                      order.customer_name || order.order?.user?.first_name,
-                    delivery_location:
-                      order.delivery_location ||
-                      order.order?.delivery_address_text,
-                    distance_km: order.distance_km,
-                    estimated_minutes: order.estimated_minutes,
-                    delivery_fee: order.delivery_fee,
-                    status: order.status,
-                    order: order.order,
-                  };
-                  router.push({
-                    pathname: "/rider/delivery-details",
-                    params: {
-                      delivery: encodeURIComponent(
-                        JSON.stringify(deliveryData),
-                      ),
-                    },
-                  });
-                }
-              }}
-            >
-              <Text style={styles.actionButtonText}>
-                {order.status === "pending" || order.status === "pending_offer"
-                  ? "Accept"
-                  : "Details"}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const currentOrders =
-    activeTab === "pending" ? pendingOrders : deliveredOrders;
-  const isEmpty = currentOrders.length === 0;
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.cardBg} />
 
-      {/* --- Standardized Header --- */}
+      {/* --- Header --- */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Orders</Text>
-        </View>
-
+        <Text style={styles.title}>Active Orders</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => router.push("/rider/notification")}
           >
             <Feather name="bell" size={22} color={COLORS.secondary} />
-            <View style={styles.notificationBadge}>
-              {/* <Text style={styles.badgeText}>2</Text> */}
-            </View>
+            <View style={styles.notificationBadge} />
           </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => router.push("/rider/settings")}
@@ -343,67 +191,121 @@ export default function OrdersPage() {
         </View>
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "pending" && styles.activeTab]}
-          onPress={() => setActiveTab("pending")}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === "pending" && styles.activeTabText,
-            ]}
-          >
-            Pending
-          </Text>
-          {activeTab === "pending" && <View style={styles.tabIndicator} />}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === "delivered" && styles.activeTab]}
-          onPress={() => setActiveTab("delivered")}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === "delivered" && styles.activeTabText,
-            ]}
-          >
-            Delivered
-          </Text>
-          {activeTab === "delivered" && <View style={styles.tabIndicator} />}
-        </TouchableOpacity>
-      </View>
-
-      {/* Orders List */}
       <ScrollView
-        style={styles.scrollView}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={[COLORS.primary]}
-          />
-        }
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {isEmpty ? (
-          <View style={styles.emptyContainer}>
-            <MaterialIcons name="inventory" size={64} color={COLORS.muted} />
-            <Text style={styles.emptyTitle}>No Orders</Text>
-            <Text style={styles.emptyText}>
-              {activeTab === "pending"
-                ? "No pending orders available"
-                : "No delivered orders yet"}
-            </Text>
-          </View>
-        ) : (
-          currentOrders.map((order) =>
-            renderOrderCard(order, activeTab === "delivered"),
-          )
-        )}
+        {/* --- Top Nav Card --- */}
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.navCard}
+            onPress={() => router.push("/rider/incoming-deliveries")}
+          >
+            <View style={styles.navIconWrap}>
+              <MaterialIcons
+                name="local-shipping"
+                size={22}
+                color={COLORS.primary}
+              />
+            </View>
+            <View style={styles.navTextWrap}>
+              <View style={styles.navTitleContainer}>
+                <Text style={styles.navTitle}>Incoming Deliveries</Text>
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{pendingCount}</Text>
+                </View>
+              </View>
+            </View>
+            <MaterialIcons
+              name="chevron-right"
+              size={22}
+              color={COLORS.muted}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {/* --- My Deliveries Title --- */}
+        <View style={styles.sectionTitleWrapper}>
+          <Text style={styles.sectionTitleText}>My Deliveries</Text>
+        </View>
+
+        {/* --- Filter Tabs (Horizontal Scroll) --- */}
+        <View style={styles.filterWrapper}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterContainer}
+          >
+            {statuses.map((status) => (
+              <TouchableOpacity
+                key={status.id}
+                style={[
+                  styles.filterTab,
+                  activeStatus === status.id && styles.filterTabActive,
+                ]}
+                onPress={() => setActiveStatus(status.id)}
+              >
+                <Text
+                  style={[
+                    styles.filterText,
+                    activeStatus === status.id && styles.filterTextActive,
+                  ]}
+                >
+                  {status.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* --- Orders List --- */}
+        <View style={styles.listSection}>
+          {filteredOrders.length > 0 ? (
+            filteredOrders.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.orderCard}
+                onPress={() => handleOrderPress(item)}
+              >
+                {/* Card Top: ID and Status */}
+                <View style={styles.cardHeader}>
+                  <View style={styles.idContainer}>
+                    <Feather name="package" size={14} color={COLORS.muted} />
+                    <Text style={styles.orderId}>{item.id}</Text>
+                  </View>
+                  <View
+                    style={[styles.statusBadge, { backgroundColor: "#F3F4F6" }]}
+                  >
+                    <Text style={[styles.statusText, { color: COLORS.muted }]}>
+                      {item.status.replace("_", " ").toUpperCase()}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Card Middle: Store and Item */}
+                <View style={styles.cardBody}>
+                  <Text style={styles.storeName}>{item.store}</Text>
+                  <Text style={styles.orderItems} numberOfLines={2}>
+                    {item.items}
+                  </Text>
+                </View>
+
+                <View style={styles.divider} />
+
+                {/* Card Bottom: Price and Date */}
+                <View style={styles.cardFooter}>
+                  <Text style={styles.orderPrice}>{item.price}</Text>
+                  <Text style={styles.dateText}>Today, 2:30 PM</Text>
+                </View>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <Feather name="shopping-bag" size={48} color={COLORS.border} />
+              <Text style={styles.emptyText}>No electronics found.</Text>
+            </View>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -414,45 +316,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.bg,
   },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 12,
-  },
-  message: {
-    fontSize: 13,
-    color: COLORS.muted,
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 13,
-    color: COLORS.muted,
-  },
-  errorText: {
-    marginTop: 10,
-    fontSize: 13,
-    color: COLORS.danger,
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  retryButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  retryButtonText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "600",
+  scrollContent: {
+    paddingBottom: 20,
   },
 
   // Header
   header: {
     backgroundColor: COLORS.cardBg,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
     flexDirection: "row",
@@ -460,181 +332,216 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   title: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "700",
     color: COLORS.secondary,
   },
   headerActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 5,
   },
   iconButton: {
     padding: 6,
     backgroundColor: "#F3F4F6",
-    borderRadius: 8,
-    position: "relative",
+    borderRadius: 6,
   },
   notificationBadge: {
     position: "absolute",
     top: 6,
     right: 6,
     backgroundColor: COLORS.muted,
-    borderRadius: 3,
     width: 6,
     height: 6,
+    borderRadius: 3,
     borderWidth: 1,
     borderColor: "#FFFFFF",
   },
 
-  // Tabs
-  tabContainer: {
+  // Section Generic
+  section: {
+    paddingHorizontal: 14,
+    marginTop: 10,
+  },
+
+  // Nav Card
+  navCard: {
     flexDirection: "row",
-    backgroundColor: COLORS.cardBg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  tab: {
-    flex: 1,
     alignItems: "center",
-    paddingVertical: 8,
-    position: "relative",
+    backgroundColor: COLORS.cardBg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 10,
+    gap: 9,
+    // Subtle shadow
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  activeTab: {
-    backgroundColor: "#F9FAFB",
+  navIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: COLORS.lightGray,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  tabText: {
+  navTextWrap: {
+    flex: 1,
+  },
+  navTitleContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  navTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.secondary,
+  },
+  countBadge: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 20,
+    alignItems: "center",
+  },
+  countBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  navSubtitle: {
+    fontSize: 10,
+    color: COLORS.muted,
+    marginTop: 1,
+  },
+
+  // Section Title
+  sectionTitleWrapper: {
+    paddingHorizontal: 14,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  sectionTitleText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.secondary,
+  },
+
+  // Filter Tabs
+  filterWrapper: {
+    marginTop: 8,
+  },
+  filterContainer: {
+    paddingHorizontal: 14,
+    gap: 5,
+  },
+  filterTab: {
+    paddingVertical: 5,
+    paddingHorizontal: 11,
+    borderRadius: 100,
+    backgroundColor: COLORS.lightGray,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  filterTabActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterText: {
     fontSize: 11,
     fontWeight: "600",
     color: COLORS.muted,
   },
-  activeTabText: {
-    color: COLORS.primary,
-  },
-  tabIndicator: {
-    position: "absolute",
-    bottom: 0,
-    width: "100%",
-    height: 2,
-    backgroundColor: COLORS.primary,
+  filterTextActive: {
+    color: "#FFFFFF",
   },
 
-  // List
-  scrollView: {
-    flex: 1,
+  // List Section
+  listSection: {
+    paddingHorizontal: 14,
+    marginTop: 10,
+    gap: 12,
   },
-  scrollContent: {
-    paddingBottom: 80,
-  },
-
-  // Order Card
   orderCard: {
     backgroundColor: COLORS.cardBg,
-    marginHorizontal: 16,
-    marginTop: 8,
-    padding: 8,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#F3F4F6",
+    borderColor: COLORS.border,
+    padding: 10,
   },
-  orderHeader: {
+  cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 6,
+    marginBottom: 8,
   },
-  orderIdContainer: {
+  idContainer: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
   },
   orderId: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "600",
-    color: COLORS.secondary,
+    color: COLORS.muted,
   },
   statusBadge: {
     paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingVertical: 3,
     borderRadius: 4,
-  },
-  pendingBadge: {
-    backgroundColor: "#F3F4F6",
-  },
-  deliverBadge: {
-    backgroundColor: "#D1FAE5",
   },
   statusText: {
     fontSize: 9,
-    fontWeight: "600",
+    fontWeight: "700",
+    letterSpacing: 0.3,
   },
-  orderDetails: {
-    gap: 4,
-    marginBottom: 6,
+  cardBody: {
+    marginBottom: 8,
   },
-  detailRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
+  storeName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.secondary,
+    marginBottom: 2,
   },
-  detailText: {
-    fontSize: 10,
-    color: COLORS.muted,
-    flex: 1,
+  orderItems: {
+    fontSize: 11,
+    color: "#4B5563",
+    lineHeight: 16,
   },
-  orderFooter: {
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginBottom: 8,
+  },
+  cardFooter: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
   },
-  orderInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  orderAmount: {
-    fontSize: 12,
+  orderPrice: {
+    fontSize: 13,
     fontWeight: "700",
     color: COLORS.primary,
   },
-  orderItems: {
+  dateText: {
     fontSize: 10,
     color: COLORS.muted,
   },
-  actionButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  actionButtonText: {
-    color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "600",
-  },
-
-  // Empty State
-  emptyContainer: {
-    flex: 1,
-    justifyContent: "center",
+  emptyState: {
     alignItems: "center",
-    paddingTop: 48,
-    paddingHorizontal: 16,
-  },
-  emptyTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.secondary,
-    marginTop: 10,
-    marginBottom: 6,
+    justifyContent: "center",
+    paddingVertical: 30,
   },
   emptyText: {
-    fontSize: 11,
+    marginTop: 10,
     color: COLORS.muted,
-    textAlign: "center",
-    lineHeight: 16,
+    fontSize: 13,
   },
 });

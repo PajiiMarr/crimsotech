@@ -13,6 +13,13 @@ interface CategoryData {
   user_id?: string | null;
 }
 
+interface ProductImage {
+  id: string;
+  url: string;
+  file_type: string;
+  is_primary: boolean;
+}
+
 interface ProductData {
   id: string;
   title: string;
@@ -23,7 +30,11 @@ interface ProductData {
   shop_id: string | null;
   category_id?: string | null;
   category_name?: string | null;
-  image_url: string | null;
+  primary_image: string | null;
+  all_images: ProductImage[];
+  image_count: number;
+  stock: number;
+  is_out_of_stock: boolean;
   created_at?: string;
 }
 
@@ -49,7 +60,7 @@ interface StatsData {
 interface HeroProduct {
   title: string;
   link: string;
-  thumbnail?: string;
+  thumbnail: string;
   description: string;
 }
 
@@ -70,6 +81,15 @@ interface LandingData {
   };
 }
 
+interface FallbackProduct {
+  id: string;
+  title: string;
+  description: string;
+  price: number;
+  primary_image: string | null;
+  [key: string]: any;
+}
+
 export function meta(): Route.MetaDescriptors {
   return [
     {
@@ -84,22 +104,33 @@ export async function loader() {
     const response = await AxiosInstance.get('/landing/');
     const landingData: LandingData = response.data;
     
-    // Transform featured products for HeroParallax component
-    const heroProducts = landingData.featured_products.map((product, index) => ({
-      title: product.title,
-      link: `/products/${product.id}`,
-      thumbnail: product.image_url || getProductImage(index),
-      description: product.description
-    }));
+    // Transform featured products for HeroParallax component using ACTUAL database images
+    const heroProducts = landingData.featured_products
+      .filter((product: ProductData) => product.primary_image !== null) // Only products with actual images
+      .map((product: ProductData) => ({
+        title: product.title,
+        link: `/products/${product.id}`,
+        thumbnail: product.primary_image || '', // Use actual product image from database
+        description: product.description
+      }));
 
-    // If we don't have enough featured products, supplement with hero sections
+    // If we don't have enough products with images, supplement with hero sections that have ACTUAL images
     if (heroProducts.length < 5 && landingData.ui_data.hero_products.length > 0) {
-      landingData.ui_data.hero_products.forEach((heroSection, index) => {
+      landingData.ui_data.hero_products.forEach((heroSection: HeroProduct) => {
         if (heroProducts.length < 8) {
+          // Find a product image from the same category or use any product image
+          const categoryProducts = landingData.featured_products.filter(
+            (p: ProductData) => p.category_name === heroSection.title && p.primary_image
+          );
+          
+          const thumbnail = categoryProducts.length > 0 
+            ? categoryProducts[0].primary_image! 
+            : landingData.featured_products.find((p: ProductData) => p.primary_image)?.primary_image || '';
+          
           heroProducts.push({
             title: heroSection.title,
             link: heroSection.link,
-            thumbnail: getHeroSectionImage(heroSection.title),
+            thumbnail: thumbnail,
             description: heroSection.description
           });
         }
@@ -117,79 +148,57 @@ export async function loader() {
   } catch (error) {
     console.error('Error fetching landing page data:', error);
     
-    // Minimal fallback data
-    return {
-      stats: {
-        products_count: 0,
-        shops_count: 0,
-        boosted_count: 0,
-        avg_rating: 4.8
-      },
-      categories: [],
-      featuredProducts: [],
-      trendingShops: [],
-      heroProducts: getFallbackHeroProducts(),
-      uiData: {
-        hero_products: [],
-        trust_badges: []
-      }
-    };
-  }
-}
+    // Try to fetch at least some products as fallback
+    try {
+      const fallbackResponse = await AxiosInstance.get('/products/?limit=10');
+      const fallbackProducts = fallbackResponse.data?.results || [];
+      
+      const fallbackHeroProducts = fallbackProducts
+        .filter((p: FallbackProduct) => p.primary_image)
+        .slice(0, 5)
+        .map((product: FallbackProduct) => ({
+          title: product.title || 'Product',
+          link: `/products/${product.id}`,
+          thumbnail: product.primary_image || '',
+          description: product.description || 'Check out this product'
+        }));
 
-// Helper function to get appropriate Unsplash images for products
-function getProductImage(index: number): string {
-  const images = [
-    "https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=2070&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?q=80&w=2070&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1607082349566-187342175e2f?q=80&w=2070&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1472851294608-062f824d29cc?q=80&w=2070&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?q=80&w=2070&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?q=80&w=2058&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1498049794561-7780e7231661?q=80&w=2070&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?q=80&w=2070&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=2070&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?q=80&w=2065&auto=format&fit=crop"
-  ];
-  return images[index % images.length];
-}
-
-// Helper function to get images for hero sections
-function getHeroSectionImage(title: string): string {
-  const imageMap: Record<string, string> = {
-    'Trending Shops': 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=2070&auto=format&fit=crop',
-    'Boosted Products': 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?q=80&w=2070&auto=format&fit=crop',
-    'Best Deals': 'https://images.unsplash.com/photo-1607082349566-187342175e2f?q=80&w=2070&auto=format&fit=crop',
-    'New Arrivals': 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=2070&auto=format&fit=crop',
-    'Top Rated': 'https://images.unsplash.com/photo-1472851294608-062f824d29cc?q=80&w=2070&auto=format&fit=crop',
-    'Verified Stores': 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?q=80&w=2070&auto=format&fit=crop'
-  };
-  
-  return imageMap[title] || getProductImage(Math.floor(Math.random() * 10));
-}
-
-// Fallback hero products for when API fails
-function getFallbackHeroProducts() {
-  return [
-    {
-      title: "Welcome to Marketplace",
-      link: "/products",
-      thumbnail: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=2070&auto=format&fit=crop",
-      description: "Discover amazing products"
-    },
-    {
-      title: "Start Shopping",
-      link: "/categories",
-      thumbnail: "https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?q=80&w=2070&auto=format&fit=crop",
-      description: "Browse all categories"
-    },
-    {
-      title: "Join Our Community",
-      link: "/register",
-      thumbnail: "https://images.unsplash.com/photo-1607082349566-187342175e2f?q=80&w=2070&auto=format&fit=crop",
-      description: "Create your account today"
+      return {
+        stats: {
+          products_count: fallbackProducts.length || 0,
+          shops_count: 0,
+          boosted_count: 0,
+          avg_rating: 4.8
+        },
+        categories: [],
+        featuredProducts: fallbackProducts,
+        trendingShops: [],
+        heroProducts: fallbackHeroProducts.length > 0 ? fallbackHeroProducts : [],
+        uiData: {
+          hero_products: [],
+          trust_badges: []
+        }
+      };
+    } catch (fallbackError) {
+      // Absolute fallback - empty data
+      return {
+        stats: {
+          products_count: 0,
+          shops_count: 0,
+          boosted_count: 0,
+          avg_rating: 4.8
+        },
+        categories: [],
+        featuredProducts: [],
+        trendingShops: [],
+        heroProducts: [],
+        uiData: {
+          hero_products: [],
+          trust_badges: []
+        }
+      };
     }
-  ];
+  }
 }
 
 export default function LandingPage({ loaderData }: { loaderData: any }) {
@@ -221,7 +230,15 @@ export default function LandingPage({ loaderData }: { loaderData: any }) {
   return (
     <div className="min-h-svh flex flex-col">
       <Header />
-      <HeroParallax products={heroProducts} />
+      {heroProducts.length > 0 ? (
+        <HeroParallax products={heroProducts} />
+      ) : (
+        <div className="h-64 bg-gradient-to-r from-orange-500 to-amber-500 flex items-center justify-center">
+          <h1 className="text-4xl md:text-5xl font-bold text-white text-center">
+            CrimsoTech Marketplace
+          </h1>
+        </div>
+      )}
       
       {/* Value Proposition Section */}
       <section className="px-4 my-5 bg-gradient-to-b from-transparent to-orange-100/30">
@@ -235,7 +252,7 @@ export default function LandingPage({ loaderData }: { loaderData: any }) {
             </p>
           </div>
           
-          {/* Marketplace Stats */}
+          {/* Marketplace Stats - NOW WITH REAL DATA */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-12">
             <div className="text-center p-6 bg-white rounded-2xl border border-orange-200 shadow-lg hover:shadow-xl transition-shadow">
               <div className="text-3xl font-bold text-orange-600">
@@ -285,7 +302,7 @@ export default function LandingPage({ loaderData }: { loaderData: any }) {
             </a>
           </div>
           
-          {/* Featured Products Preview */}
+          {/* Featured Products Preview - WITH ALL DATABASE IMAGES */}
           {featuredProducts.length > 0 && (
             <div className="mb-12">
               <h3 className="text-2xl font-bold text-orange-900 mb-6 text-center">New Arrivals</h3>
@@ -296,12 +313,16 @@ export default function LandingPage({ loaderData }: { loaderData: any }) {
                     href={`/products/${product.id}`}
                     className="bg-white rounded-lg border border-orange-200 p-4 hover:shadow-lg transition-shadow"
                   >
-                    <div className="h-40 bg-orange-100 rounded-md mb-3 flex items-center justify-center">
-                      {product.image_url ? (
+                    <div className="h-40 bg-orange-100 rounded-md mb-3 flex items-center justify-center overflow-hidden">
+                      {product.primary_image ? (
                         <img 
-                          src={product.image_url} 
+                          src={product.primary_image} 
                           alt={product.title}
                           className="h-full w-full object-cover rounded-md"
+                          onError={(e) => {
+                            // Hide broken images
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
                         />
                       ) : (
                         <span className="text-orange-400">No image</span>
@@ -310,8 +331,53 @@ export default function LandingPage({ loaderData }: { loaderData: any }) {
                     <h4 className="font-semibold text-orange-900 truncate">{product.title}</h4>
                     <p className="text-orange-600 font-bold">{formatPrice(product.price)}</p>
                     <p className="text-sm text-orange-700 truncate">{product.shop_name}</p>
+                    {product.is_out_of_stock && (
+                      <span className="text-xs text-red-600 font-semibold">Out of Stock</span>
+                    )}
                   </a>
                 ))}
+              </div>
+              {featuredProducts.length > 5 && (
+                <div className="text-center mt-6">
+                  <a 
+                    href="/products" 
+                    className="inline-block px-6 py-2 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-full transition-colors"
+                  >
+                    View All Products ({stats.products_count})
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Image Gallery Preview - SHOW MULTIPLE PRODUCT IMAGES */}
+          {featuredProducts.some((p: ProductData) => p.image_count > 1) && (
+            <div className="mb-12">
+              <h3 className="text-2xl font-bold text-orange-900 mb-6 text-center">Products with Multiple Images</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {featuredProducts
+                  .filter((p: ProductData) => p.image_count > 1)
+                  .slice(0, 6)
+                  .map((product: ProductData) => (
+                    <a
+                      key={product.id}
+                      href={`/products/${product.id}`}
+                      className="relative group"
+                    >
+                      <div className="aspect-square bg-orange-100 rounded-lg overflow-hidden">
+                        {product.primary_image && (
+                          <img 
+                            src={product.primary_image} 
+                            alt={product.title}
+                            className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-300"
+                          />
+                        )}
+                      </div>
+                      <span className="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded-full">
+                        +{product.image_count - 1}
+                      </span>
+                    </a>
+                  ))}
               </div>
             </div>
           )}
@@ -335,7 +401,9 @@ export default function LandingPage({ loaderData }: { loaderData: any }) {
               ))
             ) : (
               <p className="text-orange-600 text-center w-full">
-                No categories available yet. Check back soon!
+                {featuredProducts.length > 0 
+                  ? 'Categories loading...' 
+                  : 'No categories available yet. Check back soon!'}
               </p>
             )}
           </div>
@@ -438,7 +506,7 @@ export default function LandingPage({ loaderData }: { loaderData: any }) {
               © 2024 CrimsoTech Marketplace. All rights reserved.
             </p>
             <p className="text-orange-300 text-sm mt-2">
-              Secure payments • Verified shops • 24/7 support
+              {stats.products_count} products • {stats.shops_count} shops • {stats.boosted_count} boosted
             </p>
             <div className="mt-4 flex justify-center gap-6">
               <a href="/about" className="text-orange-200 hover:text-white transition-colors">About</a>
