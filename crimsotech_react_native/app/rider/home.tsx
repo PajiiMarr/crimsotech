@@ -10,16 +10,11 @@ import {
   Image,
   StatusBar,
   SafeAreaView,
-  ActivityIndicator,
-  Platform,
 } from "react-native";
 import { MaterialIcons, Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
-import {
-  getRiderDashboard,
-  updateRiderAvailability,
-} from "../../utils/riderApi";
+import { getRiderDashboard } from "../../utils/riderApi";
 
 // --- Theme Colors (Minimalist Softened) ---
 const COLORS = {
@@ -35,12 +30,30 @@ const COLORS = {
 };
 
 export default function Home() {
-  const { userId, user } = useAuth();
-  const [acceptingDeliveries, setAcceptingDeliveries] = useState(false);
+  const { user } = useAuth();
+  const [acceptingDeliveries, setAcceptingDeliveries] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [dashboardData, setDashboardData] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch dashboard data
+  useEffect(() => {
+    if (user?.id) {
+      fetchDashboard();
+    }
+  }, [user?.id]);
+
+  const fetchDashboard = async () => {
+    try {
+      setLoading(true);
+      const data = await getRiderDashboard(user?.id || "");
+      setDashboardData(data);
+    } catch (error) {
+      console.error("Failed to fetch dashboard:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Extract data from dashboard response
   const fullName =
@@ -59,50 +72,15 @@ export default function Home() {
   const activeDeliveries = dashboardData?.deliveries || [];
   const riderData = dashboardData?.rider || null;
 
-  // Fetch dashboard data
-  const fetchDashboardData = async () => {
-    if (!userId) return;
-
-    try {
-      setError(null);
-      const data = await getRiderDashboard(userId);
-      setDashboardData(data);
-
-      // Update accepting deliveries from rider status
-      if (data.rider?.is_accepting_deliveries !== undefined) {
-        setAcceptingDeliveries(data.rider.is_accepting_deliveries);
-      }
-    } catch (err: any) {
-      console.error("Error fetching dashboard data:", err);
-      setError(err.message || "Failed to load dashboard data");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, [userId]);
-
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchDashboardData();
+    await fetchDashboard();
     setRefreshing(false);
   };
 
   const toggleAcceptingDeliveries = async () => {
-    if (!userId) return;
-
-    try {
-      const newStatus = !acceptingDeliveries;
-      await updateRiderAvailability(userId, newStatus);
-      setAcceptingDeliveries(newStatus);
-      // Refresh dashboard to get updated data
-      await fetchDashboardData();
-    } catch (err: any) {
-      console.error("Error updating availability:", err);
-      alert("Failed to update availability. Please try again.");
-    }
+    const newStatus = !acceptingDeliveries;
+    setAcceptingDeliveries(newStatus);
   };
 
   const formatCurrency = (amount: number) => {
@@ -139,301 +117,309 @@ export default function Home() {
     }
   };
 
-  if (loading) {
-    return (
-      <SafeAreaView style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Loading dashboard...</Text>
-      </SafeAreaView>
-    );
-  }
-
-  if (error) {
-    return (
-      <SafeAreaView style={[styles.container, styles.center]}>
-        <MaterialIcons name="error-outline" size={48} color={COLORS.danger} />
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity
-          style={styles.retryButton}
-          onPress={fetchDashboardData}
-        >
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.cardBg} />
 
-      {/* --- Header (Matches Schedule/Messages Style) --- */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Hello, {fullName}</Text>
-          <Text style={styles.headerSubtitle}>
-            {acceptingDeliveries ? "Ready for deliveries" : "Currently offline"}
-          </Text>
+      {loading ? (
+        <View style={styles.center}>
+          <Text style={{ color: COLORS.muted }}>Loading...</Text>
         </View>
+      ) : (
+        <>
+          {/* --- Header (Matches Schedule/Messages Style) --- */}
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.headerTitle}>Hello, {fullName}</Text>
+              <Text style={styles.headerSubtitle}>
+                {acceptingDeliveries
+                  ? "Ready for deliveries"
+                  : "Currently offline"}
+              </Text>
+            </View>
 
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => router.push("/rider/notification")}
-          >
-            <Feather name="bell" size={22} color={COLORS.secondary} />
-            <View style={styles.notifBadge} />
-          </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.iconBtn}
+                onPress={() => router.push("/rider/notification")}
+              >
+                <Feather name="bell" size={22} color={COLORS.secondary} />
+                <View style={styles.notifBadge} />
+              </TouchableOpacity>
 
-          {/* FIXED ROUTE: Points to /rider/settings instead of /settings */}
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => router.push("/rider/settings")}
-          >
-            <Feather name="settings" size={22} color={COLORS.secondary} />
-          </TouchableOpacity>
-        </View>
-      </View>
+              {/* FIXED ROUTE: Points to /rider/settings instead of /settings */}
+              <TouchableOpacity
+                style={styles.iconBtn}
+                onPress={() => router.push("/rider/settings")}
+              >
+                <Feather name="settings" size={22} color={COLORS.secondary} />
+              </TouchableOpacity>
+            </View>
+          </View>
 
-      <ScrollView
-        style={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={[COLORS.primary]}
-          />
-        }
-        contentContainerStyle={styles.scrollContent}
-      >
-        {/* Availability Toggle */}
-        <View style={styles.availabilityCard}>
-          <View style={styles.availabilityHeader}>
-            <Text style={styles.availabilityTitle}>Delivery Status</Text>
-            <View style={styles.statusIndicator}>
-              <View
-                style={[
-                  styles.statusDot,
-                  acceptingDeliveries && styles.activeDot,
-                ]}
+          <ScrollView
+            style={styles.content}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[COLORS.primary]}
               />
-              <Text style={styles.statusText}>
-                {acceptingDeliveries ? "Available" : "Offline"}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.availabilitySubtitle}>
-            {acceptingDeliveries
-              ? "You are accepting delivery requests"
-              : "You are not accepting deliveries"}
-          </Text>
-
-          <TouchableOpacity
-            style={[
-              styles.toggleButton,
-              acceptingDeliveries && styles.toggleButtonActive,
-            ]}
-            onPress={toggleAcceptingDeliveries}
+            }
+            contentContainerStyle={styles.scrollContent}
           >
-            <Text
-              style={[
-                styles.toggleButtonText,
-                acceptingDeliveries && styles.toggleButtonTextActive,
-              ]}
-            >
-              {acceptingDeliveries ? "Go Offline" : "Go Online"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Stats Grid */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <View style={[styles.statIconBg, { backgroundColor: "#ECFDF5" }]}>
-                <MaterialIcons
-                  name="delivery-dining"
-                  size={20}
-                  color={COLORS.success}
-                />
+            {/* Availability Toggle */}
+            <View style={styles.availabilityCard}>
+              <View style={styles.availabilityHeader}>
+                <Text style={styles.availabilityTitle}>Delivery Status</Text>
+                <View style={styles.statusIndicator}>
+                  <View
+                    style={[
+                      styles.statusDot,
+                      acceptingDeliveries && styles.activeDot,
+                    ]}
+                  />
+                  <Text style={styles.statusText}>
+                    {acceptingDeliveries ? "Available" : "Offline"}
+                  </Text>
+                </View>
               </View>
-              <Text style={styles.statValue}>{stats.total_deliveries}</Text>
-              <Text style={styles.statLabel}>Deliveries</Text>
-            </View>
 
-            <View style={styles.statCard}>
-              <View style={[styles.statIconBg, { backgroundColor: "#EFF6FF" }]}>
-                <MaterialIcons name="check-circle" size={20} color="#3B82F6" />
-              </View>
-              <Text style={styles.statValue}>{stats.delivered}</Text>
-              <Text style={styles.statLabel}>Completed</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={[styles.statIconBg, { backgroundColor: "#FFF7ED" }]}>
-                <Text
-                  style={{ color: "#EE4D2D", fontWeight: "700", fontSize: 14 }}
-                >
-                  ₱
-                </Text>
-              </View>
-              <Text style={styles.statValue}>
-                {formatCurrency(stats.total_earnings).replace("₱", "")}
+              <Text style={styles.availabilitySubtitle}>
+                {acceptingDeliveries
+                  ? "You are accepting delivery requests"
+                  : "You are not accepting deliveries"}
               </Text>
-              <Text style={styles.statLabel}>Earnings</Text>
-            </View>
 
-            <View style={styles.statCard}>
-              <View style={[styles.statIconBg, { backgroundColor: "#F3E8FF" }]}>
-                <MaterialIcons name="star" size={20} color="#9333EA" />
-              </View>
-              <Text style={styles.statValue}>
-                {stats.avg_rating.toFixed(1)}
-              </Text>
-              <Text style={styles.statLabel}>Rating</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Active Deliveries List */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Active Deliveries</Text>
-            <TouchableOpacity onPress={() => router.push("/rider/orders")}>
-              <Text style={styles.sectionLink}>View All</Text>
-            </TouchableOpacity>
-          </View>
-
-          {activeDeliveries.map((item) => (
-            <View key={item.id} style={styles.deliveryCard}>
-              <View style={styles.deliveryHeader}>
+              <TouchableOpacity
+                style={[
+                  styles.toggleButton,
+                  acceptingDeliveries && styles.toggleButtonActive,
+                ]}
+                onPress={toggleAcceptingDeliveries}
+              >
                 <Text
-                  style={styles.deliveryId}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {item.order_id}
-                </Text>
-                <View
                   style={[
-                    styles.statusBadge,
-                    { backgroundColor: getStatusColor(item.status) + "20" },
+                    styles.toggleButtonText,
+                    acceptingDeliveries && styles.toggleButtonTextActive,
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.statusBadgeText,
-                      { color: getStatusColor(item.status) },
-                    ]}
-                  >
-                    {getStatusText(item.status)}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.deliveryDetails}>
-                <View style={styles.detailRow}>
-                  <Feather name="user" size={14} color={COLORS.muted} />
-                  <Text style={styles.detailText}>
-                    {item.order?.user?.first_name || ""}{" "}
-                    {item.order?.user?.last_name || "Customer"}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Feather name="map-pin" size={14} color={COLORS.muted} />
-                  <Text style={styles.detailText} numberOfLines={1}>
-                    {item.order?.delivery_address_text ||
-                      item.delivery_location ||
-                      "Delivery Location"}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Feather name="navigation" size={14} color={COLORS.muted} />
-                  <Text style={styles.detailText}>
-                    {item.distance_km || 0} km • {item.estimated_minutes || 0}{" "}
-                    mins
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.deliveryFooter}>
-                <Text style={styles.deliveryAmount}>
-                  {formatCurrency(
-                    item.order?.total_amount || item.delivery_fee || 0,
-                  )}
+                  {acceptingDeliveries ? "Go Offline" : "Go Online"}
                 </Text>
-                <TouchableOpacity style={styles.actionButton}>
-                  <Text style={styles.actionButtonText}>View Details</Text>
-                </TouchableOpacity>
-              </View>
+              </TouchableOpacity>
             </View>
-          ))}
-        </View>
 
-        {/* Vehicle Info */}
-        {riderData && (
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>
-              Vehicle Information
-            </Text>
-
-            <View style={styles.vehicleCard}>
-              <View style={styles.vehicleHeader}>
-                {riderData.vehicle_image ? (
-                  <Image
-                    source={{ uri: riderData.vehicle_image }}
-                    style={styles.vehicleImage}
-                  />
-                ) : (
-                  <View style={styles.vehicleImagePlaceholder}>
+            {/* Stats Grid */}
+            <View style={styles.statsContainer}>
+              <View style={styles.statsGrid}>
+                <View style={styles.statCard}>
+                  <View
+                    style={[styles.statIconBg, { backgroundColor: "#ECFDF5" }]}
+                  >
                     <MaterialIcons
-                      name="two-wheeler"
-                      size={28}
-                      color={COLORS.primary}
+                      name="delivery-dining"
+                      size={20}
+                      color={COLORS.success}
                     />
                   </View>
-                )}
+                  <Text style={styles.statValue}>{stats.total_deliveries}</Text>
+                  <Text style={styles.statLabel}>Deliveries</Text>
+                </View>
 
-                <View style={styles.vehicleInfo}>
-                  <Text style={styles.vehicleModel}>
-                    {riderData.vehicle_brand} {riderData.vehicle_model}
+                <View style={styles.statCard}>
+                  <View
+                    style={[styles.statIconBg, { backgroundColor: "#EFF6FF" }]}
+                  >
+                    <MaterialIcons
+                      name="check-circle"
+                      size={20}
+                      color="#3B82F6"
+                    />
+                  </View>
+                  <Text style={styles.statValue}>{stats.delivered}</Text>
+                  <Text style={styles.statLabel}>Completed</Text>
+                </View>
+
+                <View style={styles.statCard}>
+                  <View
+                    style={[styles.statIconBg, { backgroundColor: "#FFF7ED" }]}
+                  >
+                    <Text
+                      style={{
+                        color: "#EE4D2D",
+                        fontWeight: "700",
+                        fontSize: 14,
+                      }}
+                    >
+                      ₱
+                    </Text>
+                  </View>
+                  <Text style={styles.statValue}>
+                    {formatCurrency(stats.total_earnings).replace("₱", "")}
                   </Text>
-                  <Text style={styles.vehicleType}>
-                    {riderData.vehicle_type}
+                  <Text style={styles.statLabel}>Earnings</Text>
+                </View>
+
+                <View style={styles.statCard}>
+                  <View
+                    style={[styles.statIconBg, { backgroundColor: "#F3E8FF" }]}
+                  >
+                    <MaterialIcons name="star" size={20} color="#9333EA" />
+                  </View>
+                  <Text style={styles.statValue}>
+                    {stats.avg_rating.toFixed(1)}
                   </Text>
-                  <Text style={styles.plateNumber}>
-                    {riderData.plate_number}
-                  </Text>
+                  <Text style={styles.statLabel}>Rating</Text>
                 </View>
               </View>
-
-              <View style={styles.verificationBadge}>
-                <MaterialIcons
-                  name={riderData.verified ? "verified" : "warning"}
-                  size={16}
-                  color={riderData.verified ? COLORS.success : COLORS.warning}
-                />
-                <Text
-                  style={[
-                    styles.verificationText,
-                    {
-                      color: riderData.verified
-                        ? COLORS.success
-                        : COLORS.warning,
-                    },
-                  ]}
-                >
-                  {riderData.verified
-                    ? "Verified Rider"
-                    : "Pending Verification"}
-                </Text>
-              </View>
             </View>
-          </View>
-        )}
-      </ScrollView>
+
+            {/* Active Deliveries List */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Active Deliveries</Text>
+                <TouchableOpacity onPress={() => router.push("/rider/orders")}>
+                  <Text style={styles.sectionLink}>View All</Text>
+                </TouchableOpacity>
+              </View>
+
+              {activeDeliveries.map((item) => (
+                <View key={item.id} style={styles.deliveryCard}>
+                  <View style={styles.deliveryHeader}>
+                    <Text
+                      style={styles.deliveryId}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {item.order_id}
+                    </Text>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: "#F3F4F6" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusBadgeText,
+                          { color: COLORS.muted },
+                        ]}
+                      >
+                        {getStatusText(item.status)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.deliveryDetails}>
+                    <View style={styles.detailRow}>
+                      <Feather name="user" size={14} color={COLORS.muted} />
+                      <Text style={styles.detailText}>
+                        {item.order?.user?.first_name || ""}{" "}
+                        {item.order?.user?.last_name || "Customer"}
+                      </Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Feather name="map-pin" size={14} color={COLORS.muted} />
+                      <Text style={styles.detailText} numberOfLines={1}>
+                        {item.order?.delivery_address_text ||
+                          item.delivery_location ||
+                          "Delivery Location"}
+                      </Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Feather
+                        name="navigation"
+                        size={14}
+                        color={COLORS.muted}
+                      />
+                      <Text style={styles.detailText}>
+                        {item.distance_km || 0} km •{" "}
+                        {item.estimated_minutes || 0} mins
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.deliveryFooter}>
+                    <Text style={styles.deliveryAmount}>
+                      {formatCurrency(
+                        item.order?.total_amount || item.delivery_fee || 0,
+                      )}
+                    </Text>
+                    <TouchableOpacity style={styles.actionButton}>
+                      <Text style={styles.actionButtonText}>View Details</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </View>
+
+            {/* Vehicle Info */}
+            {riderData && (
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>
+                  Vehicle Information
+                </Text>
+
+                <View style={styles.vehicleCard}>
+                  <View style={styles.vehicleHeader}>
+                    {riderData.vehicle_image ? (
+                      <Image
+                        source={{ uri: riderData.vehicle_image }}
+                        style={styles.vehicleImage}
+                      />
+                    ) : (
+                      <View style={styles.vehicleImagePlaceholder}>
+                        <MaterialIcons
+                          name="two-wheeler"
+                          size={28}
+                          color={COLORS.primary}
+                        />
+                      </View>
+                    )}
+
+                    <View style={styles.vehicleInfo}>
+                      <Text style={styles.vehicleModel}>
+                        {riderData.vehicle_brand} {riderData.vehicle_model}
+                      </Text>
+                      <Text style={styles.vehicleType}>
+                        {riderData.vehicle_type}
+                      </Text>
+                      <Text style={styles.plateNumber}>
+                        {riderData.plate_number}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.verificationBadge}>
+                    <MaterialIcons
+                      name={riderData.verified ? "verified" : "warning"}
+                      size={16}
+                      color={
+                        riderData.verified ? COLORS.success : COLORS.warning
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.verificationText,
+                        {
+                          color: riderData.verified
+                            ? COLORS.success
+                            : COLORS.warning,
+                        },
+                      ]}
+                    >
+                      {riderData.verified
+                        ? "Verified Rider"
+                        : "Pending Verification"}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+          </ScrollView>
+        </>
+      )}
     </SafeAreaView>
   );
 }
@@ -447,29 +433,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 13,
-    color: COLORS.muted,
-  },
-  errorText: {
-    marginTop: 10,
-    fontSize: 13,
-    color: COLORS.danger,
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  retryButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  retryButtonText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "600",
   },
   content: {
     flex: 1,
