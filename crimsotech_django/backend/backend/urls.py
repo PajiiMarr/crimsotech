@@ -59,7 +59,7 @@ router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-order
 router.register(r'swap-products', SwapViewset, basename='swap-products')
 router.register(r'customer-products-viewset', CustomerProductViewSet, basename='customer-products-viewset')
 router.register(r'customer-product-list', CustomerProductsList, basename='customer-product-list')
-
+router.register(r'home-boosts', HomeBoosts, basename='home-boosts')
 
 
 router.register(r'seller-gift', SellerGifts, basename='seller-gift')

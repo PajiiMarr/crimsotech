@@ -34,6 +34,7 @@ import {
   CreditCard,
   Clock,
   CheckCircle,
+  X,
   XCircle,
   MessageCircle,
   AlertTriangle,
@@ -2288,6 +2289,8 @@ function RejectModal({
   setShowRejectModal, 
   rejectReason, 
   setRejectReason, 
+  rejectReasonCode,
+  setRejectReasonCode,
   isProcessing, 
   handleRejectSubmit 
 }: { 
@@ -2295,9 +2298,59 @@ function RejectModal({
   setShowRejectModal: (show: boolean) => void;
   rejectReason: string;
   setRejectReason: (reason: string) => void;
+  rejectReasonCode: string;
+  setRejectReasonCode: (code: string) => void;
   isProcessing: boolean;
   handleRejectSubmit: () => Promise<void>;
 }) {
+  const MAX_FILES = 9;
+  const REASONS = [
+    { id: 'invalid_request', label: 'Invalid request' },
+    { id: 'not_eligible', label: 'Refund not eligible' },
+    { id: 'insufficient_evidence', label: 'Insufficient evidence' },
+    { id: 'buyer_fault', label: 'Buyer at fault' },
+    { id: 'good_condition_handed', label: 'Item was in good condition when handed to rider' },
+    { id: 'proper_packaging', label: 'Proper packaging was used' },
+    { id: 'fraud', label: 'Suspicious or fraudulent' },
+    { id: 'other', label: 'Other' },
+  ];
+
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Clean up object URLs on unmount
+    return () => {
+      previews.forEach((u) => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } });
+    };
+  }, [previews]);
+
+  const onFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (!files.length) return;
+
+    const combined = [...selectedFiles, ...files].slice(0, MAX_FILES);
+    if (combined.length > MAX_FILES) {
+      setFileError(`Maximum ${MAX_FILES} files allowed. Extra files were ignored.`);
+    } else {
+      setFileError(null);
+    }
+
+    setSelectedFiles(combined);
+    setPreviews(combined.map((f) => URL.createObjectURL(f)));
+
+    // Reset input value to allow re-selecting same file if needed
+    if (e.target) (e.target as HTMLInputElement).value = '';
+  };
+
+  const removeFile = (idx: number) => {
+    const nf = selectedFiles.filter((_, i) => i !== idx);
+    setSelectedFiles(nf);
+    setPreviews(nf.map((f) => URL.createObjectURL(f)));
+    setFileError(null);
+  };
+
   return (
     <Dialog open={showRejectModal} onOpenChange={setShowRejectModal}>
       <DialogContent className="sm:max-w-md">
@@ -2312,15 +2365,88 @@ function RejectModal({
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="reject-reason">Reason for Rejection</Label>
+            <Label htmlFor="reject-reason-code">Reason</Label>
+            <select
+              id="reject-reason-code"
+              value={rejectReasonCode}
+              onChange={(e) => setRejectReasonCode(e.target.value)}
+              className="w-full p-2 border rounded-md"
+            >
+              <option value="">Select a reason</option>
+              {REASONS.map((r) => (
+                <option key={r.id} value={r.id}>{r.label}</option>
+              ))}
+            </select>
+
+            <Label htmlFor="reject-reason" className="mt-2">Detailed Reason</Label>
             <Textarea
               id="reject-reason"
-              placeholder="Explain why you're rejecting this request..."
+              placeholder="Provide a detailed explanation for rejection..."
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
               className="min-h-[100px] resize-none"
             />
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="reject-proof-upload">Attach Proof (optional)</Label>
+            <p className="text-sm font-medium mb-3 flex items-center gap-2">
+              <Upload className="h-4 w-4" />
+              Upload Evidence (Optional)
+            </p>
+            <p className="text-xs text-gray-500 mb-3">Upload photos or videos showing the issue. Max {MAX_FILES} files, 5MB each. Supported formats: JPG, PNG, GIF, MP4, MOV.</p>
+
+            <div className="flex flex-wrap gap-3">
+              {/* Upload Button */}
+              <label className="cursor-pointer">
+                <input
+                  id="reject-proof-upload"
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  onChange={onFilesSelected}
+                  className="hidden"
+                  disabled={selectedFiles.length >= MAX_FILES}
+                />
+                <div className={`w-20 h-20 border-2 border-dashed rounded-lg flex flex-col items-center justify-center ${
+                  selectedFiles.length >= MAX_FILES 
+                    ? 'border-gray-300 text-gray-400 cursor-not-allowed' 
+                    : 'border-gray-300 text-gray-500 hover:border-blue-500 hover:text-blue-500 cursor-pointer'
+                } transition-colors`}>
+                  <Upload className="w-6 h-6 mb-1" />
+                  <span className="text-xs">{selectedFiles.length}/{MAX_FILES}</span>
+                </div>
+              </label>
+
+              {/* Previews */}
+              {selectedFiles.map((f, i) => (
+                <div key={i} className="relative group">
+                  <div className="w-20 h-20 rounded-lg border overflow-hidden">
+                    {f.type && f.type.startsWith('image') ? (
+                      <img src={previews[i]} alt={f.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <video src={previews[i]} className="w-full h-full object-cover" />
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removeFile(i)}
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+
+                  <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs py-1 text-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    Evidence {i + 1}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {fileError && <p className="text-xs text-red-600">{fileError}</p>}
+          </div>
+
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>Warning</AlertTitle>
@@ -2330,13 +2456,13 @@ function RejectModal({
           </Alert>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setShowRejectModal(false)}>
+          <Button variant="outline" onClick={() => { setShowRejectModal(false); setRejectReason(''); setRejectReasonCode(''); setSelectedFiles([]); setPreviews([]); setFileError(null); }}>
             Cancel
           </Button>
           <Button
             variant="destructive"
             onClick={handleRejectSubmit}
-            disabled={!rejectReason.trim() || isProcessing}
+            disabled={!rejectReasonCode || !rejectReason.trim() || isProcessing}
           >
             {isProcessing ? 'Rejecting...' : 'Reject Request'}
           </Button>
@@ -2909,6 +3035,7 @@ export default function ViewRefundDetails() {
   const [actionLoading, setActionLoading] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [rejectReasonCode, setRejectReasonCode] = useState('');
   const [suggestedMethod, setSuggestedMethod] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showCounterOffer, setShowCounterOffer] = useState(false);
@@ -3320,10 +3447,19 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
   };
 
   const handleRejectSubmit = async () => {
+    if (!rejectReasonCode) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please select a reason for rejection',
+        variant: 'destructive'
+      });
+      return;
+    }
+
     if (!rejectReason.trim()) {
       toast({
         title: 'Validation Error',
-        description: 'Please enter a reason for rejection',
+        description: 'Please provide a detailed reason for rejection',
         variant: 'destructive'
       });
       return;
@@ -3341,6 +3477,7 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
         credentials: 'include',
         body: JSON.stringify({
           action: 'reject',
+          reason_code: rejectReasonCode,
           notes: rejectReason,
         }),
       });
@@ -3358,6 +3495,7 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
           setRefund(updatedRefund);
           setShowRejectModal(false);
           setRejectReason('');
+          setRejectReasonCode('');
         } else {
           setShowRejectModal(false);
           setRejectReason('');
@@ -4320,6 +4458,8 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
           setShowRejectModal={setShowRejectModal}
           rejectReason={rejectReason}
           setRejectReason={setRejectReason}
+          rejectReasonCode={rejectReasonCode}
+          setRejectReasonCode={setRejectReasonCode}
           isProcessing={isProcessing}
           handleRejectSubmit={handleRejectSubmit}
         />

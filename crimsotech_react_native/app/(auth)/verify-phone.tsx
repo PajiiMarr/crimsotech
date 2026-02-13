@@ -404,7 +404,7 @@ export default function VerifyPhoneScreen() {
                 )}
 
                 <View style={styles.resendContainer}>
-                  <Text style={styles.resendText}>Didn't receive OTP? </Text>
+                  <Text style={styles.resendText}>Didn&apos;t receive OTP? </Text>
                   <TouchableOpacity
                     onPress={handleResendOTP}
                     disabled={loading || cooldown > 0}
@@ -472,7 +472,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   header: {
-    paddingTop: Platform.OS === "ios" ? 60 : 40,
+    paddingTop: Platform.OS === "ios" ? 80 : 60,
     paddingHorizontal: 25,
     flexDirection: "row",
     alignItems: "center",
@@ -493,6 +493,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 25,
     paddingTop: 0,
+    marginTop: 30,
   },
   title: {
     fontSize: 24,

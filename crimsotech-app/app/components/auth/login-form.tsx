@@ -37,12 +37,7 @@ export function LoginForm({
                     {errors.password}
                   </p>
                 )}
-                <a
-                  href="#"
-                  className="ml-auto text-sm underline-offset-4 hover:underline"
-                >
-                  Forgot your password?
-                </a>
+                
               </div>
               <Input id="password" type="password" name="password" required />
             </div>
@@ -56,12 +51,25 @@ export function LoginForm({
             <Button type="submit" className="w-full" disabled={fetcher.state === "submitting"}>
               {fetcher.state === "submitting" ? "Logging in..." : "Login"}
             </Button>
+            
           </div>
-          <div className="text-center text-sm">
-            Don&apos;t have an account?{" "}
-            <Link to="/signup" className="underline underline-offset-4">
-              Sign up
-            </Link>
+          <div className="text-center text-sm flex">
+            <div>
+              Don&apos;t have an account?{" "}
+              <Link to="/signup" className="underline underline-offset-4">
+                Sign up
+              </Link>
+
+            </div>
+
+            <div>
+              <a
+                href="#"
+                className="ml-auto text-sm underline-offset-4 hover:underline"
+              >
+                Forgot your password?
+              </a>
+            </div>
           </div>
         </fetcher.Form>
     </div>

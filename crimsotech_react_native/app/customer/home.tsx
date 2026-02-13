@@ -283,7 +283,7 @@ useEffect(() => {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }>
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#6366F1" />
+            <ActivityIndicator size="large" color="#EE4D2D" />
             <Text style={styles.loadingText}>Loading products...</Text>
           </View>
         </CustomerLayout>

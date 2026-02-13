@@ -14,6 +14,8 @@
     const order = orderDetails.order;
     const [selectedProof, setSelectedProof] = useState<any | null>(null);
     const [fetchedProofs, setFetchedProofs] = useState<any[] | null>(null);
+    const [riders, setRiders] = useState<any[] | null>(null);
+    const [isFetchingRiders, setIsFetchingRiders] = useState(false);
 
     // Use backend_status to determine whether this is an actual delivered (arrived) or still out-for-delivery
     const backendStatus = (order.backend_status || '').toString();
@@ -32,23 +34,7 @@
 
       const fetchProofs = async () => {
         try {
-          // Try the purchases-buyer endpoint first
-          try {
-            const res = await AxiosInstance.get(`/purchases-buyer/${order.id}/get-delivery-proofs/`, {
-              headers: { 'X-User-Id': userId || '' }
-            });
-            if (res.data && res.data.success) {
-              const proofsData = res.data.all_proofs || res.data.proofs || [];
-              const mapped = proofsData.map((p: any) => ({ file_url: p.file_url, file_name: p.file_name, uploaded_at: p.uploaded_at, file_type: p.file_type }));
-              console.debug('Fetched delivery proofs (purchases-buyer):', mapped);
-              setFetchedProofs(mapped);
-              return;
-            }
-          } catch (err) {
-            console.debug('purchases-buyer get-delivery-proofs returned error or 404, falling back to proof-management by order', err);
-          }
-
-          // Fallback: ask proof-management for proofs by order id
+          // Fallback: ask proof-management for proofs by order id (single reliable endpoint)
           const res2 = await AxiosInstance.get(`/proof-management/get_delivery_proofs_by_order/?order_id=${order.id}`, {
             headers: { 'X-User-Id': userId || '' }
           });
@@ -59,24 +45,12 @@
             setFetchedProofs(mapped2);
             return;
           }
-          console.debug('No proofs from fallback endpoints for order', order.id);
+
+          console.debug('No proofs from proof-management for order', order.id);
 
           if (cancelled) return;
 
-          if (res.data && res.data.success) {
-            const proofsData = res.data.proofs || [];
-            const mapped = proofsData.map((p: any) => ({
-              file_url: p.file_url,
-              file_name: p.file_name,
-              uploaded_at: p.uploaded_at,
-              file_type: p.file_type
-            }));
-            console.debug('Fetched delivery proofs:', mapped);
-            setFetchedProofs(mapped);
-          } else {
-            console.debug('No proofs returned from API for order', order.id, res.data);
-            setFetchedProofs([]);
-          }
+          setFetchedProofs([]);
         } catch (err) {
           console.error('Error fetching delivery proofs:', err);
           setFetchedProofs([]);
@@ -87,6 +61,36 @@
 
       return () => { cancelled = true; };
     }, [order?.id, isDelivered, userId]);
+
+    // Fetch rider info for this order (customer-facing endpoint)
+    useEffect(() => {
+      let cancelled = false;
+      if (!order?.id) return;
+
+      const fetchRiders = async () => {
+        setIsFetchingRiders(true);
+        try {
+          const res = await AxiosInstance.get(`/purchases-buyer/${order.id}/get-rider-info/`, { headers: { 'X-User-Id': userId || '' } });
+          if (cancelled) return;
+
+          if (res.data && res.data.success) {
+            console.debug('Fetched rider info:', res.data.riders);
+            setRiders(res.data.riders || []);
+          } else {
+            console.debug('No rider info returned', res.data);
+            setRiders([]);
+          }
+        } catch (err) {
+          console.error('Error fetching rider info:', err);
+          setRiders([]);
+        } finally {
+          setIsFetchingRiders(false);
+        }
+      };
+
+      fetchRiders();
+      return () => { cancelled = true; };
+    }, [order?.id, userId]);
 
     return (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -126,14 +130,49 @@
 
                 <div>
                   <p className="text-xs text-muted-foreground">Rider</p>
-                  <p className="font-medium text-sm">{order.rider_name || 'N/A'}</p>
-                  {order.rider_contact ? (
-                    <a href={`tel:${order.rider_contact}`} className="text-xs text-muted-foreground flex items-center gap-2">
-                      <Phone className="h-3 w-3" />
-                      <span className="truncate">{order.rider_contact}</span>
-                    </a>
+
+                  {/* Show fetched riders when available, else fallback to order fields */}
+                  {isFetchingRiders ? (
+                    <p className="text-xs text-muted-foreground">Loading rider info...</p>
+                  ) : (riders && riders.length > 0) ? (
+                    <div className="space-y-2">
+                      {riders.map((r: any, idx: number) => {
+                        const user = r.user || r;
+                        const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.name || 'Rider';
+                        const phone = user.phone || r.phone || '';
+                        return (
+                          <div key={idx} className="flex items-center justify-between">
+                            <div>
+                              <p className="font-medium text-sm">{name}</p>
+                              {phone ? (
+                                <a href={`tel:${phone}`} className="text-xs text-muted-foreground flex items-center gap-2">
+                                  <Phone className="h-3 w-3" />
+                                  <span className="truncate">{phone}</span>
+                                </a>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No phone</p>
+                              )}
+                            </div>
+
+                            {phone && (
+                              <a href={`tel:${phone}`} className="text-xs underline">Call</a>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : (
-                    <p className="text-xs text-muted-foreground">N/A</p>
+                    <>
+                      <p className="font-medium text-sm">{order.rider_name || 'N/A'}</p>
+                      {order.rider_contact ? (
+                        <a href={`tel:${order.rider_contact}`} className="text-xs text-muted-foreground flex items-center gap-2">
+                          <Phone className="h-3 w-3" />
+                          <span className="truncate">{order.rider_contact}</span>
+                        </a>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">N/A</p>
+                      )}
+                    </>
                   )}
 
                   {/* Proof thumbnails */}

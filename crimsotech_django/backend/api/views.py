@@ -49,6 +49,8 @@ from django.core.files.storage import FileSystemStorage
 import os
 from .utils.model_handler import ElectronicsClassifier
 import json
+from api.utils.storage_utils import convert_s3_to_public_url
+
 
 # Initialize classifier once (Django will cache this)
 MODEL_PATH = os.path.join('model', 'electronics_classifier3.keras')
@@ -123,6 +125,9 @@ class Landing(viewsets.ViewSet):
         """
         Get landing page data including stats, categories, and featured products.
         STRICTLY respects data model integrity - all data comes from database.
+        Fetches ALL product images from ProductMedia model.
+        Hero products are ACTUAL products with images, not categories.
+        ONLY PUBLISHED PRODUCTS ARE FETCHED.
         """
         try:
             # 1. MARKETPLACE STATS (respects model constraints)
@@ -147,7 +152,7 @@ class Landing(viewsets.ViewSet):
             )
             avg_rating = avg_rating_result['avg_rating'] if avg_rating_result['avg_rating'] else 4.8
             
-            # Show all categories, even without products
+            # 2. CATEGORIES with product counts - ONLY PUBLISHED PRODUCTS COUNTED
             categories_with_products = Category.objects.annotate(
                 product_count=Count('products', filter=Q(
                     products__upload_status='published',
@@ -155,9 +160,7 @@ class Landing(viewsets.ViewSet):
                 ))
             ).order_by('-product_count')[:10]
             
-            # 3. FEATURED PRODUCTS (respects all model constraints)
-            # Featured products (include all published products regardless of stock;
-            # frontend will mark out-of-stock items using the `stock` field)
+            # 3. FEATURED PRODUCTS with ALL images - ONLY PUBLISHED
             featured_products = Product.objects.annotate(
                 sku_total=Coalesce(Sum('skus__quantity', filter=Q(skus__is_active=True)), 0)
             ).filter(
@@ -171,8 +174,7 @@ class Landing(viewsets.ViewSet):
                 'productmedia_set'
             ).order_by('-created_at')[:15]
             
-            # 4. TRENDING SHOPS (respects model relationships)
-            # Create the base queryset WITHOUT slicing first
+            # 4. TRENDING SHOPS - ONLY WITH PUBLISHED PRODUCTS
             trending_shops_queryset = Shop.objects.filter(
                 verified=True,
                 is_suspended=False,
@@ -187,52 +189,136 @@ class Landing(viewsets.ViewSet):
                 active_product_count__gt=0
             ).order_by('-follower_count', '-total_sales')
             
-            # Check if any shops have followers BEFORE slicing
             has_shops_with_followers = trending_shops_queryset.filter(
                 follower_count__gt=0
             ).exists()
             
-            # Now slice the queryset
             trending_shops = list(trending_shops_queryset[:10])
             
-            # 5. HERO SECTIONS (dynamic based on actual data)
+            # 5. HERO PRODUCTS - ONLY PUBLISHED PRODUCTS WITH IMAGES
+            hero_products_list = []
+            
+            # Get products with images for hero section - ONLY PUBLISHED
+            products_with_images = Product.objects.filter(
+                upload_status='published',
+                is_removed=False,
+                productmedia__isnull=False,
+                shop__isnull=False,
+                shop__is_suspended=False,
+                shop__verified=True,
+                shop__status='Active'
+            ).select_related('shop').prefetch_related(
+                'productmedia_set'
+            ).distinct().order_by('-created_at')[:12]  # Get 12 products for hero
+            
+            for product in products_with_images:
+                # Get first image
+                media = product.productmedia_set.first()
+                if media and media.file_data:
+                    image_url = request.build_absolute_uri(media.file_data.url)
+                    
+                    hero_products_list.append({
+                        'id': str(product.id),
+                        'title': product.name,
+                        'link': f'/products/{product.id}',
+                        'thumbnail': image_url,
+                        'description': product.description[:100] + '...' if len(product.description) > 100 else product.description,
+                        'price': float(product.price),
+                        'shop_name': product.shop.name if product.shop else 'No Shop',
+                        'is_product': True  # Flag to identify this is a real product
+                    })
+            
+            # If we don't have enough products with images, supplement with boosted products - ONLY PUBLISHED
+            if len(hero_products_list) < 8:
+                boosted_products = Boost.objects.filter(
+                    status='active',
+                    end_date__gt=timezone.now(),
+                    product__isnull=False,
+                    product__upload_status='published',  # ONLY PUBLISHED
+                    product__is_removed=False,
+                    product__productmedia__isnull=False
+                ).select_related('product', 'product__shop').prefetch_related(
+                    'product__productmedia_set'
+                ).distinct()[:8 - len(hero_products_list)]
+                
+                for boost in boosted_products:
+                    product = boost.product
+                    if product.upload_status == 'published' and not product.is_removed:  # Double-check
+                        media = product.productmedia_set.first()
+                        if media and media.file_data:
+                            image_url = request.build_absolute_uri(media.file_data.url)
+                            hero_products_list.append({
+                                'id': str(product.id),
+                                'title': f"🔥 {product.name}",
+                                'link': f'/products/{product.id}',
+                                'thumbnail': image_url,
+                                'description': f"Boosted • {product.description[:80]}..." if len(product.description) > 80 else f"Boosted • {product.description}",
+                                'price': float(product.price),
+                                'shop_name': product.shop.name if product.shop else 'No Shop',
+                                'is_product': True,
+                                'is_boosted': True
+                            })
+            
+            # If STILL not enough, get any products with images - ONLY PUBLISHED
+            if len(hero_products_list) < 6:
+                any_products = Product.objects.filter(
+                    upload_status='published',  # ONLY PUBLISHED
+                    is_removed=False,
+                    productmedia__isnull=False
+                ).exclude(
+                    id__in=[p['id'] for p in hero_products_list if 'id' in p]
+                ).select_related('shop').prefetch_related(
+                    'productmedia_set'
+                ).order_by('?')[:6 - len(hero_products_list)]  # Random products
+                
+                for product in any_products:
+                    media = product.productmedia_set.first()
+                    if media and media.file_data:
+                        image_url = request.build_absolute_uri(media.file_data.url)
+                        hero_products_list.append({
+                            'id': str(product.id),
+                            'title': product.name,
+                            'link': f'/products/{product.id}',
+                            'thumbnail': image_url,
+                            'description': product.description[:100] + '...' if len(product.description) > 100 else product.description,
+                            'price': float(product.price),
+                            'shop_name': product.shop.name if product.shop else 'No Shop',
+                            'is_product': True
+                        })
+            
+            # 6. HERO SECTIONS - NOW ONLY FOR NON-PRODUCT LINKS
             hero_sections = []
             
-            # Trending shops (only if we have shops with followers)
             if has_shops_with_followers:
                 hero_sections.append({
                     'title': 'Trending Shops',
                     'link': '/shops/trending',
-                    'description': 'Discover the most popular shops this week'
+                    'description': 'Discover the most popular shops this week',
+                    'is_category': False,
+                    'is_product': False
                 })
             
-            # Boosted products (only if we have active boosts)
             if boosted_count > 0:
                 hero_sections.append({
                     'title': 'Boosted Products',
                     'link': '/boosts',
-                    'description': 'Featured products with maximum visibility'
+                    'description': 'Featured products with maximum visibility',
+                    'is_category': False,
+                    'is_product': False
                 })
             
-            # New arrivals (always relevant)
-            hero_sections.append({
-                'title': 'New Arrivals',
-                'link': '/products/new',
-                'description': 'Fresh products just added'
-            })
-            
-            # Top rated (only if we have 5-star reviews)
             has_top_rated = Review.objects.filter(rating=5).exists()
             if has_top_rated:
                 hero_sections.append({
                     'title': 'Top Rated',
                     'link': '/products/top-rated',
-                    'description': '5-star favorites from the community'
+                    'description': '5-star favorites from the community',
+                    'is_category': False,
+                    'is_product': False
                 })
             
-            # Best deals (products with compare_price > price)
             has_deals = Product.objects.filter(
-                upload_status='published',
+                upload_status='published',  # ONLY PUBLISHED
                 is_removed=False,
                 compare_price__isnull=False,
                 compare_price__gt=F('price')
@@ -241,23 +327,14 @@ class Landing(viewsets.ViewSet):
                 hero_sections.append({
                     'title': 'Best Deals',
                     'link': '/deals',
-                    'description': 'Save big on amazing offers'
+                    'description': 'Save big on amazing offers',
+                    'is_category': False,
+                    'is_product': False
                 })
             
-            # Add popular categories as hero sections
-            # Convert queryset to list before slicing
-            categories_list = list(categories_with_products)
-            for category in categories_list[:3]:
-                hero_sections.append({
-                    'title': category.name,
-                    'link': f'/category/{slugify(category.name)}',
-                    'description': f'Browse {category.product_count} products'
-                })
-            
-            # 6. TRUST BADGES (from actual verification data)
+            # 7. TRUST BADGES
             trust_badges = []
             
-            # Verified shops count
             verified_shops_count = Shop.objects.filter(
                 verified=True,
                 is_suspended=False
@@ -269,7 +346,6 @@ class Landing(viewsets.ViewSet):
                     'icon': '✓'
                 })
             
-            # Secure payments (completed orders)
             completed_orders = Order.objects.filter(
                 status__in=['delivered', 'completed']
             ).count()
@@ -280,7 +356,6 @@ class Landing(viewsets.ViewSet):
                     'icon': '🛡️'
                 })
             
-            # Verified riders
             verified_riders = Rider.objects.filter(
                 verified=True,
                 rider__is_suspended=False
@@ -292,7 +367,8 @@ class Landing(viewsets.ViewSet):
                     'icon': '🚚'
                 })
             
-            # Format data for response
+            # 8. FORMAT CATEGORIES
+            categories_list = list(categories_with_products)
             category_list = [
                 {
                     'id': str(cat.id),
@@ -302,17 +378,27 @@ class Landing(viewsets.ViewSet):
                     'shop_id': str(cat.shop.id) if cat.shop else None,
                     'user_id': str(cat.user.id) if cat.user else None
                 }
-                for cat in categories_list  # Use the list instead of queryset
+                for cat in categories_list
             ]
             
+            # 9. FORMAT PRODUCTS WITH ALL IMAGES - ONLY PUBLISHED
             product_list = []
             for product in featured_products:
-                image_url = None
-                media = product.productmedia_set.first()
-                if media and media.file_data:
-                    image_url = request.build_absolute_uri(media.file_data.url)
+                all_images = []
+                media_files = product.productmedia_set.all()
                 
-                # Prefer SKU totals for stock if available
+                for media in media_files:
+                    if media and media.file_data:
+                        image_url = request.build_absolute_uri(media.file_data.url)
+                        all_images.append({
+                            'id': str(media.id),
+                            'url': image_url,
+                            'file_type': media.file_type,
+                            'is_primary': len(all_images) == 0
+                        })
+                
+                primary_image_url = all_images[0]['url'] if all_images else None
+                
                 try:
                     sku_total = int(getattr(product, 'sku_total', 0) or 0)
                 except Exception:
@@ -330,12 +416,15 @@ class Landing(viewsets.ViewSet):
                     'shop_name': product.shop.name if product.shop else 'No Shop',
                     'category_id': str(product.category.id) if product.category else None,
                     'category_name': product.category.name if product.category else None,
-                    'image_url': image_url,
+                    'primary_image': primary_image_url,
+                    'all_images': all_images,
+                    'image_count': len(all_images),
                     'stock': stock,
                     'is_out_of_stock': stock <= 0,
                     'created_at': product.created_at.isoformat()
                 })
             
+            # 10. FORMAT TRENDING SHOPS
             trending_shop_list = [
                 {
                     'id': str(shop.id),
@@ -351,6 +440,7 @@ class Landing(viewsets.ViewSet):
                 for shop in trending_shops
             ]
             
+            # 11. BUILD RESPONSE
             response_data = {
                 'stats': {
                     'products_count': products_count,
@@ -361,8 +451,9 @@ class Landing(viewsets.ViewSet):
                 'categories': category_list,
                 'featured_products': product_list,
                 'trending_shops': trending_shop_list,
+                'hero_products': hero_products_list,  # CONTAINS REAL PRODUCTS - ONLY PUBLISHED
                 'ui_data': {
-                    'hero_products': hero_sections,
+                    'hero_sections': hero_sections,  # Non-product links
                     'trust_badges': trust_badges
                 }
             }
@@ -385,14 +476,12 @@ class Landing(viewsets.ViewSet):
                 'categories': [],
                 'featured_products': [],
                 'trending_shops': [],
+                'hero_products': [],
                 'ui_data': {
-                    'hero_products': [],
+                    'hero_sections': [],
                     'trust_badges': []
                 }
-            }, status=status.HTTP_200_OK)
-        
-
-        
+            }, status=status.HTTP_200_OK)        
 class UserView(APIView):
     def get(self, request):
         user = [{"user_id": user.id, "username": user.username, "email": user.email, "registration_stage": user.registration_stage, "is_rider": user.is_rider} for user in User.objects.all()]
@@ -3392,7 +3481,7 @@ class AdminProduct(viewsets.ViewSet):
             product_data["media"] = [
                 {
                     "id": str(media.id),
-                    "file_data": media.file_data.url if media.file_data else None,
+                    "file_data": convert_s3_to_public_url(media.file_data.url) if media.file_data else None,
                     "file_type": media.file_type,
                 }
                 for media in product.productmedia_set.all()
@@ -16229,6 +16318,15 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         except Exception:
             pass
         
+        # Convert media URLs to public format
+        if data.get('primary_image'):
+            data['primary_image'] = convert_s3_to_public_url(data['primary_image'])
+        
+        if data.get('media_files'):
+            for media in data['media_files']:
+                if media.get('file_data'):
+                    media['file_data'] = convert_s3_to_public_url(media['file_data'])
+        
         # Manually enhance variant options with SKU images and price info
         if data.get('variants') and data.get('skus'):
             # Build a map of option_id -> list of SKUs containing that option
@@ -16271,7 +16369,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                                 break
                         
                         if sku_with_image and sku_with_image.image:
-                            option['image'] = request.build_absolute_uri(sku_with_image.image.url)
+                            sku_image_url = request.build_absolute_uri(sku_with_image.image.url)
+                            option['image'] = convert_s3_to_public_url(sku_image_url)
                         else:
                             option['image'] = None
                     else:
@@ -16321,13 +16420,18 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         
         if matching_sku:
             # Build response with SKU details
+            image_url = None
+            if matching_sku.image:
+                image_url = request.build_absolute_uri(matching_sku.image.url)
+                image_url = convert_s3_to_public_url(image_url)
+            
             response_data = {
                 'id': str(matching_sku.id),
                 'sku_code': matching_sku.sku_code,
                 'price': float(matching_sku.price) if matching_sku.price else None,
                 'compare_price': float(matching_sku.compare_price) if matching_sku.compare_price else None,
                 'quantity': matching_sku.quantity,
-                'image': request.build_absolute_uri(matching_sku.image.url) if matching_sku.image else None,
+                'image': image_url,
                 'length': float(matching_sku.length) if matching_sku.length else None,
                 'width': float(matching_sku.width) if matching_sku.width else None,
                 'height': float(matching_sku.height) if matching_sku.height else None,
@@ -16381,9 +16485,9 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 if all(oid in sku_option_ids for oid in option_ids):
                     return Response({"sku_id": str(sku.id), "fallback": True})
 
-        return Response({"sku_id": None, "message": "No matching SKU found"}, status=404)
+        return Response({"sku_id": None, "message": "No matching SKU found"}, status=404) 
     
-    
+
 class AddToCartView(APIView):
 
     def post(self, request):
@@ -20441,6 +20545,39 @@ class PurchasesBuyer(viewsets.ViewSet):
         return Response(order_data)
 
     
+    # Add: return rider info for an order
+    @action(detail=True, methods=['get'], url_path='get-rider-info')
+    def get_rider_info(self, request, pk=None):
+        """Return rider(s) assigned to deliveries for an order. URL: /purchases-buyer/{order_id}/get-rider-info/"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            order = Order.objects.get(order=pk, user=user)
+        except (User.DoesNotExist, Order.DoesNotExist):
+            return Response({'error': 'Order not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+
+        deliveries = Delivery.objects.filter(order=order).select_related('rider__rider')
+        riders_data = []
+        for delivery in deliveries:
+            rider_link = getattr(delivery, 'rider', None)
+            if rider_link and getattr(rider_link, 'rider', None):
+                r = rider_link.rider
+                riders_data.append({
+                    "id": str(r.id),
+                    "rider_id": str(r.id),
+                    "user": {
+                        "id": str(r.id),
+                        "first_name": r.first_name,
+                        "last_name": r.last_name,
+                        "phone": r.contact_number or ""
+                    }
+                })
+
+        return Response({"success": True, "order_id": str(order.order), "riders": riders_data})
+
     # These helper methods should be at the same level as get_delivery_proofs_for_customer
     def _get_status_display(self, status):
         status_map = {
@@ -30831,6 +30968,272 @@ class SellerBoosts(viewsets.ViewSet):
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['get'])
+    def products(self, request):
+        """Get seller's products with boost status"""
+        try:
+            customer_id = request.query_params.get('customer_id')
+            shop_id = request.query_params.get('shop_id')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'products': [],
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get products for this customer/shop
+            products_query = Product.objects.filter(
+                customer_id=customer_id,
+                is_removed=False,
+                upload_status='published'
+            )
+            
+            if shop_id:
+                products_query = products_query.filter(shop_id=shop_id)
+            
+            # Annotate each product with boost status
+            now = timezone.now()
+            
+            # Create subquery to check for active boosts
+            active_boost_subquery = Boost.objects.filter(
+                product_id=OuterRef('id'),
+                status='active',
+                end_date__gt=now
+            )
+            
+            # Create subquery to get boost details
+            boost_details_subquery = Boost.objects.filter(
+                product_id=OuterRef('id'),
+                status='active',
+                end_date__gt=now
+            ).select_related('boost_plan')
+            
+            # Annotate products with boost information
+            products = products_query.annotate(
+                is_boosted=Exists(active_boost_subquery)
+            ).order_by('-created_at')
+            
+            products_data = []
+            for product in products:
+                boost_info = None
+                
+                if product.is_boosted:
+                    # Get the active boost details
+                    boost = boost_details_subquery.filter(product_id=product.id).first()
+                    if boost:
+                        boost_info = {
+                            'boost_id': str(boost.id),
+                            'plan_name': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                            'plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
+                            'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                            'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                            'days_remaining': (boost.end_date - now).days if boost.end_date else 0,
+                            'status': boost.status
+                        }
+                
+                product_data = {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description,
+                    'price': float(product.price),
+                    'quantity': product.quantity,
+                    'status': product.status,
+                    'upload_status': product.upload_status,
+                    'is_boosted': product.is_boosted,
+                    'boost_info': boost_info,
+                    'category': str(product.category.name) if product.category else None,
+                    'created_at': product.created_at.isoformat(),
+                    'can_be_boosted': self._can_product_be_boosted(product)
+                }
+                
+                # Add shop info if available
+                if product.shop:
+                    product_data['shop_id'] = str(product.shop.id)
+                    product_data['shop_name'] = product.shop.name
+                
+                products_data.append(product_data)
+            
+            # Get boost eligibility stats
+            eligible_products = [p for p in products_data if p['can_be_boosted']]
+            already_boosted = [p for p in products_data if p['is_boosted']]
+            
+            return Response({
+                'success': True,
+                'products': products_data,
+                'stats': {
+                    'total_products': len(products_data),
+                    'eligible_for_boost': len(eligible_products),
+                    'already_boosted': len(already_boosted),
+                    'not_eligible': len(products_data) - len(eligible_products)
+                },
+                'message': 'Products with boost status retrieved successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'products': [],
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def product_boost_status(self, request, pk=None):
+        """Get detailed boost status for a specific product"""
+        try:
+            customer_id = request.query_params.get('customer_id')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the product
+            try:
+                product = Product.objects.get(
+                    id=pk,
+                    customer_id=customer_id
+                )
+            except Product.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Product not found or unauthorized'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check for active boosts
+            now = timezone.now()
+            active_boost = Boost.objects.filter(
+                product_id=pk,
+                status='active',
+                end_date__gt=now
+            ).select_related('boost_plan').first()
+            
+            boost_info = None
+            if active_boost:
+                boost_info = {
+                    'boost_id': str(active_boost.id),
+                    'plan_name': active_boost.boost_plan.name if active_boost.boost_plan else 'Unknown',
+                    'plan_id': str(active_boost.boost_plan.id) if active_boost.boost_plan else None,
+                    'start_date': active_boost.start_date.isoformat() if active_boost.start_date else None,
+                    'end_date': active_boost.end_date.isoformat() if active_boost.end_date else None,
+                    'days_remaining': (active_boost.end_date - now).days if active_boost.end_date else 0,
+                    'status': active_boost.status,
+                    'plan_details': {
+                        'duration': active_boost.boost_plan.duration if active_boost.boost_plan else 0,
+                        'time_unit': active_boost.boost_plan.time_unit if active_boost.boost_plan else '',
+                        'price': float(active_boost.boost_plan.price) if active_boost.boost_plan else 0
+                    }
+                }
+            
+            # Check eligibility
+            eligibility = self._check_product_eligibility(product)
+            
+            # Get product's boost history
+            boost_history = Boost.objects.filter(
+                product_id=pk
+            ).select_related('boost_plan').order_by('-created_at')[:10]
+            
+            history_data = []
+            for boost in boost_history:
+                history_data.append({
+                    'id': str(boost.id),
+                    'plan_name': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                    'status': boost.status,
+                    'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                    'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                    'created_at': boost.created_at.isoformat() if boost.created_at else None
+                })
+            
+            return Response({
+                'success': True,
+                'product': {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'is_boosted': active_boost is not None,
+                    'boost_info': boost_info,
+                    'eligibility': eligibility,
+                    'product_details': {
+                        'quantity': product.quantity,
+                        'upload_status': product.upload_status,
+                        'status': product.status,
+                        'is_removed': product.is_removed
+                    },
+                    'boost_history': history_data,
+                    'can_be_boosted': self._can_product_be_boosted(product)
+                },
+                'message': 'Product boost status retrieved successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _can_product_be_boosted(self, product):
+        """Check if a product can be boosted"""
+        if product.quantity <= 0:
+            return False
+        if product.upload_status != 'published':
+            return False
+        if product.status != 'active':
+            return False
+        if product.is_removed:
+            return False
+        
+        # Check if already has active boost
+        now = timezone.now()
+        has_active_boost = Boost.objects.filter(
+            product_id=product.id,
+            status='active',
+            end_date__gt=now
+        ).exists()
+        
+        return not has_active_boost
+    
+    def _check_product_eligibility(self, product):
+        """Detailed eligibility check for a product"""
+        eligibility = {
+            'is_eligible': True,
+            'issues': []
+        }
+        
+        if product.quantity <= 0:
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append("Product is out of stock")
+        
+        if product.upload_status != 'published':
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append(f"Product must be published (current: {product.upload_status})")
+        
+        if product.status != 'active':
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append(f"Product must be active (current: {product.status})")
+        
+        if product.is_removed:
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append("Product has been removed")
+        
+        # Check for active boosts
+        now = timezone.now()
+        existing_boost = Boost.objects.filter(
+            product_id=product.id,
+            status='active',
+            end_date__gt=now
+        ).first()
+        
+        if existing_boost:
+            eligibility['is_eligible'] = False
+            eligibility['issues'].append("Product already has an active boost")
+            eligibility['existing_boost'] = {
+                'boost_id': str(existing_boost.id),
+                'end_date': existing_boost.end_date.isoformat() if existing_boost.end_date else None,
+                'days_remaining': (existing_boost.end_date - now).days if existing_boost.end_date else 0
+            }
+        
+        return eligibility
+    
     def create(self, request):
         """Create a new boost for a product (single or bulk)"""
         try:
@@ -30931,34 +31334,14 @@ class SellerBoosts(viewsets.ViewSet):
                     product = Product.objects.get(id=product_id, customer_id=customer_id)
                     
                     # Check if product can be boosted
-                    product_errors = []
+                    eligibility = self._check_product_eligibility(product)
                     
-                    if product.quantity <= 0:
-                        product_errors.append("Product is out of stock")
-                    
-                    if product.upload_status != 'published':
-                        product_errors.append(f"Product must be published (current: {product.upload_status})")
-                    
-                    if product.status != 'active':
-                        product_errors.append(f"Product must be active (current: {product.status})")
-                    
-                    if product.is_removed:
-                        product_errors.append("Product has been removed")
-                    
-                    # Check if product already has an active boost
-                    existing_boost = Boost.objects.filter(
-                        product_id=product_id,
-                        status='active',
-                        end_date__gt=timezone.now()
-                    ).first()
-                    if existing_boost:
-                        product_errors.append("Product already has an active boost")
-                    
-                    if product_errors:
+                    if not eligibility['is_eligible']:
                         validation_errors.append({
                             'product_id': str(product_id),
                             'product_name': product.name,
-                            'errors': product_errors
+                            'errors': eligibility['issues'],
+                            'existing_boost': eligibility.get('existing_boost')
                         })
                     else:
                         valid_products.append(product)
@@ -31084,6 +31467,31 @@ class SellerBoosts(viewsets.ViewSet):
                         'days_remaining': (boost.end_date - timezone.now()).days
                     })
             
+            # Get product statistics
+            products = Product.objects.filter(
+                customer_id=customer_id,
+                is_removed=False
+            )
+            
+            if shop_id:
+                products = products.filter(shop_id=shop_id)
+            
+            total_products = products.count()
+            eligible_products = 0
+            already_boosted = 0
+            
+            for product in products:
+                if self._can_product_be_boosted(product):
+                    eligible_products += 1
+                
+                # Check if already boosted
+                if Boost.objects.filter(
+                    product_id=product.id,
+                    status='active',
+                    end_date__gt=timezone.now()
+                ).exists():
+                    already_boosted += 1
+            
             return Response({
                 'success': True,
                 'stats': {
@@ -31092,7 +31500,13 @@ class SellerBoosts(viewsets.ViewSet):
                     'expired_boosts': expired_boosts,
                     'pending_boosts': pending_boosts,
                     'total_spent': total_spent,
-                    'active_boost_details': active_boost_details
+                    'active_boost_details': active_boost_details,
+                    'product_stats': {
+                        'total_products': total_products,
+                        'eligible_for_boost': eligible_products,
+                        'already_boosted': already_boosted,
+                        'not_eligible': total_products - eligible_products
+                    }
                 },
                 'message': 'Boost statistics retrieved successfully'
             })
@@ -31144,6 +31558,90 @@ class SellerBoosts(viewsets.ViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=False, methods=['get'])
+    def check_products(self, request):
+        """Check boost status for multiple products at once"""
+        try:
+            customer_id = request.query_params.get('customer_id')
+            product_ids = request.query_params.getlist('product_ids')
+            
+            if not customer_id:
+                return Response({
+                    'success': False,
+                    'message': 'customer_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not product_ids:
+                return Response({
+                    'success': False,
+                    'message': 'product_ids is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            now = timezone.now()
+            results = []
+            
+            for product_id in product_ids:
+                try:
+                    product = Product.objects.get(
+                        id=product_id,
+                        customer_id=customer_id
+                    )
+                    
+                    # Check for active boost
+                    active_boost = Boost.objects.filter(
+                        product_id=product_id,
+                        status='active',
+                        end_date__gt=now
+                    ).select_related('boost_plan').first()
+                    
+                    eligibility = self._check_product_eligibility(product)
+                    
+                    results.append({
+                        'product_id': product_id,
+                        'product_name': product.name,
+                        'is_boosted': active_boost is not None,
+                        'boost_info': {
+                            'boost_id': str(active_boost.id) if active_boost else None,
+                            'plan_name': active_boost.boost_plan.name if active_boost and active_boost.boost_plan else None,
+                            'end_date': active_boost.end_date.isoformat() if active_boost else None,
+                            'days_remaining': (active_boost.end_date - now).days if active_boost else None
+                        } if active_boost else None,
+                        'eligibility': eligibility,
+                        'can_be_boosted': self._can_product_be_boosted(product)
+                    })
+                    
+                except Product.DoesNotExist:
+                    results.append({
+                        'product_id': product_id,
+                        'product_name': 'Unknown',
+                        'is_boosted': False,
+                        'boost_info': None,
+                        'eligibility': {
+                            'is_eligible': False,
+                            'issues': ['Product not found or unauthorized']
+                        },
+                        'can_be_boosted': False,
+                        'error': 'Product not found'
+                    })
+            
+            return Response({
+                'success': True,
+                'results': results,
+                'summary': {
+                    'total_checked': len(results),
+                    'boosted': len([r for r in results if r['is_boosted']]),
+                    'can_be_boosted': len([r for r in results if r['can_be_boosted']]),
+                    'not_eligible': len([r for r in results if not r['can_be_boosted']])
+                },
+                'message': 'Products checked successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
     def debug_features(self, request):
         """Debug endpoint to check feature structure"""
         try:
@@ -31175,4 +31673,58 @@ class SellerBoosts(viewsets.ViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=500)
 
+
+class HomeBoosts(viewsets.ViewSet):
+    """ViewSet for showing boosted products on home page"""
+    
+    @action(detail=False, methods=['get'])
+    def other_users(self, request):
+        """Get all boosted products that do NOT belong to the logged-in user"""
+        try:
+            # Get logged-in user ID from request
+            user_id = request.query_params.get('user_id')
             
+            if not user_id:
+                return Response({
+                    'success': False,
+                    'message': 'user_id is required'
+                }, status=400)
+            
+            # Get current time
+            now = timezone.now()
+            
+            # Get active boosts excluding user's products
+            boosts = Boost.objects.filter(
+                status='active',
+                end_date__gt=now
+            ).exclude(
+                product__customer__customer__id=user_id
+            ).select_related('product', 'product__customer__customer', 'boost_plan')[:20]
+            
+            # Build response
+            boosted_products = []
+            for boost in boosts:
+                product = boost.product
+                seller = product.customer.customer if product.customer else None
+                
+                boosted_products.append({
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'product_price': float(product.price),
+                    'seller_username': seller.username if seller else None,
+                    'boost_plan': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                    'days_remaining': (boost.end_date - now).days
+                })
+            
+            return Response({
+                'success': True,
+                'products': boosted_products,
+                'count': len(boosted_products),
+                'message': 'Success'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=500)
