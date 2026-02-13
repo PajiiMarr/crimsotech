@@ -121,11 +121,6 @@ class CategorySerializer(serializers.ModelSerializer):
         model = Category
         fields = '__all__'
 
-# class ProductSerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = Product
-#         fields = '__all__'
-
 class FavoritesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Favorites
@@ -144,35 +139,37 @@ class ProductMediaSerializer(serializers.ModelSerializer):
             # Convert S3 URL to public URL
             return convert_s3_to_public_url(obj.file_data.url)
         return None
-       
-class VariantOptionsSerializer(serializers.ModelSerializer):
+
+# NEW: Simplified Variants Serializer (contains all fields from the refactored Variants model)
+class VariantsSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
-    compare_price = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    length = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    width = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    height = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    weight = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    weight_unit = serializers.CharField(read_only=True)
-
+    accepted_categories = serializers.SerializerMethodField()
+    
     class Meta:
-        model = VariantOptions
-        fields = ['id', 'variant', 'title', 'quantity', 'price', 'compare_price', 'image_url', 'length', 'width', 'height', 'weight', 'weight_unit']
-
+        model = Variants
+        fields = [
+            'id', 'product', 'shop', 'title', 'option_title', 'option_created_at',
+            'option_ids', 'option_map', 'sku_code', 'price', 'compare_price',
+            'quantity', 'length', 'width', 'height', 'weight', 'weight_unit',
+            'critical_trigger', 'is_active', 'is_refundable', 'refund_days',
+            'allow_swap', 'swap_type', 'minimum_additional_payment',
+            'maximum_additional_payment', 'swap_description', 'image', 'image_url',
+            'accepted_categories', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'option_created_at']
+    
     def get_image_url(self, obj):
         if obj.image:
             request = self.context.get('request')
-            url = obj.image.url
             if request:
-                return request.build_absolute_uri(url)
-            return url
+                return request.build_absolute_uri(obj.image.url)
+            return obj.image.url
         return None
-
-class VariantsSerializer(serializers.ModelSerializer):
-    options = VariantOptionsSerializer(source='variantoptions_set', many=True, read_only=True)
-
-    class Meta:
-        model = Variants
-        fields = ['id', 'title', 'options']
+    
+    def get_accepted_categories(self, obj):
+        # This method can be customized if you have a relationship for accepted categories
+        # For now, returning None or you can implement based on your model structure
+        return None
 
 class IssuesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -250,15 +247,16 @@ class ProductSerializer(serializers.ModelSerializer):
     variants = serializers.SerializerMethodField()
     media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
     primary_image = serializers.SerializerMethodField()
-    # Include per-SKU details
-    skus = serializers.SerializerMethodField()
-    compare_price = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    length = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    width = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    height = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    weight = serializers.DecimalField(max_digits=9, decimal_places=2, read_only=True)
-    weight_unit = serializers.CharField(read_only=True)
 
+    class Meta:
+        model = Product
+        fields = [
+            'id', 'name', 'description', 'quantity', 'price', 'original_price',
+            'usage_time', 'usage_unit', 'status', 'upload_status', 'condition',
+            'is_refundable', 'refund_days', 'created_at', 'updated_at',
+            'shop', 'category', 'category_admin', 'variants', 'media_files', 'primary_image',
+        ]
+    
     def to_internal_value(self, data):
         # Accept 'refundable' from frontend when updating products and map to 'is_refundable'
         try:
@@ -268,15 +266,6 @@ class ProductSerializer(serializers.ModelSerializer):
             return super().to_internal_value(mutable)
         except Exception:
             return super().to_internal_value(data)
-    
-    class Meta:
-        model = Product
-        fields = [
-            'id', 'name', 'description', 'quantity', 'price',
-            'status', 'upload_status', 'condition', 'is_refundable', 'refund_days', 'created_at', 'updated_at',
-            'shop', 'category', 'category_admin', 'variants', 'media_files', 'primary_image',
-            'skus', 'compare_price', 'length', 'width', 'height', 'weight', 'weight_unit',
-        ]
     
     def get_primary_image(self, obj):
         """Get the first media file as primary image"""
@@ -297,101 +286,12 @@ class ProductSerializer(serializers.ModelSerializer):
             }
         return None
 
-
-    def get_skus(self, obj):
-        skus = []
-        for sku in obj.skus.all():
-            skus.append({
-                'id': str(sku.id),
-                'option_ids': sku.option_ids,
-                'option_map': sku.option_map,
-                'price': str(sku.price) if sku.price is not None else None,
-                'compare_price': str(sku.compare_price) if sku.compare_price is not None else None,
-                'quantity': sku.quantity,
-                'length': str(sku.length) if sku.length is not None else None,
-                'width': str(sku.width) if sku.width is not None else None,
-                'height': str(sku.height) if sku.height is not None else None,
-                'weight': str(sku.weight) if sku.weight is not None else None,
-                'weight_unit': sku.weight_unit,
-                'sku_code': sku.sku_code,
-                'critical_trigger': sku.critical_trigger,
-                'is_refundable': sku.is_refundable,
-                'refund_days': sku.refund_days,
-                'allow_swap': sku.allow_swap,
-                'swap_type': sku.swap_type,
-                'minimum_additional_payment': (str(sku.minimum_additional_payment) if sku.minimum_additional_payment is not None else None),
-                'maximum_additional_payment': (str(sku.maximum_additional_payment) if sku.maximum_additional_payment is not None else None),
-                'accepted_categories': [str(c.id) for c in sku.accepted_categories.all()],
-                'swap_description': sku.swap_description,
-                'image': (
-                    (self.context.get('request').build_absolute_uri(sku.image.url)
-                        if self.context.get('request') and sku.image and getattr(sku.image, 'url', None)
-                        else (sku.image.url if sku.image and getattr(sku.image, 'url', None) else None))
-                ),
-            })
-        return skus
-
     def get_variants(self, obj):
-        # Build a mapping of option_id -> image url derived from SKUs.
-        request = self.context.get('request')
-        option_image_map = {}
-
-        # Prefer single-option SKUs first (explicit image for that option), then fall back to any SKU that includes the option
-        try:
-            for sku in obj.skus.all():
-                oids = sku.option_ids or []
-                if not oids:
-                    continue
-                # resolve image URL
-                img_url = None
-                if sku.image and getattr(sku.image, 'url', None):
-                    if request:
-                        img_url = request.build_absolute_uri(sku.image.url)
-                    else:
-                        img_url = sku.image.url
-
-                # If single-option sku, prefer assigning immediately
-                if len(oids) == 1 and img_url:
-                    option_image_map[str(oids[0])] = img_url
-
-            # Second pass: fill missing option images from any SKU that includes the option
-            for sku in obj.skus.all():
-                oids = sku.option_ids or []
-                if not oids:
-                    continue
-                img_url = None
-                if sku.image and getattr(sku.image, 'url', None):
-                    if request:
-                        img_url = request.build_absolute_uri(sku.image.url)
-                    else:
-                        img_url = sku.image.url
-                if not img_url:
-                    continue
-                for oid in oids:
-                    if str(oid) not in option_image_map:
-                        option_image_map[str(oid)] = img_url
-        except Exception:
-            # Fail silently; return variants without images
-            option_image_map = option_image_map or {}
-
-        variants = []
-        for variant in obj.variants_set.all():
-            vdata = {
-                'id': str(variant.id),
-                'title': variant.title,
-                'options': []
-            }
-            for option in variant.variantoptions_set.all():
-                opt_img = option_image_map.get(str(option.id)) if option_image_map else None
-                vdata['options'].append({
-                    'id': str(option.id),
-                    'title': option.title,
-                    'quantity': option.quantity if hasattr(option, 'quantity') else None,
-                    'price': str(option.price) if hasattr(option, 'price') and option.price is not None else None,
-                    
-                })
-            variants.append(vdata)
-        return variants
+        """Return all variants for this product using the simplified VariantsSerializer"""
+        variants = obj.variants.all()
+        # Pass request context to serializer for building absolute URLs
+        context = self.context.copy()
+        return VariantsSerializer(variants, many=True, context=context).data
         
         
 class ReviewDetailSerializer(serializers.ModelSerializer):
@@ -440,7 +340,7 @@ class CartItemSerializer(serializers.ModelSerializer):
     subtotal = serializers.SerializerMethodField()
     product_details = serializers.SerializerMethodField()
     shop_name = serializers.CharField(source='product.shop.name', read_only=True)
-    sku = serializers.SerializerMethodField()
+    variant = serializers.SerializerMethodField()
     
     class Meta:
         model = CartItem
@@ -452,7 +352,7 @@ class CartItemSerializer(serializers.ModelSerializer):
             'item_price',
             'item_image',
             'shop_name',
-            'sku',
+            'variant',
             'quantity', 
             'added_at',
             'subtotal'
@@ -460,10 +360,10 @@ class CartItemSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'added_at']
     
     def get_item_price(self, obj):
-        # Prefer SKU price when present, otherwise product price
+        # Prefer variant price when present, otherwise product price
         try:
-            if hasattr(obj, 'sku') and obj.sku and obj.sku.price is not None:
-                return float(obj.sku.price)
+            if hasattr(obj, 'variant') and obj.variant and obj.variant.price is not None:
+                return float(obj.variant.price)
         except Exception:
             pass
         if obj.product and obj.product.price is not None:
@@ -475,12 +375,12 @@ class CartItemSerializer(serializers.ModelSerializer):
         return float(price) * obj.quantity
     
     def get_item_image(self, obj):
-        # Get the first media file from product or SKU image
-        # Prefer SKU image if available
+        # Get the first media file from product or variant image
+        # Prefer variant image if available
         try:
-            if obj.sku and obj.sku.image and getattr(obj.sku.image, 'url', None):
+            if obj.variant and obj.variant.image and getattr(obj.variant.image, 'url', None):
                 request = self.context.get('request')
-                return request.build_absolute_uri(obj.sku.image.url) if request else obj.sku.image.url
+                return request.build_absolute_uri(obj.variant.image.url) if request else obj.variant.image.url
         except Exception:
             pass
 
@@ -496,27 +396,31 @@ class CartItemSerializer(serializers.ModelSerializer):
                     return first_media.file_data.url
         return None
 
-    def get_sku(self, obj):
-        """Return a safe summary of the selected SKU for this cart item."""
+    def get_variant(self, obj):
+        """Return variant details if this cart item has a variant"""
         try:
-            sku = obj.sku
-            if not sku:
+            variant = obj.variant
+            if not variant:
                 return None
 
             request = self.context.get('request')
             image_url = None
             try:
-                if sku.image and getattr(sku.image, 'url', None):
-                    image_url = request.build_absolute_uri(sku.image.url) if request else sku.image.url
+                if variant.image and getattr(variant.image, 'url', None):
+                    image_url = request.build_absolute_uri(variant.image.url) if request else variant.image.url
             except Exception:
                 image_url = None
 
             return {
-                'id': str(sku.id),
-                'price': str(sku.price) if sku.price is not None else None,
-                'quantity': sku.quantity,
-                'sku_code': sku.sku_code,
-                'image': image_url
+                'id': str(variant.id),
+                'title': variant.title,
+                'option_title': variant.option_title,
+                'sku_code': variant.sku_code,
+                'price': str(variant.price) if variant.price is not None else None,
+                'quantity': variant.quantity,
+                'image': image_url,
+                'option_ids': variant.option_ids,
+                'option_map': variant.option_map
             }
         except Exception:
             return None
@@ -544,13 +448,14 @@ class CartItemSerializer(serializers.ModelSerializer):
                 'media_files': media_files if media_files else None
             }
 
-            # If cart item has a sku, include sku summary
-            if obj.sku:
-                product_data['sku'] = {
-                    'id': str(obj.sku.id),
-                    'price': str(obj.sku.price) if obj.sku.price is not None else None,
-                    'quantity': obj.sku.quantity,
-                    'sku_code': obj.sku.sku_code
+            # If cart item has a variant, include variant summary
+            if obj.variant:
+                product_data['variant'] = {
+                    'id': str(obj.variant.id),
+                    'title': obj.variant.title,
+                    'price': str(obj.variant.price) if obj.variant.price is not None else None,
+                    'quantity': obj.variant.quantity,
+                    'sku_code': obj.variant.sku_code
                 }
 
             return product_data
@@ -622,7 +527,7 @@ class CartItemCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating cart items"""
     class Meta:
         model = CartItem
-        fields = ['product', 'quantity']
+        fields = ['product', 'variant', 'quantity']
     
     def validate(self, data):
         # Check if product exists and is available
@@ -639,21 +544,26 @@ class CartItemCreateUpdateSerializer(serializers.ModelSerializer):
         if quantity < 1:
             raise serializers.ValidationError({"quantity": "Quantity must be at least 1."})
         
-        # Check stock if product has stock attribute
-        if hasattr(product, 'stock') and product.stock < quantity:
-            raise serializers.ValidationError({"quantity": f"Only {product.stock} items available in stock."})
+        # Check variant stock if variant is provided
+        variant = data.get('variant')
+        if variant and variant.quantity < quantity:
+            raise serializers.ValidationError({
+                "quantity": f"Only {variant.quantity} items available for this variant."
+            })
         
         return data
     
     def create(self, validated_data):
         user = self.context['request'].user
         product = validated_data['product']
+        variant = validated_data.get('variant')
         quantity = validated_data['quantity']
         
-        # Check if item already exists in cart
+        # Check if item already exists in cart with same product and variant
         cart_item, created = CartItem.objects.get_or_create(
             user=user,
             product=product,
+            variant=variant,
             defaults={'quantity': quantity}
         )
         
@@ -674,42 +584,23 @@ class CartDisplayItemSerializer(serializers.ModelSerializer):
     image = serializers.ImageField(source='product.image', read_only=True)
     shop_name = serializers.CharField(source='product.shop.name', default='Unknown Shop')
     selected = serializers.SerializerMethodField()
+    variant_details = serializers.SerializerMethodField()
 
     class Meta:
         model = CartItem
-        fields = ['id', 'name', 'color', 'price', 'quantity', 'image', 'shop_name', 'selected']
+        fields = ['id', 'name', 'color', 'price', 'quantity', 'image', 'shop_name', 'selected', 'variant_details']
 
     def get_selected(self, obj):
         return True  # default to selected
     
-
-class ProductSKUSerializer(serializers.ModelSerializer):
-    option_map = serializers.JSONField(read_only=True)
-    image_url = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = ProductSKU
-        fields = [
-            'id', 'option_ids', 'option_map', 'sku_code',
-            'price', 'compare_price', 'quantity',
-            'length', 'width', 'height', 'weight', 'weight_unit',
-            'is_refundable',
-            'refund_days',
-            'image_url',
-        ]
-
-    def get_image_url(self, obj):
-        request = self.context.get('request')
-        if obj.image:
-            return request.build_absolute_uri(obj.image.url) if request else obj.image.url
-        # fallback: first option with image
-        for oid in obj.option_ids or []:
-            try:
-                option = VariantOptions.objects.get(id=oid)
-                if hasattr(option, 'image') and option.image:
-                    return request.build_absolute_uri(option.image.url) if request else option.image.url
-            except VariantOptions.DoesNotExist:
-                continue
+    def get_variant_details(self, obj):
+        if obj.variant:
+            return {
+                'id': str(obj.variant.id),
+                'title': obj.variant.title,
+                'sku_code': obj.variant.sku_code,
+                'price': str(obj.variant.price) if obj.variant.price else None
+            }
         return None
     
 
@@ -804,6 +695,7 @@ class ReturnAddressSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return {'id': str(obj.created_by.id), 'username': obj.created_by.username}
         return None
+
 class ReturnRequestItemSerializer(serializers.ModelSerializer):
     medias = ReturnRequestMediaSerializer(many=True, read_only=True)
     
