@@ -5,9 +5,7 @@ import { redirect, data } from "react-router";
 import { cleanInput } from '~/clean/clean';
 import AxiosInstance from '~/components/axios/Axios';
 import CreateProductForm from '~/components/customer/seller-create-product-form';
-import { useState } from 'react';
 import { Button } from '~/components/ui/button';
-
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -47,9 +45,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
     );
 
-    const shop = shopsResponse.data.shop
-
-    const selectedShop = shop
+    const shop = shopsResponse.data.shop;
+    const selectedShop = shop;
 
     // Fetch global categories
     let globalCategories = [];
@@ -117,33 +114,14 @@ export async function action({ request }: Route.ActionArgs) {
 
   const formData = await request.formData();
 
-  console.log('this is a formdata: ', formData)
+  console.log('this is a formdata: ', formData);
 
   // Get basic product fields
   const name = String(formData.get("name"));
   const description = String(formData.get("description"));
-  const quantity = String(formData.get("quantity"));
-  const used_for = String(formData.get("used_for") || "General use");
-  const price = String(formData.get("price"));
-  const original_price = String(formData.get("original_price") || "");
-  const usage_time = String(formData.get("usage_time") || "");
-  const usage_unit = String(formData.get("usage_unit") || "months");
-
-  // Detect if variants/skus are provided in the form; if so, product-level quantity/price can be optional
-  const hasVariants = Boolean(formData.get('variants') || formData.get('skus') || Array.from(formData.keys()).some(k => k.startsWith('variant_') || k.startsWith('sku_')));
-  console.log('Detected variants/skus in submission:', hasVariants);
   const condition = String(formData.get("condition"));
   const category_admin_id = String(formData.get("category_admin_id") || "");
   const category_admin_name = String(formData.get("category_admin_name") || "");
-
-  // Get dimension fields
-  const length = formData.get("length");
-  const width = formData.get("width");
-  const height = formData.get("height");
-  const weight = formData.get("weight");
-
-  // Get critical trigger fields
-  const critical_threshold = formData.get("critical_threshold");
 
   // Get media files
   const media_files = formData.getAll("media_files") as File[];
@@ -151,7 +129,6 @@ export async function action({ request }: Route.ActionArgs) {
   // Clean inputs
   cleanInput(name);
   cleanInput(description);
-  cleanInput(used_for);
   cleanInput(condition);
 
   const errors: Record<string, string> = {};
@@ -173,63 +150,50 @@ export async function action({ request }: Route.ActionArgs) {
     errors.description = "Description should be at most 1000 characters";
   }
 
-  // Quantity & price validation: If variants/skus are present, product-level price/quantity are optional
-  // Use a tolerant sanitizer to handle commas and whitespace (e.g., '1,000')
-  const sanitizeNumber = (s: string) => String(s || '').replace(/,/g, '').replace(/[^0-9.\-]/g, '').trim();
-  const rawQuantity = sanitizeNumber(quantity);
-  const rawPrice = sanitizeNumber(price);
-  const rawOriginalPrice = sanitizeNumber(original_price);
-  const rawUsageTime = sanitizeNumber(usage_time);
-  
-  console.log('Quantity (raw):', quantity, '=> sanitized:', rawQuantity);
-  console.log('Price (calculated):', price, '=> sanitized:', rawPrice);
-  console.log('Original Price:', original_price, '=> sanitized:', rawOriginalPrice);
-  console.log('Usage Time:', usage_time, '=> sanitized:', rawUsageTime);
-
-  // Validate original price (required field)
-  if (!rawOriginalPrice) {
-    errors.original_price = "Original price is required";
-  } else if (isNaN(Number(rawOriginalPrice)) || Number(rawOriginalPrice) <= 0) {
-    errors.original_price = "Please enter a valid original price";
-  }
-
-  // Validate usage time (required field)
-  if (!rawUsageTime) {
-    errors.usage_time = "Usage time is required";
-  } else if (isNaN(Number(rawUsageTime)) || Number(rawUsageTime) < 0) {
-    errors.usage_time = "Please enter a valid usage time";
-  }
-
-  // Validate calculated price (required for non-variant products)
-  if (!hasVariants) {
-    if (!rawQuantity) {
-      errors.quantity = "Quantity is required";
-    } else if (isNaN(Number(rawQuantity)) || Number(rawQuantity) < 0) {
-      errors.quantity = "Please enter a valid quantity";
-    }
-
-    if (!rawPrice) {
-      errors.price = "Calculated price is required";
-    } else if (isNaN(Number(rawPrice)) || Number(rawPrice) < 0) {
-      errors.price = "Please enter a valid calculated price";
-    }
-  } else {
-    // Variants present: if product-level quantity/price provided, validate; otherwise it's allowed to be empty
-    if (rawQuantity && (isNaN(Number(rawQuantity)) || Number(rawQuantity) < 0)) {
-      errors.quantity = "Please enter a valid quantity";
-    }
-    if (rawPrice && (isNaN(Number(rawPrice)) || Number(rawPrice) < 0)) {
-      errors.price = "Please enter a valid calculated price";
-    }
-  }
-
   if (!condition.trim()) {
     errors.condition = "Condition is required";
   }
 
-  // Validate usage unit
-  if (usage_unit && !['months', 'years'].includes(usage_unit)) {
-    errors.usage_unit = "Usage unit must be either 'months' or 'years'";
+  // Validate variants
+  const variantsRaw = formData.get('variants');
+  if (!variantsRaw) {
+    errors.variants = "Products must have at least one variant";
+  } else {
+    try {
+      const variants = JSON.parse(String(variantsRaw));
+      
+      if (!Array.isArray(variants) || variants.length === 0) {
+        errors.variants = "Products must have at least one variant";
+      } else {
+        // Validate each variant has required fields
+        variants.forEach((variant, index) => {
+          if (!variant.title || !variant.title.trim()) {
+            errors[`variant_${index}_title`] = "Variant title is required";
+          }
+          if (!variant.price || variant.price === '' || Number(variant.price) <= 0) {
+            errors[`variant_${index}_price`] = "Variant price must be greater than 0";
+          }
+          if (!variant.quantity || variant.quantity === '' || Number(variant.quantity) <= 0) {
+            errors[`variant_${index}_quantity`] = "Variant quantity must be greater than 0";
+          }
+          
+          // Validate depreciation fields if present
+          if (variant.original_price || variant.usage_period || variant.depreciation_rate) {
+            if (variant.original_price && Number(variant.original_price) <= 0) {
+              errors[`variant_${index}_original_price`] = "Original price must be greater than 0";
+            }
+            if (variant.usage_period && Number(variant.usage_period) < 0) {
+              errors[`variant_${index}_usage_period`] = "Usage period cannot be negative";
+            }
+            if (variant.depreciation_rate && (Number(variant.depreciation_rate) < 0 || Number(variant.depreciation_rate) > 100)) {
+              errors[`variant_${index}_depreciation_rate`] = "Depreciation rate must be between 0 and 100";
+            }
+          }
+        });
+      }
+    } catch (e) {
+      errors.variants = "Invalid variants format";
+    }
   }
 
   // Validate media files
@@ -244,14 +208,6 @@ export async function action({ request }: Route.ActionArgs) {
       }
     }
   });
-
-  // Validate critical threshold if provided
-  if (critical_threshold) {
-    const threshold = Number(critical_threshold);
-    if (isNaN(threshold) || threshold <= 0) {
-      errors.critical_threshold = "Critical threshold must be a positive number";
-    }
-  }
 
   if (Object.keys(errors).length > 0) {
     console.log("Product validation errors:", errors);
@@ -270,53 +226,30 @@ export async function action({ request }: Route.ActionArgs) {
     // Append basic fields
     apiFormData.append('name', name.trim());
     apiFormData.append('description', description.trim());
-    
-    // If variants/skus are present, default product-level quantity/price to 0 when not provided.
-    // Use sanitized numeric values so backend receives clean numbers.
-    const apiQuantity = (hasVariants && !rawQuantity) ? '0' : (rawQuantity || '0');
-    const apiPrice = (hasVariants && !rawPrice) ? '0' : (rawPrice || '0');
-
-    apiFormData.append('quantity', apiQuantity);
-    apiFormData.append('used_for', used_for.trim());
-    apiFormData.append('price', apiPrice);
-    
-    // Append new pricing fields
-    apiFormData.append('original_price', rawOriginalPrice);
-    apiFormData.append('usage_time', rawUsageTime);
-    apiFormData.append('usage_unit', usage_unit);
-    
     apiFormData.append('condition', condition.trim());
     apiFormData.append('shop', shop_id ?? "");
     apiFormData.append('status', "active");
     apiFormData.append('customer_id', userId);
 
-    // Product-level refundable flag (for non-variant products)
-    // Read either key and send both to backend to avoid mismatch
-    const refundableValue = String(formData.get('is_refundable') || formData.get('refundable') || 'false');
-    apiFormData.append('is_refundable', refundableValue);
-    apiFormData.append('refundable', refundableValue);
-
-    // Add category_admin_id if provided and not "none"
-    if (category_admin_id.trim() && category_admin_id !== "none") {
-      apiFormData.append('category_admin_id', category_admin_id.trim());
+    // IMPORTANT FIX: Only append ONE category field - prefer ID over name
+    if (category_admin_id.trim() && category_admin_id !== "none" && category_admin_id !== "undefined") {
+      // Validate that it looks like a UUID before sending
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(category_admin_id.trim())) {
+        apiFormData.append('category_admin_id', category_admin_id.trim());
+        console.log("Appending category_admin_id (valid UUID):", category_admin_id.trim());
+      } else {
+        // If it's not a UUID, treat it as a name
+        apiFormData.append('category_admin_name', category_admin_id.trim());
+        console.log("Appending category_admin_name (not a UUID):", category_admin_id.trim());
+      }
     } else if (category_admin_name.trim() && category_admin_name.toLowerCase() !== 'none') {
-      // Forward suggested name so backend can create a global Category (shop=None, user=None)
       apiFormData.append('category_admin_name', category_admin_name.trim());
+      console.log("Appending category_admin_name:", category_admin_name.trim());
     }
 
-    console.log("Category admin ID:", category_admin_id);
-    console.log("Category admin name:", category_admin_name);
-
-    // Append dimension fields if provided
-    if (length) apiFormData.append('length', String(length));
-    if (width) apiFormData.append('width', String(width));
-    if (height) apiFormData.append('height', String(height));
-    if (weight) apiFormData.append('weight', String(weight));
-
-    // Add critical threshold if provided
-    if (critical_threshold) {
-      apiFormData.append('critical_threshold', String(critical_threshold));
-    }
+    console.log("Category admin ID from form:", category_admin_id);
+    console.log("Category admin name from form:", category_admin_name);
 
     // Append media files
     media_files.forEach(file => {
@@ -325,149 +258,43 @@ export async function action({ request }: Route.ActionArgs) {
       }
     });
 
-    // Handle variants - collect all variant data
-    const variantData: any[] = [];
-    
-    // Parse all form data to find variant groups and options
-    const formDataObj: Record<string, any> = {};
-    for (const [key, value] of formData.entries()) {
-      if (key.startsWith('variant_')) {
-        formDataObj[key] = value;
-      }
-    }
-
-    // Extract variant structure from form data
-    const variantGroups: Map<string, any> = new Map();
-    
-    for (const [key, value] of Object.entries(formDataObj)) {
-      const groupMatch = key.match(/^variant_group_([^_]+)_title$/);
-      if (groupMatch) {
-        const groupId = groupMatch[1];
-        if (!variantGroups.has(groupId)) {
-          variantGroups.set(groupId, {
-            title: value,
-            options: []
-          });
-        }
-      }
-
-      const optionMatch = key.match(/^variant_group_([^_]+)_option_([^_]+)_(.+)$/);
-      if (optionMatch) {
-        const groupId = optionMatch[1];
-        const optionId = optionMatch[2];
-        const field = optionMatch[3];
-
-        if (!variantGroups.has(groupId)) {
-          variantGroups.set(groupId, {
-            title: '',
-            options: []
-          });
-        }
-
-        const group = variantGroups.get(groupId);
-        let option = group.options.find((o: any) => o.id === optionId);
-        
-        if (!option) {
-          option = { id: optionId };
-          group.options.push(option);
-        }
-
-        option[field] = value;
-      }
-    }
-
-    // Convert variant groups to array format (we will include ids later when sending to API)
-    // Build from the map of parsed groups/options
-    // (ids are kept in the map keys and option.id fields)
-
-    // Add variants as structural metadata (no numeric fields; SKUs carry numeric/swap data)
-    if (variantGroups.size > 0) {
-      // include group and option ids so backend can match uploaded variant images
-      const variantsWithIds = Array.from(variantGroups.entries()).map(([groupId, group]) => ({
-        id: groupId,
-        title: group.title,
-        options: group.options.map((option: any) => ({
-          id: option.id,
-          title: option.title,
-        }))
+    // Handle variants
+    if (variantsRaw) {
+      const variants = JSON.parse(String(variantsRaw));
+      
+      // Ensure each variant has is_refundable flag
+      const processedVariants = variants.map((v: any) => ({
+        ...v,
+        is_refundable: v.refundable !== undefined ? v.refundable : true
       }));
-
-      apiFormData.append('variants', JSON.stringify(variantsWithIds));
+      
+      apiFormData.append('variants', JSON.stringify(processedVariants));
     }
 
-    // Forward SKUs payload from the form if provided (the client sends comprehensive per-SKU fields)
-    const skusRaw = formData.get('skus');
-    if (skusRaw) {
-      apiFormData.append('skus', String(skusRaw));
-    }
-
-    // Handle variant images and per-SKU images by forwarding their original keys
-    // variant_image_<groupId>_<optionId> and sku_image_<skuId>
+    // Handle variant images
     for (const [key, value] of formData.entries()) {
-      if (key.startsWith('variant_image_') || key.startsWith('sku_image_')) {
+      if (key.startsWith('variant_image_')) {
         const file = value as File;
-        if (file && (file as any).size > 0) {
+        if (file && file.size > 0) {
           apiFormData.append(key, file);
         }
       }
     }
 
-    // Append product-level dimensions/weight unit if available
-    const weightUnitVal = String(formData.get('weight_unit') || 'kg');
-    apiFormData.append('weight_unit', weightUnitVal);
-
-    // Handle shipping zones
-    const shippingZones: any[] = [];
-    const shippingZoneIds = new Set<string>();
-    
-    for (const [key, value] of formData.entries()) {
-      const zoneMatch = key.match(/^shipping_zone_([^_]+)_(.+)$/);
-      if (zoneMatch) {
-        const zoneId = zoneMatch[1];
-        const field = zoneMatch[2];
-        
-        shippingZoneIds.add(zoneId);
-        
-        let zone = shippingZones.find(z => z.id === zoneId);
-        if (!zone) {
-          zone = { id: zoneId };
-          shippingZones.push(zone);
-        }
-        
-        zone[field] = value;
-      }
-    }
-
-    // Format shipping zones for API
-    const formattedShippingZones = shippingZones.map(zone => ({
-      name: zone.name,
-      fee: zone.freeShipping === 'true' ? 0 : parseFloat(zone.fee) || 0,
-      free_shipping: zone.freeShipping === 'true'
-    }));
-
-    if (formattedShippingZones.length > 0) {
-      apiFormData.append('shipping_zones', JSON.stringify(formattedShippingZones));
-    }
-
     console.log("Sending product data to API with user ID:", userId);
-    console.log("Category admin ID:", category_admin_id);
-    console.log("Variants count:", variantGroups.size);
-    console.log("Shipping zones count:", formattedShippingZones.length);
-    console.log("Original Price:", rawOriginalPrice);
-    console.log("Usage Time:", rawUsageTime);
-    console.log("Usage Unit:", usage_unit);
 
     // Debug: inspect entries in apiFormData before sending to API
     try {
       for (const [k, v] of (apiFormData as any).entries()) {
-        const valPreview = (v && typeof v === 'object' && 'name' in v) ? { name: v.name, size: v.size, type: v.type } : String(v).slice(0, 200);
+        const valPreview = (v && typeof v === 'object' && 'name' in v) 
+          ? { name: v.name, size: v.size, type: v.type } 
+          : String(v).slice(0, 200);
         console.log('apiFormData entry ->', k, valPreview);
       }
     } catch (err) {
       console.log('Failed to iterate apiFormData entries for debug:', err);
     }
     
-    // NOTE: Do NOT manually set Content-Type for multipart FormData here — Axios will set the proper boundary header for us.
     const response = await AxiosInstance.post('/seller-products/', apiFormData);
     
     if (response.data.success) {
@@ -508,25 +335,15 @@ export async function action({ request }: Route.ActionArgs) {
   }
 }
 
-// --- TYPES (UNCHANGED) ---
-
 // Define the errors type
 interface FormErrors {
   message?: string;
   name?: string;
   description?: string;
-  quantity?: string;
-  price?: string;
-  original_price?: string;
-  usage_time?: string;
-  usage_unit?: string;
   condition?: string;
   shop?: string;
   category_admin_id?: string;
-  variant_title?: string;
-  variant_option_title?: string;
-  variant_option_quantity?: string;
-  variant_option_price?: string;
+  variants?: string;
   [key: string]: string | undefined;
 }
 

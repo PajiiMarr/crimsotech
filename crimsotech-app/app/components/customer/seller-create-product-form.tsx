@@ -11,7 +11,7 @@ import { Switch } from "~/components/ui/switch";
 import { Separator } from "~/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
-import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles, Calculator, ChevronDown, ChevronUp, Info } from "lucide-react";
+import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles, Calculator, ChevronDown, ChevronUp, Info, GripVertical, Percent, Clock } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
 import { useFetcher } from "react-router"
@@ -61,20 +61,39 @@ interface ShippingZone {
   fee: number | '';
   freeShipping: boolean;
 }
-interface VariantOption {
-  id: string;
-  title: string;
-  image?: File | null;
-  imagePreview?: string;
-} 
 
-interface VariantGroup {
-  id: string;
-  title: string;
-  options: VariantOption[];
+// Depreciation interface
+interface Depreciation {
+  originalPrice: number | '';
+  usagePeriod: number | '';
+  usageUnit: 'weeks' | 'months' | 'years';
+  depreciationRate: number | '';
+  calculatedPrice: number | '';
 }
 
-
+// Simplified Variant interface - each variant is independent, not a combination
+interface Variant {
+  id: string;
+  title: string;
+  price: number | '';  // This will now be auto-calculated and read-only
+  compare_price?: number | '';
+  quantity: number | '';
+  sku_code?: string;
+  image?: File | null;
+  imagePreview?: string;
+  length?: number | '';
+  width?: number | '';
+  height?: number | '';
+  weight?: number | '';
+  weight_unit?: 'g' | 'kg' | 'lb' | 'oz';
+  critical_trigger?: number | '';
+  is_active?: boolean;
+  refundable?: boolean;
+  // Depreciation fields
+  depreciation: Depreciation; // Make it required instead of optional
+  // Optional attributes for grouping/filtering (can be added later)
+  attributes?: Record<string, string>;
+}
 
 interface CreateProductFormProps {
   selectedShop: Shop | null;
@@ -84,8 +103,6 @@ interface CreateProductFormProps {
 }
 
 // --- PREDICTION STATE INTERFACE ---
-// UPDATED: Based on actual API response (image-based prediction)
-
 interface PredictedCategory {
   id?: string;
   uuid?: string;
@@ -116,8 +133,6 @@ interface PredictionResult {
   [key: string]: any;
 }
 
-
-
 // --- REACT COMPONENT ---
 
 export default function CreateProductForm({ selectedShop, globalCategories, modelClasses, errors }: CreateProductFormProps) {
@@ -134,57 +149,34 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
   // Form state
   const [productName, setProductName] = useState('');
   const [productDescription, setProductDescription] = useState('');
-  const [productQuantity, setProductQuantity] = useState<number | ''>('');
-  
-  // New pricing state
-  const [originalPrice, setOriginalPrice] = useState<number | ''>('');
-  const [usageTime, setUsageTime] = useState<number | ''>('');
-  const [usageUnit, setUsageUnit] = useState<'months' | 'years'>('months');
-  const [calculatedPrice, setCalculatedPrice] = useState<number | ''>('');
-  
   const [productCondition, setProductCondition] = useState('');
 
-
-
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
-  const [showVariants, setShowVariants] = useState(false);
-  const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
-  const variantsEnabled = variantGroups.length > 0;
-  const [enableCriticalTrigger, setEnableCriticalTrigger] = useState(false);
-  const [criticalThreshold, setCriticalThreshold] = useState<number | ''>('');
-
-  // SKU combinations generated from variant groups (cartesian product)
-  interface SKUCombination {
-    id: string;
-    option_ids: string[]; // ordered by group order
-    option_map: Record<string, string>; // groupId -> optionId
-    price: number | '';
-    compare_price?: number | '';
-    quantity: number | '';
-    length?: number | '';
-    width?: number | '';
-    height?: number | '';
-    weight?: number | '';
-    weight_unit?: 'g' | 'kg' | 'lb' | 'oz' | '';
-    sku_code?: string;
-    // New: per-SKU image and critical stock trigger
-    image?: File | null;
-    imagePreview?: string;
-    critical_trigger?: number | '';
-    // Whether this combination is active (seller can disable combinations)
-    is_active?: boolean;
-    // Whether this SKU is refundable (seller can toggle per-SKU)
-    refundable?: boolean;
-  }
-
-  const [skuCombinations, setSkuCombinations] = useState<SKUCombination[]>([]);
-  const [productWeight, setProductWeight] = useState<number | ''>('');
-  const [productWeightUnit, setProductWeightUnit] = useState<'g' | 'kg' | 'lb' | 'oz'>('g');
-  const [productLength, setProductLength] = useState<number | ''>('');
-  // Product-level refundable toggle (for non-variant products) - default enabled
+  
+  // Simplified variants - just a list of independent variants
+  const [variants, setVariants] = useState<Variant[]>([
+    // Initialize with one default variant using product name as title
+    {
+      id: generateId(),
+      title: productName || "Default",
+      price: '',
+      quantity: '',
+      sku_code: '',
+      weight_unit: 'g',
+      is_active: true,
+      refundable: true,
+      depreciation: {
+        originalPrice: '',
+        usagePeriod: '',
+        usageUnit: 'months',
+        depreciationRate: 10, // Default 10% depreciation rate
+        calculatedPrice: '',
+      }
+    }
+  ]);
+  
   const [productRefundable, setProductRefundable] = useState(true);
-  const [productWidth, setProductWidth] = useState<number | ''>('');
-  const [productHeight, setProductHeight] = useState<number | ''>('');
+  
   const [shippingZones, setShippingZones] = useState<ShippingZone[]>([
     { id: generateId(), name: 'Local', fee: '', freeShipping: false },
     { id: generateId(), name: 'Nearby City', fee: '', freeShipping: false },
@@ -195,258 +187,273 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
   const [isPredicting, setIsPredicting] = useState(false);
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
   const [showPrediction, setShowPrediction] = useState(false);
-  // Empty means no selection
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
 
-  const [predictionImagePreview, setPredictionImagePreview] = useState<string | null>(null);
-  const [predictionImageFile, setPredictionImageFile] = useState<File | null>(null);
   const [predictionError, setPredictionError] = useState<string | null>(null);
   const [apiResponseError, setApiResponseError] = useState<string | null>(null);
   const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(null);
   const predictionAbortController = useRef<AbortController | null>(null);
 
-  // Calculate depreciation function
-  const calculateDepreciation = useCallback((original: number, time: number, unit: 'months' | 'years') => {
-    if (!original || !time) return '';
-    
-    let years = unit === 'years' ? time : time / 12;
-    const depreciationRate = 0.20; // 20% per year
-    
-    // Calculate depreciated value: original * (1 - depreciationRate)^years
-    const depreciatedValue = original * Math.pow((1 - depreciationRate), years);
-    
-    // Round to 2 decimal places
-    return Math.max(0, parseFloat(depreciatedValue.toFixed(2)));
-  }, []);
-
-  // Update calculated price when original price or usage time changes
-  useEffect(() => {
-    if (originalPrice && usageTime) {
-      const calculated = calculateDepreciation(originalPrice, usageTime, usageUnit);
-      setCalculatedPrice(calculated);
-    } else {
-      setCalculatedPrice('');
-    }
-  }, [originalPrice, usageTime, usageUnit, calculateDepreciation]);
-
-  // Note: Prediction is image-based now. Validation is performed when an image is provided.
-
   // Handle category selection change
-const [closestMatch, setClosestMatch] = useState<{ name: string; score: number } | null>(null);
-const [appliedCategory, setAppliedCategory] = useState<Category | null>(null);
+  const [closestMatch, setClosestMatch] = useState<{ name: string; score: number } | null>(null);
+  const [appliedCategory, setAppliedCategory] = useState<Category | null>(null);
 
-const normalizeText = (s: string) => {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .join(' ');
-};
+  // Update first variant title when product name changes
+  useEffect(() => {
+    if (variants.length > 0) {
+      setVariants(prev => prev.map((variant, index) => 
+        index === 0 ? { ...variant, title: productName || "Default" } : variant
+      ));
+    }
+  }, [productName]);
 
-const tokenSimilarity = (a: string, b: string) => {
-  const ta = new Set(normalizeText(a).split(' '));
-  const tb = new Set(normalizeText(b).split(' '));
-  if (ta.size === 0 || tb.size === 0) return 0;
-  const inter = [...ta].filter(x => tb.has(x)).length;
-  const union = new Set([...ta, ...tb]).size;
-  return union === 0 ? 0 : inter / union;
-};
+  // Calculate depreciated price
+  const calculateDepreciatedPrice = (originalPrice: number, usagePeriod: number, usageUnit: string, depreciationRate: number): number => {
+    if (!originalPrice || !usagePeriod || !depreciationRate) return originalPrice;
+    
+    // Convert usage period to years for calculation
+    let years = usagePeriod;
+    if (usageUnit === 'months') {
+      years = usagePeriod / 12;
+    } else if (usageUnit === 'weeks') {
+      years = usagePeriod / 52;
+    }
+    
+    // Calculate depreciated value: original * (1 - rate/100)^years
+    const rate = depreciationRate / 100;
+    const depreciatedValue = originalPrice * Math.pow((1 - rate), years);
+    
+    // Ensure price doesn't go below 0 and round to 2 decimal places
+    return Math.max(0, Math.round(depreciatedValue * 100) / 100);
+  };
 
-const findBestCategoryMatch = (predictedName: string) => {
-  const scores = globalCategories.map((gc) => ({
-    category: gc,
-    score: tokenSimilarity(predictedName, gc.name),
-  }));
-  scores.sort((a, b) => b.score - a.score);
-  return scores[0] || null;
-};
+  // Handle depreciation field changes
+  const handleDepreciationChange = (variantId: string, field: keyof Depreciation, value: any) => {
+    setVariants(prev => prev.map(v => {
+      if (v.id === variantId) {
+        const updatedDepreciation = {
+          ...v.depreciation,
+          [field]: value
+        };
+        
+        // Calculate new price if all required fields are present
+        if (updatedDepreciation.originalPrice && 
+            updatedDepreciation.usagePeriod && 
+            updatedDepreciation.depreciationRate) {
+          
+          const calculatedPrice = calculateDepreciatedPrice(
+            Number(updatedDepreciation.originalPrice),
+            Number(updatedDepreciation.usagePeriod),
+            updatedDepreciation.usageUnit || 'months',
+            Number(updatedDepreciation.depreciationRate)
+          );
+          
+          updatedDepreciation.calculatedPrice = calculatedPrice;
+          
+          // Auto-update the variant price (read-only field)
+          return {
+            ...v,
+            depreciation: updatedDepreciation,
+            price: calculatedPrice
+          };
+        }
+        
+        return {
+          ...v,
+          depreciation: updatedDepreciation
+        };
+      }
+      return v;
+    }));
+  };
 
-const handleCategoryChange = (value: string) => {
-  console.log('Category changed to:', value);
-  
-  // Reset closest match and applied category when user manually picks
-  setClosestMatch(null);
-  setAppliedCategory(null);
+  const normalizeText = (s: string) => {
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .join(' ');
+  };
 
-  // If value is empty/none, clear the selection
-  if (value === "none" || value === "") {
-    setSelectedCategoryName("");
-    return;
-  }
+  const tokenSimilarity = (a: string, b: string) => {
+    const ta = new Set(normalizeText(a).split(' '));
+    const tb = new Set(normalizeText(b).split(' '));
+    if (ta.size === 0 || tb.size === 0) return 0;
+    const inter = [...ta].filter(x => tb.has(x)).length;
+    const union = new Set([...ta, ...tb]).size;
+    return union === 0 ? 0 : inter / union;
+  };
 
-  // If user selects "Others", set canonical name 'others' (no custom input allowed)
-  if (value === 'Others' || value === 'others') {
-    setSelectedCategoryName('others');
-    return;
-  }
+  const findBestCategoryMatch = (predictedName: string) => {
+    const scores = globalCategories.map((gc) => ({
+      category: gc,
+      score: tokenSimilarity(predictedName, gc.name),
+    }));
+    scores.sort((a, b) => b.score - a.score);
+    return scores[0] || null;
+  };
 
-  // For model classes or category names, we store the name directly
-  setSelectedCategoryName(value);
-};
+  const handleCategoryChange = (value: string) => {
+    console.log('Category changed to:', value);
+    
+    setClosestMatch(null);
+    setAppliedCategory(null);
 
-  // Image-based prediction using the cover image (or provided file)
- // Image-based prediction using the cover image
-const predictCategoryFromImage = async (file?: File) => {
-  // Delegate to analyzeImages for single-file support
-  const files = file ? [file] : (mainMedia.map(m => m.file).filter(Boolean) as File[]);
-  await analyzeImages(files);
-};
-
-// Analyze multiple images and aggregate predictions
-const analyzeImages = async (files: File[]) => {
-  const imageFiles = (files || []).filter(f => f && f.type && f.type.startsWith('image/')) as File[];
-  if (imageFiles.length === 0) {
-    alert('No image files to analyze.');
-    return;
-  }
-
-  // Abort any previous request
-  if (predictionAbortController.current) {
-    predictionAbortController.current.abort();
-  }
-  predictionAbortController.current = new AbortController();
-
-  setIsPredicting(true);
-  setPredictionError(null);
-
-  try {
-    // Send all images in parallel
-    const requests = imageFiles.map((file) => {
-      const form = new FormData();
-      form.append('image', file);
-      return AxiosInstance.post('/predict/', form, {
-        signal: predictionAbortController.current!.signal,
-      });
-    });
-
-    const settled = await Promise.allSettled(requests);
-    const successful = settled.filter(s => s.status === 'fulfilled') as PromiseFulfilledResult<any>[];
-
-    if (successful.length === 0) {
-      setPredictionError('All image predictions failed');
+    // Ensure value is a string before comparisons
+    const stringValue = String(value).trim();
+    
+    if (stringValue === "none" || stringValue === "") {
+      setSelectedCategoryName("");
       return;
     }
 
-    // Aggregate per-class probabilities
-    const aggregateScores: Record<string, number> = {};
-    let count = 0;
+    if (stringValue === 'Others' || stringValue === 'others') {
+      setSelectedCategoryName('others');
+      return;
+    }
 
-    successful.forEach(res => {
-      const data = res.value?.data;
-      if (!data || !data.success || !data.predictions) return;
-      const p = data.predictions;
+    setSelectedCategoryName(stringValue);
+  };  
 
-      if (p.all_predictions && typeof p.all_predictions === 'object') {
-        Object.entries(p.all_predictions).forEach(([cls, score]) => {
-          aggregateScores[cls] = (aggregateScores[cls] || 0) + Number(score || 0);
+  // Image-based prediction
+  const analyzeImages = async (files: File[]) => {
+    const imageFiles = (files || []).filter(f => f && f.type && f.type.startsWith('image/')) as File[];
+    if (imageFiles.length === 0) {
+      alert('No image files to analyze.');
+      return;
+    }
+
+    if (predictionAbortController.current) {
+      predictionAbortController.current.abort();
+    }
+    predictionAbortController.current = new AbortController();
+
+    setIsPredicting(true);
+    setPredictionError(null);
+
+    try {
+      const requests = imageFiles.map((file) => {
+        const form = new FormData();
+        form.append('image', file);
+        return AxiosInstance.post('/predict/', form, {
+          signal: predictionAbortController.current!.signal,
         });
-      } else if (p.predicted_class) {
-        const cls = String(p.predicted_class);
-        const conf = Number(p.confidence || 1);
-        aggregateScores[cls] = (aggregateScores[cls] || 0) + conf;
+      });
+
+      const settled = await Promise.allSettled(requests);
+      const successful = settled.filter(s => s.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+
+      if (successful.length === 0) {
+        setPredictionError('All image predictions failed');
+        return;
       }
 
-      count += 1;
-    });
+      const aggregateScores: Record<string, number> = {};
+      let count = 0;
 
-    if (count === 0) {
-      setPredictionError('No valid predictions received');
-      return;
-    }
+      successful.forEach(res => {
+        const data = res.value?.data;
+        if (!data || !data.success || !data.predictions) return;
+        const p = data.predictions;
 
-    // Average the scores
-    Object.keys(aggregateScores).forEach(k => { aggregateScores[k] = aggregateScores[k] / count; });
+        if (p.all_predictions && typeof p.all_predictions === 'object') {
+          Object.entries(p.all_predictions).forEach(([cls, score]) => {
+            aggregateScores[cls] = (aggregateScores[cls] || 0) + Number(score || 0);
+          });
+        } else if (p.predicted_class) {
+          const cls = String(p.predicted_class);
+          const conf = Number(p.confidence || 1);
+          aggregateScores[cls] = (aggregateScores[cls] || 0) + conf;
+        }
 
-    // Sort classes
-    const sorted = Object.entries(aggregateScores).sort((a, b) => b[1] - a[1]);
-    const topClass = sorted[0]?.[0] || 'Unknown';
-    const topConfidence = Number(sorted[0]?.[1] || 0);
+        count += 1;
+      });
 
-    const mapped: PredictionResult = {
-      success: true,
-      predicted_category: {
-        category_name: topClass,
-        confidence: topConfidence,
-        category_uuid: null
-      } as any,
-      alternative_categories: sorted.slice(1, 4).map(s => ({ category_name: s[0], confidence: s[1] })),
-      all_categories: globalCategories ? globalCategories.map((c: Category) => ({ uuid: c.id, name: c.name, id: c.id })) : [],
-      all_predictions: Object.fromEntries(sorted),
-      predicted_class: topClass,
-      analyzed_images_count: count
-    };
-
-    setPredictionResult(mapped);
-    setShowPrediction(true);
-
-    // Auto-select matching category by name when an exact match exists
-    if (mapped.predicted_category?.category_name && globalCategories) {
-      const predictedName = mapped.predicted_category.category_name.toLowerCase();
-      const found = globalCategories.find((gc: any) => gc.name.toLowerCase() === predictedName);
-      if (found) {
-        setSelectedCategoryName(found.name);
-        console.log('Auto-selected category:', found.name);
+      if (count === 0) {
+        setPredictionError('No valid predictions received');
+        return;
       }
-    }
 
-  } catch (error: any) {
-    if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
-      console.log('Prediction request cancelled');
-      return;
-    }
+      Object.keys(aggregateScores).forEach(k => { aggregateScores[k] = aggregateScores[k] / count; });
 
-    let errorMsg = 'Prediction request failed';
-    if (error.response?.status === 404) {
-      errorMsg = 'Prediction endpoint not found. Make sure the Django endpoint is configured.';
-    } else if (error.response?.data?.error) {
-      errorMsg = error.response.data.error;
-    } else if (error.message) {
-      errorMsg = error.message;
-    }
+      const sorted = Object.entries(aggregateScores).sort((a, b) => b[1] - a[1]);
+      const topClass = sorted[0]?.[0] || 'Unknown';
+      const topConfidence = Number(sorted[0]?.[1] || 0);
 
-    setPredictionError(errorMsg);
-    console.error('Image prediction failed:', error);
-  } finally {
-    setIsPredicting(false);
-    predictionAbortController.current = null;
-  }
-};
+      const mapped: PredictionResult = {
+        success: true,
+        predicted_category: {
+          category_name: topClass,
+          confidence: topConfidence,
+          category_uuid: null
+        } as any,
+        alternative_categories: sorted.slice(1, 4).map(s => ({ category_name: s[0], confidence: s[1] })),
+        all_categories: globalCategories ? globalCategories.map((c: Category) => ({ uuid: c.id, name: c.name, id: c.id })) : [],
+        all_predictions: Object.fromEntries(sorted),
+        predicted_class: topClass,
+        analyzed_images_count: count
+      };
+
+      setPredictionResult(mapped);
+      setShowPrediction(true);
+
+      if (mapped.predicted_category?.category_name && globalCategories) {
+        const predictedName = mapped.predicted_category.category_name.toLowerCase();
+        const found = globalCategories.find((gc: any) => gc.name.toLowerCase() === predictedName);
+        if (found) {
+          setSelectedCategoryName(found.name);
+          console.log('Auto-selected category:', found.name);
+        }
+      }
+
+    } catch (error: any) {
+      if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
+        console.log('Prediction request cancelled');
+        return;
+      }
+
+      let errorMsg = 'Prediction request failed';
+      if (error.response?.status === 404) {
+        errorMsg = 'Prediction endpoint not found. Make sure the Django endpoint is configured.';
+      } else if (error.response?.data?.error) {
+        errorMsg = error.response.data.error;
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+
+      setPredictionError(errorMsg);
+      console.error('Image prediction failed:', error);
+    } finally {
+      setIsPredicting(false);
+      predictionAbortController.current = null;
+    }
+  };
 
   // Clean up on component unmount
   useEffect(() => {
     return () => {
-      // Abort any pending request
       if (predictionAbortController.current) {
         predictionAbortController.current.abort();
       }
       
-      // Revoke object URLs to prevent memory leaks
       mainMedia.forEach(item => {
         URL.revokeObjectURL(item.preview);
       });
       
-      variantGroups.forEach(group => {
-        group.options.forEach(option => {
-          if (option.imagePreview) {
-            URL.revokeObjectURL(option.imagePreview);
-          }
-        });
+      variants.forEach(variant => {
+        if (variant.imagePreview) {
+          URL.revokeObjectURL(variant.imagePreview);
+        }
       });
     };
   }, []);
-
-
-
-
 
   const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
     setShippingZones(prev => prev.map(zone => 
       zone.id === zoneId ? { ...zone, fee } : zone
     ));
   };
-
-
 
   // --- MAIN MEDIA HANDLERS ---
   const handleMainMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -471,23 +478,17 @@ const analyzeImages = async (files: File[]) => {
       type: file.type.startsWith('image/') ? 'image' : 'video' as 'image' | 'video'
     }));
 
-    // Store files in ref
     mediaFilesRef.current = [...mediaFilesRef.current, ...filesToAdd];
     setMainMedia(prev => [...prev, ...newMedia]);
 
-    // Automatically analyze newly added image files (not videos)
     const newImageFiles = filesToAdd.filter(f => f.type.startsWith('image/'));
     if (newImageFiles.length > 0) {
-      // Run analysis asynchronously (do not block UI)
       analyzeImages(newImageFiles as File[]).catch((err) => console.error('Auto image analysis failed:', err));
     }
   };
 
   const removeMainMedia = (index: number) => {
-    // Revoke the object URL
     URL.revokeObjectURL(mainMedia[index].preview);
-    
-    // Remove from ref
     mediaFilesRef.current = mediaFilesRef.current.filter((_, i) => i !== index);
     setMainMedia(prev => prev.filter((_, i) => i !== index));
   };
@@ -506,212 +507,63 @@ const analyzeImages = async (files: File[]) => {
     }));
   };
 
-  // --- VARIANT HANDLERS ---
-  const addVariantGroup = () => {
-    setVariantGroups(prev => [
+  // --- SIMPLIFIED VARIANT HANDLERS ---
+  const addVariant = () => {
+    setVariants(prev => [
       ...prev,
       {
         id: generateId(),
-        title: "Color",
-        options: [
-          {
-            id: generateId(),
-            title: "Red",
-          },
-        ],
-      },
+        title: `Variant ${prev.length + 1}`,
+        price: '',
+        quantity: '',
+        sku_code: '',
+        weight_unit: 'g',
+        is_active: true,
+        refundable: productRefundable,
+        depreciation: {
+          originalPrice: '',
+          usagePeriod: '',
+          usageUnit: 'months',
+          depreciationRate: 10,
+          calculatedPrice: '',
+        }
+      }
     ]);
   };
 
-  const removeVariantGroup = (groupId: string) => {
-    // Clean up image previews
-    const group = variantGroups.find(g => g.id === groupId);
-    if (group) {
-      group.options.forEach(option => {
-        if (option.imagePreview) {
-          URL.revokeObjectURL(option.imagePreview);
-        }
-      });
-    }
-    
-    setVariantGroups(prev => prev.filter(group => group.id !== groupId));
-  };
-
-  const updateVariantGroupTitle = (groupId: string, newTitle: string) => {
-    setVariantGroups(prev => prev.map(group => 
-      group.id === groupId ? { ...group, title: newTitle } : group
-    ));
-  };
-
-  const addOption = (groupId: string, title: string) => {
-    const newOption: VariantOption = {
-      id: generateId(),
-      title: title.trim(),
-    };
-    
-    setVariantGroups(prev => prev.map(group => 
-      group.id === groupId
-        ? { ...group, options: [...group.options, newOption] }
-        : group
-    ));
-  };
-
-  // Create cartesian product of variant options and preserve existing SKU edits
-  const generateSkuCombinations = useCallback(() => {
-    if (variantGroups.length === 0) {
-      setSkuCombinations([]);
+  const removeVariant = (variantId: string) => {
+    // Don't allow removing the last variant - products must have at least one variant
+    if (variants.length <= 1) {
+      alert("Products must have at least one variant. You cannot remove the last variant.");
       return;
     }
-
-    // Build arrays of options per group
-    const arrays = variantGroups.map(g => g.options.map(o => ({ id: o.id, title: o.title })));
-
-    // Cartesian product
-    let combos: any[] = [];
-    arrays.forEach((arr, idx) => {
-      if (idx === 0) {
-        combos = arr.map((a) => ({ option_ids: [a.id], option_map: { [variantGroups[0].id]: a.id }, price: calculatedPrice || '', quantity: productQuantity || '' }));
-      } else {
-        const groupId = variantGroups[idx].id;
-        const newCombos: any[] = [];
-        combos.forEach(existing => {
-          arr.forEach((a) => {
-            newCombos.push({
-              option_ids: [...existing.option_ids, a.id],
-              option_map: { ...existing.option_map, [groupId]: a.id },
-              price: existing.price ?? calculatedPrice ?? '',
-              compare_price: existing.compare_price ?? undefined,
-              quantity: existing.quantity ?? productQuantity ?? '',
-              length: existing.length ?? productLength ?? '',
-              width: existing.width ?? productWidth ?? '',
-              height: existing.height ?? productHeight ?? '',
-              weight: existing.weight ?? productWeight ?? '',
-              weight_unit: existing.weight_unit ?? productWeightUnit ?? '',
-            });
-          });
-        });
-        combos = newCombos;
-      }
-    });
-
-    // Preserve existing skus where option_ids match (order-independent) by using a functional update
-    setSkuCombinations((prev) => {
-      const preserved = combos.map((c) => {
-        const ids = c.option_ids.slice().sort().join('|');
-        const found = prev.find(s => s.option_ids.slice().sort().join('|') === ids);
-        return {
-          id: found?.id || generateId(),
-          option_ids: c.option_ids,
-          option_map: c.option_map,
-          price: found?.price ?? c.price ?? calculatedPrice ?? '',
-          compare_price: found?.compare_price ?? c.compare_price ?? undefined,
-          quantity: found?.quantity ?? c.quantity ?? 0,
-          length: found?.length ?? c.length ?? productLength ?? '',
-          width: found?.width ?? c.width ?? productWidth ?? '',
-          height: found?.height ?? c.height ?? productHeight ?? '',
-          weight: found?.weight ?? c.weight ?? productWeight ?? '',
-          weight_unit: found?.weight_unit ?? c.weight_unit ?? productWeightUnit ?? '',
-          sku_code: found?.sku_code || '',
-          // Preserve per-sku fields if user already edited them
-          image: found?.image ?? undefined,
-          imagePreview: found?.imagePreview ?? undefined,
-          critical_trigger: found?.critical_trigger ?? '',
-          is_active: found?.is_active ?? true,
-          // refundable: preserve existing value, default to product-level toggle or enabled
-          refundable: found?.refundable ?? productRefundable ?? true,
-        } as SKUCombination;
-      });
-
-      // Avoid unnecessary updates: if arrays are length-equal and every id matches prev, keep prev to prevent rerender loops
-      if (preserved.length === prev.length && preserved.every((p, i) => p.id === prev[i].id && p.price === prev[i].price && p.quantity === prev[i].quantity && p.sku_code === prev[i].sku_code)) {
-        return prev;
-      }
-
-      return preserved;
-    });
-  }, [variantGroups, calculatedPrice]);
-
-  useEffect(() => {
-    generateSkuCombinations();
-  }, [variantGroups, calculatedPrice]);
-
-
-
-  const removeOption = (groupId: string, optionId: string) => {
-    // Clean up image preview if exists
-    const group = variantGroups.find(g => g.id === groupId);
-    if (group) {
-      const option = group.options.find(o => o.id === optionId);
-      if (option?.imagePreview) {
-        URL.revokeObjectURL(option.imagePreview);
-      }
+    
+    const variant = variants.find(v => v.id === variantId);
+    if (variant?.imagePreview) {
+      URL.revokeObjectURL(variant.imagePreview);
     }
     
-    setVariantGroups(prev => prev.map(group => 
-      group.id === groupId
-        ? { ...group, options: group.options.filter(option => option.id !== optionId) }
-        : group
+    setVariants(prev => prev.filter(v => v.id !== variantId));
+  };
+
+  const updateVariantField = (variantId: string, field: keyof Variant, value: any) => {
+    // Prevent manual updates to price field
+    if (field === 'price') {
+      return;
+    }
+    
+    setVariants(prev => prev.map(v => 
+      v.id === variantId ? { ...v, [field]: value } : v
     ));
   };
 
-  const updateOption = (groupId: string, optionId: string, field: keyof VariantOption, value: string | number | boolean | File | null) => {
-    setVariantGroups(prev => prev.map(group => {
-      if (group.id !== groupId) return group;
-      
-      return {
-        ...group,
-        options: group.options.map(option => {
-          if (option.id !== optionId) return option;
-          
-          let updatedOption = { ...option };
-          
-          if (field === 'title') {
-            updatedOption.title = value as string;
-          } else if (field === 'image') {
-            // Clean up previous image preview
-            if (updatedOption.imagePreview) {
-              URL.revokeObjectURL(updatedOption.imagePreview);
-            }
-            
-            updatedOption.image = value as File | null;
-            if (value instanceof File) {
-              updatedOption.imagePreview = URL.createObjectURL(value);
-            } else if (value === null) {
-              updatedOption.imagePreview = undefined;
-            }
-          }
-          
-          return updatedOption;
-        }),
-      };
-    }));
-
-    // small delay to allow variantGroups to update before regenerating skus
-    setTimeout(() => generateSkuCombinations(), 50);
-  };
-
-  // Update SKU fields (price / quantity / sku_code)
-  const updateSkuField = (skuId: string, field: keyof SKUCombination, value: any) => {
-    setSkuCombinations(prev => prev.map(sku => sku.id === skuId ? { ...sku, [field]: value } : sku));
-  };
-
-
-
-  // Handle SKU image upload (per combination)
-  const handleSkuImageChange = (skuId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVariantImageChange = (variantId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type.startsWith('image/')) {
       const preview = URL.createObjectURL(file);
-      setSkuCombinations(prev => prev.map(sku => sku.id === skuId ? { ...sku, image: file, imagePreview: preview } : sku));
-    }
-    e.target.value = '';
-  };
-
-  // Handle variant image upload
-  const handleVariantImageChange = (groupId: string, optionId: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      updateOption(groupId, optionId, 'image', file);
+      setVariants(prev => prev.map(v => 
+        v.id === variantId ? { ...v, image: file, imagePreview: preview } : v
+      ));
     }
     e.target.value = '';
   };
@@ -722,13 +574,24 @@ const analyzeImages = async (files: File[]) => {
     
     if (!formRef.current) return;
     
-    // Create FormData
+    // Validate that at least one variant exists
+    if (variants.length === 0) {
+      alert("Products must have at least one variant.");
+      return;
+    }
+    
+    // Validate that each variant has price (from depreciation) and quantity
+    const invalidVariants = variants.filter(v => !v.price || v.price === '' || !v.quantity || v.quantity === '' || v.quantity === 0);
+    if (invalidVariants.length > 0) {
+      alert("All variants must have a price (from depreciation calculation) and quantity set.");
+      return;
+    }
+    
     const formData = new FormData();
     
     // Add basic form fields
     const basicFormData = new FormData(formRef.current);
     for (const [key, value] of basicFormData.entries()) {
-      // Don't add file inputs that we'll handle separately
       if (key !== 'media_files' && !key.startsWith('variant_image_')) {
         if (value instanceof File) {
           formData.append(key, value);
@@ -738,11 +601,9 @@ const analyzeImages = async (files: File[]) => {
       }
     }
     
-    // Map selected model class name to actual category ID or send name for server to create
-if (selectedCategoryName?.trim()) {
-      // Exact match first
+    // Add category
+    if (selectedCategoryName?.trim()) {
       let match = globalCategories.find(gc => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
-      // Fuzzy match fallback (lower threshold)
       if (!match) {
         const best = findBestCategoryMatch(selectedCategoryName);
         if (best && best.score >= 0.25) {
@@ -752,91 +613,64 @@ if (selectedCategoryName?.trim()) {
 
       if (match) {
         formData.append('category_admin_id', match.id);
-        // Keep UI consistent
         setSelectedCategoryName(match.name);
       } else {
-        // Send the suggested name to backend so it can create a global category if needed
         const nameToSend = (selectedCategoryName && selectedCategoryName.toLowerCase() === 'others') ? 'others' : selectedCategoryName;
         formData.append('category_admin_name', nameToSend);
       }
     }
     
-    // Add media files from ref
+    // Add media files
     mediaFilesRef.current.forEach(file => {
       if (file.size > 0) {
         formData.append('media_files', file);
       }
     });
     
-    // Add variant data
-    if (variantGroups.length > 0) {
-      variantGroups.forEach((group) => {
-        formData.append(`variant_group_${group.id}_title`, group.title);
-        group.options.forEach((option) => {
-          formData.append(`variant_group_${group.id}_option_${option.id}_title`, option.title);
+    // Add simplified variants payload with depreciation data
+    const variantsPayload = variants.map(v => {
+      return {
+        id: v.id,
+        title: v.title,
+        price: v.price, // This is the calculated price from depreciation
+        compare_price: v.compare_price,
+        quantity: v.quantity,
+        length: v.length,
+        width: v.width,
+        height: v.height,
+        weight: v.weight,
+        weight_unit: v.weight_unit,
+        sku_code: v.sku_code,
+        critical_trigger: v.critical_trigger || null,
+        refundable: v.refundable ?? productRefundable,
+        is_refundable: v.refundable ?? productRefundable,
+        is_active: v.is_active ?? true,
+        // Depreciation data
+        original_price: v.depreciation.originalPrice,
+        usage_period: v.depreciation.usagePeriod,
+        usage_unit: v.depreciation.usageUnit,
+        depreciation_rate: v.depreciation.depreciationRate,
+        // Attributes can be added later for filtering
+        attributes: v.attributes || {},
+      };
+    });
 
-          // Add variant image if exists
-          if (option.image) {
-            formData.append(`variant_image_${group.id}_${option.id}`, option.image);
-          }
-        });
-      });
+    console.log('Submitting variants payload:', variantsPayload);
+    formData.append('variants', JSON.stringify(variantsPayload));
 
-      // Add auto-generated SKU combinations (if any)
-      if (skuCombinations.length > 0) {
-        const skusPayload = skuCombinations.map(s => {
-          const refundableFlag = !!s.refundable;
-          return {
-            id: s.id,
-            option_ids: s.option_ids,
-            price: s.price,
-            compare_price: s.compare_price,
-            quantity: s.quantity,
-            length: s.length,
-            width: s.width,
-            height: s.height,
-            weight: s.weight,
-            weight_unit: s.weight_unit,
-            sku_code: s.sku_code,
-            critical_trigger: s.critical_trigger || null,
-            // Send both keys for backend normalization
-            refundable: refundableFlag,
-            is_refundable: refundableFlag,
-            is_active: s.is_active ?? true,
-          };
-        });
-
-        // Debug: log skus payload before appending
-        console.log('Submitting SKUs payload (seller):', skusPayload);
-
-        formData.append('skus', JSON.stringify(skusPayload));
-
-        // Append any SKU images as files with keys sku_image_<skuId>
-        skuCombinations.forEach(s => {
-          if (s.image) {
-            formData.append(`sku_image_${s.id}`, s.image);
-          }
-        });
+    // Append variant images
+    variants.forEach(v => {
+      if (v.image) {
+        formData.append(`variant_image_${v.id}`, v.image);
       }
-    }
-    
-    // Add shipping zones
-    shippingZones.forEach((zone) => {
-      formData.append(`shipping_zone_${zone.id}_name`, zone.name);
-      formData.append(`shipping_zone_${zone.id}_fee`, String(zone.fee));
-      formData.append(`shipping_zone_${zone.id}_freeShipping`, String(zone.freeShipping));
     });
     
-    // Debug: log FormData entries being submitted
-    try {
-      for (const [k, v] of (formData as any).entries()) {
-        const preview = (v && typeof v === 'object' && 'name' in v) ? { name: v.name, size: v.size, type: v.type } : String(v).slice(0, 200);
-        console.log('Submitting form entry ->', k, preview);
-      }
-    } catch (err) {
-      console.log('Failed to iterate formData entries:', err);
+    
+    // Add shop ID
+    if (selectedShop) {
+      formData.append('shop', selectedShop.id);
     }
-
+    
     // Submit using fetcher
     fetcher.submit(formData, {
       method: 'post',
@@ -845,7 +679,6 @@ if (selectedCategoryName?.trim()) {
   };
 
   // --- RENDER ---
-  // Show API errors returned by the action (client-side feedback)
   useEffect(() => {
     if (fetcher && (fetcher.data)) {
       console.log('fetcher.data changed:', fetcher.data);
@@ -860,11 +693,9 @@ if (selectedCategoryName?.trim()) {
     }
   }, [fetcher.data]);
 
-  // Auto-apply model suggestion to the category dropdown when prediction result updates
   useEffect(() => {
     if (predictionResult && predictionResult.predicted_category) {
       const predictedName = predictionResult.predicted_category.category_name || '';
-      // Auto-set when user hasn't chosen a category yet or current selection is 'others'
       if (!selectedCategoryName?.trim() || selectedCategoryName === 'others') {
         console.log('Auto-applying predicted category to dropdown:', predictedName);
         setSelectedCategoryName(predictedName);
@@ -872,34 +703,45 @@ if (selectedCategoryName?.trim()) {
     }
   }, [predictionResult, selectedCategoryName]);
 
+  // Helper function to safely format price
+  const formatPrice = (price: number | ''): string => {
+    if (typeof price === 'number') {
+      return price.toFixed(2);
+    }
+    return '0.00';
+  };
+
   return (
     <form 
       ref={formRef}
       onSubmit={handleSubmit}
       className="space-y-6"
     >
-      {/* Hidden input for the calculated price to be submitted */}
-      <input type="hidden" name="price" value={calculatedPrice} />
-      
-      {/* Progress Steps */}
+      {/* Progress Steps - Orange accents only on active/completed steps */}
       <div className="flex items-center space-x-2 mb-6">
-        <Badge variant="default" className="px-3 py-1">1. Basic Info</Badge>
+        <Badge className="px-3 py-1 bg-orange-500 text-white">1. Basic Info</Badge>
         <div className="h-0.5 w-8 bg-gray-300"></div>
-        <Badge variant={mainMedia.length > 0 ? "default" : "outline"} className="px-3 py-1">2. Media</Badge>
+        <Badge variant={mainMedia.length > 0 ? "default" : "outline"} 
+          className={`px-3 py-1 ${mainMedia.length > 0 ? 'bg-orange-500 text-white' : 'border-gray-300 text-gray-600'}`}>
+          2. Media
+        </Badge>
         <div className="h-0.5 w-8 bg-gray-300"></div>
-        <Badge variant={showVariants ? "default" : "outline"} className="px-3 py-1">3. Variations</Badge>
+        <Badge className="px-3 py-1 bg-orange-500 text-white">3. Variants</Badge>
         <div className="h-0.5 w-8 bg-gray-300"></div>
-        <Badge variant={calculatedPrice ? "default" : "outline"} className="px-3 py-1">4. Pricing & Stock</Badge>
+        <Badge variant={variants.every(v => v.price && v.quantity) ? "default" : "outline"} 
+          className={`px-3 py-1 ${variants.every(v => v.price && v.quantity) ? 'bg-orange-500 text-white' : 'border-gray-300 text-gray-600'}`}>
+          4. Details
+        </Badge>
       </div>
 
-      {/* STEP 1: Basic Information */}
-      <div className="rounded-lg border bg-white p-6 shadow-sm">
+      {/* STEP 1: Basic Information - Clean white with subtle orange accent */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-3 mb-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100">
-            <Sparkles className="h-4 w-4 text-purple-600" />
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100">
+            <Sparkles className="h-4 w-4 text-orange-600" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold">Basic Information</h2>
+            <h2 className="text-xl font-semibold text-gray-800">Basic Information</h2>
             <p className="text-sm text-gray-500">Start with product details. AI will suggest a category when you upload images.</p>
           </div>
         </div>
@@ -908,7 +750,7 @@ if (selectedCategoryName?.trim()) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Product Name */}
             <div className="space-y-2">
-              <Label htmlFor="name" className="flex items-center gap-1">
+              <Label htmlFor="name" className="flex items-center gap-1 text-gray-700">
                 Product Name *
                 <Info className="h-3 w-3 text-gray-400" />
               </Label>
@@ -920,21 +762,21 @@ if (selectedCategoryName?.trim()) {
                 placeholder="Enter product name"
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
-                className={showPrediction && predictionResult ? 'border-green-500' : ''}
+                className="border-gray-300 focus:border-orange-500 focus:ring-orange-500"
               />
               {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
             </div>
 
             {/* Condition */}
             <div className="space-y-2">
-              <Label htmlFor="condition">Condition *</Label>
+              <Label htmlFor="condition" className="text-gray-700">Condition *</Label>
               <Select 
                 name="condition" 
                 required
                 value={productCondition}
                 onValueChange={setProductCondition}
               >
-                <SelectTrigger className={showPrediction && predictionResult ? 'border-green-500' : ''}>
+                <SelectTrigger className="border-gray-300 focus:border-orange-500 focus:ring-orange-500">
                   <SelectValue placeholder="Select condition" />
                 </SelectTrigger>
                 <SelectContent>
@@ -951,7 +793,7 @@ if (selectedCategoryName?.trim()) {
 
           {/* Description */}
           <div className="space-y-2">
-            <Label htmlFor="description" className="flex items-center gap-1">
+            <Label htmlFor="description" className="flex items-center gap-1 text-gray-700">
               Description *
               <Info className="h-3 w-3 text-gray-400" />
             </Label>
@@ -963,50 +805,54 @@ if (selectedCategoryName?.trim()) {
               placeholder="Describe your product in detail..."
               value={productDescription}
               onChange={(e) => setProductDescription(e.target.value)}
-              className={showPrediction && predictionResult ? 'border-green-500' : ''}
+              className="border-gray-300 focus:border-orange-500 focus:ring-orange-500"
             />
             {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
           </div>
         </div>
       </div>
 
-      {/* STEP 2: Product Media & Category */}
-      <div className="rounded-lg border bg-white p-6 shadow-sm">
+      {/* STEP 2: Product Media & Category - Clean white with subtle orange accent */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100">
-              <ImageIcon className="h-4 w-4 text-blue-600" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100">
+              <ImageIcon className="h-4 w-4 text-orange-600" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold">Product Media</h2>
+              <h2 className="text-xl font-semibold text-gray-800">Product Media</h2>
               <p className="text-sm text-gray-500">Upload images/videos (max 9). First image is the cover.</p>
             </div>
           </div>
-          <Badge variant="outline" className="text-xs">
+          <Badge variant="outline" className="border-gray-300 text-gray-600">
             {mainMedia.length}/9
           </Badge>
         </div>
 
         <div className="space-y-6">
           {/* Media Upload Area */}
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-orange-400 transition-colors">
             <div className="text-center">
               <Upload className="h-10 w-10 text-gray-400 mx-auto mb-3" />
-              <Label htmlFor="main-media-upload" className="flex justify-center flex-col text-center cursor-pointer">
-                <div className="text-xs text-gray-500 mb-4">Images or videos (max 9 files, 50MB each)</div>
-                <Button type="button" variant="outline" size="sm">
-                  Choose Files
-                </Button>
-              </Label>
-              <Input 
+              <div className="text-xs text-gray-500 mb-4">Images or videos (max 9 files, 50MB each)</div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                className="border-gray-300 text-gray-700 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-300"
+              >
+                Choose Files
+              </Button>
+              <Input
                 ref={fileInputRef}
-                type="file" 
-                id="main-media-upload" 
+                type="file"
+                id="main-media-upload"
                 name="media_files"
-                multiple 
-                accept="image/*,video/*" 
+                multiple
+                accept="image/*,video/*"
                 onChange={handleMainMediaChange}
-                className="hidden" 
+                className="hidden"
               />
             </div>
           </div>
@@ -1015,7 +861,7 @@ if (selectedCategoryName?.trim()) {
           {mainMedia.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
               {mainMedia.map((item, index) => (
-                <div key={index} className="relative group aspect-square border rounded-lg overflow-hidden">
+                <div key={index} className="relative group aspect-square border border-gray-200 rounded-lg overflow-hidden">
                   {item.type === 'image' ? (
                     <img
                       src={item.preview}
@@ -1028,7 +874,7 @@ if (selectedCategoryName?.trim()) {
                     </div>
                   )}
                   {index === 0 && (
-                    <Badge className="absolute top-2 left-2 bg-black/80 text-white px-1.5 py-0.5 text-[10px]">
+                    <Badge className="absolute top-2 left-2 bg-orange-500 text-white px-1.5 py-0.5 text-[10px]">
                       Cover
                     </Badge>
                   )}
@@ -1036,7 +882,7 @@ if (selectedCategoryName?.trim()) {
                     type="button"
                     variant="destructive"
                     size="sm"
-                    className="absolute top-2 right-2 h-6 w-6 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute top-2 right-2 h-6 w-6 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600"
                     onClick={() => removeMainMedia(index)}
                   >
                     <X className="h-3 w-3" />
@@ -1045,7 +891,7 @@ if (selectedCategoryName?.trim()) {
               ))}
               
               {mainMedia.length < 9 && (
-                <Label htmlFor="main-media-upload" className="cursor-pointer flex flex-col items-center justify-center aspect-square border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50 transition-colors p-4">
+                <Label htmlFor="main-media-upload" className="cursor-pointer flex flex-col items-center justify-center aspect-square border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition-colors p-4">
                   <Plus className="h-6 w-6 mb-2" />
                   <span className="text-xs text-center">Add More</span>
                 </Label>
@@ -1053,19 +899,19 @@ if (selectedCategoryName?.trim()) {
             </div>
           )}
 
-          {/* AI Analysis Section */}
-          <Collapsible className="border rounded-lg">
-            <CollapsibleTrigger className="flex w-full items-center justify-between p-4">
+          {/* AI Analysis Section - Orange only for interactive elements */}
+          <Collapsible className="border border-gray-200 rounded-lg">
+            <CollapsibleTrigger className="flex w-full items-center justify-between p-4 hover:bg-orange-50 transition-colors">
               <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-purple-600" />
-                <span className="font-medium">AI Category Prediction</span>
+                <Sparkles className="h-4 w-4 text-orange-600" />
+                <span className="font-medium text-gray-700">AI Category Prediction</span>
                 {predictionResult && (
-                  <Badge variant="outline" className="ml-2 bg-green-50 text-green-700">
+                  <Badge variant="outline" className="ml-2 bg-orange-100 text-orange-700 border-orange-300">
                     Ready
                   </Badge>
                 )}
               </div>
-              {predictionResult ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              {predictionResult ? <ChevronUp className="h-4 w-4 text-gray-500" /> : <ChevronDown className="h-4 w-4 text-gray-500" />}
             </CollapsibleTrigger>
             <CollapsibleContent className="px-4 pb-4">
               <div className="space-y-4">
@@ -1077,9 +923,10 @@ if (selectedCategoryName?.trim()) {
                     size="sm" 
                     onClick={() => analyzeImages(mainMedia.map(m => m.file))} 
                     disabled={mainMedia.length === 0 || isPredicting}
+                    className="border-gray-300 text-gray-700 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-300"
                   >
                     {isPredicting ? (
-                      <Loader2 className="h-3 w-3 animate-spin mr-2" />
+                      <Loader2 className="h-3 w-3 animate-spin mr-2 text-orange-600" />
                     ) : null}
                     {isPredicting ? 'Analyzing...' : 'Analyze Images'}
                   </Button>
@@ -1087,9 +934,9 @@ if (selectedCategoryName?.trim()) {
 
                 {/* Category Selection */}
                 <div className="space-y-2">
-                  <Label htmlFor="category">Category</Label>
+                  <Label htmlFor="category" className="text-gray-700">Category</Label>
                   <Select value={selectedCategoryName} onValueChange={handleCategoryChange}>
-                    <SelectTrigger>
+                    <SelectTrigger className="border-gray-300 focus:border-orange-500 focus:ring-orange-500">
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1113,16 +960,16 @@ if (selectedCategoryName?.trim()) {
                   )}
 
                   {predictionResult && !predictionError && (
-                    <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
-                      <div className="font-medium text-sm text-green-800 mb-1">AI Suggestion</div>
-                      <div className="text-sm text-green-700">
+                    <div className="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-md">
+                      <div className="font-medium text-sm text-orange-800 mb-1">AI Suggestion</div>
+                      <div className="text-sm text-orange-700">
                         <span className="font-medium">{predictionResult.predicted_category?.category_name}</span>
-                        <span className="ml-2 text-green-600">
+                        <span className="ml-2 text-orange-600">
                           ({Math.round((predictionResult.predicted_category?.confidence || 0) * 100)}% confidence)
                         </span>
                       </div>
                       {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
-                        <div className="text-xs text-green-600 mt-1">
+                        <div className="text-xs text-orange-600 mt-1">
                           Also considered: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
                         </div>
                       )}
@@ -1141,435 +988,394 @@ if (selectedCategoryName?.trim()) {
         </div>
       </div>
 
-      {/* STEP 3: Variations */}
-      <div className="rounded-lg border bg-white p-6 shadow-sm">
+      {/* STEP 3: Variants - Orange used for important elements */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100">
-              <Package className="h-4 w-4 text-amber-600" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100">
+              <Package className="h-4 w-4 text-orange-600" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold">Product Variations</h2>
-              <p className="text-sm text-gray-500">Add options like size, color, etc. (Optional)</p>
+              <h2 className="text-xl font-semibold text-gray-800">Product Variants</h2>
+              <p className="text-sm text-gray-500">Each product must have at least one variant with price and stock</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="variant-toggle" className="text-sm">Enable Variations</Label>
-            <Switch
-              id="variant-toggle"
-              checked={showVariants}
-              onCheckedChange={(checked) => {
-                setShowVariants(checked);
-                if (checked && variantGroups.length === 0) {
-                  addVariantGroup();
-                }
-              }}
-            />
-          </div>
+          <Badge className="bg-orange-100 text-orange-800 border-orange-300">
+            Required
+          </Badge>
         </div>
 
-        {showVariants ? (
-          <div className="space-y-6">
-            {/* Variant Groups */}
-            {variantGroups.map((group) => (
-              <div key={group.id} className="border rounded-lg p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="text"
-                      value={group.title}
-                      onChange={(e) => updateVariantGroupTitle(group.id, e.target.value)}
-                      placeholder="e.g., Size, Color"
-                      className="w-32 font-medium"
-                    />
+        <div className="space-y-6">
+          {/* Variants List */}
+          {variants.map((variant, index) => (
+            <div 
+              key={variant.id} 
+              className="border border-gray-200 rounded-xl p-5 bg-white hover:border-orange-300 transition-colors relative"
+            >
+              {/* Variant Header */}
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-orange-100 text-orange-700 font-semibold text-sm">
+                    {index + 1}
                   </div>
-                  <Button 
-                    type="button" 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => removeVariantGroup(group.id)}
-                    disabled={variantGroups.length === 1}
-                    className="h-8 w-8 p-0 text-gray-500 hover:text-red-500"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div>
+                    <span className="font-medium text-gray-800">Variant {index + 1}</span>
+                    {index === 0 && (
+                      <Badge className="ml-3 bg-orange-100 text-orange-700 border-0">
+                        Default
+                      </Badge>
+                    )}
+                  </div>
                 </div>
-                
-                <div className="space-y-3">
-                  <div className="text-sm font-medium text-gray-700">Options:</div>
-                  <div className="flex flex-wrap gap-2">
-                    {group.options.map((option) => (
-                      <div key={option.id} className="flex items-center gap-1 bg-gray-100 rounded-full px-3 py-1">
-                        <span className="text-sm">{option.title}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => removeVariant(variant.id)}
+                  disabled={variants.length === 1}
+                  className="h-8 w-8 p-0 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Image Preview Section */}
+              <div className="mb-5">
+                <div className="flex items-center gap-4">
+                  {/* Image Upload Area */}
+                  <div 
+                    className={`relative w-24 h-24 border-2 rounded-lg overflow-hidden transition-all ${
+                      variant.imagePreview 
+                        ? 'border-orange-400 shadow-sm' 
+                        : 'border-dashed border-gray-300 hover:border-orange-400 bg-gray-50'
+                    }`}
+                  >
+                    {variant.imagePreview ? (
+                      <>
+                        <img 
+                          src={variant.imagePreview} 
+                          alt={variant.title}
+                          className="w-full h-full object-cover"
+                        />
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="destructive"
                           size="sm"
-                          onClick={() => removeOption(group.id, option.id)}
-                          className="h-4 w-4 p-0 hover:bg-transparent"
+                          className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600"
+                          onClick={() => {
+                            URL.revokeObjectURL(variant.imagePreview!);
+                            updateVariantField(variant.id, 'image', null);
+                            updateVariantField(variant.id, 'imagePreview', undefined);
+                          }}
                         >
                           <X className="h-3 w-3" />
                         </Button>
-                      </div>
-                    ))}
-                    <input
-                      type="text"
-                      className="flex-1 min-w-[120px] text-sm border-0 focus:outline-none focus:ring-0 px-3 py-1"
-                      placeholder="Add option..."
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          if (e.currentTarget.value.trim()) {
-                            addOption(group.id, e.currentTarget.value.trim());
-                            e.currentTarget.value = '';
-                          }
-                        }
-                      }}
-                      onBlur={(e) => {
-                        if (e.target.value.trim()) {
-                          addOption(group.id, e.target.value.trim());
-                          e.target.value = '';
-                        }
-                      }}
-                    />
+                      </>
+                    ) : (
+                      <label 
+                        htmlFor={`variant-image-${variant.id}`}
+                        className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-orange-100 transition-colors"
+                      >
+                        <ImageIcon className="h-6 w-6 text-gray-400 mb-1" />
+                        <span className="text-[10px] text-gray-500">Upload</span>
+                        <Input
+                          id={`variant-image-${variant.id}`}
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => handleVariantImageChange(variant.id, e)}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-700 mb-1">Variant Image</p>
+                    <p className="text-xs text-gray-500">
+                      Upload a specific image for this variant
+                    </p>
                   </div>
                 </div>
               </div>
-            ))}
 
-            <Button 
-              type="button" 
-              onClick={addVariantGroup}
-              variant="outline"
-              className="w-full"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Another Option Type
-            </Button>
-
-            {/* Generated SKU Combinations */}
-            {skuCombinations.length > 0 && (
-              <div className="mt-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-medium">Generated Combinations ({skuCombinations.length})</h3>
-                  <Badge variant="outline">{skuCombinations.length} SKUs</Badge>
-                </div>
-                <div className="overflow-x-auto border rounded-lg">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-3 py-2 font-medium text-left">Combination</th>
-                        <th className="px-3 py-2 font-medium text-left">Price</th>
-                        <th className="px-3 py-2 font-medium text-left">Qty</th>
-                        <th className="px-3 py-2 font-medium text-left">SKU</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {skuCombinations.slice(0, 5).map((sku) => (
-                        <tr key={sku.id} className="border-t">
-                          <td className="px-3 py-2">
-                            {variantGroups.map((g) => (
-                              <span key={g.id} className="text-xs bg-gray-100 rounded px-2 py-1 mr-1">
-                                {g.options.find(o => o.id === sku.option_map[g.id])?.title}
-                              </span>
-                            ))}
-                          </td>
-                          <td className="px-3 py-2">
-                            <Input 
-                              type="number" 
-                              min="0" 
-                              step="0.01" 
-                              value={sku.price || ''} 
-                              onChange={(e) => updateSkuField(sku.id, 'price', parseFloat(e.target.value) || '')}
-                              className="w-24"
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            <Input 
-                              type="number" 
-                              min="0" 
-                              value={sku.quantity || ''} 
-                              onChange={(e) => updateSkuField(sku.id, 'quantity', parseInt(e.target.value) || '')}
-                              className="w-20"
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            <Input 
-                              type="text" 
-                              value={sku.sku_code || ''} 
-                              onChange={(e) => updateSkuField(sku.id, 'sku_code', e.target.value)}
-                              placeholder="SKU"
-                              className="w-32"
-                            />
-                          </td>
-                        </tr>
-                      ))}
-                      {skuCombinations.length > 5 && (
-                        <tr className="border-t bg-gray-50">
-                          <td colSpan={4} className="px-3 py-2 text-center text-sm text-gray-500">
-                            + {skuCombinations.length - 5} more combinations
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
-            <Package className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-            <h3 className="font-medium text-gray-700 mb-1">No Variations</h3>
-            <p className="text-sm text-gray-500 mb-4">Enable variations to add options like size, color, etc.</p>
-            <Button 
-              type="button" 
-              variant="outline"
-              onClick={() => {
-                setShowVariants(true);
-                if (variantGroups.length === 0) {
-                  addVariantGroup();
-                }
-              }}
-            >
-              Enable Variations
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* STEP 4: Pricing & Stock */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Pricing Section */}
-        <div className="rounded-lg border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
-              <Calculator className="h-4 w-4 text-green-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold">Pricing</h2>
-              <p className="text-sm text-gray-500">Set original price and usage time for depreciation calculation</p>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            {/* Original Price */}
-            <div className="space-y-2">
-              <Label htmlFor="original_price" className="flex items-center gap-1">
-                Original Price *
-                <Info className="h-3 w-3 text-gray-400" />
-              </Label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">$</span>
-                <Input
-                  type="number"
-                  id="original_price"
-                  name="original_price"
-                  required
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={originalPrice}
-                  onChange={(e) => setOriginalPrice(parseFloat(e.target.value) || '')}
-                  className="pl-8"
-                />
-              </div>
-              {errors.price && <p className="text-sm text-red-600">{errors.price}</p>}
-            </div>
-
-            {/* Usage Time */}
-            <div className="space-y-2">
-              <Label htmlFor="usage_time" className="flex items-center gap-1">
-                Usage Time *
-                <Info className="h-3 w-3 text-gray-400" />
-              </Label>
-              <div className="flex gap-3">
-                <div className="flex-1">
+              {/* Main Variant Fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                {/* Variant Title */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                    Title <span className="text-red-500">*</span>
+                  </Label>
                   <Input
-                    type="number"
-                    id="usage_time"
-                    name="usage_time"
+                    type="text"
+                    value={variant.title}
+                    onChange={(e) => updateVariantField(variant.id, 'title', e.target.value)}
+                    placeholder="e.g., Small, Red, etc."
+                    className={`h-9 text-sm border-gray-300 focus:border-orange-500 focus:ring-orange-500 ${index === 0 ? 'bg-gray-50' : ''}`}
                     required
-                    min="0"
-                    step="0.1"
-                    placeholder="0"
-                    value={usageTime}
-                    onChange={(e) => setUsageTime(parseFloat(e.target.value) || '')}
+                    readOnly={index === 0}
                   />
                 </div>
-                <Select value={usageUnit} onValueChange={(value: 'months' | 'years') => setUsageUnit(value)}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="months">Months</SelectItem>
-                    <SelectItem value="years">Years</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <p className="text-xs text-gray-500">How long the product has been used</p>
-            </div>
-
-            {/* Calculated Price */}
-            <div className="space-y-2">
-              <Label htmlFor="calculated_price">Calculated Selling Price</Label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">$</span>
-                <Input
-                  type="number"
-                  id="calculated_price"
-                  name="calculated_price_display"
-                  readOnly
-                  value={calculatedPrice}
-                  className="pl-8 bg-gray-50 font-medium"
-                />
-                <Badge 
-                  variant={calculatedPrice ? "default" : "outline"} 
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2"
-                >
-                  {calculatedPrice ? 'Auto-calculated' : 'Enter values'}
-                </Badge>
-              </div>
-            </div>
-
-
-            {/* Refundable Toggle */}
-            <div className="flex items-center justify-between pt-4 border-t">
-              <div className="space-y-1">
-                <div className="font-medium">Refundable</div>
-                <div className="text-sm text-gray-500">Allow customers to request refunds</div>
-              </div>
-              <Switch 
-                id="product-refundable" 
-                checked={productRefundable} 
-                onCheckedChange={setProductRefundable} 
-              />
-            </div>
-
-            {/* Hidden inputs for FormData */}
-            <input type="hidden" name="price" value={calculatedPrice} />
-            <input type="hidden" name="usage_unit" value={usageUnit} />
-            <input type="hidden" name="refundable" value={productRefundable ? 'true' : 'false'} />
-          </div>
-        </div>
-
-        {/* Stock Section */}
-        <div className="rounded-lg border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100">
-              <Package className="h-4 w-4 text-red-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold">Stock & Inventory</h2>
-              <p className="text-sm text-gray-500">Set quantity and low stock alerts</p>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            {/* Quantity */}
-            <div className="space-y-2">
-              <Label htmlFor="quantity" className="flex items-center gap-1">
-                Quantity *
-                <Info className="h-3 w-3 text-gray-400" />
-              </Label>
-              <Input
-                type="number"
-                id="quantity"
-                name="quantity"
-                required
-                min="0"
-                placeholder="0"
-                value={productQuantity}
-                onChange={(e) => setProductQuantity(parseInt(e.target.value) || '')}
-              />
-              {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
-            </div>
-
-            {/* Critical Stock Alert */}
-            <div className="border rounded-lg p-4">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <div className="font-medium flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-amber-600" />
-                    Low Stock Alert
-                  </div>
-                  <div className="text-sm text-gray-500">Get notified when stock is low</div>
-                </div>
-                <Switch
-                  checked={enableCriticalTrigger}
-                  onCheckedChange={setEnableCriticalTrigger}
-                />
-              </div>
-
-              {enableCriticalTrigger && (
-                <div className="space-y-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="critical_threshold">Alert When Stock Reaches</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        id="critical_threshold"
-                        name="critical_threshold"
-                        min="1"
-                        placeholder="e.g., 5"
-                        value={criticalThreshold}
-                        onChange={(e) => setCriticalThreshold(parseInt(e.target.value) || '')}
-                        className="flex-1"
-                      />
-                      <span className="text-sm text-gray-500">units</span>
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    You'll receive a notification when stock falls to or below this level
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Weight & Dimensions */}
-            <div className="space-y-4 pt-4 border-t">
-              <div className="font-medium">Shipping Details</div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="weight">Weight</Label>
-                  <div className="flex gap-2">
+                
+                {/* Final Price - DISABLED and auto-calculated */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                    Final Price <span className="text-red-500">*</span>
+                    {variant.depreciation.calculatedPrice && (
+                      <Badge variant="outline" className="text-[10px] bg-orange-100 text-orange-700 border-orange-300">
+                        Auto
+                      </Badge>
+                    )}
+                  </Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">₱</span>
                     <Input
                       type="number"
-                      id="weight"
-                      name="weight"
                       min="0"
                       step="0.01"
-                      placeholder="0.00"
-                      value={productWeight}
-                      onChange={(e) => setProductWeight(parseFloat(e.target.value) || '')}
-                      className="flex-1"
+                      value={variant.price}
+                      disabled
+                      placeholder={variant.depreciation.calculatedPrice ? "Auto-calculated" : "Fill fields"}
+                      className={`h-9 text-sm pl-8 bg-gray-50 cursor-not-allowed border-gray-300 ${
+                        variant.depreciation.calculatedPrice ? 'text-orange-600 font-medium' : 'text-gray-400'
+                      }`}
                     />
-                    <Select value={productWeightUnit} onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => setProductWeightUnit(value)}>
-                      <SelectTrigger className="w-20">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="g">g</SelectItem>
-                        <SelectItem value="kg">kg</SelectItem>
-                        <SelectItem value="lb">lb</SelectItem>
-                        <SelectItem value="oz">oz</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <input type="hidden" name="weight_unit" value={productWeightUnit} />
                   </div>
                 </div>
+                
+                {/* Quantity */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                    Stock <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={variant.quantity}
+                    onChange={(e) => updateVariantField(variant.id, 'quantity', parseInt(e.target.value) || '')}
+                    placeholder="0"
+                    className="h-9 text-sm border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                    required
+                  />
+                </div>
+                
               </div>
+
+              {/* Depreciation Section - Orange background to highlight this important feature */}
+              <div className="mb-4 p-4 bg-orange-50 rounded-lg border border-orange-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <Calculator className="h-4 w-4 text-orange-600" />
+                  <span className="text-sm font-medium text-orange-800">Price Depreciation Calculator</span>
+                  <Badge variant="outline" className="text-[10px] bg-white text-orange-700 border-orange-300">
+                    Auto-calculates final price
+                  </Badge>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Original Price */}
+                  <div className="space-y-1">
+                    <Label className="text-xs font-medium text-orange-700">Original Price</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">₱</span>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={variant.depreciation.originalPrice || ''}
+                        onChange={(e) => handleDepreciationChange(variant.id, 'originalPrice', parseFloat(e.target.value) || '')}
+                        placeholder="Original price"
+                        className="h-8 text-xs pl-8 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Usage Period */}
+                  <div className="space-y-1">
+                    <Label className="text-xs font-medium text-orange-700">Usage Period</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={variant.depreciation.usagePeriod || ''}
+                        onChange={(e) => handleDepreciationChange(variant.id, 'usagePeriod', parseFloat(e.target.value) || '')}
+                        placeholder="Amount"
+                        className="h-8 text-xs flex-1 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                      />
+                      <Select 
+                        value={variant.depreciation.usageUnit} 
+                        onValueChange={(value: 'weeks' | 'months' | 'years') => 
+                          handleDepreciationChange(variant.id, 'usageUnit', value)
+                        }
+                      >
+                        <SelectTrigger className="w-20 h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="weeks">Weeks</SelectItem>
+                          <SelectItem value="months">Months</SelectItem>
+                          <SelectItem value="years">Years</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Depreciation Rate */}
+                  <div className="space-y-1">
+                    <Label className="text-xs font-medium text-orange-700">Rate (%)</Label>
+                    <div className="relative">
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={variant.depreciation.depreciationRate || ''}
+                        onChange={(e) => handleDepreciationChange(variant.id, 'depreciationRate', parseFloat(e.target.value) || '')}
+                        placeholder="e.g., 10"
+                        className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+                    </div>
+                  </div>
+
+                  {/* Calculated Result */}
+                  <div className="space-y-1">
+                    <Label className="text-xs font-medium text-orange-700">Calculated</Label>
+                    <div className="h-8 px-3 bg-white border border-gray-300 rounded-md flex items-center">
+                      {variant.depreciation.calculatedPrice ? (
+                        <span className="text-sm font-medium text-orange-600">
+                          ₱{formatPrice(variant.depreciation.calculatedPrice)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">Fill fields</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Info */}
+                {variant.depreciation.originalPrice && variant.depreciation.usagePeriod && variant.depreciation.depreciationRate && (
+                  <div className="mt-3 text-xs text-gray-600 bg-white p-2 rounded border border-orange-200">
+                    <span className="font-medium">Calculation:</span> ₱{Number(variant.depreciation.originalPrice).toFixed(2)} × 
+                    (1 - {variant.depreciation.depreciationRate}% ÷ 100)^{variant.depreciation.usagePeriod} {variant.depreciation.usageUnit} = 
+                    <span className="font-bold text-orange-600 ml-1">₱{formatPrice(variant.depreciation.calculatedPrice || 0)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Status Toggles - Subtle orange for active states */}
+              <div className="flex items-center gap-6 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id={`active-${variant.id}`}
+                    checked={variant.is_active !== false}
+                    onCheckedChange={(checked) => updateVariantField(variant.id, 'is_active', checked)}
+                    className="data-[state=checked]:bg-orange-500"
+                  />
+                  <Label htmlFor={`active-${variant.id}`} className="text-sm text-gray-700 cursor-pointer">
+                    Active
+                  </Label>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id={`refundable-${variant.id}`}
+                    checked={variant.refundable !== false}
+                    onCheckedChange={(checked) => updateVariantField(variant.id, 'refundable', checked)}
+                    className="data-[state=checked]:bg-orange-500"
+                  />
+                  <Label htmlFor={`refundable-${variant.id}`} className="text-sm text-gray-700 cursor-pointer">
+                    Refundable
+                  </Label>
+                </div>
+              </div>
+
+              {/* Advanced Options Accordion */}
+              <Collapsible>
+                <CollapsibleTrigger className="flex items-center gap-2 text-sm text-gray-600 hover:text-orange-600 transition-colors group">
+                  <div className="p-1 rounded-full group-hover:bg-orange-100">
+                    <ChevronDown className="h-4 w-4" />
+                  </div>
+                  <span>Additional Details</span>
+                  <Badge variant="outline" className="ml-2 text-xs border-gray-300 text-gray-600">
+                    Optional
+                  </Badge>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+
+                    {/* Weight */}
+                    <div className="space-y-3">
+                      <Label className="text-xs font-medium text-gray-700 block">Weight</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={variant.weight || ''}
+                          onChange={(e) => updateVariantField(variant.id, 'weight', parseFloat(e.target.value) || '')}
+                          placeholder="0.00"
+                          className="h-8 text-xs flex-1 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                        />
+                        <Select 
+                          value={variant.weight_unit || 'g'} 
+                          onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => updateVariantField(variant.id, 'weight_unit', value)}
+                        >
+                          <SelectTrigger className="w-16 h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="g">g</SelectItem>
+                            <SelectItem value="kg">kg</SelectItem>
+                            <SelectItem value="lb">lb</SelectItem>
+                            <SelectItem value="oz">oz</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    {/* Critical Stock Alert */}
+                    <div className="space-y-3">
+                      <Label className="text-xs font-medium text-gray-700 block">Low Stock Alert</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        value={variant.critical_trigger || ''}
+                        onChange={(e) => updateVariantField(variant.id, 'critical_trigger', parseInt(e.target.value) || '')}
+                        placeholder="Alert when stock below"
+                        className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                      />
+                    </div>
+
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
+          ))}
+
+          {/* Add Variant Button - Orange outline on hover */}
+          <Button 
+            type="button" 
+            onClick={addVariant}
+            variant="outline"
+            className="w-full py-6 border-2 border-dashed border-gray-300 hover:border-orange-500 hover:bg-orange-50 text-gray-700 hover:text-orange-600 transition-colors"
+          >
+            <Plus className="h-5 w-5 mr-2" />
+            Add Another Variant
+          </Button>
+
+          {/* Variants Summary */}
+          <div className="flex items-center justify-between text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-200">
+            <span>Total Variants: {variants.length}</span>
+            <span>Total Stock: {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units</span>
           </div>
         </div>
       </div>
 
-      {/* Submit Button */}
-      <div className="sticky bottom-6 bg-white border rounded-lg shadow-lg p-6">
+      {/* Submit Button - Orange primary CTA */}
+      <div className="sticky bottom-6 bg-white border border-gray-200 rounded-lg shadow-lg p-6">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="font-medium">Ready to create your product?</div>
-            <div className="text-sm text-gray-500">
+            <div className="font-medium text-gray-800">Ready to create your product?</div>
+            <div className="text-sm text-gray-600">
               {selectedShop ? `Creating product for: ${selectedShop.name}` : 'Please create a shop first'}
             </div>
           </div>
@@ -1578,15 +1384,15 @@ if (selectedCategoryName?.trim()) {
               type="button"
               variant="outline"
               onClick={() => window.history.back()}
+              className="border-gray-300 text-gray-700 hover:bg-gray-50"
             >
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={!selectedShop || fetcher.state === 'submitting'}
-              variant="default"
+              disabled={!selectedShop || fetcher.state === 'submitting' || variants.length === 0 || variants.some(v => !v.depreciation.calculatedPrice)}
+              className="min-w-[140px] bg-orange-500 hover:bg-orange-600 text-white disabled:bg-orange-300"
               size="lg"
-              className="min-w-[140px]"
             >
               {fetcher.state === 'submitting' ? (
                 <>
@@ -1601,14 +1407,14 @@ if (selectedCategoryName?.trim()) {
         </div>
 
         {apiResponseError && (
-          <Alert variant="destructive" className="mt-4">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{apiResponseError}</AlertDescription>
+          <Alert variant="destructive" className="mt-4 border-red-200 bg-red-50">
+            <AlertCircle className="h-4 w-4 text-red-600" />
+            <AlertDescription className="text-red-700">{apiResponseError}</AlertDescription>
           </Alert>
         )}
 
         {apiResponseMessage && (
-          <Alert className="mt-4 bg-green-50 border-green-200 text-green-800">
+          <Alert className="mt-4 bg-orange-50 border-orange-200 text-orange-800">
             <AlertDescription>{apiResponseMessage}</AlertDescription>
           </Alert>
         )}

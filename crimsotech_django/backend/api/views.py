@@ -14184,17 +14184,8 @@ class SellerDashboard(viewsets.ViewSet):
             total_sales=Sum('total_amount')
         )['total_sales'] or Decimal('0.00')
         
-        # Get delivery fees for current period (from delivered orders)
-        current_period_delivery_fees = Delivery.objects.filter(
-            order__shipping_address__user__customer__owned_shops=shop,
-            delivered_at__date__range=[start_date, end_date],
-            status='delivered'
-        ).aggregate(
-            total_fees=Sum('delivery_fee')
-        )['total_fees'] or Decimal('0.00')
-        
-        # Total earnings = sales + delivery fees
-        current_period_earnings = current_period_sales + current_period_delivery_fees
+        # Since delivery_fee doesn't exist, earnings = sales only
+        current_period_earnings = current_period_sales
         
         current_period_order_count = current_period_orders.count()
         
@@ -14211,17 +14202,8 @@ class SellerDashboard(viewsets.ViewSet):
             total_sales=Sum('total_amount')
         )['total_sales'] or Decimal('0.00')
         
-        # Get delivery fees for previous period
-        previous_period_delivery_fees = Delivery.objects.filter(
-            order__shipping_address__user__customer__owned_shops=shop,
-            delivered_at__date__range=[previous_start_date, previous_end_date],
-            status='delivered'
-        ).aggregate(
-            total_fees=Sum('delivery_fee')
-        )['total_fees'] or Decimal('0.00')
-        
-        # Total earnings = sales + delivery fees
-        previous_period_earnings = previous_period_sales + previous_period_delivery_fees
+        # Since delivery_fee doesn't exist, earnings = sales only
+        previous_period_earnings = previous_period_sales
         
         previous_period_order_count = previous_period_orders.count()
         
@@ -14244,15 +14226,15 @@ class SellerDashboard(viewsets.ViewSet):
             upload_status='published',
             is_removed=False
         ).annotate(
-            # Check both product quantity and SKU quantities
+            # Check both product quantity and variant quantities
             total_quantity=Case(
-                When(skus__isnull=True, then=F('quantity')),
-                default=F('skus__quantity'),
+                When(variants__isnull=True, then=F('quantity')),
+                default=F('variants__quantity'),
                 output_field=IntegerField()
             ),
             critical_level=Case(
-                When(skus__isnull=True, then=F('critical_stock')),
-                default=F('skus__critical_trigger'),
+                When(variants__isnull=True, then=F('critical_stock')),
+                default=F('variants__critical_trigger'),
                 output_field=IntegerField()
             )
         ).filter(
@@ -14295,7 +14277,7 @@ class SellerDashboard(viewsets.ViewSet):
         
         return {
             'period_sales': float(current_period_sales),
-            'period_delivery_fees': float(current_period_delivery_fees),
+            'period_delivery_fees': 0,  # Set to 0 since field doesn't exist
             'period_earnings': float(current_period_earnings),
             'period_orders': current_period_order_count,
             'low_stock_count': low_stock_count,
@@ -14332,7 +14314,7 @@ class SellerDashboard(viewsets.ViewSet):
         ]
     
     def _get_low_stock_data(self, shop, limit=5):
-        """Get low stock products with SKU information"""
+        """Get low stock products with variant information"""
         # Get products with low stock
         low_stock_products = Product.objects.filter(
             shop=shop,
@@ -14340,38 +14322,38 @@ class SellerDashboard(viewsets.ViewSet):
             is_removed=False
         ).annotate(
             total_quantity=Case(
-                When(skus__isnull=True, then=F('quantity')),
-                default=F('skus__quantity'),
+                When(variants__isnull=True, then=F('quantity')),
+                default=F('variants__quantity'),
                 output_field=IntegerField()
             ),
             critical_level=Case(
-                When(skus__isnull=True, then=F('critical_stock')),
-                default=F('skus__critical_trigger'),
+                When(variants__isnull=True, then=F('critical_stock')),
+                default=F('variants__critical_trigger'),
                 output_field=IntegerField()
             )
         ).filter(
             Q(total_quantity__lte=F('critical_level')) & 
             Q(critical_level__isnull=False) &
             Q(total_quantity__gt=0)
-        ).prefetch_related('skus')[:limit]
+        ).prefetch_related('variants')[:limit]
         
         low_stock_items = []
         for product in low_stock_products:
-            # Get the lowest stock SKU or use product data
-            if product.skus.exists():
-                for sku in product.skus.all():
-                    if sku.quantity <= (sku.critical_trigger or 0) and sku.quantity > 0:
+            # Get the lowest stock variant or use product data
+            if product.variants.exists():
+                for variant in product.variants.all():
+                    if variant.quantity <= (variant.critical_trigger or 0) and variant.quantity > 0:
                         low_stock_items.append({
-                            'id': str(sku.id),
+                            'id': str(variant.id),
                             'product_id': str(product.id),
                             'product_name': product.name,
-                            'quantity': sku.quantity,
-                            'critical_stock': sku.critical_trigger,
-                            'sku_code': sku.sku_code,
+                            'quantity': variant.quantity,
+                            'critical_stock': variant.critical_trigger,
+                            'sku_code': variant.sku_code,
                         })
                         break
             else:
-                # Product without SKUs
+                # Product without variants
                 if product.quantity <= (product.critical_stock or 0) and product.quantity > 0:
                     low_stock_items.append({
                         'id': str(product.id),
@@ -14528,8 +14510,6 @@ class SellerDashboard(viewsets.ViewSet):
         elif diff.seconds > 60:
             minutes = diff.seconds // 60
             return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
-        else:
-            return "Just now"
 
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -14938,7 +14918,7 @@ class SellerProducts(viewsets.ModelViewSet):
         Create a new product with variants and media
         """
         # Validate required fields
-        required_fields = ["name", "description", "quantity", "price", "condition", "shop", "customer_id"]
+        required_fields = ["name", "description", "condition", "shop", "customer_id"]
         missing_fields = [f for f in required_fields if f not in request.data]
 
         if missing_fields:
@@ -14975,18 +14955,25 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": f"Cannot add more than {seller.product_limit} products. Current count: {seller.current_product_count}"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate numeric fields
+        # Check if variants are provided and not empty
+        variants_raw = request.data.get('variants')
+        if not variants_raw:
+            return Response({
+                "error": "At least one variant is required for each product"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate that variants is a non-empty list
         try:
-            quantity = int(request.data.get('quantity', 0))
-            price = float(request.data.get('price', 0))
-            
-            if quantity < 0:
-                return Response({"error": "Quantity cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
-            if price < 0:
-                return Response({"error": "Price cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
-                
-        except (ValueError, TypeError) as e:
-            return Response({"error": f"Invalid numeric value: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+            import json
+            variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+            if not isinstance(variants_list, list) or len(variants_list) == 0:
+                return Response({
+                    "error": "Products must have at least one variant"
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except:
+            return Response({
+                "error": "Invalid variants format"
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # Prepare product data
         product_data = {}
@@ -14994,10 +14981,11 @@ class SellerProducts(viewsets.ModelViewSet):
             if not hasattr(value, 'file'):
                 product_data[key] = value
         
-        # Set defaults
+        # Set defaults - CHANGED upload_status to 'draft' instead of 'published'
         product_data['status'] = product_data.get('status', 'active')
+        product_data['upload_status'] = 'draft'  # Changed from 'published' to 'draft'
         
-        # Handle refundable flag
+        # Handle refundable flag - now primarily handled at variant level
         if 'refundable' in product_data:
             product_data['is_refundable'] = str(product_data['refundable']).lower() in ('true', '1')
         elif 'is_refundable' not in product_data:
@@ -15009,19 +14997,29 @@ class SellerProducts(viewsets.ModelViewSet):
         category_admin_id = request.data.get('category_admin_id')
         category_admin_name = request.data.get('category_admin_name') or request.data.get('category_name')
 
-        if category_admin_id and category_admin_id != "none":
+        if category_admin_id and category_admin_id != "none" and category_admin_id != "undefined":
             try:
+                # Validate it's a proper UUID
                 uuid.UUID(str(category_admin_id))
-                category_admin = Category.objects.get(id=category_admin_id, shop__isnull=True)
-                product_data['category_admin'] = category_admin_id
-            except (ValueError, Category.DoesNotExist):
+                # Verify the category exists
+                if Category.objects.filter(id=category_admin_id, shop__isnull=True).exists():
+                    product_data['category_admin'] = category_admin_id
+                    logger.info(f"Using provided category ID: {category_admin_id}")
+                else:
+                    logger.warning(f"Category ID {category_admin_id} not found in database")
+                    return Response({
+                        "error": "Invalid global category selected - ID not found"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid UUID format for category_admin_id: {category_admin_id}")
                 return Response({
-                    "error": "Invalid global category selected"
+                    "error": "Invalid global category ID format"
                 }, status=status.HTTP_400_BAD_REQUEST)
                 
         elif category_admin_name and str(category_admin_name).strip().lower() not in ('none', 'null', 'undefined'):
             cat_candidate = str(category_admin_name).strip()
             try:
+                # Try to find existing category by name
                 category_obj = Category.objects.filter(
                     name__iexact=cat_candidate, 
                     shop__isnull=True
@@ -15037,7 +15035,8 @@ class SellerProducts(viewsets.ModelViewSet):
                     logger.info(f"Created new global Category: {category_obj.id} - {category_obj.name}")
                     
                 product_data['category_admin'] = str(category_obj.id)
-                
+                logger.info(f"Using category ID from name: {category_obj.id}")
+                    
             except Exception as e:
                 logger.error(f"Error handling category_admin_name: {e}")
                 return Response({
@@ -15049,6 +15048,7 @@ class SellerProducts(viewsets.ModelViewSet):
         serializer = ProductCreateSerializer(data=product_data, context={'request': request})
         
         if not serializer.is_valid():
+            logger.error(f"Serializer errors: {serializer.errors}")
             return Response({
                 "error": "Validation failed",
                 "details": serializer.errors
@@ -15076,14 +15076,16 @@ class SellerProducts(viewsets.ModelViewSet):
                     except Exception as e:
                         logger.error(f"Error creating ProductMedia: {e}")
 
-                # Process variants (SKUs) - each entry in variants list is a Variant
-                variants_raw = request.data.get('variants')
-                if variants_raw:
-                    self._process_variants(variants_raw, request.FILES, product, shop)
-
+                # Process variants with depreciation data
+                created_variants = self._process_variants(variants_raw, request.FILES, product, shop)
+                
+                # Verify at least one variant was created
+                if not created_variants or len(created_variants) == 0:
+                    raise ValidationError("Failed to create variants for the product")
+                
                 # Build response
                 return self._build_product_response(product, seller, status.HTTP_201_CREATED)
-                
+                    
         except ValidationError as e:
             return Response({
                 "error": "Validation failed",
@@ -15097,12 +15099,10 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": "Failed to create product",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 
     def _process_variants(self, variants_raw, files, product, shop):
-        """
-        Process variants data and create variant objects
-        Each variant in the list corresponds directly to a Variants model instance
-        """
+        created_variants = []
         try:
             import json
             from decimal import Decimal
@@ -15111,7 +15111,7 @@ class SellerProducts(viewsets.ModelViewSet):
             
             if not isinstance(variants_list, list):
                 logger.error("Variants data is not a list")
-                return
+                return created_variants
             
             # Process each variant/SKU directly
             for variant_data in variants_list:
@@ -15132,6 +15132,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     'allow_swap': variant_data.get('allow_swap', False),
                     'swap_type': variant_data.get('swap_type', 'direct_swap'),
                     'swap_description': variant_data.get('swap_description', ''),
+                    'critical_stock': variant_data.get('critical_stock'),
                 }
                 
                 # Handle refundable flag
@@ -15155,8 +15156,8 @@ class SellerProducts(viewsets.ModelViewSet):
                     variant_fields['refund_days'] = 0
                 
                 # Handle decimal fields
-                decimal_fields = ['price', 'compare_price', 'length', 'width', 'height', 'weight',
-                                 'minimum_additional_payment', 'maximum_additional_payment']
+                decimal_fields = ['price', 'compare_price', 'weight',
+                                'minimum_additional_payment', 'maximum_additional_payment']
                 
                 for field in decimal_fields:
                     value = variant_data.get(field)
@@ -15188,12 +15189,43 @@ class SellerProducts(viewsets.ModelViewSet):
                     except (ValueError, TypeError):
                         variant_fields['critical_trigger'] = None
                 
+                # Handle depreciation fields
+                # Original Price
+                original_price = variant_data.get('original_price')
+                if original_price not in (None, ''):
+                    try:
+                        variant_fields['original_price'] = Decimal(str(original_price))
+                    except (ValueError, TypeError, Decimal.InvalidOperation):
+                        logger.warning(f"Invalid original_price value: {original_price}")
+                
+                # Usage Period
+                usage_period = variant_data.get('usage_period')
+                if usage_period not in (None, ''):
+                    try:
+                        variant_fields['usage_period'] = float(usage_period)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid usage_period value: {usage_period}")
+                
+                # Usage Unit
+                usage_unit = variant_data.get('usage_unit')
+                if usage_unit in ['weeks', 'months', 'years']:
+                    variant_fields['usage_unit'] = usage_unit
+                
+                # Depreciation Rate
+                depreciation_rate = variant_data.get('depreciation_rate')
+                if depreciation_rate not in (None, ''):
+                    try:
+                        variant_fields['depreciation_rate'] = float(depreciation_rate)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid depreciation_rate value: {depreciation_rate}")
+                
                 # Handle variant image
                 provided_id = variant_data.get('id')
-                file_key = f"sku_image_{provided_id}" if provided_id else None
+                file_key = f"variant_image_{provided_id}" if provided_id else None
                 
                 # Create the variant
                 variant = Variants.objects.create(**variant_fields)
+                created_variants.append(variant)
                 
                 # Handle variant image after creation
                 if file_key and file_key in files:
@@ -15204,6 +15236,8 @@ class SellerProducts(viewsets.ModelViewSet):
                         logger.error(f'Failed to save variant image: {e}')
                 
                 logger.info(f"Created variant: {variant.id} for product: {product.id}")
+            
+            return created_variants
                     
         except Exception as e:
             logger.error(f"Failed to process variants payload: {e}")
@@ -15211,6 +15245,7 @@ class SellerProducts(viewsets.ModelViewSet):
             traceback.print_exc()
             raise
 
+    
     def _build_product_response(self, product, seller, status_code):
         """
         Build standardized product response with variant data
@@ -15235,17 +15270,25 @@ class SellerProducts(viewsets.ModelViewSet):
                 "swap_description": variant.swap_description,
                 "minimum_additional_payment": str(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
                 "maximum_additional_payment": str(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
-                "length": str(variant.length) if variant.length else None,
-                "width": str(variant.width) if variant.width else None,
-                "height": str(variant.height) if variant.height else None,
                 "weight": str(variant.weight) if variant.weight else None,
                 "weight_unit": variant.weight_unit,
                 "critical_trigger": variant.critical_trigger,
+                "critical_stock": variant.critical_stock,
                 "image": variant.image.url if variant.image and hasattr(variant.image, 'url') else None,
+                "original_price": str(variant.original_price) if variant.original_price else None,
+                "usage_period": variant.usage_period,
+                "usage_unit": variant.usage_unit,
+                "depreciation_rate": variant.depreciation_rate,
                 "created_at": variant.created_at.isoformat() if variant.created_at else None,
                 "updated_at": variant.updated_at.isoformat() if variant.updated_at else None,
             }
             variants_data.append(variant_data)
+
+        # Calculate aggregate values from variants for display purposes
+        total_quantity = sum(v.quantity for v in product.variants.all())
+        min_price = None
+        if product.variants.exists():
+            min_price = str(product.variants.filter(price__isnull=False).order_by('price').first().price) if product.variants.filter(price__isnull=False).exists() else None
 
         response_data = {
             "success": True,
@@ -15254,8 +15297,10 @@ class SellerProducts(viewsets.ModelViewSet):
                     "id": str(product.id),
                     "name": product.name,
                     "description": product.description,
-                    "quantity": product.quantity,
-                    "price": str(product.price),
+                    # REMOVED: quantity and price from product level
+                    # These fields no longer exist, but we can provide aggregate info
+                    "total_stock": total_quantity,
+                    "starting_price": min_price,
                     "status": product.status,
                     "upload_status": product.upload_status,
                     "condition": product.condition,
@@ -15332,24 +15377,34 @@ class SellerProducts(viewsets.ModelViewSet):
                         "swap_description": variant.swap_description,
                         "minimum_additional_payment": str(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
                         "maximum_additional_payment": str(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
-                        "length": str(variant.length) if variant.length else None,
-                        "width": str(variant.width) if variant.width else None,
-                        "height": str(variant.height) if variant.height else None,
                         "weight": str(variant.weight) if variant.weight else None,
                         "weight_unit": variant.weight_unit,
                         "critical_trigger": variant.critical_trigger,
+                        "critical_stock": variant.critical_stock,
                         "image": variant.image.url if variant.image and hasattr(variant.image, 'url') else None,
+                        "original_price": str(variant.original_price) if variant.original_price else None,
+                        "usage_period": variant.usage_period,
+                        "usage_unit": variant.usage_unit,
+                        "depreciation_rate": variant.depreciation_rate,
                         "created_at": variant.created_at.isoformat() if variant.created_at else None,
                         "updated_at": variant.updated_at.isoformat() if variant.updated_at else None,
                     }
                     variants_data.append(variant_data)
                 
+                # Calculate aggregate values from variants
+                total_quantity = sum(v.quantity for v in product.variants.all())
+                min_price = None
+                if product.variants.exists():
+                    min_price_variant = product.variants.filter(price__isnull=False).order_by('price').first()
+                    min_price = str(min_price_variant.price) if min_price_variant else None
+                
                 product_data = {
                     "id": str(product.id),
                     "name": product.name,
                     "description": product.description,
-                    "quantity": product.quantity,
-                    "price": str(product.price),
+                    # REMOVED: quantity and price from product level
+                    "total_stock": total_quantity,
+                    "starting_price": min_price,
                     "status": product.status,
                     "upload_status": product.upload_status,
                     "condition": product.condition,
@@ -15396,7 +15451,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 "message": "No seller found for this user",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-
+        
     @csrf_exempt
     @action(detail=False, methods=['post'], url_path='predict-from-image')
     def predict_category_from_image(self, request):
@@ -15556,7 +15611,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 'success': False,
                 'error': f'Image prediction failed: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
@@ -15699,7 +15754,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                             file_type=media_file.content_type
                         )
                     
-                    # Handle variants if any: accept a JSON 'variants' payload with group & option ids (personal listings)
+                    # Handle variants if any - using the new Variants model
                     variants_raw = request.data.get('variants')
                     if variants_raw:
                         try:
@@ -15709,304 +15764,58 @@ class CustomerProducts(viewsets.ModelViewSet):
                             print('Failed to parse variants payload:', e)
                             variants_list = []
 
-                        # Create variants & options and collect option images to map to SKUs
-                        option_image_files = {}
-                        # Map payload option ids -> created VariantOptions DB id
-                        option_id_map = {}
-                        for g in variants_list:
-                            group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
+                        # Create variants directly (VariantOptions model no longer exists)
+                        for variant_data in variants_list:
                             variant = Variants.objects.create(
                                 product=product,
                                 shop=None,
-                                title=g.get('title') or ''
-                            )
-                            for opt in g.get('options', []):
-                                provided_option_id = opt.get('id') or str(uuid.uuid4())
-                                vopt = VariantOptions.objects.create(
-                                    variant=variant,
-                                    title=opt.get('title') or ''
-                                )
-                                # Record mapping from provided option id to actual DB id
-                                option_id_map[str(provided_option_id)] = str(vopt.id)
-                                file_key = f"variant_image_{group_id}_{provided_option_id}"
-                                # Debug: log presence of file key and available FILES keys
-                                try:
-                                    files_keys = list(request.FILES.keys())
-                                except Exception:
-                                    files_keys = []
-                                print(f"Looking for variant file key '{file_key}' in request.FILES. Available keys: {files_keys}")
-
-                                target_key = None
-                                if file_key in request.FILES:
-                                    target_key = file_key
-                                else:
-                                    # Fallback: try match by option_id suffix if group_id mismatch occurred
-                                    for k in files_keys:
-                                        if k.endswith(f"_{option_id}") and k.startswith("variant_image_"):
-                                            target_key = k
-                                            print(f"Fallback matched variant image key '{k}' for option {option_id}")
-                                            break
-
-                                if target_key:
-                                    try:
-                                        file_obj = request.FILES[target_key]
-                                        print(f"Queued variant image for option {provided_option_id} (db id {vopt.id}): name={getattr(file_obj, 'name', None)}, size={getattr(file_obj, 'size', None)}, content_type={getattr(file_obj, 'content_type', None)}")
-                                        # Store to map for assignment to SKUs later; keep both provided id and db id
-                                        option_image_files[str(provided_option_id)] = file_obj
-                                        option_image_files[str(vopt.id)] = file_obj
-                                    except Exception as e:
-                                        print('Failed to read variant image file', e)
-
-                        # If no explicit SKUs provided, create simple SKUs per option to store images/quantities
-                        skus_raw_check = request.data.get('skus')
-                        if not skus_raw_check:
-                            try:
-                                from decimal import Decimal
-                                # For each variant group option, create a SKU with single option
-                                for g in variants_list:
-                                    for opt in g.get('options', []):
-                                        option_id = opt.get('id') or str(uuid.uuid4())
-                                        sku_refund_days = product.refund_days if getattr(product, 'refund_days', None) else (30 if product.is_refundable else 0)
-                                        sku = ProductSKU.objects.create(
-                                            product=product,
-                                            option_ids=[option_id],
-                                            option_map={g.get('title') or 'Option': opt.get('title')},
-                                            price=(Decimal(str(opt.get('price'))) if opt.get('price') not in (None, '') else None),
-                                            quantity=int(opt.get('quantity') or 0),
-                                            is_refundable=product.is_refundable,
-                                            refund_days=sku_refund_days,
-                                        )
-                                        # assign image if available
-                                        f = option_image_files.get(str(option_id))
-                                        if f:
-                                            sku.image = f
-                                            sku.save()
-                                            print(f"Auto-created SKU {sku.id} for option {option_id} and saved image {sku.image.name}")
-                            except Exception as e:
-                                print('Failed to auto-create SKUs from variants:', e)
-
-                        # Handle SKUs payload (per-variant combination config including swap)
-                        skus_raw = request.data.get('skus')
-                        if skus_raw:
-                            try:
-                                import json
-                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
-                                from decimal import Decimal
-                                # Prepare available explicit sku image keys (preserve order)
-                                try:
-                                    files_keys = list(request.FILES.keys())
-                                except Exception:
-                                    files_keys = []
-                                print(f"Incoming FILES keys (personal listing): {files_keys}")
-                                sku_file_keys = [k for k in files_keys if k.startswith('sku_image_')]
-                                print(f"Detected sku_image keys (personal listing): {sku_file_keys}")
-                                print(f"SKUs payload (personal listing): {skus_list}")
-
-                                for s in skus_list:
-                                    # Map provided option ids (which may be frontend temporary ids) to actual DB VariantOption ids
-                                    provided_oids = s.get('option_ids') or []
-                                    mapped_oids = []
-                                    for oid in provided_oids:
-                                        oid_str = str(oid)
-                                        # If option_id_map exists (from earlier variant creation), use it
-                                        if 'option_id_map' in locals() and option_id_map.get(oid_str):
-                                            mapped_oids.append(option_id_map.get(oid_str))
-                                            continue
-                                        # If oid already matches a VariantOption id, keep it
-                                        try:
-                                            if VariantOptions.objects.filter(id=oid_str).exists():
-                                                mapped_oids.append(oid_str)
-                                                continue
-                                        except Exception:
-                                            pass
-                                        # Fallback: try to find by title within this product's variants
-                                        try:
-                                            vopt = VariantOptions.objects.filter(variant__product=product, title=oid_str).first()
-                                            if vopt:
-                                                mapped_oids.append(str(vopt.id))
-                                                continue
-                                        except Exception:
-                                            pass
-                                        # As a last resort, keep the original provided value (so errors are visible)
-                                        mapped_oids.append(oid_str)
-
-                                    # Normalize refundable for this SKU payload
-                                    if 'is_refundable' in s:
-                                        ref_flag = s.get('is_refundable')
-                                    elif 'refundable' in s:
-                                        ref_flag = s.get('refundable')
-                                    else:
-                                        ref_flag = product.is_refundable if product and getattr(product, 'is_refundable', False) else False
-                                    if isinstance(ref_flag, bool):
-                                        is_refundable_val = ref_flag
-                                    else:
-                                        try:
-                                            is_refundable_val = str(ref_flag).strip().lower() in ('true', '1', 'yes', 'y')
-                                        except Exception:
-                                            is_refundable_val = False
-
-                                    sku = ProductSKU.objects.create(
-                                        product=product,
-                                        option_ids=mapped_oids,
-                                        option_map=s.get('option_map'),
-                                        price=Decimal(str(s.get('price'))) if s.get('price') not in (None, '') else None,
-                                        compare_price=(Decimal(str(s.get('compare_price'))) if s.get('compare_price') not in (None, '') else None),
-                                        quantity=int(s.get('quantity') or 0),
-                                        length=(Decimal(str(s.get('length'))) if s.get('length') not in (None, '') else None),
-                                        width=(Decimal(str(s.get('width'))) if s.get('width') not in (None, '') else None),
-                                        height=(Decimal(str(s.get('height'))) if s.get('height') not in (None, '') else None),
-                                        weight=(Decimal(str(s.get('weight'))) if s.get('weight') not in (None, '') else None),
-                                        weight_unit=s.get('weight_unit') or 'g',
-                                        sku_code=s.get('sku_code') or '',
-                                        critical_trigger=s.get('critical_trigger') if s.get('critical_trigger') not in (None, '') else None,
-                                        allow_swap=bool(s.get('allow_swap', False)),
-                                        swap_type=s.get('swap_type') or 'direct_swap',
-                                        minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
-                                        maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
-                                        swap_description=s.get('swap_description') or '',
-                                        is_refundable=is_refundable_val,
-                                        refund_days=(int(s.get('refund_days')) if s.get('refund_days') not in (None, '') else (30 if is_refundable_val else 0)),
-                                    )
-
-                                    # Attach accepted categories if provided
-                                    accepted = s.get('accepted_categories') or []
-                                    if isinstance(accepted, str):
-                                        try:
-                                            import json
-                                            accepted = json.loads(accepted)
-                                        except Exception:
-                                            accepted = []
-                                    for cat_id in accepted:
-                                        try:
-                                            cat = Category.objects.get(id=cat_id)
-                                            sku.accepted_categories.add(cat)
-                                        except Exception:
-                                            pass
-
-                                    # Save SKU image if present in FILES keyed by provided sku id OR fallback to next available sku_image_* file key
-                                    provided_id = s.get('id')
-                                    print(f"Processing personal SKU: provided_id={provided_id}, option_ids={s.get('option_ids')}")
-                                    file_key = f"sku_image_{provided_id}" if provided_id else None
-                                    assigned = False
-                                    if file_key and file_key in request.FILES:
-                                        try:
-                                            sku.image = request.FILES[file_key]
-                                            sku.save()
-                                            assigned = True
-                                            print(f"Personal SKU {sku.id} saved image from explicit key {file_key}: {sku.image.name}")
-                                        except Exception as e:
-                                            print('Failed to save personal sku image', e)
-                                    if not assigned and sku_file_keys:
-                                        next_key = sku_file_keys.pop(0)
-                                        try:
-                                            sku.image = request.FILES[next_key]
-                                            sku.save()
-                                            assigned = True
-                                            print(f"Personal SKU {sku.id} saved image from fallback key {next_key}: {sku.image.name}")
-                                        except Exception as e:
-                                            print('Failed to save personal sku image from fallback', e)
-                                    if not assigned:
-                                        try:
-                                            print(f"Attempting personal option->sku mapping using option_image_files keys: {list(option_image_files.keys())}")
-                                            oid_list = s.get('option_ids') or []
-                                            for oid in oid_list:
-                                                f = option_image_files.get(str(oid))
-                                                if f:
-                                                    sku.image = f
-                                                    sku.save()
-                                                    print(f"Personal SKU {sku.id} saved image from option {oid}: {sku.image.name}")
-                                                    break
-                                        except Exception as e:
-                                            print('Failed to map personal option image to sku', e)
-                            except Exception as e:
-                                print('Failed to parse skus payload:', e)
-                    else:
-                        # Backwards-compatible simple variant handling
-                        variant_title = request.data.get('variant_title')
-                        variant_option_title = request.data.get('variant_option_title')
-                        variant_option_quantity = request.data.get('variant_option_quantity')
-                        variant_option_price = request.data.get('variant_option_price')
-                        
-                        if variant_title and variant_option_title:
-                            variant = Variants.objects.create(
-                                product=product,
-                                shop=None,  # No shop for personal listings
-                                title=variant_title
+                                title=variant_data.get('title') or '',
+                                option_title=variant_data.get('option_title') or '',
+                                option_ids=variant_data.get('option_ids'),
+                                option_map=variant_data.get('option_map'),
+                                sku_code=variant_data.get('sku_code') or '',
+                                price=variant_data.get('price'),
+                                compare_price=variant_data.get('compare_price'),
+                                quantity=int(variant_data.get('quantity') or 0),
+                                length=variant_data.get('length'),
+                                width=variant_data.get('width'),
+                                height=variant_data.get('height'),
+                                weight=variant_data.get('weight'),
+                                weight_unit=variant_data.get('weight_unit') or 'g',
+                                critical_trigger=variant_data.get('critical_trigger'),
+                                is_refundable=variant_data.get('is_refundable', product.is_refundable),
+                                refund_days=variant_data.get('refund_days', product.refund_days),
+                                allow_swap=bool(variant_data.get('allow_swap', False)),
+                                swap_type=variant_data.get('swap_type', 'direct_swap'),
+                                minimum_additional_payment=variant_data.get('minimum_additional_payment', Decimal('0.00')),
+                                maximum_additional_payment=variant_data.get('maximum_additional_payment', Decimal('0.00')),
+                                swap_description=variant_data.get('swap_description', '')
                             )
                             
-                            VariantOptions.objects.create(
-                                variant=variant,
-                                title=variant_option_title,
-                                quantity=int(variant_option_quantity) if variant_option_quantity else 0,
-                                price=float(variant_option_price) if variant_option_price else 0
+                            # Handle variant image if present
+                            file_key = f"variant_image_{variant_data.get('id')}"
+                            if file_key in request.FILES:
+                                try:
+                                    variant.image = request.FILES[file_key]
+                                    variant.save()
+                                except Exception as e:
+                                    print('Failed to save variant image', e)
+                    else:
+                        # Backwards-compatible simple variant handling - create a single variant
+                        variant_title = request.data.get('variant_title', 'Default')
+                        variant_option_title = request.data.get('variant_option_title', 'Default')
+                        
+                        if variant_title:
+                            Variants.objects.create(
+                                product=product,
+                                shop=None,
+                                title=variant_title,
+                                option_title=variant_option_title,
+                                price=product.price,
+                                quantity=product.quantity,
+                                is_refundable=product.is_refundable,
+                                refund_days=product.refund_days
                             )
-
-                    # Handle SKUs payload (per-variant combination config including swap)
-                    skus_raw = request.data.get('skus')
-                    if skus_raw:
-                        try:
-                            import json
-                            skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
-                            from decimal import Decimal
-                            for s in skus_list:
-                                # Parse refundable flag
-                                ref_flag = s.get('is_refundable') if 'is_refundable' in s else s.get('refundable', False)
-                                if isinstance(ref_flag, bool):
-                                    is_refundable_val = ref_flag
-                                else:
-                                    try:
-                                        is_refundable_val = str(ref_flag).strip().lower() in ('true', '1', 'yes', 'y')
-                                    except Exception:
-                                        is_refundable_val = False
-
-                                sku = ProductSKU.objects.create(
-                                    product=product,
-                                    option_ids=s.get('option_ids'),
-                                    option_map=s.get('option_map'),
-                                    price=Decimal(str(s.get('price'))) if s.get('price') not in (None, '') else None,
-                                    compare_price=(Decimal(str(s.get('compare_price'))) if s.get('compare_price') not in (None, '') else None),
-                                    quantity=int(s.get('quantity') or 0),
-                                    length=(Decimal(str(s.get('length'))) if s.get('length') not in (None, '') else None),
-                                    width=(Decimal(str(s.get('width'))) if s.get('width') not in (None, '') else None),
-                                    height=(Decimal(str(s.get('height'))) if s.get('height') not in (None, '') else None),
-                                    weight=(Decimal(str(s.get('weight'))) if s.get('weight') not in (None, '') else None),
-                                    weight_unit=s.get('weight_unit') or 'g',
-                                    sku_code=s.get('sku_code') or '',
-                                    critical_trigger=s.get('critical_trigger') if s.get('critical_trigger') not in (None, '') else None,
-                                    allow_swap=bool(s.get('allow_swap', False)),
-                                    swap_type=s.get('swap_type') or 'direct_swap',
-                                    minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
-                                    maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
-                                    swap_description=s.get('swap_description') or '',
-                                    is_refundable=is_refundable_val,
-                                    refund_days=(int(s.get('refund_days')) if s.get('refund_days') not in (None, '') else (30 if is_refundable_val else 0)),
-                                )
-
-                                # Attach accepted categories if provided
-                                accepted = s.get('accepted_categories') or []
-                                if isinstance(accepted, str):
-                                    try:
-                                        import json
-                                        accepted = json.loads(accepted)
-                                    except Exception:
-                                        accepted = []
-                                for cat_id in accepted:
-                                    try:
-                                        cat = Category.objects.get(id=cat_id)
-                                        sku.accepted_categories.add(cat)
-                                    except Exception:
-                                        pass
-
-                                # Save SKU image if present in FILES
-                                file_key = f"sku_image_{s.get('id') or sku.id}"
-                                if file_key in request.FILES:
-                                    try:
-                                        sku.image = request.FILES[file_key]
-                                        sku.save()
-                                    except Exception as e:
-                                        print('Failed to save sku image', e)
-                        except Exception as e:
-                            print('Failed to parse skus payload:', e)
 
                     # Return same format as get_product_list
                     return Response({
@@ -16066,10 +15875,10 @@ class CustomerProducts(viewsets.ModelViewSet):
             
         try:
             customer = Customer.objects.get(customer_id=user_id)
-            # Prefetch variants and variant options to avoid N+1 queries
+            # Prefetch variants to avoid N+1 queries
             # Only get personal listings (no shop)
             queryset = Product.objects.filter(customer=customer, shop__isnull=True)\
-                .prefetch_related('variants_set__variantoptions_set')\
+                .prefetch_related('variants')\
                 .order_by('-created_at')
             
             # Build response manually like in create method
@@ -16077,21 +15886,31 @@ class CustomerProducts(viewsets.ModelViewSet):
             for product in queryset:
                 # Build variants data
                 variants_data = []
-                # Get all variants for this product
-                for variant in product.variants_set.all():
+                for variant in product.variants.all():
                     variant_data = {
                         "id": str(variant.id),
                         "title": variant.title,
-                        "options": []
+                        "option_title": variant.option_title,
+                        "sku_code": variant.sku_code,
+                        "price": str(variant.price) if variant.price else None,
+                        "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                        "quantity": variant.quantity,
+                        "length": str(variant.length) if variant.length else None,
+                        "width": str(variant.width) if variant.width else None,
+                        "height": str(variant.height) if variant.height else None,
+                        "weight": str(variant.weight) if variant.weight else None,
+                        "weight_unit": variant.weight_unit,
+                        "critical_trigger": variant.critical_trigger,
+                        "is_refundable": variant.is_refundable,
+                        "refund_days": variant.refund_days,
+                        "allow_swap": variant.allow_swap,
+                        "swap_type": variant.swap_type,
+                        "minimum_additional_payment": str(variant.minimum_additional_payment),
+                        "maximum_additional_payment": str(variant.maximum_additional_payment),
+                        "swap_description": variant.swap_description,
+                        "image": variant.image.url if variant.image else None,
+                        "created_at": variant.created_at.isoformat() if variant.created_at else None,
                     }
-                    # Get all options for this variant
-                    for option in variant.variantoptions_set.all():
-                        variant_data["options"].append({
-                            "id": str(option.id),
-                            "title": option.title,
-                            "quantity": option.quantity,
-                            "price": str(option.price)
-                        })
                     variants_data.append(variant_data)
                 
                 product_data = {
@@ -16134,7 +15953,8 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "message": "No customer found for this user",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-        
+
+
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
 
@@ -16166,11 +15986,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             ),
             Prefetch(
                 'variants_set',
-                queryset=Variants.objects.all().prefetch_related('variantoptions_set')
-            ),
-            Prefetch(
-                'skus',
-                queryset=ProductSKU.objects.filter(is_active=True).prefetch_related('accepted_categories')
+                queryset=Variants.objects.filter(is_active=True)
             )
         )
 
@@ -16200,16 +16016,12 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             ),
             Prefetch(
                 'variants_set',
-                queryset=Variants.objects.all().prefetch_related('variantoptions_set')
-            ),
-            Prefetch(
-                'skus',
-                queryset=ProductSKU.objects.filter(is_active=True).prefetch_related('accepted_categories')
+                queryset=Variants.objects.filter(is_active=True)
             )
         )
     
     def retrieve(self, request, pk=None):
-        """Return a single product with SKU images mapped to variant options"""
+        """Return a single product with variant images mapped to variant options"""
         try:
             product = self.get_detail_queryset().get(pk=pk)
         except Product.DoesNotExist:
@@ -16233,28 +16045,28 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 if media.get('file_data'):
                     media['file_data'] = convert_s3_to_public_url(media['file_data'])
         
-        # Manually enhance variant options with SKU images and price info
-        if data.get('variants') and data.get('skus'):
-            # Build a map of option_id -> list of SKUs containing that option
-            option_skus_map = {}
-            for sku in product.skus.filter(is_active=True):
-                for option_id in (sku.option_ids or []):
+        # Manually enhance variant options with variant images and price info
+        if data.get('variants') and data.get('variants_set'):
+            # Build a map of option_id -> list of variants containing that option
+            option_variants_map = {}
+            for variant in product.variants_set.filter(is_active=True):
+                for option_id in (variant.option_ids or []):
                     option_id_str = str(option_id)
-                    if option_id_str not in option_skus_map:
-                        option_skus_map[option_id_str] = []
-                    option_skus_map[option_id_str].append(sku)
+                    if option_id_str not in option_variants_map:
+                        option_variants_map[option_id_str] = []
+                    option_variants_map[option_id_str].append(variant)
             
-            # Enhance each variant option with data from SKUs
+            # Enhance each variant option with data from variants
             for variant_group in data['variants']:
                 for option in variant_group.get('options', []):
                     option_id = option['id']
                     
-                    # Find SKUs containing this option
-                    skus_for_option = option_skus_map.get(option_id, [])
+                    # Find variants containing this option
+                    variants_for_option = option_variants_map.get(option_id, [])
                     
-                    if skus_for_option:
+                    if variants_for_option:
                         # Get price range
-                        prices = [float(sku.price) for sku in skus_for_option if sku.price]
+                        prices = [float(variant.price) for variant in variants_for_option if variant.price]
                         if prices:
                             min_price = min(prices)
                             max_price = max(prices)
@@ -16264,19 +16076,19 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                                 option['price'] = f"₱{min_price:.2f} - ₱{max_price:.2f}"
                         
                         # Get total stock
-                        total_stock = sum([sku.quantity for sku in skus_for_option if sku.quantity])
+                        total_stock = sum([variant.quantity for variant in variants_for_option if variant.quantity])
                         option['quantity'] = total_stock
                         
-                        # Get first SKU image for this option
-                        sku_with_image = None
-                        for sku in skus_for_option:
-                            if sku.image:
-                                sku_with_image = sku
+                        # Get first variant image for this option
+                        variant_with_image = None
+                        for variant in variants_for_option:
+                            if variant.image:
+                                variant_with_image = variant
                                 break
                         
-                        if sku_with_image and sku_with_image.image:
-                            sku_image_url = request.build_absolute_uri(sku_with_image.image.url)
-                            option['image'] = convert_s3_to_public_url(sku_image_url)
+                        if variant_with_image and variant_with_image.image:
+                            variant_image_url = request.build_absolute_uri(variant_with_image.image.url)
+                            option['image'] = convert_s3_to_public_url(variant_image_url)
                         else:
                             option['image'] = None
                     else:
@@ -16287,8 +16099,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         return Response(data)
 
     @action(detail=False, methods=['get'])
-    def get_sku_for_options(self, request):
-        """Get SKU details for specific selected options"""
+    def get_variant_for_options(self, request):
+        """Get variant details for specific selected options"""
         product_id = request.query_params.get('product_id')
         option_ids = request.query_params.getlist('option_ids[]') or []
         
@@ -16309,58 +16121,62 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'message': 'No options selected'
             })
         
-        # Find matching SKU (require exact match of option_ids)
-        matching_sku = None
-        all_skus = product.skus.filter(is_active=True)
+        # Find matching variant (require exact match of option_ids)
+        matching_variant = None
+        all_variants = product.variants_set.filter(is_active=True)
         
         # Try to find exact match first
-        for sku in all_skus:
-            sku_option_ids = [str(oid) for oid in (sku.option_ids or [])]
-            if sorted(sku_option_ids) == sorted(option_ids):
-                matching_sku = sku
+        for variant in all_variants:
+            variant_option_ids = [str(oid) for oid in (variant.option_ids or [])]
+            if sorted(variant_option_ids) == sorted(option_ids):
+                matching_variant = variant
                 break
 
         # Do not fallback to inclusive matching - only exact combinations are valid
-        # (Because ProductSKU already maps all valid combinations).
+        # (Because Variants already maps all valid combinations).
 
         
-        if matching_sku:
-            # Build response with SKU details
+        if matching_variant:
+            # Build response with variant details
             image_url = None
-            if matching_sku.image:
-                image_url = request.build_absolute_uri(matching_sku.image.url)
+            if matching_variant.image:
+                image_url = request.build_absolute_uri(matching_variant.image.url)
                 image_url = convert_s3_to_public_url(image_url)
             
             response_data = {
-                'id': str(matching_sku.id),
-                'sku_code': matching_sku.sku_code,
-                'price': float(matching_sku.price) if matching_sku.price else None,
-                'compare_price': float(matching_sku.compare_price) if matching_sku.compare_price else None,
-                'quantity': matching_sku.quantity,
+                'id': str(matching_variant.id),
+                'title': matching_variant.title,
+                'sku_code': matching_variant.sku_code,
+                'price': float(matching_variant.price) if matching_variant.price else None,
+                'compare_price': float(matching_variant.compare_price) if matching_variant.compare_price else None,
+                'quantity': matching_variant.quantity,
                 'image': image_url,
-                'length': float(matching_sku.length) if matching_sku.length else None,
-                'width': float(matching_sku.width) if matching_sku.width else None,
-                'height': float(matching_sku.height) if matching_sku.height else None,
-                'weight': float(matching_sku.weight) if matching_sku.weight else None,
-                'weight_unit': matching_sku.weight_unit,
-                'swap_type': matching_sku.swap_type,
-                'minimum_additional_payment': float(matching_sku.minimum_additional_payment) if matching_sku.minimum_additional_payment else None,
-                'maximum_additional_payment': float(matching_sku.maximum_additional_payment) if matching_sku.maximum_additional_payment else None,
-                'swap_description': matching_sku.swap_description,
+                'length': float(matching_variant.length) if matching_variant.length else None,
+                'width': float(matching_variant.width) if matching_variant.width else None,
+                'height': float(matching_variant.height) if matching_variant.height else None,
+                'weight': float(matching_variant.weight) if matching_variant.weight else None,
+                'weight_unit': matching_variant.weight_unit,
+                'swap_type': matching_variant.swap_type,
+                'minimum_additional_payment': float(matching_variant.minimum_additional_payment) if matching_variant.minimum_additional_payment else None,
+                'maximum_additional_payment': float(matching_variant.maximum_additional_payment) if matching_variant.maximum_additional_payment else None,
+                'swap_description': matching_variant.swap_description,
+                'is_refundable': matching_variant.is_refundable,
+                'refund_days': matching_variant.refund_days,
+                'allow_swap': matching_variant.allow_swap,
             }
             return Response(response_data)
         
-        # Return product-level details if no matching SKU found
+        # Return product-level details if no matching variant found
         return Response({
             'price': float(product.price) if product.price else None,
             'compare_price': float(product.compare_price) if product.compare_price else None,
             'quantity': product.quantity,
-            'message': 'No matching SKU found for selected options'
+            'message': 'No matching variant found for selected options'
         })
 
     @action(detail=False, methods=['get'])
-    def find_sku_id_for_options(self, request):
-        """Return the ProductSKU id that matches the given option_ids exactly (or fall back to inclusive match with fallback=true)."""
+    def find_variant_id_for_options(self, request):
+        """Return the Variant id that matches the given option_ids exactly (or fall back to inclusive match with fallback=true)."""
         product_id = request.query_params.get('product_id')
         option_ids = request.query_params.getlist('option_ids[]') or []
         fallback = request.query_params.get('fallback', 'false').lower() == 'true'
@@ -16376,23 +16192,22 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         if not option_ids:
             return Response({"error": "option_ids[] is required"}, status=400)
 
-        all_skus = product.skus.filter(is_active=True)
+        all_variants = product.variants_set.filter(is_active=True)
 
         # exact match first
-        for sku in all_skus:
-            sku_option_ids = [str(oid) for oid in (sku.option_ids or [])]
-            if sorted(sku_option_ids) == sorted(option_ids):
-                return Response({"sku_id": str(sku.id)})
+        for variant in all_variants:
+            variant_option_ids = [str(oid) for oid in (variant.option_ids or [])]
+            if sorted(variant_option_ids) == sorted(option_ids):
+                return Response({"variant_id": str(variant.id)})
 
         if fallback:
-            # inclusive match: return first SKU that contains all selected options
-            for sku in all_skus:
-                sku_option_ids = [str(oid) for oid in (sku.option_ids or [])]
-                if all(oid in sku_option_ids for oid in option_ids):
-                    return Response({"sku_id": str(sku.id), "fallback": True})
+            # inclusive match: return first variant that contains all selected options
+            for variant in all_variants:
+                variant_option_ids = [str(oid) for oid in (variant.option_ids or [])]
+                if all(oid in variant_option_ids for oid in option_ids):
+                    return Response({"variant_id": str(variant.id), "fallback": True})
 
-        return Response({"sku_id": None, "message": "No matching SKU found"}, status=404) 
-    
+        return Response({"variant_id": None, "message": "No matching variant found"}, status=404)    
 
 class AddToCartView(APIView):
 
