@@ -352,7 +352,7 @@ export default function Favorites() {
           ListEmptyComponent={() => (
             loading ? (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#6366F1" />
+                <ActivityIndicator size="large" color="#EE4D2D" />
               </View>
             ) : (
               <View style={styles.emptyContainer}>

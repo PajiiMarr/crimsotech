@@ -8969,7 +8969,23 @@ class ModeratorAnalytics(viewsets.ViewSet):
     """
     ViewSet for admin analytics data with date range filtering
     """
-
+    
+    def list(self, request):
+        """List analytics summary data - redirects to comprehensive analytics"""
+        # Analytics is metrics-based, not entity list
+        # Return a summary or redirect to get_comprehensive_analytics
+        try:
+            return Response({
+                'message': 'Use /api/moderator-analytics/get_comprehensive_analytics/ for analytics data',
+                'available_endpoints': [
+                    '/api/moderator-analytics/get_comprehensive_analytics/',
+                ]
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
@@ -9971,6 +9987,68 @@ class ModeratorProduct(viewsets.ViewSet):
     """
     ViewSet for admin product metrics and analytics
     """
+    
+    def list(self, request):
+        """List all products with filtering and pagination"""
+        try:
+            # Get pagination parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # Get filter parameters
+            status_filter = request.query_params.get('status')
+            search = request.query_params.get('search')
+            
+            # Build queryset
+            products_qs = Product.objects.select_related('shop').all()
+            
+            # Apply status filter
+            if status_filter and status_filter != 'all':
+                products_qs = products_qs.filter(status=status_filter)
+            
+            # Apply search filter
+            if search:
+                products_qs = products_qs.filter(name__icontains=search)
+            
+            # Order by created_at descending
+            products_qs = products_qs.order_by('-created_at')
+            
+            # Paginate
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            total_count = products_qs.count()
+            products_page = products_qs[start_idx:end_idx]
+            
+            # Format results
+            results = []
+            for product in products_page:
+                # Count reports for this product
+                reports_count = Report.objects.filter(reported_product=product).count()
+                
+                results.append({
+                    'id': str(product.id),
+                    'name': product.name,
+                    'shop': product.shop.name if product.shop else 'Unknown',
+                    'price': float(product.price) if product.price else 0,
+                    'quantity': product.quantity or 0,
+                    'status': product.status,
+                    'reports_count': reports_count,
+                    'created_at': product.created_at.isoformat() if product.created_at else None,
+                    'updated_at': product.updated_at.isoformat() if product.updated_at else None,
+                })
+            
+            return Response({
+                'count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'results': results
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
@@ -11108,6 +11186,68 @@ class ModeratorShops(viewsets.ViewSet):
         
         return start_date, end_date
     
+    def list(self, request):
+        """List all shops with filtering and pagination"""
+        try:
+            # Get pagination parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # Get filter parameters
+            status_filter = request.query_params.get('status')
+            search = request.query_params.get('search')
+            
+            # Build queryset
+            shops_qs = Shop.objects.select_related('owner').all()
+            
+            # Apply status filter
+            if status_filter and status_filter != 'all':
+                shops_qs = shops_qs.filter(status=status_filter)
+            
+            # Apply search filter
+            if search:
+                shops_qs = shops_qs.filter(name__icontains=search)
+            
+            # Order by created_at descending
+            shops_qs = shops_qs.order_by('-created_at')
+            
+            # Paginate
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            total_count = shops_qs.count()
+            shops_page = shops_qs[start_idx:end_idx]
+            
+            # Format results
+            results = []
+            for shop in shops_page:
+                # Count products and orders
+                products_count = Product.objects.filter(shop=shop).count()
+                orders_count = Checkout.objects.filter(cart_item__product__shop=shop).count()
+                
+                results.append({
+                    'id': str(shop.id),
+                    'name': shop.name,
+                    'owner': shop.owner.username if shop.owner else 'Unknown',
+                    'status': shop.status,
+                    'products_count': products_count,
+                    'orders_count': orders_count,
+                    'created_at': shop.created_at.isoformat() if shop.created_at else None,
+                    'updated_at': shop.updated_at.isoformat() if shop.updated_at else None,
+                })
+            
+            return Response({
+                'count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'results': results
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """
@@ -11322,6 +11462,71 @@ class ModeratorBoosting(viewsets.ViewSet):
     """
     ViewSet for admin boost management and analytics
     """
+    
+    def list(self, request):
+        """List all boost plans and active boosts with pagination"""
+        try:
+            # Get pagination parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # Get filter parameters
+            boost_type = request.query_params.get('type', 'all')  # 'plans', 'active', or 'all'
+            
+            results = []
+            total_count = 0
+            
+            if boost_type in ['plans', 'all']:
+                # Get boost plans
+                plans_qs = BoostingPlan.objects.filter(is_active=True).order_by('price')
+                for plan in plans_qs:
+                    results.append({
+                        'id': str(plan.id),
+                        'type': 'plan',
+                        'name': plan.name,
+                        'duration_days': plan.duration_days,
+                        'price': str(plan.price),
+                        'description': plan.description or '',
+                        'is_active': plan.is_active,
+                    })
+            
+            if boost_type in ['active', 'all']:
+                # Get active product boosts
+                boosts_qs = ProductBoost.objects.select_related('product', 'plan').filter(
+                    is_active=True
+                ).order_by('-created_at')
+                
+                for boost in boosts_qs:
+                    results.append({
+                        'id': str(boost.id),
+                        'type': 'boost',
+                        'product_id': str(boost.product.id),
+                        'product_name': boost.product.name,
+                        'plan_name': boost.plan.name,
+                        'started_at': boost.started_at.isoformat() if boost.started_at else None,
+                        'expires_at': boost.expires_at.isoformat() if boost.expires_at else None,
+                        'is_active': boost.is_active,
+                    })
+            
+            total_count = len(results)
+            
+            # Paginate results
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            paginated_results = results[start_idx:end_idx]
+            
+            return Response({
+                'count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'results': paginated_results
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
@@ -11942,6 +12147,70 @@ class ModeratorOrders(viewsets.ViewSet):
         
         return start_date, end_date
     
+    def list(self, request):
+        """List all orders with pagination"""
+        try:
+            # Get pagination parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # Get date range filters if provided
+            start_date_str = request.query_params.get('start_date')
+            end_date_str = request.query_params.get('end_date')
+            
+            # Build queryset
+            orders_qs = Order.objects.select_related('user', 'shipping_address').all()
+            
+            # Apply date filter if provided
+            if start_date_str or end_date_str:
+                try:
+                    start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+                    orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+                except ValueError:
+                    pass  # Ignore invalid date filters
+            
+            # Apply status filter if provided
+            status_filter = request.query_params.get('status')
+            if status_filter and status_filter != 'all':
+                orders_qs = orders_qs.filter(status=status_filter)
+            
+            # Order by created_at descending
+            orders_qs = orders_qs.order_by('-created_at')
+            
+            # Paginate
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            total_count = orders_qs.count()
+            orders_page = orders_qs[start_idx:end_idx]
+            
+            # Format results
+            results = []
+            for order in orders_page:
+                results.append({
+                    'id': str(order.order),
+                    'order': str(order.order),
+                    'customer': f"{order.user.first_name} {order.user.last_name}".strip() or order.user.username,
+                    'amount': float(order.total_amount),
+                    'status': order.status,
+                    'payment_method': order.payment_method,
+                    'items': order.checkout_set.count(),
+                    'created_at': order.created_at.isoformat() if order.created_at else None,
+                    'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                })
+            
+            return Response({
+                'count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'results': results
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """Get order metrics and analytics data for admin dashboard with date range support"""
@@ -12543,6 +12812,66 @@ class ModeratorOrders(viewsets.ViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ModeratorRiders(viewsets.ViewSet):
+    
+    def list(self, request):
+        """List all riders with filtering and pagination"""
+        try:
+            # Get pagination parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # Get filter parameters
+            status_filter = request.query_params.get('status')
+            search = request.query_params.get('search')
+            
+            # Build queryset
+            riders_qs = Rider.objects.select_related('rider').all()
+            
+            # Apply status filter
+            if status_filter and status_filter != 'all':
+                riders_qs = riders_qs.filter(verified=(status_filter == 'verified'))
+            
+            # Apply search filter
+            if search:
+                riders_qs = riders_qs.filter(rider__username__icontains=search)
+            
+            # Order by created_at descending
+            riders_qs = riders_qs.order_by('-created_at')
+            
+            # Paginate
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            total_count = riders_qs.count()
+            riders_page = riders_qs[start_idx:end_idx]
+            
+            # Format results
+            results = []
+            for rider in riders_page:
+                results.append({
+                    'id': str(rider.id),
+                    'name': f"{rider.rider.first_name} {rider.rider.last_name}".strip() or rider.rider.username,
+                    'phone': rider.rider.contact_number or '',
+                    'vehicle_type': rider.vehicle_type or 'Unknown',
+                    'status': 'verified' if rider.verified else 'pending',
+                    'deliveries': 0,  # Placeholder - count actual deliveries from Delivery model if available
+                    'rating': 0.0,  # Placeholder - calculate from reviews if available
+                    'created_at': rider.created_at.isoformat() if rider.created_at else None,
+                    'updated_at': rider.updated_at.isoformat() if rider.updated_at else None,
+                })
+            
+            return Response({
+                'count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'results': results
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
         if not date_str:
@@ -20122,6 +20451,39 @@ class PurchasesBuyer(viewsets.ViewSet):
         return Response(order_data)
 
     
+    # Add: return rider info for an order
+    @action(detail=True, methods=['get'], url_path='get-rider-info')
+    def get_rider_info(self, request, pk=None):
+        """Return rider(s) assigned to deliveries for an order. URL: /purchases-buyer/{order_id}/get-rider-info/"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            order = Order.objects.get(order=pk, user=user)
+        except (User.DoesNotExist, Order.DoesNotExist):
+            return Response({'error': 'Order not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+
+        deliveries = Delivery.objects.filter(order=order).select_related('rider__rider')
+        riders_data = []
+        for delivery in deliveries:
+            rider_link = getattr(delivery, 'rider', None)
+            if rider_link and getattr(rider_link, 'rider', None):
+                r = rider_link.rider
+                riders_data.append({
+                    "id": str(r.id),
+                    "rider_id": str(r.id),
+                    "user": {
+                        "id": str(r.id),
+                        "first_name": r.first_name,
+                        "last_name": r.last_name,
+                        "phone": r.contact_number or ""
+                    }
+                })
+
+        return Response({"success": True, "order_id": str(order.order), "riders": riders_data})
+
     # These helper methods should be at the same level as get_delivery_proofs_for_customer
     def _get_status_display(self, status):
         status_map = {
@@ -28780,156 +29142,6 @@ class RiderEarningsViewSet(viewsets.ViewSet):
                 'deliveries': format_deliveries(
                     list(month_deliveries)  # Show all deliveries from current month
                 )
-            }, status=status.HTTP_200_OK)
-        
-        except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-class RiderProfileViewSet(viewsets.ViewSet):
-    """
-    Rider Profile API - Get and update rider personal information
-    """
-    
-    def _get_user_from_header(self, request):
-        """Extract and validate user from X-User-Id header"""
-        user_id = request.headers.get('X-User-Id')
-        
-        if not user_id:
-            raise ValueError('X-User-Id header is required')
-        
-        try:
-            user = User.objects.get(id=user_id)
-            return user
-        except User.DoesNotExist:
-            raise ValueError(f'User with ID {user_id} does not exist')
-    
-    @action(detail=False, methods=['get'])
-    def profile(self, request):
-        """Get rider profile information"""
-        try:
-            user = self._get_user_from_header(request)
-            
-            # Check if user is a rider
-            if not hasattr(user, 'rider'):
-                return Response({
-                    'error': 'User is not a rider'
-                }, status=status.HTTP_403_FORBIDDEN)
-            
-            rider = user.rider
-            
-            # Return comprehensive profile data
-            profile_data = {
-                'user': {
-                    'id': str(user.id),
-                    'username': user.username,
-                    'email': user.email,
-                    'first_name': user.first_name or '',
-                    'last_name': user.last_name or '',
-                    'contact_number': user.contact_number or '',
-                    'profile_picture': user.profile_picture.url if user.profile_picture else None,
-                    'date_of_birth': user.date_of_birth,
-                    'gender': user.gender,
-                    'bio': user.bio or '',
-                    # Address fields
-                    'country': user.country or '',
-                    'province': user.province or '',
-                    'city': user.city or '',
-                    'barangay': user.barangay or '',
-                    'street': user.street or '',
-                    'zip_code': user.zip_code or '',
-                },
-                'rider': {
-                    'id': str(rider.id),
-                    'vehicle_type': rider.vehicle_type or '',
-                    'plate_number': rider.plate_number or '',
-                    'vehicle_brand': rider.vehicle_brand or '',
-                    'vehicle_model': rider.vehicle_model or '',
-                    'vehicle_image': rider.vehicle_image.url if rider.vehicle_image else None,
-                    'license_number': rider.license_number or '',
-                    'verified': rider.verified,
-                    'availability_status': rider.availability_status,
-                    'is_accepting_deliveries': rider.is_accepting_deliveries,
-                }
-            }
-            
-            return Response(profile_data, status=status.HTTP_200_OK)
-        
-        except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @action(detail=False, methods=['put', 'patch'])
-    def update_profile(self, request):
-        """Update rider profile information"""
-        try:
-            user = self._get_user_from_header(request)
-            
-            # Check if user is a rider
-            if not hasattr(user, 'rider'):
-                return Response({
-                    'error': 'User is not a rider'
-                }, status=status.HTTP_403_FORBIDDEN)
-            
-            rider = user.rider
-            data = request.data
-            
-            # Update user fields
-            user_fields = ['first_name', 'last_name', 'email', 'contact_number', 
-                          'date_of_birth', 'gender', 'bio', 'country', 'province', 
-                          'city', 'barangay', 'street', 'zip_code']
-            
-            for field in user_fields:
-                if field in data:
-                    setattr(user, field, data[field])
-            
-            # Handle profile picture upload
-            if 'profile_picture' in request.FILES:
-                user.profile_picture = request.FILES['profile_picture']
-            
-            user.save()
-            
-            # Update rider-specific fields
-            rider_fields = ['vehicle_type', 'plate_number', 'vehicle_brand', 
-                           'vehicle_model', 'license_number']
-            
-            for field in rider_fields:
-                if field in data:
-                    setattr(rider, field, data[field])
-            
-            # Handle vehicle image upload
-            if 'vehicle_image' in request.FILES:
-                rider.vehicle_image = request.FILES['vehicle_image']
-            
-            rider.save()
-            
-            # Return updated profile
-            return Response({
-                'message': 'Profile updated successfully',
-                'user': {
-                    'id': str(user.id),
-                    'username': user.username,
-                    'email': user.email,
-                    'first_name': user.first_name or '',
-                    'last_name': user.last_name or '',
-                    'contact_number': user.contact_number or '',
-                    'profile_picture': user.profile_picture.url if user.profile_picture else None,
-                }
             }, status=status.HTTP_200_OK)
         
         except ValueError as e:
