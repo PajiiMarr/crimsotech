@@ -502,12 +502,18 @@ class ProductMedia(models.Model):
         return f"Media for {self.product.name}"
 
 class Variants(models.Model):
+    SWAP_TYPE_CHOICES = [
+        ('direct_swap', 'Direct swap'),
+        ('swap_plus_payment', 'Swap + payment'),
+    ]
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     product = models.ForeignKey(
         Product,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
+        related_name='variants'
     )
     shop = models.ForeignKey(
         Shop,
@@ -516,42 +522,55 @@ class Variants(models.Model):
         blank=True,
     )
     title = models.CharField(max_length=100)
+    
+    # Variant option fields (formerly in VariantOptions)
+    option_title = models.CharField(max_length=100, blank=True, null=True)
+    option_created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    
+    # SKU fields (formerly in ProductSKU)
+    option_ids = models.JSONField(blank=True, null=True)
+    option_map = models.JSONField(blank=True, null=True)
+    sku_code = models.CharField(max_length=100, blank=True, null=True)
+    price = models.DecimalField(decimal_places=2, max_digits=9, null=True, blank=True)
+    compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    quantity = models.IntegerField(default=0)
+    length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    weight_unit = models.CharField(max_length=10, default='g', blank=True)
+    critical_trigger = models.IntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    is_refundable = models.BooleanField(default=False)
+    refund_days = models.PositiveIntegerField(default=0)
+    allow_swap = models.BooleanField(default=False)
+    swap_type = models.CharField(
+        max_length=30,
+        choices=SWAP_TYPE_CHOICES,
+        default='direct_swap'
+    )
+    minimum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
+    maximum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
+    swap_description = models.TextField(blank=True, null=True)
+    image = models.ImageField(upload_to='product/variants/', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [
             models.Index(fields=['product']),
-        ]
-
-    def __str__(self):
-        return f"{self.title} for {self.product.name}"
-
-class VariantOptions(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
-    variant = models.ForeignKey(
-        Variants,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    title = models.CharField(max_length=100)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['variant']),
+            models.Index(fields=['product', 'is_active']),
+            models.Index(fields=['sku_code']),
+            models.Index(fields=['quantity', 'is_active']),
+            models.Index(fields=['price']),
             models.Index(fields=['created_at']),
         ]
 
-    @property
-    def quantity(self):
-        return None
-
-    @property
-    def price(self):
-        return None
-
     def __str__(self):
-        return f"{self.title} - {self.variant.title if self.variant else ''}"
+        return f"{self.title} for {self.product.name if self.product else 'Unknown Product'} (SKU: {self.sku_code or 'no-code'})"
+
+    # REMOVED the conflicting @property methods
+    # The fields quantity and price are already accessible directly
 
 class Issues(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -793,9 +812,9 @@ class CartItem(models.Model):
         null=True,
         blank=True,
     )
-    # Track selected SKU when product has variants
-    sku = models.ForeignKey(
-        'ProductSKU',
+    # Updated to reference Variants instead of ProductSKU
+    variant = models.ForeignKey(
+        Variants,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -812,16 +831,16 @@ class CartItem(models.Model):
     added_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        # uniqueness now includes sku to allow same product with different SKUs
-        unique_together = ['product', 'user', 'sku']
+        # Updated uniqueness to include variant
+        unique_together = ['product', 'user', 'variant']
         indexes = [
             models.Index(fields=['user', 'is_ordered']),
             models.Index(fields=['product', 'is_ordered']),
-            models.Index(fields=['sku', 'is_ordered']),
+            models.Index(fields=['variant', 'is_ordered']),
         ]
 
     def __str__(self):
-        return f"{self.quantity} x {(self.product.name if self.product else 'Unknown Product')} (SKU: {self.sku.sku_code if self.sku else 'none'})"
+        return f"{self.quantity} x {(self.product.name if self.product else 'Unknown Product')} (Variant: {self.variant.title if self.variant else 'none'})"
 
 class ShippingAddress(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -1030,6 +1049,9 @@ class Delivery(models.Model):
         ('in_progress','In Progress'),
         ('delivered','Delivered'),
         ('cancelled','Cancelled'),
+        ('declined','Declined'),
+        ('accepted','Accepted'),
+
     ], default='pending')
     distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     estimated_minutes = models.IntegerField(null=True, blank=True)
@@ -1290,53 +1312,6 @@ class ReportComment(models.Model):
     
     def __str__(self):
         return f"Comment by {self.user.username} on Report {self.report.id}"
-
-class ProductSKU(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
-    product = models.ForeignKey(
-        Product,
-        on_delete=models.CASCADE,
-        related_name='skus'
-    )
-    option_ids = models.JSONField(blank=True, null=True)
-    option_map = models.JSONField(blank=True, null=True)
-    sku_code = models.CharField(max_length=100, blank=True, null=True)
-    price = models.DecimalField(decimal_places=2, max_digits=9, null=True, blank=True)
-    compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    quantity = models.IntegerField(default=0)
-    length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    weight_unit = models.CharField(max_length=10, default='g', blank=True)
-    critical_trigger = models.IntegerField(null=True, blank=True)
-    is_active = models.BooleanField(default=True)
-    is_refundable = models.BooleanField(default=False)
-    refund_days = models.PositiveIntegerField(default=0)
-    allow_swap = models.BooleanField(default=False)
-    swap_type = models.CharField(
-        max_length=30,
-        choices=[('direct_swap', 'Direct swap'), ('swap_plus_payment', 'Swap + payment')],
-        default='direct_swap'
-    )
-    minimum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
-    maximum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
-    swap_description = models.TextField(blank=True, null=True)
-    accepted_categories = models.ManyToManyField('Category', blank=True, related_name='accepted_for_sku_swaps')
-    image = models.ImageField(upload_to='product/skus/', null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['product', 'is_active']),
-            models.Index(fields=['sku_code']),
-            models.Index(fields=['quantity', 'is_active']),
-            models.Index(fields=['price']),
-        ]
-
-    def __str__(self):
-        return f"SKU for {self.product.name} ({self.sku_code or 'no-code'})"
 
 class UserPaymentMethod(models.Model):
     METHOD_CHOICES = [
