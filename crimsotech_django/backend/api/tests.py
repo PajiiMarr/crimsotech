@@ -258,6 +258,43 @@ class RefundProofTests(TestCase):
         # The refund.status should remain 'approved' unless explicitly changed
         self.assertEqual(str(approved_refund.status), 'approved')
 
+    def test_admin_process_refund_completed_resolves_dispute(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        # Admin completing a refund payment should resolve an associated dispute
+        admin = User.objects.create(username='admin2', email='admin2@example.com', is_admin=True)
+        Customer.objects.create(customer=admin)
+
+        dispute_refund = Refund.objects.create(
+            reason='Disputed refund',
+            buyer_preferred_refund_method='wallet',
+            refund_type='return',
+            status='dispute',
+            order_id=self.order,
+            requested_by=self.buyer
+        )
+
+        dr = DisputeRequest.objects.create(
+            refund_id=dispute_refund,
+            requested_by=self.buyer,
+            reason='Problem with item',
+            status='under_review'
+        )
+
+        # Add a proof so admin can set status to completed
+        img = SimpleUploadedFile('proof.jpg', b'\xFF\xD8\xFF', content_type='image/jpeg')
+        RefundProof.objects.create(refund=dispute_refund, uploaded_by=admin, file_type='image/jpeg', file_data=img)
+
+        url = f"/api/return-refund/{dispute_refund.refund_id}/admin_process_refund/"
+        res = self.client.post(url, {'set_status': 'completed'}, format='multipart', HTTP_X_USER_ID=str(admin.id))
+        self.assertEqual(res.status_code, 200)
+
+        dispute_refund.refresh_from_db()
+        dr.refresh_from_db()
+        self.assertEqual(dispute_refund.refund_payment_status, 'completed')
+        self.assertEqual(str(dr.status), 'resolved')
+        self.assertEqual(str(dr.processed_by.id), str(admin.id))
+        self.assertIsNotNone(dr.resolved_at)
+
     def test_cannot_exceed_four_proofs(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         img = SimpleUploadedFile('proof.jpg', b'\xFF\xD8\xFF', content_type='image/jpeg')
@@ -369,6 +406,8 @@ class RefundProofTests(TestCase):
         self.assertEqual(str(self.refund.final_refund_method), 'bank')
         # The counter type should be applied to the refund
         self.assertEqual(str(self.refund.refund_type), 'keep')
+        # Payment should still be pending; admin/moderation handles actual payment processing
+        self.assertEqual(str(self.refund.refund_payment_status), 'pending')
 
     def test_buyer_rejects_counter_offer(self):
         # Seller creates a counter offer
@@ -416,6 +455,32 @@ class RefundProofTests(TestCase):
         # Ensure return address exists
         ra = getattr(self.refund, 'return_address', None)
         self.assertIsNotNone(ra)
+
+        # Buyer accepts the return counter
+        url2 = f"/api/return-refund/{self.refund.refund_id}/respond_to_negotiation/"
+        res2 = self.client.post(url2, {'action': 'accept', 'reason': 'Accepting return'}, format='json', HTTP_X_USER_ID=str(self.buyer.id))
+        self.assertEqual(res2.status_code, 200)
+        self.refund.refresh_from_db()
+        cr.refresh_from_db()
+        # Check final type and that return workflow was created
+        self.assertEqual(str(self.refund.status), 'approved')
+        self.assertEqual(str(self.refund.final_refund_type), 'return')
+        # There should be a ReturnRequestItem created
+        self.assertIsNotNone(getattr(self.refund, 'return_request', None))
+        # Payment should remain pending
+        self.assertEqual(str(self.refund.refund_payment_status), 'pending')
+
+        # Call admin refund_list and ensure the returned data includes our new fields
+        admin_res = self.client.get('/api/admin-refunds/refund_list/', HTTP_X_USER_ID=str(self.admin.id))
+        self.assertEqual(admin_res.status_code, 200)
+        found = False
+        for item in admin_res.data:
+            if str(item.get('refund')) == str(self.refund.refund_id):
+                found = True
+                self.assertEqual(item.get('final_refund_type'), 'return')
+                self.assertTrue(item.get('has_return_request') in (True, False))
+                self.assertEqual(item.get('refund_payment_status'), 'pending')
+        self.assertTrue(found)
         self.assertEqual(str(ra.contact_number), '09123456789')
 
         # Buyer accepts the counter offer
@@ -429,6 +494,8 @@ class RefundProofTests(TestCase):
         self.assertEqual(str(self.refund.final_refund_method), 'return:bank')
         # Refund type should be set to 'return'
         self.assertEqual(str(self.refund.refund_type), 'return')
+        # Payment should still be pending; admin/moderation handles actual payment processing
+        self.assertEqual(str(self.refund.refund_payment_status), 'pending')
 
     def test_seller_negotiate_return_requires_return_address(self):
         url = f"/api/return-refund/{self.refund.refund_id}/seller_respond_to_refund/"
@@ -541,6 +608,56 @@ class DisputeWorkflowTests(TestCase):
         self.assertEqual(r.refund_payment_status, 'processing')
         self.assertEqual(str(r.status), 'approved')
 
+
+class SellerOrderListAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        # seller/shop/product
+        self.seller = User.objects.create(username='seller_orders', email='seller_orders@example.com')
+        Customer.objects.create(customer=self.seller)
+        self.shop = Shop.objects.create(name='SellerOrders Shop', province='P', city='C', barangay='B', street='S', customer=self.seller.customer)
+        self.product = Product.objects.create(name='OrderProduct', description='p', quantity=5, price=20.0, status='active', condition='New', shop=self.shop, customer=self.seller.customer)
+        # buyer and order
+        self.buyer = User.objects.create(username='buyer_orders', email='buyer_orders@example.com')
+        Customer.objects.create(customer=self.buyer)
+        self.order = Order.objects.create(user=self.buyer, total_amount=20.0, payment_method='cash', status='pending')
+        # create cart + checkout linking the order -> shop
+        from .models import CartItem, Checkout
+        cart = CartItem.objects.create(product=self.product, user=self.buyer, quantity=1)
+        Checkout.objects.create(order=self.order, cart_item=cart, quantity=1, total_amount=20.0, status='completed')
+
+    def test_order_list_includes_order_status_field(self):
+        url = f"/api/seller-order-list/order_list/?shop_id={self.shop.id}"
+        res = self.client.get(url, format='json', HTTP_X_USER_ID=str(self.seller.id))
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data.get('success'))
+        data = res.data.get('data', [])
+        self.assertGreaterEqual(len(data), 1)
+        # Find the order we created
+        found = next((o for o in data if o.get('order_id') == str(self.order.order)), None)
+        self.assertIsNotNone(found, 'Order not returned in seller order_list')
+        # The seller API must include raw DB order_status
+        self.assertIn('order_status', found)
+        self.assertEqual(found.get('order_status'), 'pending')
+
+    def test_confirm_updates_order_to_processing_and_returns_to_ship(self):
+        # Confirm the order via update_status and assert DB + API reflect processing/to_ship
+        url = f"/api/seller-order-list/{self.order.order}/update_status/?shop_id={self.shop.id}"
+        res = self.client.patch(url, {'action_type': 'confirm'}, format='json', HTTP_X_USER_ID=str(self.seller.id))
+        self.assertEqual(res.status_code, 200)
+        self.order.refresh_from_db()
+        # DB order.status must be 'processing'
+        self.assertEqual(str(self.order.status), 'processing')
+        data = res.data.get('data', {})
+        # API should report the shipping status for the order as 'to_ship' inside updated_order
+        updated_order = data.get('updated_order') or {}
+        self.assertIn('status', updated_order)
+        self.assertEqual(updated_order.get('status'), 'to_ship')
+        # Available actions for to_ship should include arrange_shipment for delivery orders
+        updated_actions = data.get('updated_available_actions', [])
+        self.assertIn('arrange_shipment', updated_actions)
+
+
         self.assertIsNotNone(self.dispute.processed_by)
         self.assertEqual(self.dispute.processed_by.id, self.admin.id)
 
@@ -602,3 +719,75 @@ class DisputeWorkflowTests(TestCase):
         self.assertEqual(str(r.refund_payment_status), 'completed')
         # Dispute should be marked resolved
         self.assertEqual(str(d.status), 'resolved')
+
+
+class RiderDeliveryActionsTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        # customer
+        self.customer = User.objects.create(username='cust_rider', email='cust_rider@example.com')
+        Customer.objects.create(customer=self.customer)
+        # rider user + profile
+        self.rider_user = User.objects.create(username='rider_user', email='rider_user@example.com', is_rider=True)
+        from .models import Rider, ShippingAddress, Delivery
+        Rider.objects.create(rider=self.rider_user, is_accepting_deliveries=True)
+        # order with shipping address
+        addr = ShippingAddress.objects.create(user=self.customer, recipient_name='Cust', recipient_phone='09171234567', street='Main St', barangay='B', city='City', province='Prov', zip_code='1000')
+        self.order = Order.objects.create(user=self.customer, total_amount=150.0, payment_method='cash', shipping_address=addr, status='pending')
+
+    def test_rider_accept_order_sets_delivery_status_accepted(self):
+        url = "/api/rider-orders-active/accept_order/"
+        res = self.client.post(url, {'order_id': str(self.order.order)}, format='json', HTTP_X_USER_ID=str(self.rider_user.id))
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data.get('success'))
+        self.assertEqual(res.data['delivery']['status'], 'accepted')
+
+        from .models import Delivery
+        delivery = Delivery.objects.filter(order=self.order).first()
+        self.assertIsNotNone(delivery)
+        self.assertEqual(delivery.status, 'accepted')
+        # picked_at should NOT be set on accept
+        self.assertIsNone(delivery.picked_at)
+        # order.status should NOT be moved to 'shipped' on accept
+        self.order.refresh_from_db()
+        self.assertNotEqual(self.order.status, 'shipped')
+
+    def test_rider_accept_order_idempotent(self):
+        url = "/api/rider-orders-active/accept_order/"
+        res1 = self.client.post(url, {'order_id': str(self.order.order)}, format='json', HTTP_X_USER_ID=str(self.rider_user.id))
+        self.assertEqual(res1.status_code, 200)
+        self.assertEqual(res1.data['delivery']['status'], 'accepted')
+
+        # Call again — should be idempotent and still return accepted
+        res2 = self.client.post(url, {'order_id': str(self.order.order)}, format='json', HTTP_X_USER_ID=str(self.rider_user.id))
+        self.assertEqual(res2.status_code, 200)
+        self.assertEqual(res2.data['delivery']['status'], 'accepted')
+
+    def test_rider_pickup_from_accepted_moves_order_to_shipped(self):
+        # Rider accepts the order (creates delivery.status='accepted')
+        accept_url = "/api/rider-orders-active/accept_order/"
+        accept_res = self.client.post(accept_url, {'order_id': str(self.order.order)}, format='json', HTTP_X_USER_ID=str(self.rider_user.id))
+        self.assertEqual(accept_res.status_code, 200)
+        self.assertTrue(accept_res.data.get('success'))
+        delivery_id = accept_res.data['delivery']['id']
+
+        # Seller has already moved order -> processing (simulate)
+        self.order.status = 'processing'
+        self.order.save()
+
+        # Rider marks pickup
+        pickup_url = "/api/rider-orders-active/pickup_order/"
+        res = self.client.post(pickup_url, {'delivery_id': delivery_id}, format='json', HTTP_X_USER_ID=str(self.rider_user.id))
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data.get('success'))
+        self.assertEqual(res.data['delivery']['status'], 'picked_up')
+
+        # Verify DB state
+        from .models import Delivery
+        delivery = Delivery.objects.get(order=self.order)
+        self.assertEqual(delivery.status, 'picked_up')
+        self.assertIsNotNone(delivery.picked_at)
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, 'shipped')
+
