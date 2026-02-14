@@ -3,16 +3,11 @@ import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { 
   Card, 
-  CardHeader, 
-  CardTitle, 
-  CardContent, 
-  CardDescription 
+  CardContent
 } from '~/components/ui/card';
 import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
 import { Skeleton } from '~/components/ui/skeleton';
-import type { ColumnDef } from '@tanstack/react-table';
-import { DataTable } from '~/components/ui/data-table';
 import { Link } from 'react-router';
 import { 
   Package,
@@ -20,17 +15,19 @@ import {
   CheckCircle,
   AlertCircle,
   TrendingUp,
-  DollarSign,
   MapPin,
   User,
   Calendar,
   Truck,
-  ArrowUpDown,
   Phone,
   Navigation,
   CreditCard,
   MoreVertical,
-  PhilippinePeso
+  PhilippinePeso,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  ShoppingBag
 } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
@@ -56,6 +53,7 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "~/components/ui/drawer";
+import { Input } from '~/components/ui/input';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -129,6 +127,51 @@ interface LoaderData {
   user: any;
 }
 
+// Status badges configuration
+const STATUS_CONFIG = {
+  pending: { 
+    label: 'Pending', 
+    color: 'bg-yellow-100 text-yellow-800',
+    icon: Clock
+  },
+  pending_offer: { 
+    label: 'Pending Offer', 
+    color: 'bg-amber-100 text-amber-800',
+    icon: Clock
+  },
+  accepted: {
+    label: 'Accepted',
+    color: 'bg-indigo-100 text-indigo-800',
+    icon: CheckCircle
+  },
+  declined: {
+    label: 'Declined',
+    color: 'bg-red-100 text-red-800',
+    icon: AlertCircle
+  },
+  picked_up: { 
+    label: 'In Transit', 
+    color: 'bg-blue-100 text-blue-800',
+    icon: Truck
+  },
+  delivered: { 
+    label: 'Delivered', 
+    color: 'bg-green-100 text-green-800',
+    icon: CheckCircle
+  },
+  default: { 
+    label: 'Unknown', 
+    color: 'bg-gray-100 text-gray-800',
+    icon: AlertCircle
+  }
+};
+
+// Tabs configuration
+const STATUS_TABS = [
+  { id: 'pending', label: 'Pending', icon: Clock },
+  { id: 'to_process', label: 'To Process', icon: Truck }
+];
+
 export async function loader({ request, context}: Route.LoaderArgs): Promise<LoaderData> {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
   await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
@@ -173,11 +216,16 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null);
   const [actionType, setActionType] = useState<'pickup' | 'deliver' | null>(null);
   const [showActionDialog, setShowActionDialog] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState({
     start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
     end: new Date(),
     rangeType: 'weekly' as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
   });
+
+  // Minimalist tabs for rider active orders (Pending / To Process)
+  const [activeTab, setActiveTab] = useState<'pending' | 'to_process'>('pending');
+  const [expandedDeliveries, setExpandedDeliveries] = useState<Set<string>>(new Set());
 
   // Check if desktop on mount and resize
   useEffect(() => {
@@ -246,27 +294,48 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
   // Handle action confirmation
   const confirmAction = async () => {
     if (!selectedDelivery || !actionType) return;
-    
+
+    // Client-side guard: prevent firing pickup if delivery is not in a valid pre-pickup state
+    if (actionType === 'pickup') {
+      const status = String(selectedDelivery.status || '').toLowerCase();
+      const allowed = ['pending', 'pending_offer', 'accepted'];
+      if (!allowed.includes(status)) {
+        alert(`Cannot mark pickup — delivery status is "${selectedDelivery.status}" (expected: ${allowed.join(', ')}).`);
+        return;
+      }
+    }
+
     try {
       setIsActionLoading(true);
-      
-      const endpoint = actionType === 'pickup' 
+
+      const endpoint = actionType === 'pickup'
         ? '/rider-orders-active/pickup_order/'
         : '/rider-orders-active/deliver_order/';
-      
-      console.log('Sending delivery ID:', selectedDelivery.id);
-      
-      // Use FormData to ensure proper data format
+
+        // Debug: print the payload we'll send
+      console.debug('[RiderAction] sending', { actionType, deliveryId: selectedDelivery.id, deliveryStatus: selectedDelivery.status, riderUserId: user.user_id });
+
+      // Pause in devtools so you can inspect `selectedDelivery` and the outgoing payload
+      if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+        // eslint-disable-next-line no-debugger
+        debugger;
+      }
+
+      // Use FormData to ensure proper data format — include both delivery_id and order_id as a fallback
       const formData = new FormData();
       formData.append('delivery_id', selectedDelivery.id);
-      
+      if (selectedDelivery.order?.order_id) {
+        formData.append('order_id', selectedDelivery.order.order_id);
+      }
+
       const response = await AxiosInstance.post(endpoint, formData, {
         headers: {
           'X-User-Id': user.user_id,
           // FormData will set the correct content type automatically
         }
       });
-      
+      console.debug('[RiderAction] response', response.data);
+
       if (response.data.success) {
         // Refresh data
         await fetchDeliveryData();
@@ -275,11 +344,14 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
         setSelectedDelivery(null);
         setActionType(null);
         alert(`Order ${actionType === 'pickup' ? 'picked up' : 'delivered'} successfully!`);
+      } else {
+        // Show server-provided message when available
+        alert(response.data.error || `Failed to ${actionType} order`);
       }
     } catch (error: any) {
       console.error('Error performing action:', error);
       console.error('Error response:', error.response?.data);
-      alert(error.response?.data?.error || `Failed to ${actionType} order`);
+      alert((error.response?.data && error.response.data.error) || `Failed to ${actionType} order`);
     } finally {
       setIsActionLoading(false);
     }
@@ -299,490 +371,162 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     setShowActionDialog(true);
   };
 
-  // Prepare transformed data for the table
-  const tableData = useMemo(() => {
-    return deliveries.map(delivery => ({
-      // Create a flattened structure for the table
-      id: delivery.id,
-      order_id: delivery.order.order_id,
-      customer_name: `${delivery.order.customer.first_name} ${delivery.order.customer.last_name}`,
-      customer_phone: delivery.order.customer.contact_number,
-      address: delivery.order.shipping_address?.full_address || 'No address',
-      recipient_phone: delivery.order.shipping_address?.recipient_phone || '',
-      amount: delivery.order.total_amount,
-      payment_method: delivery.order.payment_method,
-      delivery_method: delivery.order.delivery_method,
-      status: delivery.status,
-      created_at: delivery.created_at,
-      time_elapsed: delivery.time_elapsed,
-      is_late: delivery.is_late,
-      // Keep original delivery for actions
-      original: delivery
-    }));
-  }, [deliveries]);
+  // Accept a delivery (calls backend accept_order endpoint)
+  const handleAcceptDelivery = async (delivery: Delivery) => {
+    try {
+      setIsActionLoading(true);
+      const formData = new FormData();
+      formData.append('order_id', delivery.id);
 
-  // Get filter options based on actual column IDs
-  const getFilterOptions = () => {
-    const statusOptions = [...new Set(deliveries.map(d => d.status))].filter(Boolean);
-    const paymentOptions = [...new Set(deliveries.map(d => d.order.payment_method))].filter(Boolean);
-    const deliveryOptions = [...new Set(deliveries.map(d => d.order.delivery_method))].filter(Boolean);
-    
-    return {
-      status: {
-        options: statusOptions,
-        placeholder: 'Delivery Status',
-        columnId: 'status' // Match the column ID
-      },
-      payment_method: {
-        options: paymentOptions,
-        placeholder: 'Payment Method',
-        columnId: 'payment_method' // Match the column ID
-      },
-      delivery_method: {
-        options: deliveryOptions,
-        placeholder: 'Delivery Method',
-        columnId: 'delivery_method' // Match the column ID
+      const response = await AxiosInstance.post('/rider-orders-active/accept_order/', formData, {
+        headers: {
+          'X-User-Id': user.user_id
+        }
+      });
+
+      // DEBUG: show server response so we can confirm persisted status
+      console.debug('rider/accept_order response', response.data);
+
+      if (response.data.success) {
+        // update UI to show 'accepted' status (frontend representation)
+        setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, status: 'accepted' } : d));
+        // if currently selectedDelivery is the same, update it too
+        if (selectedDelivery?.id === delivery.id) {
+          setSelectedDelivery(prev => prev ? { ...prev, status: 'accepted' } : prev);
+        }
+        alert('Order accepted');
+      } else {
+        console.error('Accept delivery failed:', response.data);
+        alert(response.data.error || 'Failed to accept order');
       }
-    };
-  };
-
-  // Loading skeleton for metrics
-  const MetricCardSkeleton = () => (
-    <Card>
-      <CardContent className="p-4 sm:p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <Skeleton className="h-4 w-20 mb-2" />
-            <Skeleton className="h-8 w-16 mt-1" />
-            <Skeleton className="h-3 w-24 mt-2" />
-          </div>
-          <Skeleton className="w-10 h-10 sm:w-12 sm:h-12 rounded-full" />
-        </div>
-      </CardContent>
-    </Card>
-  );
-
-  // Columns definition
-  const columns: ColumnDef<any>[] = [
-    {
-      accessorKey: "order_id",
-      id: "order_id", // This ID is used for searching
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm"
-        >
-          Order ID
-          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
-      cell: ({ row }: { row: any}) => (
-        <div className="font-mono text-xs sm:text-sm">
-          #{row.getValue("order_id")?.slice(-8) || 'N/A'}
-        </div>
-      ),
-    },
-    {
-      accessorKey: "customer_name",
-      id: "customer_name", // This ID is used for searching
-      header: "Customer",
-      cell: ({ row }: { row: any}) => {
-        const customerPhone = row.original.customer_phone;
-        return (
-          <div className="space-y-1">
-            <div className="flex items-center gap-1">
-              <User className="w-3 h-3 text-muted-foreground" />
-              <span className="text-xs sm:text-sm font-medium">
-                {row.getValue("customer_name")}
-              </span>
-            </div>
-            {customerPhone && (
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Phone className="w-3 h-3" />
-                {customerPhone}
-              </div>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      accessorKey: "address",
-      id: "address", // This ID is used for searching
-      header: "Delivery Address",
-      cell: ({ row }: { row: any}) => {
-        const recipientPhone = row.original.recipient_phone;
-        return (
-          <div className="space-y-1 max-w-[200px]">
-            <div className="flex items-start gap-1">
-              <MapPin className="w-3 h-3 text-muted-foreground mt-0.5" />
-              <span className="text-xs sm:text-sm line-clamp-2">
-                {row.getValue("address")}
-              </span>
-            </div>
-            {recipientPhone && (
-              <div className="text-xs text-muted-foreground">
-                Contact: {recipientPhone}
-              </div>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      accessorKey: "amount",
-      id: "amount",
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm"
-        >
-          Amount
-          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
-      cell: ({ row }: { row: any}) => (
-        <div className="space-y-1">
-          <div className="font-bold text-xs sm:text-sm">
-            ₱{parseFloat(row.getValue("amount")).toLocaleString()}
-          </div>
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <CreditCard className="w-3 h-3" />
-            {row.original.payment_method || 'N/A'}
-          </div>
-        </div>
-      ),
-    },
-    {
-      accessorKey: "status",
-      id: "status", // This ID is used for filtering
-      header: "Status",
-      cell: ({ row }: { row: any}) => {
-        const status = row.getValue("status");
-        const isLate = row.original.is_late;
-        const timeElapsed = row.original.time_elapsed;
-        
-        const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: any }> = {
-          pending: { label: "Pending", variant: "secondary", icon: Clock },
-          pending_offer: { label: "Pending Offer", variant: "secondary", icon: Clock },
-          picked_up: { label: "In Transit", variant: "default", icon: Truck },
-          delivered: { label: "Delivered", variant: "outline", icon: CheckCircle }
-        };
-        
-        const config = statusConfig[status] || { label: status, variant: "outline", icon: AlertCircle };
-        const Icon = config.icon;
-        
-        return (
-          <div className="space-y-2">
-            <Badge variant={config.variant} className="flex items-center gap-1 text-xs">
-              <Icon className="w-3 h-3" />
-              {config.label}
-            </Badge>
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Clock className="w-3 h-3" />
-              {timeElapsed}
-              {isLate && (
-                <Badge variant="destructive" className="ml-2 text-xs">
-                  Late
-                </Badge>
-              )}
-            </div>
-          </div>
-        );
-      },
-    },
-    {
-      accessorKey: "created_at",
-      id: "created_at",
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm"
-        >
-          Created
-          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
-      cell: ({ row }: { row: any}) => (
-        <div className="text-xs sm:text-sm">
-          {new Date(row.getValue("created_at")).toLocaleDateString()}
-          <div className="text-xs text-muted-foreground">
-            {new Date(row.getValue("created_at")).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </div>
-        </div>
-      ),
-    },
-    {
-      accessorKey: "payment_method",
-      id: "payment_method", // This ID is used for filtering
-      header: "Payment Method",
-      cell: ({ row }: { row: any}) => (
-        <div className="text-xs sm:text-sm">
-          {row.getValue("payment_method") || 'N/A'}
-        </div>
-      ),
-    },
-    {
-      accessorKey: "delivery_method",
-      id: "delivery_method", // This ID is used for filtering
-      header: "Delivery Method",
-      cell: ({ row }: { row: any}) => (
-        <div className="text-xs sm:text-sm">
-          {row.getValue("delivery_method") || 'N/A'}
-        </div>
-      ),
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: ({ row }: { row: any}) => {
-        const delivery = row.original.original; // Get the original delivery object
-        const isPending = delivery.status === 'pending' || delivery.status === 'pending_offer';
-        const isPickedUp = delivery.status === 'picked_up';
-        
-        return (
-          <div className="flex items-center gap-2">
-            {isDesktop ? (
-              <>
-                {isPending && (
-                  <Button 
-                    size="sm" 
-                    onClick={() => handlePickupClick(delivery)}
-                    className="text-xs"
-                  >
-                    <Package className="w-3 h-3 mr-1" />
-                    Pick Up
-                  </Button>
-                )}
-                {isPickedUp && (
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    onClick={() => handleDeliverClick(delivery)}
-                    className="text-xs"
-                  >
-                    <CheckCircle className="w-3 h-3 mr-1" />
-                    Deliver
-                  </Button>
-                )}
-
-                {delivery.status === 'delivered' && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="text-xs"
-                    asChild
-                  >
-                    <Link to={`/rider/delivery/${delivery.id}/add-delivery-media`}>
-                      {(delivery.proofs_count || 0) > 0 ? 'View Proofs' : 'Provide Proof'}
-                    </Link>
-                  </Button>
-                )}
-
-                <Button 
-                  size="sm" 
-                  variant="ghost" 
-                  className="text-xs"
-                  asChild
-                >
-                  <Link to={`/rider/orders/active/${delivery.order.order_id}`}>
-                    <Navigation className="w-3 h-3 mr-1" />
-                    Details
-                  </Link>
-                </Button>
-              </>
-            ) : (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button size="sm" variant="outline">
-                    <MoreVertical className="w-4 h-4" />
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Actions</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Choose an action for this delivery
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <div className="space-y-2 py-4">
-                    {isPending && (
-                      <Button 
-                        size="sm" 
-                        onClick={() => handlePickupClick(delivery)}
-                        className="w-full justify-start"
-                      >
-                        <Package className="w-4 h-4 mr-2" />
-                        Pick Up Order
-                      </Button>
-                    )}
-                    {isPickedUp && (
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => handleDeliverClick(delivery)}
-                        className="w-full justify-start"
-                      >
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Mark as Delivered
-                      </Button>
-                    )}
-                    {delivery.status === 'delivered' && (
-                      <Button 
-                        size="sm" 
-                        variant="secondary" 
-                        className="w-full justify-start"
-                        asChild
-                      >
-                        <Link to={`/rider/delivery/${delivery.id}/add-delivery-media`}>
-                          {(delivery.proofs_count || 0) > 0 ? 'View Proofs' : 'Provide Proof'}
-                        </Link>
-                      </Button>
-                    )}
-                    <Button 
-                      size="sm" 
-                      variant="ghost" 
-                      className="w-full justify-start"
-                      asChild
-                    >
-                      <Link to={`/rider/orders/${delivery.order.order_id}`}>
-                        <Navigation className="w-4 h-4 mr-2" />
-                        View Details
-                      </Link>
-                    </Button>
-                  </div>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
-          </div>
-        );
-      },
-    },
-  ];
-
-  // Action Dialog/Drawer component
-  const ActionConfirmation = () => {
-    if (!selectedDelivery || !actionType) return null;
-
-    const actionConfig = {
-      pickup: {
-        title: "Pick Up Order",
-        description: "Are you sure you want to mark this order as picked up? This will update the order status to 'In Transit'.",
-        confirmText: "Yes, Pick Up",
-        icon: Package,
-        confirmColor: "bg-blue-600 hover:bg-blue-700"
-      },
-      deliver: {
-        title: "Deliver Order",
-        description: "Are you sure you want to mark this order as delivered? This will complete the delivery process.",
-        confirmText: "Yes, Deliver",
-        icon: CheckCircle,
-        confirmColor: "bg-green-600 hover:bg-green-700"
-      }
-    };
-
-    const config = actionConfig[actionType];
-    const Icon = config.icon;
-    const order = selectedDelivery.order;
-    const customer = order.customer;
-
-    if (isDesktop) {
-      return (
-        <AlertDialog open={showActionDialog} onOpenChange={setShowActionDialog}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle className="flex items-center gap-2">
-                <Icon className="w-5 h-5" />
-                {config.title}
-              </AlertDialogTitle>
-              <AlertDialogDescription className="space-y-4">
-                <p>{config.description}</p>
-                <div className="bg-muted p-4 rounded-lg space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Order ID:</span>
-                    <span className="font-mono text-sm">#{order.order_id?.slice(-8)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Customer:</span>
-                    <span className="text-sm">{customer.first_name} {customer.last_name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Amount:</span>
-                    <span className="text-sm font-bold">₱{order.total_amount?.toLocaleString()}</span>
-                  </div>
-                </div>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={isActionLoading}>
-                Cancel
-              </AlertDialogCancel>
-              <AlertDialogAction
-                onClick={confirmAction}
-                disabled={isActionLoading}
-                className={config.confirmColor}
-              >
-                {isActionLoading ? "Processing..." : config.confirmText}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      );
-    } else {
-      return (
-        <Drawer open={showActionDialog} onOpenChange={setShowActionDialog}>
-          <DrawerContent>
-            <DrawerHeader className="text-left">
-              <DrawerTitle className="flex items-center gap-2">
-                <Icon className="w-5 h-5" />
-                {config.title}
-              </DrawerTitle>
-              <DrawerDescription className="space-y-4">
-                <p>{config.description}</p>
-                <div className="bg-muted p-4 rounded-lg space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Order ID:</span>
-                    <span className="font-mono text-sm">#{order.order_id?.slice(-8)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Customer:</span>
-                    <span className="text-sm">{customer.first_name} {customer.last_name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Amount:</span>
-                    <span className="text-sm font-bold">₱{order.total_amount?.toLocaleString()}</span>
-                  </div>
-                </div>
-              </DrawerDescription>
-            </DrawerHeader>
-            <DrawerFooter className="pt-2">
-              <Button
-                onClick={confirmAction}
-                disabled={isActionLoading}
-                className={config.confirmColor}
-              >
-                {isActionLoading ? "Processing..." : config.confirmText}
-              </Button>
-              <DrawerClose asChild>
-                <Button variant="outline" disabled={isActionLoading}>
-                  Cancel
-                </Button>
-              </DrawerClose>
-            </DrawerFooter>
-          </DrawerContent>
-        </Drawer>
-      );
+    } catch (err: any) {
+      console.error('Error accepting delivery:', err);
+      alert(err?.response?.data?.error || 'Failed to accept order');
+    } finally {
+      setIsActionLoading(false);
     }
   };
 
-  // Initial data fetch
-  useEffect(() => {
-    fetchDeliveryData();
-  }, []);
+  // Decline a delivery (no server endpoint available — remove locally and refresh)
+  const handleDeclineDelivery = async (deliveryId: string) => {
+    // optimistic UI: remove from list immediately for feedback
+    setDeliveries(prev => prev.filter(d => d.id !== deliveryId));
+    // attempt a refresh to sync with server
+    try {
+      await fetchDeliveryData();
+      alert('Order declined');
+    } catch (err) {
+      // still succeed locally
+      console.warn('Decline refresh failed, delivery removed locally', err);
+      alert('Order declined (local)');
+    }
+  };
+
+  // Mark an accepted delivery as failed (persisted on server -> status='declined')
+  const handleMarkFailed = async (delivery: Delivery) => {
+    if (!confirm('Mark this delivery as failed? This will unassign you from the delivery.')) return;
+    try {
+      setIsActionLoading(true);
+      const formData = new FormData();
+      formData.append('delivery_id', delivery.id);
+      formData.append('status', 'declined');
+
+      const res = await AxiosInstance.post('/rider-orders-active/update_delivery_status/', formData, {
+        headers: { 'X-User-Id': user.user_id }
+      });
+
+      console.debug('update_delivery_status response', res.data);
+
+      if (res.data.success) {
+        // refresh list to reflect change
+        await fetchDeliveryData();
+        alert('Delivery marked as failed');
+      } else {
+        alert(res.data.error || 'Failed to mark delivery as failed');
+      }
+    } catch (err: any) {
+      console.error('Failed to mark failed:', err);
+      alert(err?.response?.data?.error || 'Failed to mark delivery as failed');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const toggleDeliveryExpansion = (deliveryId: string) => {
+    const newExpanded = new Set(expandedDeliveries);
+    if (newExpanded.has(deliveryId)) {
+      newExpanded.delete(deliveryId);
+    } else {
+      newExpanded.add(deliveryId);
+    }
+    setExpandedDeliveries(newExpanded);
+  };
+
+  // Prepare transformed data for the table (filtered by activeTab)
+  const pendingStatuses = ['pending', 'pending_offer'];
+  const toProcessStatuses = ['accepted', 'picked_up']; // "To Process" / To Pick Up includes accepted + picked_up (in-transit)
+
+  const filteredDeliveries = useMemo(() => {
+    let filtered = activeTab === 'pending' 
+      ? deliveries.filter(d => pendingStatuses.includes(d.status))
+      : deliveries.filter(d => toProcessStatuses.includes(d.status));
+    
+    // Apply search filter
+    if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase();
+      filtered = filtered.filter(d => 
+        d.order.order_id.toLowerCase().includes(searchLower) ||
+        `${d.order.customer.first_name} ${d.order.customer.last_name}`.toLowerCase().includes(searchLower) ||
+        d.order.shipping_address?.full_address?.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    return filtered;
+  }, [deliveries, activeTab, searchTerm]);
+
+  // Get status badge
+  const getStatusBadge = (status: string) => {
+    const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.default;
+    const Icon = config.icon;
+    
+    return (
+      <Badge 
+        className={`text-[10px] h-5 px-1.5 py-0 flex items-center gap-1 ${config.color}`}
+      >
+        <Icon className="w-2.5 h-2.5" />
+        {config.label}
+      </Badge>
+    );
+  };
+
+  // Format date
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return '';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
+    } catch {
+      return '';
+    }
+  };
+
+  // Format currency
+  const formatCurrency = (amount: number) => {
+    return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  };
+
+  // Get tab count
+  const getTabCount = (tabId: string) => {
+    if (tabId === 'pending') {
+      return deliveries.filter(d => pendingStatuses.includes(d.status)).length;
+    } else {
+      return deliveries.filter(d => toProcessStatuses.includes(d.status)).length;
+    }
+  };
 
   // Handle date range change
   const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
@@ -793,16 +537,35 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     });
   };
 
+  // Loading skeleton for metrics
+  const MetricCardSkeleton = () => (
+    <Card>
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <Skeleton className="h-3 w-16 mb-2" />
+            <Skeleton className="h-5 w-12" />
+            <Skeleton className="h-2 w-20 mt-2" />
+          </div>
+          <Skeleton className="w-8 h-8 rounded-full" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  // Initial data fetch
+  useEffect(() => {
+    fetchDeliveryData();
+  }, []);
+
   return (
     <UserProvider user={user}>
       <SidebarLayout>
-        <div className="space-y-6">
+        <div className="space-y-3 p-3">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">Active Orders</h1>
-              <p className="text-muted-foreground mt-1">Manage your deliveries and track performance</p>
-            </div>
+          <div className="mb-2">
+            <h1 className="text-lg font-bold">Active Orders</h1>
+            <p className="text-gray-500 text-xs">Manage your deliveries and track performance</p>
           </div>
 
           <DateRangeFilter 
@@ -810,8 +573,8 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
             isLoading={isLoading}
           />
 
-          {/* Key Metrics */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Key Metrics - MINIMALIST */}
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2">
             {isLoading ? (
               <>
                 <MetricCardSkeleton />
@@ -822,84 +585,84 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
             ) : (
               <>
                 <Card>
-                  <CardContent className="p-4 sm:p-6">
+                  <CardContent className="p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Active Orders</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{metrics.total_active_orders}</p>
-                        <div className="flex gap-2 text-xs text-muted-foreground mt-2">
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" /> {metrics.pending_pickup} pending
+                        <p className="text-xs text-muted-foreground">Active Orders</p>
+                        <p className="text-lg font-bold mt-1">{metrics.total_active_orders}</p>
+                        <div className="flex gap-1 text-[10px] text-muted-foreground mt-1">
+                          <span className="flex items-center gap-0.5">
+                            <Clock className="w-2 h-2" /> {metrics.pending_pickup}
                           </span>
-                          <span className="flex items-center gap-1">
-                            <Truck className="w-3 h-3" /> {metrics.in_transit} in transit
+                          <span className="flex items-center gap-0.5">
+                            <Truck className="w-2 h-2" /> {metrics.in_transit}
                           </span>
                         </div>
                       </div>
-                      <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
-                        <Package className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
+                      <div className="p-1.5 bg-blue-100 rounded-full">
+                        <Package className="w-3 h-3 sm:w-4 sm:h-4 text-blue-600" />
                       </div>
                     </div>
                   </CardContent>
                 </Card>
 
                 <Card>
-                  <CardContent className="p-4 sm:p-6">
+                  <CardContent className="p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Expected Earnings</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">
+                        <p className="text-xs text-muted-foreground">Expected Earnings</p>
+                        <p className="text-lg font-bold mt-1">
                           ₱{metrics.expected_earnings.toLocaleString()}
                         </p>
-                        <p className="text-xs text-muted-foreground mt-2">
+                        <p className="text-[10px] text-muted-foreground mt-1">
                           ₱{metrics.week_earnings.toLocaleString()} this week
                         </p>
                       </div>
-                      <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                        <PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
+                      <div className="p-1.5 bg-green-100 rounded-full">
+                        <PhilippinePeso className="w-3 h-3 sm:w-4 sm:h-4 text-green-600" />
                       </div>
                     </div>
                   </CardContent>
                 </Card>
 
                 <Card>
-                  <CardContent className="p-4 sm:p-6">
+                  <CardContent className="p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Avg Delivery Time</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">
+                        <p className="text-xs text-muted-foreground">Avg Delivery Time</p>
+                        <p className="text-lg font-bold mt-1">
                           {Math.floor(metrics.avg_delivery_time / 60)}h {Math.round(metrics.avg_delivery_time % 60)}m
                         </p>
-                        <div className="flex gap-2 text-xs text-muted-foreground mt-2">
-                          <span className="flex items-center gap-1">
-                            <CheckCircle className="w-3 h-3 text-green-500" /> {metrics.on_time_deliveries} on time
+                        <div className="flex gap-1 text-[10px] text-muted-foreground mt-1">
+                          <span className="flex items-center gap-0.5">
+                            <CheckCircle className="w-2 h-2 text-green-500" /> {metrics.on_time_deliveries}
                           </span>
-                          <span className="flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3 text-red-500" /> {metrics.late_deliveries} late
+                          <span className="flex items-center gap-0.5">
+                            <AlertCircle className="w-2 h-2 text-red-500" /> {metrics.late_deliveries}
                           </span>
                         </div>
                       </div>
-                      <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                        <Clock className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
+                      <div className="p-1.5 bg-purple-100 rounded-full">
+                        <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-purple-600" />
                       </div>
                     </div>
                   </CardContent>
                 </Card>
 
                 <Card>
-                  <CardContent className="p-4 sm:p-6">
+                  <CardContent className="p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Completion Rate</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">
+                        <p className="text-xs text-muted-foreground">Completion Rate</p>
+                        <p className="text-lg font-bold mt-1">
                           {metrics.completion_rate.toFixed(1)}%
                         </p>
-                        <p className="text-xs text-muted-foreground mt-2">
+                        <p className="text-[10px] text-muted-foreground mt-1">
                           {metrics.today_deliveries} deliveries today
                         </p>
                       </div>
-                      <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                        <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
+                      <div className="p-1.5 bg-yellow-100 rounded-full">
+                        <TrendingUp className="w-3 h-3 sm:w-4 sm:h-4 text-yellow-600" />
                       </div>
                     </div>
                   </CardContent>
@@ -909,28 +672,315 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
           </div>
 
           {/* Action Confirmation Dialog/Drawer */}
-          <ActionConfirmation />
+          {selectedDelivery && actionType && (
+            <AlertDialog open={showActionDialog} onOpenChange={setShowActionDialog}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle className="flex items-center gap-2">
+                    {actionType === 'pickup' ? <Package className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
+                    {actionType === 'pickup' ? 'Pick Up Order' : 'Deliver Order'}
+                  </AlertDialogTitle>
+                  <AlertDialogDescription className="space-y-3">
+                    <p className="text-xs">
+                      {actionType === 'pickup' 
+                        ? 'Are you sure you want to mark this order as picked up?' 
+                        : 'Are you sure you want to mark this order as delivered?'}
+                    </p>
+                    <div className="bg-muted p-2 rounded space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="font-medium">Order ID:</span>
+                        <span className="font-mono">#{selectedDelivery.order.order_id?.slice(-8)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Customer:</span>
+                        <span>{selectedDelivery.order.customer.first_name} {selectedDelivery.order.customer.last_name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Amount:</span>
+                        <span className="font-bold">{formatCurrency(selectedDelivery.order.total_amount)}</span>
+                      </div>
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isActionLoading} className="text-xs h-7">
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={confirmAction}
+                    disabled={isActionLoading}
+                    className={`text-xs h-7 ${actionType === 'pickup' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}`}
+                  >
+                    {isActionLoading ? "Processing..." : actionType === 'pickup' ? 'Yes, Pick Up' : 'Yes, Deliver'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
 
-          {/* Active Deliveries Table */}
+          {/* Active Deliveries */}
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg sm:text-xl">My Deliveries</CardTitle>
-              <CardDescription>
-                {isLoading ? 'Loading deliveries...' : `Showing ${deliveries.length} deliveries`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-md">
-                <DataTable 
-                  columns={columns} 
-                  data={tableData}
-                  filterConfig={getFilterOptions()}
-                  searchConfig={{
-                    column: "order_id", // Search by order_id column
-                    placeholder: "Search by order ID..."
-                  }}
-                  isLoading={isLoading}
-                />
+            <CardContent className="p-3">
+              <div className="space-y-3">
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
+                  <Input
+                    placeholder="Search deliveries by ID, customer, or address..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-8 text-sm h-8"
+                  />
+                </div>
+
+                {/* Minimalist tabs (Pending / To Process) */}
+                <div className="flex items-center space-x-1 overflow-x-auto">
+                  {STATUS_TABS.map((tab) => {
+                    const Icon = tab.icon;
+                    const count = getTabCount(tab.id);
+                    const isActive = activeTab === tab.id;
+                    
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as 'pending' | 'to_process')}
+                        className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap ${
+                          isActive 
+                            ? 'bg-blue-50 text-blue-600 border border-blue-200' 
+                            : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        <Icon className="w-3 h-3" />
+                        <span>{tab.label}</span>
+                        {count > 0 && (
+                          <span className={`text-[10px] px-1 py-0.5 rounded ${
+                            isActive ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Deliveries List - CARD-BASED */}
+                <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                  {isLoading ? (
+                    // Loading skeletons
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <Card key={i} className="overflow-hidden border">
+                        <CardContent className="p-3">
+                          <div className="space-y-2">
+                            <Skeleton className="h-4 w-3/4" />
+                            <Skeleton className="h-3 w-1/2" />
+                            <Skeleton className="h-3 w-2/3" />
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))
+                  ) : filteredDeliveries.length === 0 ? (
+                    <div className="text-center py-4">
+                      <ShoppingBag className="mx-auto h-6 w-6 text-gray-300 mb-2" />
+                      <p className="text-gray-500 text-xs">
+                        {activeTab === 'pending' ? 'No pending deliveries' : 'No orders to process'}
+                      </p>
+                    </div>
+                  ) : (
+                    filteredDeliveries.map((delivery) => {
+                      const isExpanded = expandedDeliveries.has(delivery.id);
+                      const customer = delivery.order.customer;
+                      const address = delivery.order.shipping_address;
+                      
+                      return (
+                        <Card key={delivery.id} className="overflow-hidden border">
+                          <CardContent className="p-3">
+                            {/* Top Section - Header */}
+                            <div className="flex items-start justify-between mb-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Package className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                                  <span className="text-xs font-medium truncate">
+                                    Order #{delivery.order.order_id?.slice(-8)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                                  <span className="truncate">{customer.first_name} {customer.last_name}</span>
+                                  <span>•</span>
+                                  <span>{formatDate(delivery.created_at)}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {getStatusBadge(delivery.status)}
+                                {delivery.is_late && (
+                                  <Badge variant="destructive" className="text-[8px] h-4 px-1">
+                                    Late
+                                  </Badge>
+                                )}
+                                <button 
+                                  onClick={() => toggleDeliveryExpansion(delivery.id)}
+                                  className="p-1 hover:bg-gray-100 rounded"
+                                >
+                                  {isExpanded ? (
+                                    <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+                                  ) : (
+                                    <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Middle Section - Summary */}
+                            <div className="mb-2">
+                              <div className="flex items-center gap-2 text-[10px] text-gray-600 mb-1">
+                                <MapPin className="w-2.5 h-2.5" />
+                                <span className="truncate">{address?.full_address || 'No address'}</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-[10px] text-gray-600 mb-1">
+                                <Phone className="w-2.5 h-2.5" />
+                                <span>{customer.contact_number || 'No contact'}</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <div className="text-[10px] text-gray-500 flex items-center gap-1">
+                                  <CreditCard className="w-2.5 h-2.5" />
+                                  {delivery.order.payment_method || 'N/A'}
+                                </div>
+                                <div className="font-medium text-xs">
+                                  {formatCurrency(delivery.order.total_amount)}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Time Elapsed */}
+                            <div className="flex items-center gap-1 mb-2">
+                              <Clock className="w-2.5 h-2.5 text-gray-400" />
+                              <span className="text-[10px] text-gray-500">
+                                {delivery.time_elapsed}
+                              </span>
+                            </div>
+
+                            {/* Expanded Section - Details */}
+                            {isExpanded && (
+                              <div className="mt-3 pt-3 border-t space-y-2">
+                                <div className="text-[10px]">
+                                  <div className="font-medium text-gray-700 mb-1">Recipient Information</div>
+                                  <div className="text-gray-600 space-y-0.5">
+                                    <div>Name: {address?.recipient_name || 'N/A'}</div>
+                                    <div>Phone: {address?.recipient_phone || 'N/A'}</div>
+                                  </div>
+                                </div>
+                                
+                                <div className="text-[10px]">
+                                  <div className="font-medium text-gray-700 mb-1">Delivery Details</div>
+                                  <div className="text-gray-600 space-y-0.5">
+                                    <div>Method: {delivery.order.delivery_method || 'N/A'}</div>
+                                    {delivery.picked_at && (
+                                      <div>Picked Up: {formatDate(delivery.picked_at)}</div>
+                                    )}
+                                    {delivery.delivered_at && (
+                                      <div>Delivered: {formatDate(delivery.delivered_at)}</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Bottom Section - Actions */}
+                            <div className="flex items-center justify-between pt-2 border-t mt-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => toggleDeliveryExpansion(delivery.id)}
+                                className="h-6 px-2 text-[10px]"
+                              >
+                                {isExpanded ? 'Show Less' : 'View Details'}
+                              </Button>
+                              
+                              <div className="flex gap-1">
+                                {delivery.status === 'pending' ? (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 px-2 text-[10px] text-red-600 hover:bg-red-50"
+                                      onClick={async () => { if (!confirm('Decline this delivery?')) return; await handleDeclineDelivery(delivery.id); }}
+                                    >
+                                      <span className="text-xs">Decline</span>
+                                    </Button>
+
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 px-2 text-[10px] text-green-600 hover:bg-green-50"
+                                      onClick={() => handleAcceptDelivery(delivery)}
+                                    >
+                                      <CheckCircle className="w-2.5 h-2.5 mr-1" />
+                                      Accept
+                                    </Button>
+                                  </>
+                                ) : delivery.status === 'accepted' ? (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handlePickupClick(delivery)}
+                                      className="h-6 px-2 text-[10px]"
+                                      aria-label="Mark picked up"
+                                    >
+                                      <Package className="w-2.5 h-2.5 mr-1" />
+                                      Pick Up
+                                    </Button>
+
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 px-2 text-[10px] text-red-600 hover:bg-red-50"
+                                      onClick={() => handleMarkFailed(delivery)}
+                                    >
+                                      <span className="text-xs">Mark Failed</span>
+                                    </Button>
+                                  </>
+                                ) : delivery.status === 'pending_offer' ? (
+                                  <Button 
+                                    size="sm" 
+                                    onClick={() => handlePickupClick(delivery)}
+                                    className="h-6 px-2 text-[10px]"
+                                  >
+                                    <Package className="w-2.5 h-2.5 mr-1" />
+                                    Pick Up
+                                  </Button>
+                                ) : delivery.status === 'picked_up' ? (
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline"
+                                    onClick={() => handleDeliverClick(delivery)}
+                                    className="h-6 px-2 text-[10px]"
+                                  >
+                                    <CheckCircle className="w-2.5 h-2.5 mr-1" />
+                                    Deliver
+                                  </Button>
+                                ) : delivery.status === 'delivered' && (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    className="h-6 px-2 text-[10px]"
+                                    asChild
+                                  >
+                                    <Link to={`/rider/delivery/${delivery.id}/add-delivery-media`}>
+                                      {(delivery.proofs_count || 0) > 0 ? 'View Proofs' : 'Add Proof'}
+                                    </Link>
+                                  </Button>
+                                )}
+                                
+
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
