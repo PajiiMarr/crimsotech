@@ -571,7 +571,7 @@ class Variants(models.Model):
 
     # REMOVED the conflicting @property methods
     # The fields quantity and price are already accessible directly
-    
+
 class Issues(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     product = models.ForeignKey(
@@ -1049,6 +1049,9 @@ class Delivery(models.Model):
         ('in_progress','In Progress'),
         ('delivered','Delivered'),
         ('cancelled','Cancelled'),
+        ('declined','Declined'),
+        ('accepted','Accepted'),
+
     ], default='pending')
     distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     estimated_minutes = models.IntegerField(null=True, blank=True)
