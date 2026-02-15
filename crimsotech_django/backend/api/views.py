@@ -29582,7 +29582,6 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
 class RiderScheduleViewSet(viewsets.ViewSet):
     """
     Rider Schedule API endpoints for managing rider availability and schedules
-    Similar structure to RiderOrderHistoryViewSet with data integrity and optimization
     """
     
     def _get_user_from_header(self, request):
@@ -29616,11 +29615,13 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             user = self._get_user_from_header(request)
             rider = self._get_rider_from_user(user)
             
-            # Get custom schedule from rider (stored as JSONField)
-            custom_schedule = rider.custom_schedule if hasattr(rider, 'custom_schedule') else {}
+            # Get rider's schedule from RiderSchedule model
+            rider_schedules = RiderSchedule.objects.filter(
+                rider=rider
+            ).order_by('day_of_week')
             
-            # Format custom schedule for UI
-            formatted_schedule = self._format_custom_schedule(custom_schedule)
+            # Format schedule for UI
+            formatted_schedule = self._format_schedule_data(rider_schedules, rider)
             
             # Get scheduled deliveries for metrics and calendar
             scheduled_deliveries = self._get_scheduled_deliveries(rider)
@@ -29631,13 +29632,16 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             # Format scheduled deliveries for UI
             formatted_deliveries = self._format_scheduled_deliveries(scheduled_deliveries)
             
+            # Get custom schedule from rider (if exists)
+            custom_schedule = rider.custom_schedule if hasattr(rider, 'custom_schedule') else {}
+            
             return Response({
                 'success': True,
                 'rider': {
-                    'id': str(rider.rider.id),
-                    'availability_status': rider.availability_status,
-                    'is_accepting_deliveries': rider.is_accepting_deliveries,
-                    'last_status_update': rider.last_status_update,
+                    'id': str(rider.id),
+                    'availability_status': getattr(rider, 'availability_status', 'offline'),
+                    'is_accepting_deliveries': getattr(rider, 'is_accepting_deliveries', True),
+                    'last_status_update': getattr(rider, 'last_status_update', timezone.now()),
                     'custom_schedule': custom_schedule
                 },
                 'schedule': formatted_schedule,
@@ -29656,23 +29660,36 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                 'error': f'An unexpected error occurred: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _format_custom_schedule(self, custom_schedule):
-        """Format custom schedule data for UI consumption"""
+    def _format_schedule_data(self, rider_schedules, rider):
+        """Format schedule data from RiderSchedule model"""
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         formatted_schedule = []
         
+        # Create a dictionary of existing schedules
+        schedule_dict = {s.day_of_week: s for s in rider_schedules}
+        
         for i, day_name in enumerate(days):
-            day_key = day_name.lower()
-            day_data = custom_schedule.get(day_key, {})
-            
-            formatted_schedule.append({
-                'day_of_week': i,
-                'day_name': day_name,
-                'start_time': day_data.get('start', '09:00'),
-                'end_time': day_data.get('end', '17:00'),
-                'is_available': day_data.get('available', i < 5),  # Mon-Fri available by default
-                'has_custom_schedule': day_key in custom_schedule
-            })
+            if i in schedule_dict:
+                schedule = schedule_dict[i]
+                formatted_schedule.append({
+                    'day_of_week': i,
+                    'day_name': day_name,
+                    'start_time': schedule.start_time.strftime('%H:%M'),
+                    'end_time': schedule.end_time.strftime('%H:%M'),
+                    'is_available': schedule.is_available,
+                    'has_custom_schedule': True,
+                    'id': str(schedule.id)  # Include ID for editing
+                })
+            else:
+                # Default values for days without schedule
+                formatted_schedule.append({
+                    'day_of_week': i,
+                    'day_name': day_name,
+                    'start_time': '09:00',
+                    'end_time': '17:00',
+                    'is_available': i < 5,  # Mon-Fri available by default
+                    'has_custom_schedule': False
+                })
         
         return formatted_schedule
     
@@ -29683,7 +29700,6 @@ class RiderScheduleViewSet(viewsets.ViewSet):
         
         return Delivery.objects.filter(
             rider=rider,
-            is_scheduled=True,
             status__in=['scheduled', 'pending', 'picked_up', 'in_progress'],
             scheduled_pickup_time__lte=seven_days_from_now
         ).select_related(
@@ -29697,7 +29713,7 @@ class RiderScheduleViewSet(viewsets.ViewSet):
     def _calculate_schedule_metrics(self, rider, deliveries):
         """Calculate comprehensive schedule metrics"""
         if not deliveries.exists():
-            return self._get_empty_metrics(rider)
+            return self._get_empty_metrics()
         
         # Calculate metrics from deliveries
         aggregated = deliveries.aggregate(
@@ -29720,19 +29736,24 @@ class RiderScheduleViewSet(viewsets.ViewSet):
         # Calculate peak day
         peak_day = self._get_peak_day(deliveries)
         
-        # Calculate availability percentage from custom schedule
-        custom_schedule = rider.custom_schedule if hasattr(rider, 'custom_schedule') else {}
-        availability_percentage = self._calculate_availability_percentage(custom_schedule)
+        # Calculate availability percentage from RiderSchedule
+        total_schedules = RiderSchedule.objects.filter(rider=rider).count()
+        available_schedules = RiderSchedule.objects.filter(
+            rider=rider, 
+            is_available=True
+        ).count()
+        
+        availability_percentage = round((available_schedules / max(total_schedules, 1)) * 100) if total_schedules > 0 else 71
         
         # Calculate average deliveries per day (next 7 days)
         deliveries_by_day = self._get_deliveries_by_day(deliveries)
         avg_deliveries_per_day = sum(deliveries_by_day.values()) / max(len(deliveries_by_day), 1)
         
         return {
-            'total_deliveries': aggregated['total_deliveries'],
-            'upcoming_deliveries': aggregated['upcoming_deliveries'],
-            'in_progress_deliveries': aggregated['in_progress_deliveries'],
-            'completed_deliveries': aggregated['completed_deliveries'],
+            'total_deliveries': aggregated['total_deliveries'] or 0,
+            'upcoming_deliveries': aggregated['upcoming_deliveries'] or 0,
+            'in_progress_deliveries': aggregated['in_progress_deliveries'] or 0,
+            'completed_deliveries': aggregated['completed_deliveries'] or 0,
             'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
             'total_distance_km': float(aggregated['total_distance_km'] or 0),
             'average_rating': round(aggregated['avg_rating'] or 0, 1),
@@ -29742,20 +29763,6 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             'avg_deliveries_per_day': round(avg_deliveries_per_day, 1),
             'has_data': aggregated['total_deliveries'] > 0
         }
-    
-    def _calculate_availability_percentage(self, custom_schedule):
-        """Calculate availability percentage from custom schedule"""
-        if not custom_schedule:
-            # Default: Monday-Friday available (5/7 = 71%)
-            return 71
-        
-        available_days = sum(1 for day_data in custom_schedule.values() 
-                           if day_data.get('available', False))
-        total_days = len(custom_schedule)
-        
-        if total_days > 0:
-            return round((available_days / total_days) * 100)
-        return 0
     
     def _get_peak_day(self, deliveries):
         """Determine which day has the most deliveries"""
@@ -29813,11 +29820,11 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             
             formatted_deliveries.append({
                 'id': str(delivery.id),
-                'order': str(order.order),
-                'order_number': str(order.order)[:8].upper(),
+                'order': str(order.id),
+                'order_number': str(order.id)[:8].upper(),
                 'status': delivery.status,
-                'scheduled_pickup_time': delivery.scheduled_pickup_time,
-                'scheduled_delivery_time': delivery.scheduled_delivery_time,
+                'scheduled_pickup_time': delivery.scheduled_pickup_time.isoformat() if delivery.scheduled_pickup_time else None,
+                'scheduled_delivery_time': delivery.scheduled_delivery_time.isoformat() if delivery.scheduled_delivery_time else None,
                 'is_scheduled': delivery.is_scheduled,
                 'estimated_minutes': delivery.estimated_minutes,
                 'actual_minutes': delivery.actual_minutes,
@@ -29827,11 +29834,11 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                 
                 # Order details
                 'order_details': {
-                    'order': str(order.order),
+                    'order': str(order.id),
                     'user': {
                         'username': customer.username,
                         'email': customer.email,
-                        'contact_number': customer.contact_number
+                        'contact_number': getattr(customer, 'contact_number', '')
                     },
                     'shipping_address': {
                         'recipient_name': shipping_address.recipient_name if shipping_address else None,
@@ -29849,7 +29856,7 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                 
                 # Customer info
                 'customer_name': f"{customer.first_name} {customer.last_name}".strip() or customer.username,
-                'customer_contact': customer.contact_number,
+                'customer_contact': getattr(customer, 'contact_number', ''),
                 'customer_email': customer.email,
                 
                 # Shop info
@@ -29857,15 +29864,15 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                 'shop_contact': shop_contact,
                 
                 # Timestamps
-                'created_at': delivery.created_at,
-                'updated_at': delivery.updated_at,
-                'picked_at': delivery.picked_at,
-                'delivered_at': delivery.delivered_at,
+                'created_at': delivery.created_at.isoformat() if delivery.created_at else None,
+                'updated_at': delivery.updated_at.isoformat() if delivery.updated_at else None,
+                'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
+                'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
             })
         
         return formatted_deliveries
     
-    def _get_empty_metrics(self, rider):
+    def _get_empty_metrics(self):
         """Return empty metrics structure"""
         return {
             'total_deliveries': 0,
@@ -29877,7 +29884,7 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             'average_rating': 0,
             'today_deliveries': 0,
             'peak_day': 'N/A',
-            'availability_percentage': 0,
+            'availability_percentage': 71,
             'avg_deliveries_per_day': 0,
             'has_data': False
         }
@@ -29907,19 +29914,22 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                     'error': f'Invalid availability_status. Must be one of: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Update rider's availability
-            rider.availability_status = availability_status
-            rider.is_accepting_deliveries = bool(is_accepting_deliveries)
-            rider.last_status_update = timezone.now()
+            # Update rider's availability (if these fields exist on Rider model)
+            if hasattr(rider, 'availability_status'):
+                rider.availability_status = availability_status
+            if hasattr(rider, 'is_accepting_deliveries'):
+                rider.is_accepting_deliveries = bool(is_accepting_deliveries)
+            if hasattr(rider, 'last_status_update'):
+                rider.last_status_update = timezone.now()
             rider.save()
             
             return Response({
                 'success': True,
                 'message': 'Availability updated successfully',
                 'rider': {
-                    'availability_status': rider.availability_status,
-                    'is_accepting_deliveries': rider.is_accepting_deliveries,
-                    'last_status_update': rider.last_status_update
+                    'availability_status': getattr(rider, 'availability_status', availability_status),
+                    'is_accepting_deliveries': getattr(rider, 'is_accepting_deliveries', bool(is_accepting_deliveries)),
+                    'last_status_update': getattr(rider, 'last_status_update', timezone.now())
                 }
             })
             
@@ -29936,38 +29946,61 @@ class RiderScheduleViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])
     def update_schedule(self, request):
-        """Update rider's custom schedule"""
+        """Update rider's schedule using RiderSchedule model"""
         try:
             user = self._get_user_from_header(request)
             rider = self._get_rider_from_user(user)
             
-            custom_schedule = request.data.get('custom_schedule')
+            schedule_data = request.data.get('schedule', [])
             
-            if not custom_schedule or not isinstance(custom_schedule, dict):
+            if not isinstance(schedule_data, list):
                 return Response({
                     'success': False,
-                    'error': 'custom_schedule is required and must be a dictionary'
+                    'error': 'schedule must be a list'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Validate schedule structure
-            if not self._validate_custom_schedule(custom_schedule):
-                return Response({
-                    'success': False,
-                    'error': 'Invalid custom_schedule format'
-                }, status=status.HTTP_400_BAD_REQUEST)
+            # Process each day's schedule
+            for day_schedule in schedule_data:
+                day_of_week = day_schedule.get('day_of_week')
+                start_time = day_schedule.get('start_time')
+                end_time = day_schedule.get('end_time')
+                is_available = day_schedule.get('is_available', True)
+                
+                if day_of_week is None or not start_time or not end_time:
+                    continue
+                
+                # Validate time format
+                time_pattern = re.compile(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$')
+                if not time_pattern.match(start_time) or not time_pattern.match(end_time):
+                    return Response({
+                        'success': False,
+                        'error': f'Invalid time format for day {day_of_week}. Use HH:MM format.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Convert string times to TimeField
+                from datetime import time
+                start_hour, start_minute = map(int, start_time.split(':'))
+                end_hour, end_minute = map(int, end_time.split(':'))
+                
+                # Update or create schedule
+                schedule, created = RiderSchedule.objects.update_or_create(
+                    rider=rider,
+                    day_of_week=day_of_week,
+                    defaults={
+                        'start_time': time(start_hour, start_minute),
+                        'end_time': time(end_hour, end_minute),
+                        'is_available': is_available
+                    }
+                )
             
-            # Update rider's custom schedule
-            rider.custom_schedule = custom_schedule
-            rider.save()
-            
-            # Format response
-            formatted_schedule = self._format_custom_schedule(custom_schedule)
+            # Return updated schedule
+            updated_schedules = RiderSchedule.objects.filter(rider=rider).order_by('day_of_week')
+            formatted_schedule = self._format_schedule_data(updated_schedules, rider)
             
             return Response({
                 'success': True,
                 'message': 'Schedule updated successfully',
-                'custom_schedule': custom_schedule,
-                'formatted_schedule': formatted_schedule
+                'schedule': formatted_schedule
             })
             
         except ValueError as e:
@@ -29980,30 +30013,6 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                 'success': False,
                 'error': f'An unexpected error occurred: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    def _validate_custom_schedule(self, custom_schedule):
-        """Validate custom schedule structure"""
-        valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-        
-        for day_key, day_data in custom_schedule.items():
-            if day_key not in valid_days:
-                return False
-            
-            if not isinstance(day_data, dict):
-                return False
-            
-            required_keys = ['start', 'end', 'available']
-            for key in required_keys:
-                if key not in day_data:
-                    return False
-            
-            # Validate time format (HH:MM)
-            import re
-            time_pattern = re.compile(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$')
-            if not time_pattern.match(day_data['start']) or not time_pattern.match(day_data['end']):
-                return False
-        
-        return True
     
     @action(detail=False, methods=['get'])
     def get_weekly_view(self, request):
@@ -30021,12 +30030,13 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             start_of_target_week = start_of_current_week + timedelta(weeks=week_offset)
             
             # Get deliveries for the target week
-            start_datetime = timezone.make_aware(timezone.datetime.combine(start_of_target_week, timezone.datetime.min.time()))
+            start_datetime = timezone.make_aware(
+                timezone.datetime.combine(start_of_target_week, timezone.datetime.min.time())
+            )
             end_datetime = start_datetime + timedelta(days=7)
             
             weekly_deliveries = Delivery.objects.filter(
                 rider=rider,
-                is_scheduled=True,
                 scheduled_pickup_time__gte=start_datetime,
                 scheduled_pickup_time__lt=end_datetime
             ).select_related(
@@ -30034,19 +30044,21 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                 'order__user'
             ).order_by('scheduled_pickup_time')
             
-            # Get custom schedule
-            custom_schedule = rider.custom_schedule if hasattr(rider, 'custom_schedule') else {}
+            # Get rider's schedule
+            rider_schedules = RiderSchedule.objects.filter(rider=rider)
+            schedule_dict = {s.day_of_week: s for s in rider_schedules}
             
             # Format data for weekly view
             weekly_data = []
             for i in range(7):
                 day_date = start_of_target_week + timedelta(days=i)
                 day_name = day_date.strftime('%A')
-                day_key = day_name.lower()
                 
                 # Get day's schedule
-                day_schedule = custom_schedule.get(day_key, {})
-                is_available = day_schedule.get('available', True)
+                day_schedule = schedule_dict.get(i)
+                is_available = day_schedule.is_available if day_schedule else (i < 5)
+                start_time = day_schedule.start_time.strftime('%H:%M') if day_schedule else '09:00'
+                end_time = day_schedule.end_time.strftime('%H:%M') if day_schedule else '17:00'
                 
                 # Get day's deliveries
                 day_deliveries = []
@@ -30058,7 +30070,7 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                         if len(day_deliveries) < 2:  # Only include first 2 for preview
                             day_deliveries.append({
                                 'id': str(delivery.id),
-                                'order_number': str(delivery.order.order)[:8].upper(),
+                                'order_number': str(delivery.order.id)[:8].upper(),
                                 'scheduled_time': delivery.scheduled_pickup_time.time().strftime('%H:%M'),
                                 'status': delivery.status,
                                 'customer_name': delivery.order.user.username
@@ -30070,8 +30082,8 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                     'day_name': day_name,
                     'is_today': day_date == today,
                     'is_available': is_available,
-                    'start_time': day_schedule.get('start', '09:00'),
-                    'end_time': day_schedule.get('end', '17:00'),
+                    'start_time': start_time,
+                    'end_time': end_time,
                     'deliveries_count': day_delivery_count,
                     'deliveries_preview': day_deliveries
                 })
@@ -30095,6 +30107,53 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                 'success': False,
                 'error': f'An unexpected error occurred: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['delete'])
+    def delete_schedule(self, request):
+        """Delete a specific schedule entry"""
+        try:
+            user = self._get_user_from_header(request)
+            rider = self._get_rider_from_user(user)
+            
+            day_of_week = request.query_params.get('day_of_week')
+            
+            if day_of_week is None:
+                return Response({
+                    'success': False,
+                    'error': 'day_of_week is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                day_of_week = int(day_of_week)
+            except ValueError:
+                return Response({
+                    'success': False,
+                    'error': 'Invalid day_of_week'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Delete the schedule
+            deleted = RiderSchedule.objects.filter(
+                rider=rider,
+                day_of_week=day_of_week
+            ).delete()
+            
+            return Response({
+                'success': True,
+                'message': 'Schedule deleted successfully',
+                'deleted': deleted[0] > 0
+            })
+            
+        except ValueError as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'An unexpected error occurred: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class Reviews(viewsets.ModelViewSet):
     """
