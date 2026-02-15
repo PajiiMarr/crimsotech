@@ -339,44 +339,11 @@ class Product(models.Model):
     )
     name = models.CharField(max_length=100)
     description = models.CharField(max_length=1000)
-    quantity = models.IntegerField(default=0)
-    
-    # New pricing fields
-    original_price = models.DecimalField(
-        decimal_places=2, 
-        max_digits=9,
-        null=True,
-        blank=True,
-        help_text="Original price of the product when new"
-    )
-    usage_time = models.DecimalField(
-        decimal_places=2,
-        max_digits=6,
-        null=True,
-        blank=True,
-        help_text="How long the product has been used"
-    )
-    usage_unit = models.CharField(
-        max_length=10,
-        choices=USAGE_UNIT_CHOICES,
-        default='months',
-        help_text="Unit of measurement for usage time"
-    )
-    
-    # Current selling price (calculated from depreciation)
-    price = models.DecimalField(decimal_places=2, max_digits=9)
     
     upload_status = models.CharField(max_length=20, choices=[('draft','Draft'),('published','Published'),('archived','Archived')], default='draft')
     status = models.TextField()
     condition = models.CharField(max_length=50, choices=CONDITION_CHOICES)
-    compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     is_refundable = models.BooleanField(null=True,blank=True)
-    length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    weight_unit = models.CharField(max_length=10, default='kg', blank=True)
-    critical_stock = models.IntegerField(null=True,blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_removed = models.BooleanField(default=False)
@@ -390,8 +357,6 @@ class Product(models.Model):
             models.Index(fields=['customer', 'upload_status']),
             models.Index(fields=['upload_status', 'created_at']),
             models.Index(fields=['category', 'upload_status']),
-            models.Index(fields=['price']),
-            models.Index(fields=['original_price']),
             models.Index(fields=['created_at']),
             models.Index(fields=['is_removed', 'removed_at']),
         ]
@@ -401,49 +366,37 @@ class Product(models.Model):
         return self.reports_against.filter(status__in=['pending', 'under_review']).count()
     
     @property
-    def calculated_price(self):
-        """
-        Calculate the depreciated price based on original price and usage time.
-        Uses 20% annual depreciation.
-        """
-        if not self.original_price or not self.usage_time:
-            return self.price
-        
-        # Convert usage time to years
-        if self.usage_unit == 'months':
-            years = self.usage_time / Decimal('12.0')
-        else:  # years
-            years = self.usage_time
-        
-        # Calculate depreciation: original * (1 - 0.20)^years
-        depreciation_rate = Decimal('0.20')
-        depreciated_value = self.original_price * ((Decimal('1.0') - depreciation_rate) ** years)
-        
-        # Ensure price doesn't go below 0
-        return max(Decimal('0.00'), depreciated_value.quantize(Decimal('0.01')))
+    def total_variants(self):
+        """Get the count of active variants for this product"""
+        return self.variants.filter(is_active=True).count()
+    
+    @property
+    def min_price(self):
+        """Get the minimum price among active variants"""
+        active_variants = self.variants.filter(is_active=True, price__isnull=False)
+        if active_variants.exists():
+            return active_variants.aggregate(models.Min('price'))['price__min']
+        return None
+    
+    @property
+    def max_price(self):
+        """Get the maximum price among active variants"""
+        active_variants = self.variants.filter(is_active=True, price__isnull=False)
+        if active_variants.exists():
+            return active_variants.aggregate(models.Max('price'))['price__max']
+        return None
+    
+    @property
+    def total_stock(self):
+        """Get the total stock quantity from all active variants"""
+        return self.variants.filter(is_active=True).aggregate(models.Sum('quantity'))['quantity__sum'] or 0
 
     def clean(self):
         if self.customer and not self.customer.can_add_product():
             raise ValidationError(f"Customer cannot add more than {self.customer.product_limit} products")
-        
-        # Validate usage time if provided
-        if self.usage_time is not None and self.usage_time < 0:
-            raise ValidationError("Usage time cannot be negative")
-        
-        # Validate original price if provided
-        if self.original_price is not None and self.original_price <= 0:
-            raise ValidationError("Original price must be positive")
-        
-        # Validate price
-        if self.price is not None and self.price < 0:
-            raise ValidationError("Price cannot be negative")
 
     def save(self, *args, **kwargs):
         is_new = self._state.adding
-        
-        # Auto-calculate price if original price and usage time are provided
-        if self.original_price and self.usage_time:
-            self.price = self.calculated_price
         
         if is_new and self.customer:
             self.customer.increment_product_count()
@@ -457,7 +410,7 @@ class Product(models.Model):
 
     def __str__(self):
         return f"{self.name}"
-
+    
 class Favorites(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     product = models.ForeignKey(
@@ -534,9 +487,6 @@ class Variants(models.Model):
     price = models.DecimalField(decimal_places=2, max_digits=9, null=True, blank=True)
     compare_price = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     quantity = models.IntegerField(default=0)
-    length = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    width = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
-    height = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     weight = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     weight_unit = models.CharField(max_length=10, default='g', blank=True)
     critical_trigger = models.IntegerField(null=True, blank=True)
@@ -549,12 +499,38 @@ class Variants(models.Model):
         choices=SWAP_TYPE_CHOICES,
         default='direct_swap'
     )
+    original_price = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Original price of the item when new"
+    )
+    usage_period = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="How long the item has been used"
+    )
+    usage_unit = models.CharField(
+        max_length=10,
+        choices=[('weeks', 'Weeks'), ('months', 'Months'), ('years', 'Years')],
+        null=True,
+        blank=True,
+        help_text="Unit of measurement for usage period"
+    )
+    depreciation_rate = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="Annual depreciation rate percentage"
+    )
     minimum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
     maximum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
     swap_description = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='product/variants/', null=True, blank=True)
+    critical_stock = models.IntegerField(null=True,blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
 
     class Meta:
         indexes = [

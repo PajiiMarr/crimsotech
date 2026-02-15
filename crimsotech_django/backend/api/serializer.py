@@ -247,14 +247,19 @@ class ProductSerializer(serializers.ModelSerializer):
     variants = serializers.SerializerMethodField()
     media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
     primary_image = serializers.SerializerMethodField()
+    # Add computed fields from variants
+    total_stock = serializers.SerializerMethodField()
+    starting_price = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
         fields = [
-            'id', 'name', 'description', 'quantity', 'price', 'original_price',
-            'usage_time', 'usage_unit', 'status', 'upload_status', 'condition',
+            'id', 'name', 'description', 
+            # REMOVED: 'quantity', 'price', 'original_price', 'usage_time', 'usage_unit'
+            'status', 'upload_status', 'condition',
             'is_refundable', 'refund_days', 'created_at', 'updated_at',
-            'shop', 'category', 'category_admin', 'variants', 'media_files', 'primary_image',
+            'shop', 'category', 'category_admin', 'variants', 'media_files', 
+            'primary_image', 'total_stock', 'starting_price'
         ]
     
     def to_internal_value(self, data):
@@ -292,7 +297,18 @@ class ProductSerializer(serializers.ModelSerializer):
         # Pass request context to serializer for building absolute URLs
         context = self.context.copy()
         return VariantsSerializer(variants, many=True, context=context).data
-        
+    
+    def get_total_stock(self, obj):
+        """Calculate total stock from all variants"""
+        return sum(variant.quantity for variant in obj.variants.all())
+    
+    def get_starting_price(self, obj):
+        """Get the minimum price from all variants"""
+        min_price_variant = obj.variants.filter(price__isnull=False).order_by('price').first()
+        if min_price_variant and min_price_variant.price:
+            return str(min_price_variant.price)
+        return None
+     
         
 class ReviewDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)

@@ -18,24 +18,29 @@ import {
   AlertCircle,
   Star,
   MapPin,
+  Trash2,
   Heart,
   Shield,
   Eye,
   Ban,
-  Trash2,
+  XCircle,
   Archive,
   Send,
   Undo,
   CheckCircle,
-  XCircle,
   ChevronLeft,
   MoreVertical,
-  ChevronDown,
   Calendar,
   Tag,
   Box,
   Layers,
-  TrendingUp
+  TrendingUp,
+  Image as ImageIcon,
+  Scale,
+  RefreshCw,
+  Clock,
+  Hash,
+  DollarSign
 } from 'lucide-react';
 import AxiosInstance from "~/components/axios/Axios";
 import { useState, useEffect } from 'react';
@@ -69,6 +74,12 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "~/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "~/components/ui/tooltip";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -84,10 +95,15 @@ interface ProductData {
   description: string;
   quantity: number;
   used_for: string;
-  price: string;
+  price_range: {
+    min: string;
+    max: string;
+  };
   upload_status: string;
   status: string;
   condition: string;
+  is_refundable: boolean;
+  refund_days: number;
   created_at: string;
   updated_at: string;
   is_removed: boolean;
@@ -95,19 +111,27 @@ interface ProductData {
   removed_at: string | null;
   active_report_count: number;
   favorites_count: number;
+  average_rating: number;
+  total_reviews: number;
   shop: {
     id: string;
     name: string;
+    shop_picture: string | null;
     verified: boolean;
     city: string;
     barangay: string;
+    street: string;
+    contact_number: string;
     total_sales: string;
     created_at: string;
     is_suspended: boolean;
   } | null;
   customer: {
+    id: string;
     username: string | null;
     email: string | null;
+    first_name: string;
+    last_name: string;
     contact_number: string;
     product_limit: number;
     current_product_count: number;
@@ -128,29 +152,95 @@ interface ProductData {
   variants: Array<{
     id: string;
     title: string;
+    sku_code: string | null;
+    price: string | null;
+    compare_price: string | null;
+    quantity: number;
+    weight: string | null;
+    weight_unit: string;
+    critical_trigger: number | null;
+    is_active: boolean;
+    is_refundable: boolean;
+    refund_days: number;
+    allow_swap: boolean;
+    swap_type: string;
+    original_price: string | null;
+    usage_period: number | null;
+    usage_unit: string | null;
+    depreciation_rate: number | null;
+    minimum_additional_payment: string;
+    maximum_additional_payment: string;
+    swap_description: string | null;
+    critical_stock: number | null;
+    image: string | null;
+    option_title: string | null;
+    option_ids: Array<any>;
+    option_map: any;
     options: Array<{
       id: string;
+      name: string;
+      value: string;
       title: string;
-      quantity: number;
-      price: string;
     }>;
+    created_at: string | null;
+    updated_at: string | null;
   }>;
   reviews: Array<{
     id: string;
     rating: number;
     comment: string | null;
-    customer: string | null;
+    customer: {
+      id: string | null;
+      username: string | null;
+      first_name: string | null;
+      last_name: string | null;
+    } | null;
     created_at: string;
+    updated_at: string | null;
   }>;
   boost: {
     id: string;
     status: string;
-    plan: string | null;
-    end_date: string;
+    plan: {
+      id: string;
+      name: string;
+      price: string;
+      duration: number;
+      time_unit: string;
+    } | null;
+    start_date: string | null;
+    end_date: string | null;
+    created_at: string | null;
   } | null;
+  pending_boost: {
+    id: string;
+    created_at: string | null;
+  } | null;
+  issues: Array<{
+    id: string;
+    description: string;
+  }>;
+  variant_stats: {
+    total_variants: number;
+    active_variants: number;
+    total_stock: number;
+    min_price: string | null;
+    max_price: string | null;
+    low_stock_variants: number;
+    out_of_stock_variants: number;
+  };
   reports: {
     active: number;
+    resolved: number;
     total: number;
+    active_reports: Array<{
+      id: string;
+      reason: string;
+      description: string;
+      status: string;
+      created_at: string;
+      reporter: string | null;
+    }>;
   };
 }
 
@@ -187,7 +277,7 @@ export async function loader({ request, context, params}: Route.LoaderArgs): Pro
   try {
     // Fetch product data from API
     const response = await AxiosInstance.get(`/admin-products/get_product/?product_id=${product_id}`);
-    const product = response.data;
+    const product = response.data.product || response.data;
 
     return { user, product };
   } catch (error: any) {
@@ -284,6 +374,15 @@ const actionConfigs = {
     needsReason: false,
     needsSuspensionDays: false,
   },
+  deleteDraft: {
+    title: "Delete Draft",
+    description: "Are you sure you want to delete this draft product? This action cannot be undone.",
+    confirmText: "Delete",
+    variant: "destructive" as const,
+    icon: Trash2,
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
 };
 
 export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) {
@@ -299,6 +398,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
   const [reason, setReason] = useState("");
   const [suspensionDays, setSuspensionDays] = useState(7);
   const [processing, setProcessing] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const { toast } = useToast();
 
@@ -309,7 +409,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     setLoading(true);
     try {
       const response = await AxiosInstance.get(`/admin-products/get_product/?product_id=${product.id}`);
-      setProduct(response.data);
+      setProduct(response.data.product || response.data);
       setError(undefined);
     } catch (error: any) {
       console.error('Error refreshing product data:', error);
@@ -333,9 +433,10 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     await fetchProductData();
   };
 
-  const averageRating = product?.reviews && product.reviews.length > 0 
-    ? product.reviews.reduce((acc, review) => acc + review.rating, 0) / product.reviews.length 
-    : 0;
+  const averageRating = product?.average_rating || 
+    (product?.reviews && product.reviews.length > 0 
+      ? product.reviews.reduce((acc, review) => acc + review.rating, 0) / product.reviews.length 
+      : 0);
 
   // Determine available actions based on status and upload_status
   const getAvailableActions = () => {
@@ -352,6 +453,12 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
           icon: Send,
           variant: "default" as const,
         },
+        {
+          id: "deleteDraft",
+          label: "Delete Draft",
+          icon: Trash2,
+          variant: "destructive" as const,
+        }
       );
     } else if (product.upload_status === 'published') {
       actions.push(
@@ -401,7 +508,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     }
 
     // Actions based on general status
-    if (product.status === 'Active' && !product.is_removed) {
+    if (product.status === 'Active' && !product.is_removed && product.upload_status === 'published') {
       actions.push(
         {
           id: "suspend",
@@ -509,14 +616,31 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
   };
 
   const getUploadStatusBadge = (status: string) => {
-    const statusConfig = {
-      draft: { variant: "secondary" as const, label: "Draft" },
-      published: { variant: "default" as const, label: "Published" },
-      archived: { variant: "outline" as const, label: "Archived" }
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
+      draft: { variant: "secondary", label: "Draft" },
+      published: { variant: "default", label: "Published" },
+      archived: { variant: "outline", label: "Archived" }
     };
     
-    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.draft;
+    const config = statusConfig[status] || statusConfig.draft;
     return <Badge variant={config.variant}>{config.label}</Badge>;
+  };
+
+  const getConditionBadge = (condition: string) => {
+    const conditionMap: Record<string, { variant: "default" | "secondary" | "outline", color: string }> = {
+      'Like New': { variant: "default", color: "bg-green-500" },
+      'New': { variant: "default", color: "bg-blue-500" },
+      'Refurbished': { variant: "secondary", color: "" },
+      'Used - Excellent': { variant: "secondary", color: "" },
+      'Used - Good': { variant: "outline", color: "" },
+    };
+    
+    const config = conditionMap[condition] || { variant: "outline", color: "" };
+    return (
+      <Badge variant={config.variant} className={config.color}>
+        {condition}
+      </Badge>
+    );
   };
 
   const renderDialogContent = () => {
@@ -708,6 +832,13 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
               <AlertCircle className="w-8 h-8 sm:w-12 sm:h-12 text-red-500 mx-auto mb-3 sm:mb-4" />
               <h2 className="text-lg sm:text-xl font-semibold mb-2">Error Loading Product</h2>
               <p className="text-muted-foreground text-sm sm:text-base">{error}</p>
+              <Button 
+                variant="outline" 
+                className="mt-4"
+                onClick={() => window.location.reload()}
+              >
+                Try Again
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -731,101 +862,107 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     );
   }
 
-  // Flatten all options from all variants into a simple list
-  const allOptions = product.variants.flatMap(variant => 
-    variant.options.map(option => ({
-      ...option,
-      variantTitle: variant.title
-    }))
-  );
+  const allVariants = product.variants || [];
+
+  // Calculate price display
+  const priceDisplay = () => {
+    if (product.price_range.min && product.price_range.max) {
+      if (product.price_range.min === product.price_range.max) {
+        return `₱${parseFloat(product.price_range.min).toLocaleString()}`;
+      } else {
+        return `₱${parseFloat(product.price_range.min).toLocaleString()} - ₱${parseFloat(product.price_range.max).toLocaleString()}`;
+      }
+    }
+    return "Price not available";
+  };
 
   return (
     <UserProvider user={user}>
-      <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
-        {/* Loading indicator */}
-        {loading && (
-          <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="flex flex-col items-center gap-2">
-              <div className="h-6 w-6 sm:h-8 sm:w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-              <p className="text-xs sm:text-sm text-muted-foreground">Updating product data...</p>
+      <TooltipProvider>
+        <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
+          {/* Loading indicator */}
+          {loading && (
+            <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
+              <div className="flex flex-col items-center gap-2 bg-white p-6 rounded-lg shadow-lg">
+                <div className="h-6 w-6 sm:h-8 sm:w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                <p className="text-xs sm:text-sm text-muted-foreground">Updating product data...</p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Product removed banner - ADDED THIS SECTION */}
-        {product?.is_removed && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <XCircle className="w-5 h-5 text-red-600" />
-              <div className="flex-1">
-                <h3 className="font-medium text-red-800">This product has been removed</h3>
-                <div className="text-sm text-red-700 mt-1 space-y-1">
-                  <p><strong>Removal Reason:</strong> {product.removal_reason || "No reason provided"}</p>
-                  <p><strong>Removed At:</strong> {product.removed_at ? new Date(product.removed_at).toLocaleString() : "Unknown date"}</p>
+          {/* Product removed banner */}
+          {product?.is_removed && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="font-medium text-red-800">This product has been removed</h3>
+                  <div className="text-sm text-red-700 mt-1 space-y-1">
+                    <p><strong>Removal Reason:</strong> {product.removal_reason || "No reason provided"}</p>
+                    <p><strong>Removed At:</strong> {product.removed_at ? new Date(product.removed_at).toLocaleString() : "Unknown date"}</p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Responsive Header with Admin Actions Dropdown */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          {/* Breadcrumb */}
-          <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
-            <a href="/admin" className="hover:text-primary hover:underline flex items-center gap-1">
-              <ChevronLeft className="w-3 h-3 sm:w-4 sm:h-4" />
-              <span className="hidden xs:inline">Admin</span>
-            </a>
-            <span>&gt;</span>
-            <a href="/admin/products" className="hover:text-primary hover:underline">
-              Products
-            </a>
-            <span>&gt;</span>
-            <span className="text-foreground font-medium truncate max-w-[120px] xs:max-w-[180px] sm:max-w-[250px]">
-              {product.name}
-            </span>
-          </nav>
-
-          {/* Admin Actions Dropdown - Visible on all screen sizes */}
-          {availableActions.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="ml-auto">
-                  <MoreVertical className="w-4 h-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {availableActions.map((action, index) => {
-                  // Add separator before destructive actions
-                  const isDestructive = action.variant === "destructive";
-                  const prevAction = availableActions[index - 1];
-                  const needsSeparator = isDestructive && prevAction && prevAction.variant !== "destructive";
-
-                  return (
-                    <div key={action.id}>
-                      {needsSeparator && <DropdownMenuSeparator />}
-                      <DropdownMenuItem
-                        onClick={() => handleActionClick(action.id)}
-                        className={`flex items-center gap-2 ${
-                          isDestructive 
-                            ? "text-destructive focus:text-destructive" 
-                            : ""
-                        }`}
-                      >
-                        <action.icon className="w-4 h-4" />
-                        {action.label}
-                      </DropdownMenuItem>
-                    </div>
-                  );
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
           )}
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
-          {/* Left Column - Images */}
-          <div className="w-full col-span-2 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 lg:grid-rows-1 lg:min-h-[600px]">
+          {/* Responsive Header with Admin Actions Dropdown */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Breadcrumb */}
+            <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
+              <a href="/admin" className="hover:text-primary hover:underline flex items-center gap-1">
+                <ChevronLeft className="w-3 h-3 sm:w-4 sm:h-4" />
+                <span className="hidden xs:inline">Admin</span>
+              </a>
+              <span>&gt;</span>
+              <a href="/admin/products" className="hover:text-primary hover:underline">
+                Products
+              </a>
+              <span>&gt;</span>
+              <span className="text-foreground font-medium truncate max-w-[120px] xs:max-w-[180px] sm:max-w-[250px]">
+                {product.name}
+              </span>
+            </nav>
+
+            {/* Admin Actions Dropdown */}
+            {availableActions.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="ml-auto">
+                    <MoreVertical className="w-4 h-4 mr-2" />
+                    Actions
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  {availableActions.map((action, index) => {
+                    const isDestructive = action.variant === "destructive";
+                    const prevAction = availableActions[index - 1];
+                    const needsSeparator = isDestructive && prevAction && prevAction.variant !== "destructive";
+
+                    return (
+                      <div key={action.id}>
+                        {needsSeparator && <DropdownMenuSeparator />}
+                        <DropdownMenuItem
+                          onClick={() => handleActionClick(action.id)}
+                          className={`flex items-center gap-2 cursor-pointer ${
+                            isDestructive 
+                              ? "text-destructive focus:text-destructive" 
+                              : ""
+                          }`}
+                        >
+                          <action.icon className="w-4 h-4" />
+                          {action.label}
+                        </DropdownMenuItem>
+                      </div>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+
+          {/* Main Content Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
             {/* Left Column - Images */}
             <div className="lg:h-[800px]">
               <Card className="h-full">
@@ -837,7 +974,10 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                           {product.media.map((media) => (
                             <CarouselItem key={media.id} className="h-full">
                               <div className="h-full flex items-center justify-center">
-                                <div className="aspect-square w-full rounded-lg overflow-hidden">
+                                <div 
+                                  className="aspect-square w-full rounded-lg overflow-hidden cursor-pointer"
+                                  onClick={() => setSelectedImage(media.file_data)}
+                                >
                                   <img
                                     src={media.file_data || "/api/placeholder/600/400"}
                                     alt={product.name}
@@ -849,60 +989,81 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             </CarouselItem>
                           ))}
                         </CarouselContent>
-                        <CarouselPrevious className="hidden sm:flex -left-3" />
-                        <CarouselNext className="hidden sm:flex -right-3" />
+                        {product.media.length > 1 && (
+                          <>
+                            <CarouselPrevious className="hidden sm:flex -left-3" />
+                            <CarouselNext className="hidden sm:flex -right-3" />
+                          </>
+                        )}
                       </Carousel>
-                      {/* Mobile carousel indicators */}
-                      <div className="flex justify-center gap-2 mt-3 sm:hidden">
-                        {product.media.map((_, index) => (
-                          <div
-                            key={index}
-                            className="w-2 h-2 rounded-full bg-muted"
-                          />
-                        ))}
+                      {/* Image count indicator */}
+                      <div className="flex justify-center items-center gap-2 mt-3">
+                        <div className="flex gap-1">
+                          {product.media.map((_, index) => (
+                            <div
+                              key={index}
+                              className="w-2 h-2 rounded-full bg-muted-foreground/30"
+                            />
+                          ))}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {product.media.length} {product.media.length === 1 ? 'image' : 'images'}
+                        </span>
                       </div>
                     </div>
                   ) : (
                     <div className="h-full flex items-center justify-center">
-                      <div className="aspect-square w-full rounded-lg bg-muted flex items-center justify-center">
-                        <Package className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
+                      <div className="aspect-square w-full rounded-lg bg-muted flex flex-col items-center justify-center gap-2">
+                        <ImageIcon className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground" />
+                        <p className="text-sm text-muted-foreground">No images available</p>
                       </div>
                     </div>
                   )}
                 </CardContent>
               </Card>
             </div>
+
             {/* Right Column - Product Details */}
             <div className="lg:h-[800px]">
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 sm:p-4 flex-1 flex flex-col min-h-0">
-                  {/* Product Header - Fixed */}
+                  {/* Product Header */}
                   <div className="flex-shrink-0">
                     <div className="flex flex-col xs:flex-row xs:items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight break-words">
                           {product.name}
                         </h1>
-                        <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
                           {getUploadStatusBadge(product.upload_status)}
-                          <Badge variant={product.condition === "Excellent" ? "default" : "secondary"}>
-                            {product.condition} Condition
-                          </Badge>
-                          <Badge variant="outline">
-                            {product.category?.name || "No Category"}
-                          </Badge>
-                          {/* ADDED: Removed badge indicator */}
+                          {getConditionBadge(product.condition)}
+                          {product.category && (
+                            <Badge variant="outline" className="bg-blue-50">
+                              {product.category.name}
+                            </Badge>
+                          )}
+                          {product.category_admin && (
+                            <Badge variant="outline" className="bg-purple-50">
+                              Admin: {product.category_admin.name}
+                            </Badge>
+                          )}
                           {product.is_removed && (
                             <Badge variant="destructive" className="animate-pulse">
                               <XCircle className="w-3 h-3 mr-1" />
                               Removed
                             </Badge>
                           )}
+                          {product.status === 'Suspended' && (
+                            <Badge variant="destructive">
+                              <Ban className="w-3 h-3 mr-1" />
+                              Suspended
+                            </Badge>
+                          )}
                         </div>
                       </div>
                       <div className="text-left xs:text-right">
                         <div className="text-xl sm:text-2xl font-bold text-primary">
-                          ₱{parseFloat(product.price).toLocaleString()}
+                          {priceDisplay()}
                         </div>
                         <div className="flex items-center gap-1 mt-1 xs:justify-end">
                           <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
@@ -912,6 +1073,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                         </div>
                       </div>
                     </div>
+
                     {/* Rating and Engagement */}
                     <div className="flex items-center gap-3 sm:gap-4 mt-3 flex-wrap">
                       <div className="flex items-center gap-2">
@@ -928,9 +1090,15 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                           ))}
                         </div>
                         <span className="text-xs sm:text-sm text-muted-foreground">
-                          {averageRating.toFixed(1)} • ({product.reviews.length} reviews)
+                          {averageRating.toFixed(1)} • ({product.total_reviews || product.reviews.length} reviews)
                         </span>
                       </div>
+                      {product.is_refundable && (
+                        <Badge variant="secondary" className="bg-green-100 text-green-800">
+                          <RefreshCw className="w-3 h-3 mr-1" />
+                          Refundable ({product.refund_days} days)
+                        </Badge>
+                      )}
                     </div>
                   </div>
 
@@ -940,16 +1108,33 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                   <div className="flex-1 overflow-y-auto min-h-0 pr-2 space-y-4">
                     {/* Key Stats Grid */}
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20">
-                        <Box className="w-5 h-5 text-muted-foreground mb-2" />
-                        <span className="text-xs text-muted-foreground mb-1">Stock</span>
-                        <span className="font-semibold text-base">{product.quantity} units</span>
-                      </div>
-                      <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20">
-                        <Tag className="w-5 h-5 text-muted-foreground mb-2" />
-                        <span className="text-xs text-muted-foreground mb-1">Category</span>
-                        <span className="font-semibold text-sm text-center">{product.category?.name || "No Category"}</span>
-                      </div>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20 cursor-help">
+                            <Box className="w-5 h-5 text-muted-foreground mb-2" />
+                            <span className="text-xs text-muted-foreground mb-1">Total Stock</span>
+                            <span className="font-semibold text-base">{product.variant_stats?.total_stock || product.quantity} units</span>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Total quantity across all variants</p>
+                        </TooltipContent>
+                      </Tooltip>
+
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20 cursor-help">
+                            <Layers className="w-5 h-5 text-muted-foreground mb-2" />
+                            <span className="text-xs text-muted-foreground mb-1">Variants</span>
+                            <span className="font-semibold text-base">{product.variant_stats?.total_variants || allVariants.length}</span>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Total variants: {product.variant_stats?.total_variants || 0}</p>
+                          <p>Active variants: {product.variant_stats?.active_variants || 0}</p>
+                        </TooltipContent>
+                      </Tooltip>
+
                       <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20">
                         <Calendar className="w-5 h-5 text-muted-foreground mb-2" />
                         <span className="text-xs text-muted-foreground mb-1">Created</span>
@@ -957,98 +1142,166 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                           {new Date(product.created_at).toLocaleDateString()}
                         </span>
                       </div>
+
                       <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20">
                         <TrendingUp className="w-5 h-5 text-muted-foreground mb-2" />
-                        <span className="text-xs text-muted-foreground mb-1">Last Updated</span>
+                        <span className="text-xs text-muted-foreground mb-1">Updated</span>
                         <span className="font-semibold text-xs text-center">
                           {new Date(product.updated_at).toLocaleDateString()}
                         </span>
                       </div>
                     </div>
 
-                    <Separator />
-
-                    {/* Additional Details */}
-                    <div className="space-y-3">
-                      <div>
-                        <h3 className="font-medium text-sm mb-2">
-                          <span className="text-muted-foreground">Condition</span>
-                        </h3>
+                    {/* Low Stock Warning */}
+                    {(product.variant_stats?.low_stock_variants || 0) > 0 && (
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                         <div className="flex items-center gap-2">
-                          <Badge variant={product.condition === "Excellent" ? "default" : "secondary"} className="text-sm">
-                            {product.condition}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {product.condition === "Excellent" ? "Like new" : 
-                            product.condition === "Good" ? "Minor wear" : 
-                            product.condition === "Fair" ? "Visible wear" : "Well used"}
+                          <AlertCircle className="w-4 h-4 text-yellow-600" />
+                          <span className="text-sm text-yellow-800">
+                            {product.variant_stats.low_stock_variants} variant(s) have low stock (less than 5 units)
                           </span>
                         </div>
                       </div>
-                    </div>
+                    )}
+
+                    {/* Out of Stock Warning */}
+                    {(product.variant_stats?.out_of_stock_variants || 0) > 0 && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                        <div className="flex items-center gap-2">
+                          <XCircle className="w-4 h-4 text-red-600" />
+                          <span className="text-sm text-red-800">
+                            {product.variant_stats.out_of_stock_variants} variant(s) are out of stock
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     <Separator />
 
                     {/* Description */}
                     <div>
-                      <h3 className="font-medium text-sm mb-3">
-                        <span className="text-muted-foreground">Description</span>
+                      <h3 className="font-medium text-sm mb-3 flex items-center gap-2">
+                        <Package className="w-4 h-4" />
+                        Description
                       </h3>
                       <div className="bg-muted/10 p-4 rounded-lg">
                         <p className="text-sm leading-relaxed whitespace-pre-line">{product.description}</p>
                       </div>
                     </div>
 
-                    {/* Product Options - Showing in grid layout with 3 per row, disabled for 0 stock */}
-                    {allOptions.length > 0 && (
+                    {/* Product Variants */}
+                    {allVariants.length > 0 && (
                       <>
                         <Separator />
                         <div>
                           <h3 className="font-medium text-sm mb-3 flex items-center gap-2">
                             <Layers className="w-4 h-4" />
-                            Available Options
+                            Product Variants ({allVariants.length})
                           </h3>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {allOptions.map((option) => {
-                              const isOutOfStock = option.quantity === 0;
+                          <div className="space-y-3">
+                            {allVariants.map((variant) => {
+                              const isOutOfStock = variant.quantity === 0;
+                              const isLowStock = variant.quantity > 0 && variant.quantity < 5;
                               
                               return (
                                 <div 
-                                  key={option.id} 
+                                  key={variant.id} 
                                   className={`
                                     border rounded-lg p-3 transition-colors
                                     ${isOutOfStock 
-                                      ? 'bg-muted/30 border-muted opacity-60 cursor-not-allowed' 
-                                      : 'hover:border-primary/50'
+                                      ? 'bg-muted/30 border-muted opacity-60' 
+                                      : isLowStock
+                                        ? 'border-yellow-200 bg-yellow-50/30'
+                                        : 'hover:border-primary/50'
                                     }
                                   `}
                                 >
-                                  <div className="flex flex-col h-full">
-                                    <div className="flex-1">
-                                      <div className="flex justify-between items-start mb-2">
-                                        <span className={`font-medium text-sm line-clamp-2 ${isOutOfStock ? 'text-muted-foreground' : ''}`}>
-                                          {option.title}
-                                        </span>
+                                  <div className="flex flex-col sm:flex-row gap-3">
+                                    {/* Variant Image */}
+                                    {variant.image && (
+                                      <div className="sm:w-24 sm:h-24 w-full h-32 flex-shrink-0">
+                                        <img 
+                                          src={variant.image} 
+                                          alt={variant.title}
+                                          className="w-full h-full object-cover rounded-md"
+                                          onError={(e) => {
+                                            (e.target as HTMLImageElement).src = '/api/placeholder/200/200';
+                                          }}
+                                        />
+                                      </div>
+                                    )}
+                                    
+                                    {/* Variant Details */}
+                                    <div className="flex-1 space-y-2">
+                                      <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div>
+                                          <h4 className="font-medium text-sm">{variant.title}</h4>
+                                          {variant.sku_code && (
+                                            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                                              <Hash className="w-3 h-3" />
+                                              SKU: {variant.sku_code}
+                                            </p>
+                                          )}
+                                        </div>
                                         <Badge 
-                                          variant={isOutOfStock ? "outline" : option.quantity < 5 ? "destructive" : "default"}
-                                          className="text-xs shrink-0 ml-1"
+                                          variant={isOutOfStock ? "outline" : isLowStock ? "destructive" : "default"}
+                                          className="shrink-0"
                                         >
-                                          {isOutOfStock ? "Out of stock" : option.quantity}
+                                          {isOutOfStock ? "Out of stock" : `${variant.quantity} in stock`}
                                         </Badge>
                                       </div>
-                                      <p className={`text-xs mb-2 truncate ${isOutOfStock ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>
-                                        {option.variantTitle}
-                                      </p>
-                                    </div>
-                                    <div className="mt-2 pt-2 border-t">
-                                      <div className="flex justify-between items-center">
-                                        <span className={`text-sm font-semibold ${isOutOfStock ? 'text-muted-foreground' : 'text-primary'}`}>
-                                          ₱{parseFloat(option.price).toLocaleString()}
+
+                                      {/* Options */}
+                                      {variant.options && variant.options.length > 0 && (
+                                        <div className="flex flex-wrap gap-2">
+                                          {variant.options.map((opt, idx) => (
+                                            <Badge key={idx} variant="outline" className="bg-gray-50">
+                                              {opt.name}: {opt.value}
+                                            </Badge>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {/* Pricing */}
+                                      <div className="flex items-center gap-3">
+                                        <span className="text-base font-semibold text-primary">
+                                          ₱{parseFloat(variant.price || "0").toLocaleString()}
                                         </span>
-                                        {!isOutOfStock && (
-                                          <span className="text-xs text-muted-foreground">
-                                            in stock
+                                        {variant.compare_price && parseFloat(variant.compare_price) > 0 && (
+                                          <>
+                                            <span className="text-sm text-muted-foreground line-through">
+                                              ₱{parseFloat(variant.compare_price).toLocaleString()}
+                                            </span>
+                                            <Badge variant="secondary" className="bg-green-100">
+                                              Save {Math.round((1 - parseFloat(variant.price || "0") / parseFloat(variant.compare_price)) * 100)}%
+                                            </Badge>
+                                          </>
+                                        )}
+                                      </div>
+
+                                      {/* Additional Variant Info */}
+                                      <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                                        {variant.weight && (
+                                          <span className="flex items-center gap-1">
+                                            <Scale className="w-3 h-3" />
+                                            {variant.weight} {variant.weight_unit}
                                           </span>
+                                        )}
+                                        {variant.usage_period && (
+                                          <span className="flex items-center gap-1">
+                                            <Clock className="w-3 h-3" />
+                                            Used: {variant.usage_period} {variant.usage_unit}
+                                          </span>
+                                        )}
+                                        {variant.allow_swap && (
+                                          <Badge variant="outline" className="text-xs">
+                                            Swap available ({variant.swap_type})
+                                          </Badge>
+                                        )}
+                                        {variant.is_refundable && (
+                                          <Badge variant="outline" className="text-xs text-green-600">
+                                            Refundable ({variant.refund_days} days)
+                                          </Badge>
                                         )}
                                       </div>
                                     </div>
@@ -1065,408 +1318,443 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
               </Card>
             </div>
           </div>
-          {/* Product Status Overview - Full Width */}
-          <Card className="col-span-1 lg:col-span-2">
-            <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-              <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
-                Product Status Overview
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
-              <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
-                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Upload Status</span>
-                  {getUploadStatusBadge(product.upload_status)}
-                </div>
-                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
-                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Product Status</span>
-                  <Badge variant={product.status === "Active" ? "default" : "secondary"}>
-                    {product.status}
-                  </Badge>
-                </div>
-                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
-                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Boost Status</span>
-                  <Badge variant={product.boost?.status === "active" ? "default" : "outline"} className="bg-purple-500">
-                    {product.boost?.status === "active" ? "Boosted" : "Not Boosted"}
-                  </Badge>
-                </div>
-                <div className="flex flex-col items-center justify-center p-3 sm:p-4 border rounded-lg bg-muted/50">
-                  <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Removal Status</span>
-                  <Badge variant={product.is_removed ? "destructive" : "default"}>
-                    {product.is_removed ? "Removed" : "Active"}
-                  </Badge>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
 
-        {/* Bottom Section - Accordion */}
-        <Accordion type="single" collapsible className="w-full" defaultValue="product-details">
-          <AccordionItem value="product-details">
-            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
-              <div className="flex items-center gap-2">
-                <Package className="w-4 h-4 sm:w-5 sm:h-5" />
-                Product Details & Information
-              </div>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4 p-4 sm:p-6">
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Stock Quantity</p>
-                    <p className="font-medium text-sm sm:text-base">{product.quantity} units</p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Category</p>
-                    <p className="font-medium text-sm sm:text-base">{product.category?.name || "No Category"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Condition</p>
-                    <p className="font-medium text-sm sm:text-base">{product.condition}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Created</p>
-                    <p className="font-medium text-xs sm:text-sm">
-                      {new Date(product.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Last Updated</p>
-                    <p className="font-medium text-xs sm:text-sm">
-                      {new Date(product.updated_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  {/* ADDED: Removal info section */}
-                  {product.is_removed && (
-                    <>
+          {/* Bottom Section - Accordion */}
+          <Accordion type="single" collapsible className="w-full" defaultValue="product-details">
+            <AccordionItem value="product-details">
+              <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <Package className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Product Details & Information
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 p-4 sm:p-6">
+                    <div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">Total Stock</p>
+                      <p className="font-medium text-sm sm:text-base">{product.variant_stats?.total_stock || product.quantity} units</p>
+                    </div>
+                    <div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">Category</p>
+                      <p className="font-medium text-sm sm:text-base">{product.category?.name || "No Category"}</p>
+                    </div>
+                    {product.category_admin && (
                       <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">Removal Status</p>
-                        <p className="font-medium text-sm sm:text-base text-red-600">Removed</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground">Admin Category</p>
+                        <p className="font-medium text-sm sm:text-base">{product.category_admin.name}</p>
                       </div>
-                      <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">Removed At</p>
-                        <p className="font-medium text-xs sm:text-sm">
-                          {product.removed_at ? new Date(product.removed_at).toLocaleString() : "Unknown"}
-                        </p>
-                      </div>
-                      {product.removal_reason && (
-                        <div className="col-span-2">
-                          <p className="text-xs sm:text-sm text-muted-foreground">Removal Reason</p>
-                          <p className="font-medium text-sm sm:text-base">{product.removal_reason}</p>
+                    )}
+                    <div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">Condition</p>
+                      <p className="font-medium text-sm sm:text-base">{product.condition}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">Created</p>
+                      <p className="font-medium text-xs sm:text-sm">
+                        {new Date(product.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">Last Updated</p>
+                      <p className="font-medium text-xs sm:text-sm">
+                        {new Date(product.updated_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">Refund Policy</p>
+                      <p className="font-medium text-sm sm:text-base">
+                        {product.is_refundable ? `Refundable (${product.refund_days} days)` : "Non-refundable"}
+                      </p>
+                    </div>
+                    
+                    {/* Removal info section */}
+                    {product.is_removed && (
+                      <>
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Removal Status</p>
+                          <p className="font-medium text-sm sm:text-base text-red-600">Removed</p>
                         </div>
-                      )}
-                    </>
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Removed At</p>
+                          <p className="font-medium text-xs sm:text-sm">
+                            {product.removed_at ? new Date(product.removed_at).toLocaleString() : "Unknown"}
+                          </p>
+                        </div>
+                        {product.removal_reason && (
+                          <div className="col-span-3">
+                            <p className="text-xs sm:text-sm text-muted-foreground">Removal Reason</p>
+                            <p className="font-medium text-sm sm:text-base">{product.removal_reason}</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  
+                  {product.description && (
+                    <div className="p-4 sm:p-6 pt-0">
+                      <p className="text-xs sm:text-sm text-muted-foreground mb-2">Full Description</p>
+                      <p className="text-sm break-words whitespace-pre-line">{product.description}</p>
+                    </div>
                   )}
                 </div>
-                
-                {product.description && (
-                  <div className="p-4 sm:p-6 pt-0">
-                    <p className="text-xs sm:text-sm text-muted-foreground mb-2">Description</p>
-                    <p className="text-sm break-words">{product.description}</p>
-                  </div>
-                )}
+              </AccordionContent>
+            </AccordionItem>
 
-                {/* Options in accordion view - also in grid layout with disabled state for 0 stock */}
-                {allOptions.length > 0 && (
-                  <div className="p-4 sm:p-6 pt-0">
-                    <p className="text-xs sm:text-sm text-muted-foreground mb-3">Available Options</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {allOptions.map((option) => {
-                        const isOutOfStock = option.quantity === 0;
-                        
-                        return (
-                          <div 
-                            key={option.id} 
-                            className={`
-                              border rounded-lg p-3 transition-colors
-                              ${isOutOfStock 
-                                ? 'bg-muted/30 border-muted opacity-60 cursor-not-allowed' 
-                                : 'hover:border-primary/50'
-                              }
-                            `}
-                          >
-                            <div className="flex flex-col h-full">
-                              <div className="flex-1">
-                                <div className="flex justify-between items-start mb-1">
-                                  <span className={`font-medium text-sm line-clamp-2 ${isOutOfStock ? 'text-muted-foreground' : ''}`}>
-                                    {option.title}
-                                  </span>
-                                  <Badge 
-                                    variant={isOutOfStock ? "outline" : option.quantity < 5 ? "destructive" : "default"}
-                                    className="text-xs shrink-0 ml-1"
-                                  >
-                                    {isOutOfStock ? "Out of stock" : option.quantity}
-                                  </Badge>
-                                </div>
-                                <p className={`text-xs truncate mb-2 ${isOutOfStock ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>
-                                  {option.variantTitle}
-                                </p>
-                              </div>
-                              <div className="mt-2 pt-2 border-t">
-                                <p className={`text-sm font-semibold ${isOutOfStock ? 'text-muted-foreground' : 'text-primary'}`}>
-                                  ₱{parseFloat(option.price).toLocaleString()}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+            <AccordionItem value="reviews-ratings">
+              <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <Star className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Reviews & Ratings
+                  <Badge variant="outline" className="ml-2">
+                    {product.total_reviews || product.reviews.length}
+                  </Badge>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="p-4 sm:p-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-6">
+                    <div className="flex flex-col items-center">
+                      <div className="text-2xl sm:text-3xl font-bold">{averageRating.toFixed(1)}</div>
+                      <div className="flex items-center gap-1 mt-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <Star
+                            key={star}
+                            className={`w-3 h-3 sm:w-4 sm:h-4 ${
+                              star <= Math.round(averageRating)
+                                ? "fill-yellow-400 text-yellow-400"
+                                : "text-gray-300"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {product.total_reviews || product.reviews.length} reviews
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Heart className="w-4 h-4 sm:w-5 sm:h-5 text-red-500" />
+                      <div>
+                        <div className="font-medium">{product.favorites_count}</div>
+                        <div className="text-xs text-muted-foreground">favorites</div>
+                      </div>
                     </div>
                   </div>
-                )}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
 
-          <AccordionItem value="reviews-ratings">
-            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
-              <div className="flex items-center gap-2">
-                <Star className="w-4 h-4 sm:w-5 sm:h-5" />
-                Reviews & Ratings
-                <Badge variant="outline" className="ml-2">
-                  {product.reviews.length}
-                </Badge>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="p-4 sm:p-6">
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="flex flex-col items-center">
-                    <div className="text-2xl sm:text-3xl font-bold">{averageRating.toFixed(1)}</div>
-                    <div className="flex items-center gap-1 mt-1">
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <Star
-                          key={star}
-                          className={`w-3 h-3 sm:w-4 sm:h-4 ${
-                            star <= Math.round(averageRating)
-                              ? "fill-yellow-400 text-yellow-400"
-                              : "text-gray-300"
-                          }`}
-                        />
+                  <div className="space-y-3">
+                    {product.reviews && product.reviews.length > 0 ? (
+                      product.reviews.map((review) => (
+                        <div key={review.id} className="border rounded-lg p-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-2">
+                            <div className="flex items-center gap-1">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <Star
+                                  key={star}
+                                  className={`w-3 h-3 ${
+                                    star <= review.rating
+                                      ? "fill-yellow-400 text-yellow-400"
+                                      : "text-gray-300"
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <span className="text-xs sm:text-sm font-medium">
+                              {review.customer?.username || review.customer?.first_name || "Anonymous"}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(review.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <p className="text-xs sm:text-sm">{review.comment || "No comment provided"}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
+                        No reviews yet for this product.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="shop-information">
+              <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <Store className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Shop Information
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="p-4 sm:p-6">
+                  {product.shop ? (
+                    <>
+                      <div className="flex items-center gap-3 mb-4">
+                        {product.shop.shop_picture ? (
+                          <img 
+                            src={product.shop.shop_picture} 
+                            alt={product.shop.name}
+                            className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-lg flex items-center justify-center">
+                            <Store className="w-5 h-5 sm:w-6 sm:h-6 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <h3 className="font-semibold text-sm sm:text-base break-words">{product.shop.name}</h3>
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            <Badge variant={product.shop.verified ? "default" : "secondary"} className="w-fit">
+                              {product.shop.verified ? "Verified" : "Unverified"}
+                            </Badge>
+                            {product.shop.is_suspended && (
+                              <Badge variant="destructive" className="w-fit">
+                                Suspended
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Contact Number</p>
+                          <p className="font-medium text-sm sm:text-base">{product.shop.contact_number || "Not provided"}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Total Sales</p>
+                          <p className="font-medium text-sm sm:text-base">₱{parseFloat(product.shop.total_sales).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Location</p>
+                          <p className="font-medium text-sm sm:text-base">
+                            {product.shop.street}, {product.shop.barangay}, {product.shop.city}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Member Since</p>
+                          <p className="font-medium text-xs sm:text-sm">
+                            {new Date(product.shop.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
+                      No shop information available.
+                    </p>
+                  )}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="seller-details">
+              <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <User className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Seller Details
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="p-4 sm:p-6">
+                  {product.customer ? (
+                    <>
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-full flex items-center justify-center">
+                          <User className="w-5 h-5 sm:w-6 sm:h-6 text-muted-foreground" />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-semibold text-sm sm:text-base break-words">
+                            {product.customer.first_name} {product.customer.last_name}
+                          </h3>
+                          <p className="text-xs sm:text-sm text-muted-foreground">@{product.customer.username || "No username"}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Email</p>
+                          <p className="font-medium text-sm sm:text-base break-words">{product.customer.email || "Not provided"}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Contact Number</p>
+                          <p className="font-medium text-sm sm:text-base">{product.customer.contact_number || "Not provided"}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs sm:text-sm text-muted-foreground">Product Limit</p>
+                          <p className="font-medium text-sm sm:text-base">
+                            {product.customer.current_product_count} / {product.customer.product_limit} products
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
+                      No seller information available.
+                    </p>
+                  )}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="reports-moderation">
+              <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Reports & Moderation
+                  {product.reports?.active > 0 && (
+                    <Badge variant="destructive" className="ml-2">
+                      {product.reports.active} active
+                    </Badge>
+                  )}
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="p-4 sm:p-6">
+                  <div className="grid grid-cols-1 xs:grid-cols-3 gap-3 sm:gap-4 mb-4">
+                    <div className="bg-red-50 p-3 rounded-lg">
+                      <p className="text-xs sm:text-sm text-red-600 font-medium">Active Reports</p>
+                      <p className="text-xl sm:text-2xl font-bold text-red-700">{product.reports?.active || 0}</p>
+                    </div>
+                    <div className="bg-green-50 p-3 rounded-lg">
+                      <p className="text-xs sm:text-sm text-green-600 font-medium">Resolved</p>
+                      <p className="text-xl sm:text-2xl font-bold text-green-700">{product.reports?.resolved || 0}</p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-xs sm:text-sm text-gray-600 font-medium">Total Reports</p>
+                      <p className="text-xl sm:text-2xl font-bold text-gray-700">{product.reports?.total || 0}</p>
+                    </div>
+                  </div>
+                  
+                  {product.reports?.active_reports && product.reports.active_reports.length > 0 && (
+                    <div className="space-y-3 mb-4">
+                      <h4 className="font-medium text-sm">Recent Active Reports:</h4>
+                      {product.reports.active_reports.map((report) => (
+                        <div key={report.id} className="border-l-4 border-red-500 pl-3 py-2">
+                          <p className="text-sm font-medium">{report.reason}</p>
+                          <p className="text-xs text-muted-foreground mt-1">{report.description}</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Reported by: {report.reporter || "Anonymous"} • {new Date(report.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
                       ))}
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {product.reviews.length} reviews
+                  )}
+                  
+                  {product.issues && product.issues.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="font-medium text-sm mb-2">Product Issues:</h4>
+                      <div className="space-y-2">
+                        {product.issues.map((issue) => (
+                          <Badge key={issue.id} variant="outline" className="bg-yellow-50">
+                            {issue.description}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
+                  )}
+                  
+                  <div className="flex gap-2 flex-wrap mt-4">
+                    <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+                      View All Reports
+                    </Button>
+                    <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+                      Moderate Product
+                    </Button>
                   </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            {product.boost && (
+              <AccordionItem value="boost-info">
+                <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
                   <div className="flex items-center gap-2">
-                    <Heart className="w-4 h-4 sm:w-5 sm:h-5 text-red-500" />
-                    <div>
-                      <div className="font-medium">{product.favorites_count}</div>
-                      <div className="text-xs text-muted-foreground">favorites</div>
-                    </div>
+                    <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
+                    Boost Information
                   </div>
-                </div>
-
-                <div className="space-y-3">
-                  {product.reviews.map((review) => (
-                    <div key={review.id} className="border-b pb-3 sm:pb-4 last:border-0">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mb-2">
-                        <div className="flex items-center gap-1">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <Star
-                              key={star}
-                              className={`w-3 h-3 ${
-                                star <= review.rating
-                                  ? "fill-yellow-400 text-yellow-400"
-                                  : "text-gray-300"
-                              }`}
-                            />
-                          ))}
-                        </div>
-                        <span className="text-xs sm:text-sm font-medium">{review.customer || "Anonymous"}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(review.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <p className="text-xs sm:text-sm">{review.comment || "No comment provided"}</p>
-                    </div>
-                  ))}
-                  {product.reviews.length === 0 && (
-                    <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
-                      No reviews yet for this product.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-
-          <AccordionItem value="shop-information">
-            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
-              <div className="flex items-center gap-2">
-                <Store className="w-4 h-4 sm:w-5 sm:h-5" />
-                Shop Information
-              </div>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="p-4 sm:p-6">
-                {product.shop ? (
-                  <>
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Store className="w-5 h-5 sm:w-6 sm:h-6" />
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="font-semibold text-sm sm:text-base break-words">{product.shop.name}</h3>
-                        <div className="flex flex-col xs:flex-row xs:items-center gap-1 xs:gap-2 mt-1 flex-wrap">
-                          <Badge variant={product.shop.verified ? "default" : "secondary"} className="w-fit">
-                            {product.shop.verified ? "Verified" : "Unverified"}
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="p-4 sm:p-6">
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Badge variant="default" className="bg-purple-600">
+                          {product.boost.status}
+                        </Badge>
+                        {product.boost.plan && (
+                          <Badge variant="outline" className="bg-white">
+                            {product.boost.plan.name}
                           </Badge>
-                          <Badge variant={product.shop.is_suspended ? "destructive" : "outline"} className="w-fit">
-                            {product.shop.is_suspended ? "Suspended" : "Active"}
-                          </Badge>
-                          <span className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1">
-                            <MapPin className="w-3 h-3 flex-shrink-0" />
-                            <span className="truncate">{product.shop.city}, {product.shop.barangay}</span>
-                          </span>
+                        )}
+                      </div>
+                      
+                      {product.boost.plan && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-xs text-muted-foreground">Plan Price</p>
+                            <p className="font-medium">₱{parseFloat(product.boost.plan.price).toLocaleString()}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Duration</p>
+                            <p className="font-medium">{product.boost.plan.duration} {product.boost.plan.time_unit}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Start Date</p>
+                            <p className="font-medium text-sm">
+                              {product.boost.start_date ? new Date(product.boost.start_date).toLocaleDateString() : "N/A"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">End Date</p>
+                            <p className="font-medium text-sm">
+                              {product.boost.end_date ? new Date(product.boost.end_date).toLocaleDateString() : "N/A"}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
-                      <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">Total Sales</p>
-                        <p className="font-medium text-sm sm:text-base">₱{parseFloat(product.shop.total_sales).toLocaleString()}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">Member Since</p>
-                        <p className="font-medium text-xs sm:text-sm">
-                          {new Date(product.shop.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
-                    No shop information available.
-                  </p>
-                )}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-
-          <AccordionItem value="seller-details">
-            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
-              <div className="flex items-center gap-2">
-                <User className="w-4 h-4 sm:w-5 sm:h-5" />
-                Seller Details
-              </div>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="p-4 sm:p-6">
-                {product.customer ? (
-                  <>
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-full flex items-center justify-center flex-shrink-0">
-                        <User className="w-5 h-5 sm:w-6 sm:h-6" />
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="font-semibold text-sm sm:text-base break-words">{product.customer.username || "Unknown User"}</h3>
-                        <p className="text-xs sm:text-sm text-muted-foreground truncate">{product.customer.contact_number || "No contact number"}</p>
-                        <p className="text-xs sm:text-sm text-muted-foreground truncate">{product.customer.email || "No email"}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
-                      <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">Product Limit</p>
-                        <p className="font-medium text-sm sm:text-base">{product.customer.product_limit} products</p>
-                      </div>
-                      <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">Current Products</p>
-                        <p className="font-medium text-sm sm:text-base">{product.customer.current_product_count} products</p>
-                      </div>
-                      <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">Total Favorites</p>
-                        <div className="flex items-center gap-1">
-                          <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
-                          <p className="font-medium text-sm sm:text-base">{product.favorites_count}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
-                    No seller information available.
-                  </p>
-                )}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-
-          <AccordionItem value="reports-moderation">
-            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" />
-                Reports & Moderation
-                {product.reports.active > 0 && (
-                  <Badge variant="destructive" className="ml-2">
-                    {product.reports.active} active
-                  </Badge>
-                )}
-              </div>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="p-4 sm:p-6">
-                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4 mb-4">
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Active Reports</p>
-                    <p className={`font-medium text-sm sm:text-base ${product.reports.active > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      {product.reports.active} active
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Total Reports</p>
-                    <p className="font-medium text-sm sm:text-base">{product.reports.total} total</p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Favorites Count</p>
-                    <div className="flex items-center gap-1">
-                      <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
-                      <p className="font-medium text-sm sm:text-base">{product.favorites_count}</p>
-                    </div>
-                  </div>
-                  {/* ADDED: Removal status in reports section */}
-                  {product.is_removed && (
-                    <div>
-                      <p className="text-xs sm:text-sm text-muted-foreground">Removal Status</p>
-                      <p className="font-medium text-sm sm:text-base text-red-600">Removed</p>
-                    </div>
-                  )}
-                </div>
-                
-                {product.reports.total > 0 && (
-                  <div className="space-y-2 mb-4">
-                    <p className="text-xs sm:text-sm font-medium">Report Summary:</p>
-                    <div className="text-xs sm:text-sm text-muted-foreground space-y-1">
-                      <p>• {product.reports.active} active reports requiring attention</p>
-                      <p>• {product.reports.total - product.reports.active} resolved reports</p>
-                      {product.is_removed && (
-                        <p className="text-red-600">• This product has been removed from the platform</p>
                       )}
                     </div>
+                    
+                    {product.pending_boost && (
+                      <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                        <p className="text-sm text-yellow-800">
+                          Pending boost request submitted on {new Date(product.pending_boost.created_at || "").toLocaleDateString()}
+                        </p>
+                      </div>
+                    )}
                   </div>
-                )}
-                
-                <div className="flex gap-2 flex-wrap">
-                  <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                    View All Reports
-                  </Button>
-                  <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                    Moderate Product
-                  </Button>
-                </div>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
+                </AccordionContent>
+              </AccordionItem>
+            )}
+          </Accordion>
 
-        {/* Responsive Dialog */}
-        {isMobile ? renderMobileDialog() : renderDesktopDialog()}
-      </div>
+          {/* Image Modal */}
+          {selectedImage && (
+            <div 
+              className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+              onClick={() => setSelectedImage(null)}
+            >
+              <div className="relative max-w-4xl max-h-[90vh]">
+                <img 
+                  src={selectedImage} 
+                  alt="Product" 
+                  className="w-full h-full object-contain"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="absolute top-2 right-2 bg-white"
+                  onClick={() => setSelectedImage(null)}
+                >
+                  <XCircle className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Responsive Dialog */}
+          {isMobile ? renderMobileDialog() : renderDesktopDialog()}
+        </div>
+      </TooltipProvider>
     </UserProvider>
   );
 }

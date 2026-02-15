@@ -12,7 +12,6 @@ import {
   ShoppingCart, 
   Package, 
   RefreshCw, 
-  DollarSign,
   TrendingUp,
   TrendingDown,
   Star,
@@ -24,6 +23,7 @@ import {
   CheckCircle,
   XCircle,
   Clock,
+  PhilippinePeso,
 } from 'lucide-react'
 import AxiosInstance from '~/components/axios/Axios'
 
@@ -289,7 +289,7 @@ function DashboardContent({ user, shopId, dashboardData: initialDashboardData }:
             value={isLoading ? "..." : formatCurrency(summary.period_sales || 0)} 
             change={summary.sales_change !== undefined ? `${summary.sales_change >= 0 ? '+' : ''}${summary.sales_change}%` : undefined} 
             trend={(summary.sales_change || 0) >= 0 ? "up" : "down"} 
-            icon={DollarSign}
+            icon={PhilippinePeso}
             description="Sales in selected period"
             loading={isLoading}
           />
@@ -308,7 +308,7 @@ function DashboardContent({ user, shopId, dashboardData: initialDashboardData }:
             change={summary.low_stock_change !== undefined ? `${summary.low_stock_change >= 0 ? '+' : ''}${summary.low_stock_change} more` : undefined} 
             trend="down" 
             icon={Package}
-            description="Products & SKUs needing restock"
+            description="Products & variants needing restock"
             loading={isLoading}
           />
           <StatCard 
@@ -442,7 +442,7 @@ function DashboardContent({ user, shopId, dashboardData: initialDashboardData }:
                             {item.sku_code && (
                               <>
                                 <span>•</span>
-                                <span>SKU: {item.sku_code}</span>
+                                <span>Variant: {item.sku_code}</span>
                               </>
                             )}
                           </div>
@@ -683,35 +683,6 @@ function DashboardContent({ user, shopId, dashboardData: initialDashboardData }:
             </CardContent>
           </Card>
         </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Data Summary</CardTitle>
-            <CardDescription>Current filter settings and data coverage</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 border rounded-lg">
-                <p className="text-sm text-muted-foreground">Date Range</p>
-                <p className="font-medium">
-                  {dateRangeInfo.start_date ? formatDate(dateRangeInfo.start_date) : 'N/A'} 
-                  {' → '} 
-                  {dateRangeInfo.end_date ? formatDate(dateRangeInfo.end_date) : 'N/A'}
-                </p>
-              </div>
-              <div className="p-4 border rounded-lg">
-                <p className="text-sm text-muted-foreground">View Type</p>
-                <p className="font-medium capitalize">{dateRangeInfo.range_type || 'monthly'} view</p>
-              </div>
-              <div className="p-4 border rounded-lg">
-                <p className="text-sm text-muted-foreground">Total Orders</p>
-                <p className="font-medium">
-                  {summary.period_orders || 0} orders in period
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </section>
   )
