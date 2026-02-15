@@ -18,32 +18,20 @@ import { Badge } from '~/components/ui/badge';
 import { Skeleton } from '~/components/ui/skeleton';
 import { 
   Plus, 
-  Edit, 
-  Trash2, 
   Eye, 
-  Search, 
-  Filter,
   Package,
   TrendingUp,
   TrendingDown,
   AlertTriangle,
   Star,
   Zap,
-  Image,
-  Download,
-  MoreHorizontal,
   ArrowUpDown,
   RefreshCw,
   Tag,
-  Grid,
-  List,
-  X,
   CheckCircle,
   Clock,
-  AlertCircle,
   Archive,
   Ban,
-  Check,
   XCircle,
   Circle,
   PlayCircle,
@@ -74,7 +62,6 @@ import {
 } from "~/components/ui/drawer"
 import { Input } from "~/components/ui/input"
 import { Label } from "~/components/ui/label"
-import { Textarea } from "~/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -101,8 +88,8 @@ interface Product {
   quantity: number;
   condition: string;
   status: string;
-  upload_status: string;  // Added for consistency
-  is_removed: boolean;    // Added for consistency
+  upload_status: string;
+  is_removed: boolean;
   views: number;
   purchases: number;
   favorites: number;
@@ -203,7 +190,6 @@ const normalizeStatus = (status: string): string => {
     case 'out_of_stock':
       return 'Out of Stock';
     default:
-      // Capitalize first letter
       return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
   }
 };
@@ -334,7 +320,7 @@ const getUploadStatusConfig = (uploadStatus: string) => {
   }
 };
 
-// Helper function to get removed status styling - MODIFIED for consistency
+// Helper function to get removed status styling
 const getRemovedStatusConfig = () => {
   return {
     variant: 'destructive' as const,
@@ -455,10 +441,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     
     if (rangeType) productsParams.append('range_type', rangeType);
     
-    // Add pagination parameters
-    productsParams.append('page', '1');
-    productsParams.append('page_size', '50');
-
     const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`, {
       headers: {
         "X-User-Id": session.get("userId")
@@ -477,16 +459,9 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       
       // Extract unique filter values from products data
       if (productsList.length > 0) {
-        // Extract unique categories from products
         const uniqueCategories: string[] = [...new Set(productsList.map((product: Product) => product.category))].filter(Boolean) as string[];
-        
-        // Extract unique statuses (using normalized status)
         const uniqueStatuses: string[] = [...new Set(productsList.map((product: Product) => product.status))].filter(Boolean) as string[];
-        
-        // Extract unique shops
         const uniqueShops: string[] = [...new Set(productsList.map((product: Product) => product.shop))].filter(Boolean) as string[];
-        
-        // Extract unique conditions (if available)
         const uniqueConditions: string[] = [...new Set(productsList.map((product: Product) => product.condition))].filter(Boolean) as string[];
         
         filterOptions = {
@@ -501,7 +476,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
   } catch (error) {
     console.error('Error fetching product data:', error);
-    // Use fallback data
     productMetrics = {
       total_products: 0,
       low_stock_alert: 0,
@@ -581,7 +555,6 @@ function AddCategoryModalDrawer({
       
       console.log('Sending payload to /admin-products/add_category/ :', payload);
       
-      // Get the session token or user ID from localStorage if available
       const sessionUserId = localStorage.getItem('userId') || userId;
       
       const response = await AxiosInstance.post('/admin-products/add_category/', payload, {
@@ -628,7 +601,6 @@ function AddCategoryModalDrawer({
     }));
   };
 
-  // Render only ONE component based on screen size
   if (isMobile) {
     return (
       <Drawer open={open} onOpenChange={setOpen}>
@@ -813,9 +785,7 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     }
   );
   const [isLoading, setIsLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [categoryStats, setCategoryStats] = useState<CategoryStats[]>([]);
   
   // Date range state
@@ -828,15 +798,12 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
   // Calculate category stats from all categories
   useEffect(() => {
     if (categories.length > 0) {
-      // Create a map to count products per category
       const categoryProductCount: Record<string, number> = {};
       
-      // Initialize all categories with 0 count
       categories.forEach(category => {
         categoryProductCount[category.name] = 0;
       });
       
-      // Count products per category
       products.forEach(product => {
         const categoryName = product.category || 'Uncategorized';
         if (categoryProductCount[categoryName] !== undefined) {
@@ -846,26 +813,22 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
         }
       });
       
-      // Convert to array and calculate percentages
       const totalProducts = products.length;
       const stats = Object.entries(categoryProductCount).map(([name, count]) => ({
         name,
         count,
         percentage: totalProducts > 0 ? (count / totalProducts) * 100 : 0
-      })).sort((a, b) => b.count - a.count); // Sort by count descending
+      })).sort((a, b) => b.count - a.count);
       
       setCategoryStats(stats);
     } else if (products.length > 0) {
-      // Fallback to calculating from products if no categories loaded
       const categoryCounts: Record<string, number> = {};
       
-      // Count products per category
       products.forEach(product => {
         const category = product.category || 'Uncategorized';
         categoryCounts[category] = (categoryCounts[category] || 0) + 1;
       });
       
-      // Convert to array and calculate percentages
       const totalProducts = products.length;
       const stats = Object.entries(categoryCounts).map(([name, count]) => ({
         name,
@@ -888,25 +851,21 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
       params.append('end_date', end.toISOString().split('T')[0]);
       params.append('range_type', rangeType);
 
-      // Fetch metrics with date range
       const metricsResponse = await AxiosInstance.get(`/admin-products/get_metrics/?${params.toString()}`);
       
       if (metricsResponse.data.success) {
         setProductMetrics(metricsResponse.data.metrics);
       }
 
-      // Fetch categories separately
       const categoriesResponse = await AxiosInstance.get(`/admin-products/get_categories/`);
       if (categoriesResponse.data.success) {
         setCategories(categoriesResponse.data.categories);
       }
 
-      // Fetch products list with date range
       const productsParams = new URLSearchParams(params);
       const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`);
 
       if (productsResponse.data.success) {
-        // Normalize product statuses for consistency
         const normalizedProducts = productsResponse.data.products.map((product: Product) => ({
           ...product,
           status: normalizeStatus(product.status),
@@ -915,7 +874,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
         
         setProducts(normalizedProducts);
         
-        // Update filter options from new data
         if (normalizedProducts.length > 0) {
           const uniqueCategories: string[] = [...new Set(normalizedProducts.map((product: Product) => product.category))].filter(Boolean) as string[];
           const uniqueStatuses: string[] = [...new Set(normalizedProducts.map((product: Product) => product.status))].filter(Boolean) as string[];
@@ -947,11 +905,10 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     fetchProductData(range.start, range.end, range.rangeType);
   };
 
-  // Function to refresh categories (call this after adding a new category)
+  // Function to refresh categories
   const refreshCategories = async () => {
     setIsLoading(true);
     try {
-      // Refresh categories from the new endpoint
       const categoriesResponse = await AxiosInstance.get(`/admin-products/get_categories/`);
       if (categoriesResponse.data.success) {
         setCategories(categoriesResponse.data.categories);
@@ -959,7 +916,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
         toast.success('Categories refreshed successfully');
       }
       
-      // Also refresh the products to update counts
       await fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
     } catch (error) {
       console.error('Error refreshing categories:', error);
@@ -989,8 +945,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
 
       if (response.data.success || response.data.message) {
         toast.success(response.data.message || 'Product status updated successfully');
-        
-        // Refresh the products data
         await fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
         return true;
       } else {
@@ -1011,31 +965,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Function to handle product actions
-  const handleProductAction = async (product: Product, actionType: string) => {
-    let reason = '';
-    let suspensionDays = 7;
-
-    if (actionType === 'remove' || actionType === 'suspend') {
-      // Prompt for reason for remove/suspend actions
-      reason = prompt(`Enter reason for ${actionType === 'remove' ? 'removal' : 'suspension'}:`) || '';
-      if (!reason) {
-        toast.error('Reason is required');
-        return;
-      }
-      
-      if (actionType === 'suspend') {
-        const daysInput = prompt('Enter suspension days (default: 7):', '7');
-        suspensionDays = parseInt(daysInput || '7', 10);
-        if (isNaN(suspensionDays) || suspensionDays <= 0) {
-          suspensionDays = 7;
-        }
-      }
-    }
-
-    await updateProductStatus(product.id, actionType, reason, suspensionDays);
   };
 
   // Use real data from backend or fallback
@@ -1088,49 +1017,8 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
       'bg-cyan-100 text-cyan-800 border-cyan-200',
     ];
     
-    // Simple hash function to get consistent color for same category
     const hash = category.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
     return colors[hash % colors.length];
-  };
-
-  // Function to determine available actions based on product state
-  const getAvailableActions = (product: Product) => {
-    const actions = [];
-    
-    const normalizedStatus = normalizeStatus(product.status);
-    const normalizedUploadStatus = normalizeUploadStatus(product.upload_status);
-    
-    // Draft actions
-    if (normalizedUploadStatus === 'Draft' && !product.is_removed) {
-      actions.push({ label: 'Publish', action: 'publish' });
-      actions.push({ label: 'Delete Draft', action: 'deleteDraft' });
-    }
-    
-    // Published actions
-    if (normalizedUploadStatus === 'Published' && !product.is_removed) {
-      if (normalizedStatus === 'Active') {
-        actions.push({ label: 'Unpublish', action: 'unpublish' });
-        actions.push({ label: 'Archive', action: 'archive' });
-        actions.push({ label: 'Suspend', action: 'suspend' });
-        actions.push({ label: 'Remove', action: 'remove' });
-      } else if (normalizedStatus === 'Suspended') {
-        actions.push({ label: 'Unsuspend', action: 'unsuspend' });
-        actions.push({ label: 'Remove', action: 'remove' });
-      }
-    }
-    
-    // Archived actions
-    if (normalizedUploadStatus === 'Archived' && !product.is_removed) {
-      actions.push({ label: 'Restore', action: 'restore' });
-      actions.push({ label: 'Remove', action: 'remove' });
-    }
-    
-    // Removed actions
-    if (product.is_removed) {
-      actions.push({ label: 'Restore Removed', action: 'restoreRemoved' });
-    }
-    
-    return actions;
   };
 
   return (
@@ -1302,7 +1190,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                     <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
                     Refresh
                   </Button>
-                  {/* Add Category Button */}
                   <AddCategoryModalDrawer 
                     onCategoryAdded={refreshCategories} 
                     userId={user?.id || ''}
@@ -1319,7 +1206,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                 </div>
               ) : categoryStats.length > 0 ? (
                 <div className="space-y-4">
-                  {/* Categories Grid */}
                   <div className="flex flex-wrap gap-3">
                     {categoryStats.map((category) => (
                       <div
@@ -1344,7 +1230,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                           </Badge>
                         </div>
                         
-                        {/* Progress bar showing percentage */}
                         <div className="mt-2 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
                           <div 
                             className="h-full rounded-full transition-all duration-300"
@@ -1359,12 +1244,10 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                           />
                         </div>
                         
-                        {/* Percentage indicator */}
                         <div className="text-xs mt-1 opacity-75">
                           {category.percentage.toFixed(1)}% of total
                         </div>
                         
-                        {/* Hover info */}
                         <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
                           <div className="font-medium">{category.name}</div>
                           <div className="text-xs text-gray-300">{category.count} products</div>
@@ -1373,7 +1256,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                       </div>
                     ))}
                   </div>
-
                 </div>
               ) : (
                 <div className="text-center py-8">
@@ -1488,19 +1370,25 @@ const columns: ColumnDef<Product>[] = [
       )
     },
     cell: ({ row }) => {
-      const price = parseFloat(row.getValue("price"))
-      const formatted = new Intl.NumberFormat('en-PH', {
-        style: 'currency',
-        currency: 'PHP',
-      }).format(price)
+      const priceStr = row.getValue("price") as string;
       
-      return (
-        <div className="flex items-center gap-2">
-          <span>
-            {formatted}
-          </span>
-        </div>
-      )
+      // Check if it's a range (contains " - ")
+      if (priceStr.includes(' - ')) {
+        return <div className="font-medium">{priceStr}</div>;
+      }
+      
+      // Try to parse as number for single price
+      const priceNum = parseFloat(priceStr);
+      if (!isNaN(priceNum)) {
+        const formatted = new Intl.NumberFormat('en-PH', {
+          style: 'currency',
+          currency: 'PHP',
+        }).format(priceNum);
+        return <div className="font-medium">{formatted}</div>;
+      }
+      
+      // Return as is if not a number (e.g., "No price")
+      return <div className="font-medium text-gray-500">{priceStr}</div>;
     },
   },
   {
@@ -1603,7 +1491,7 @@ const columns: ColumnDef<Product>[] = [
           const payload = {
             product_id: product.id,
             action_type: actionType,
-            user_id: (window as any).user?.id || '', // Get from global context
+            user_id: (window as any).user?.id || '',
             ...(reason && { reason }),
             ...(suspensionDays && { suspension_days: suspensionDays })
           };
@@ -1612,7 +1500,6 @@ const columns: ColumnDef<Product>[] = [
           
           if (response.data.success || response.data.message) {
             toast.success(response.data.message || 'Product status updated successfully');
-            // Trigger a page refresh or data reload
             window.location.reload();
           } else {
             toast.error(response.data.error || 'Failed to update product status');
@@ -1629,13 +1516,11 @@ const columns: ColumnDef<Product>[] = [
         const normalizedStatus = normalizeStatus(product.status);
         const normalizedUploadStatus = normalizeUploadStatus(product.upload_status);
         
-        // Draft actions
         if (normalizedUploadStatus === 'Draft' && !product.is_removed) {
           actions.push({ label: 'Publish', action: 'publish', variant: 'default' as const });
           actions.push({ label: 'Delete', action: 'deleteDraft', variant: 'destructive' as const });
         }
         
-        // Published actions
         if (normalizedUploadStatus === 'Published' && !product.is_removed) {
           if (normalizedStatus === 'Active') {
             actions.push({ label: 'Unpublish', action: 'unpublish', variant: 'secondary' as const });
@@ -1648,13 +1533,11 @@ const columns: ColumnDef<Product>[] = [
           }
         }
         
-        // Archived actions
         if (normalizedUploadStatus === 'Archived' && !product.is_removed) {
           actions.push({ label: 'Restore', action: 'restore', variant: 'default' as const });
           actions.push({ label: 'Remove', action: 'remove', variant: 'destructive' as const });
         }
         
-        // Removed actions
         if (product.is_removed) {
           actions.push({ label: 'Restore', action: 'restoreRemoved', variant: 'default' as const });
         }
