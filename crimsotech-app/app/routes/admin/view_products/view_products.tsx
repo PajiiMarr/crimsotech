@@ -250,6 +250,14 @@ interface LoaderData {
   error?: string;
 }
 
+// Define the image type for carousel
+interface CarouselImage {
+  id: string;
+  src: string;
+  type: 'product' | 'variant';
+  variantTitle: string | null;
+}
+
 export async function loader({ request, context, params}: Route.LoaderArgs): Promise<LoaderData> {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
   await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
@@ -399,6 +407,8 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
   const [suspensionDays, setSuspensionDays] = useState(7);
   const [processing, setProcessing] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  // State for selected variant
+  const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const { toast } = useToast();
 
@@ -864,8 +874,17 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
   const allVariants = product.variants || [];
 
-  // Calculate price display
+  // Calculate price display based on selected variant
   const priceDisplay = () => {
+    // If a variant is selected, show its price
+    if (selectedVariant) {
+      const variant = allVariants.find(v => v.id === selectedVariant);
+      if (variant && variant.price) {
+        return `₱${parseFloat(variant.price).toLocaleString()}`;
+      }
+    }
+    
+    // Otherwise show the price range
     if (product.price_range.min && product.price_range.max) {
       if (product.price_range.min === product.price_range.max) {
         return `₱${parseFloat(product.price_range.min).toLocaleString()}`;
@@ -875,6 +894,51 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     }
     return "Price not available";
   };
+
+  // Handle variant click
+  const handleVariantClick = (variantId: string) => {
+    setSelectedVariant(variantId === selectedVariant ? null : variantId);
+  };
+
+  // Get all images to display in carousel (prioritize product media, then all variant images)
+  const getAllCarouselImages = (): CarouselImage[] => {
+    const images: CarouselImage[] = [];
+    const imageSet = new Set<string>(); // To avoid duplicates
+    
+    // Add all product media first (prioritize these)
+    if (product.media && product.media.length > 0) {
+      product.media.forEach(media => {
+        if (media.file_data) {
+          imageSet.add(media.file_data);
+          images.push({
+            id: media.id,
+            src: media.file_data,
+            type: 'product',
+            variantTitle: null
+          });
+        }
+      });
+    }
+    
+    // Add all variant images (even if not selected)
+    if (allVariants.length > 0) {
+      allVariants.forEach(variant => {
+        if (variant.image && !imageSet.has(variant.image)) {
+          imageSet.add(variant.image);
+          images.push({
+            id: `variant-${variant.id}`,
+            src: variant.image,
+            type: 'variant',
+            variantTitle: variant.title
+          });
+        }
+      });
+    }
+    
+    return images;
+  };
+
+  const carouselImages = getAllCarouselImages();
 
   return (
     <UserProvider user={user}>
@@ -967,29 +1031,36 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
             <div className="lg:h-[800px]">
               <Card className="h-full">
                 <CardContent className="p-3 sm:p-4 h-full">
-                  {product.media.length > 0 ? (
+                  {carouselImages.length > 0 ? (
                     <div className="h-full flex flex-col">
                       <Carousel className="w-full flex-1">
                         <CarouselContent className="h-full">
-                          {product.media.map((media) => (
-                            <CarouselItem key={media.id} className="h-full">
-                              <div className="h-full flex items-center justify-center">
+                          {carouselImages.map((image) => (
+                            <CarouselItem key={image.id} className="h-full">
+                              <div className="h-full flex items-center justify-center relative">
                                 <div 
                                   className="aspect-square w-full rounded-lg overflow-hidden cursor-pointer"
-                                  onClick={() => setSelectedImage(media.file_data)}
+                                  onClick={() => setSelectedImage(image.src)}
                                 >
                                   <img
-                                    src={media.file_data || "/api/placeholder/600/400"}
-                                    alt={product.name}
+                                    src={image.src || "/api/placeholder/600/400"}
+                                    alt={image.type === 'variant' ? image.variantTitle || 'Variant image' : product.name}
                                     className="w-full h-full object-cover"
                                     loading="lazy"
                                   />
                                 </div>
+                                {image.type === 'variant' && (
+                                  <div className="absolute top-2 left-2">
+                                    <Badge variant="secondary" className="bg-blue-500 text-white">
+                                      {image.variantTitle || 'Variant'}
+                                    </Badge>
+                                  </div>
+                                )}
                               </div>
                             </CarouselItem>
                           ))}
                         </CarouselContent>
-                        {product.media.length > 1 && (
+                        {carouselImages.length > 1 && (
                           <>
                             <CarouselPrevious className="hidden sm:flex -left-3" />
                             <CarouselNext className="hidden sm:flex -right-3" />
@@ -999,7 +1070,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                       {/* Image count indicator */}
                       <div className="flex justify-center items-center gap-2 mt-3">
                         <div className="flex gap-1">
-                          {product.media.map((_, index) => (
+                          {carouselImages.map((_, index) => (
                             <div
                               key={index}
                               className="w-2 h-2 rounded-full bg-muted-foreground/30"
@@ -1007,7 +1078,8 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                           ))}
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          {product.media.length} {product.media.length === 1 ? 'image' : 'images'}
+                          {carouselImages.length} {carouselImages.length === 1 ? 'image' : 'images'}
+                          {carouselImages.some(img => img.type === 'variant') && ' (includes variants)'}
                         </span>
                       </div>
                     </div>
@@ -1064,6 +1136,11 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                       <div className="text-left xs:text-right">
                         <div className="text-xl sm:text-2xl font-bold text-primary">
                           {priceDisplay()}
+                          {selectedVariant && (
+                            <Badge variant="outline" className="ml-2 text-xs align-middle">
+                              Selected Variant
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 mt-1 xs:justify-end">
                           <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
@@ -1202,19 +1279,22 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             {allVariants.map((variant) => {
                               const isOutOfStock = variant.quantity === 0;
                               const isLowStock = variant.quantity > 0 && variant.quantity < 5;
+                              const isSelected = selectedVariant === variant.id;
                               
                               return (
                                 <div 
                                   key={variant.id} 
                                   className={`
-                                    border rounded-lg p-3 transition-colors
+                                    border rounded-lg p-3 transition-all cursor-pointer
                                     ${isOutOfStock 
                                       ? 'bg-muted/30 border-muted opacity-60' 
                                       : isLowStock
                                         ? 'border-yellow-200 bg-yellow-50/30'
                                         : 'hover:border-primary/50'
                                     }
+                                    ${isSelected ? 'border-primary ring-1 ring-primary bg-primary/5' : ''}
                                   `}
+                                  onClick={() => handleVariantClick(variant.id)}
                                 >
                                   <div className="flex flex-col sm:flex-row gap-3">
                                     {/* Variant Image */}
