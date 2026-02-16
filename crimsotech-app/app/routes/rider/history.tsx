@@ -11,8 +11,7 @@ import {
 import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
 import { Skeleton } from '~/components/ui/skeleton';
-import type { ColumnDef } from '@tanstack/react-table';
-import { DataTable } from '~/components/ui/data-table';
+
 import { Link } from 'react-router';
 import { 
   Package,
@@ -39,7 +38,6 @@ import {
 } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
-import DateRangeFilter from '~/components/ui/date-range-filter';
 
 export function meta(): Route.MetaDescriptors {
     return [
@@ -154,6 +152,16 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
       week_earnings: 0,
       has_data: false
     });
+
+    // Tabs: make UI match Rider Active Orders (Active / Completed / Cancelled)
+    const STATUS_TABS = [
+      { id: 'active', label: 'Active', icon: Truck },
+      { id: 'completed', label: 'Completed', icon: CheckCircle },
+      { id: 'cancelled', label: 'Cancelled', icon: AlertCircle },
+    ];
+
+    const [activeTab, setActiveTab] = useState<'active' | 'completed' | 'cancelled'>('active');
+
     
     // State for loading and date range
     const [isLoading, setIsLoading] = useState(true);
@@ -221,14 +229,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
       fetchHistoryData();
     }, []);
 
-    // Handle date range change
-    const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
-      setDateRange({
-        start: range.start,
-        end: range.end,
-        rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
-      });
-    };
+
 
     // Prepare transformed data for the table
     const tableData = useMemo(() => {
@@ -265,29 +266,50 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
       }));
     }, [historyData]);
 
-    // Get filter options based on actual column IDs
-    const getFilterOptions = () => {
-      const statusOptions = [...new Set(historyData.map(d => d.status))].filter(Boolean);
-      const paymentOptions = [...new Set(historyData.map(d => d.payment_method))].filter(Boolean);
-      const ratingOptions = ['1', '2', '3', '4', '5'];
-      
-      return {
-        status: {
-          options: statusOptions,
-          placeholder: 'Delivery Status',
-          columnId: 'status'
-        },
-        payment_method: {
-          options: paymentOptions,
-          placeholder: 'Payment Method',
-          columnId: 'payment_method'
-        },
-        delivery_rating: {
-          options: ratingOptions,
-          placeholder: 'Rating',
-          columnId: 'delivery_rating'
-        }
-      };
+    // Filter table data by selected tab (Active / Completed / Cancelled)
+    const filteredTableData = useMemo(() => {
+      const activeStatuses = ['pending', 'accepted', 'picked_up', 'in_progress'];
+      const completedStatuses = ['delivered'];
+      const cancelledStatuses = ['cancelled'];
+
+      switch (activeTab) {
+        case 'active':
+          return tableData.filter(d => activeStatuses.includes(d.status));
+        case 'completed':
+          return tableData.filter(d => completedStatuses.includes(d.status));
+        case 'cancelled':
+          return tableData.filter(d => cancelledStatuses.includes(d.status));
+        default:
+          return tableData;
+      }
+    }, [tableData, activeTab]);
+
+    const counts = {
+      active: tableData.filter(d => ['pending', 'accepted', 'picked_up', 'in_progress'].includes(d.status)).length,
+      completed: tableData.filter(d => d.status === 'delivered').length,
+      cancelled: tableData.filter(d => d.status === 'cancelled').length,
+    };
+
+    // Small helper to render compact status badges (used by cards)
+    const STATUS_BADGE_MAP: Record<string, { label: string; color: string; icon: any }> = {
+      pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800', icon: Clock },
+      picked_up: { label: 'Picked Up', color: 'bg-blue-100 text-blue-800', icon: Package },
+      in_progress: { label: 'In Progress', color: 'bg-indigo-100 text-indigo-800', icon: Truck },
+      delivered: { label: 'Delivered', color: 'bg-green-100 text-green-800', icon: CheckCircle },
+      cancelled: { label: 'Cancelled', color: 'bg-red-100 text-red-800', icon: AlertCircle },
+      default: { label: 'Unknown', color: 'bg-gray-100 text-gray-800', icon: AlertCircle }
+    };
+
+    const renderStatusBadge = (status?: string) => {
+      const key = String(status || '').toLowerCase();
+      const cfg = STATUS_BADGE_MAP[key] || STATUS_BADGE_MAP.default;
+      const Icon = cfg.icon;
+      return (
+        <Badge className={`text-[10px] h-5 px-1.5 py-0 flex items-center gap-1 ${cfg.color}`}>
+          <Icon className="w-3 h-3" />
+          {cfg.label}
+        </Badge>
+      );
     };
 
     // Loading skeleton for metrics
@@ -323,240 +345,8 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
       return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
     };
 
-    // Columns definition
-    const columns: ColumnDef<any>[] = [
-      {
-        accessorKey: "order_number",
-        id: "order_number",
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-            className="text-sm"
-          >
-            Order ID
-            <ArrowUpDown className="ml-2 h-4 w-4" />
-          </Button>
-        ),
-        cell: ({ row }: { row: any}) => (
-          <div className="font-mono text-sm">
-            #{row.getValue("order_number")?.slice(0, 8).toUpperCase() || 'N/A'}
-          </div>
-        ),
-      },
-      {
-        accessorKey: "customer_name",
-        id: "customer_name",
-        header: "Customer",
-        cell: ({ row }: { row: any}) => {
-          const customerPhone = row.original.customer_phone;
-          return (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <User className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-medium">
-                  {row.getValue("customer_name")}
-                </span>
-              </div>
-              {customerPhone && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Phone className="w-3 h-3" />
-                  {customerPhone}
-                </div>
-              )}
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "delivery_location",
-        id: "delivery_location",
-        header: "Delivery Address",
-        cell: ({ row }: { row: any}) => {
-          const recipientPhone = row.original.recipient_phone;
-          const recipientName = row.original.recipient_name;
-          return (
-            <div className="space-y-1 max-w-[200px]">
-              <div className="flex items-start gap-2">
-                <MapPin className="w-4 h-4 text-muted-foreground mt-0.5" />
-                <div className="text-sm line-clamp-2">
-                  {row.getValue("delivery_location")}
-                </div>
-              </div>
-              {recipientName && (
-                <div className="text-xs text-muted-foreground">
-                  To: {recipientName}
-                </div>
-              )}
-              {recipientPhone && (
-                <div className="text-xs text-muted-foreground">
-                  Contact: {recipientPhone}
-                </div>
-              )}
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "status",
-        id: "status",
-        header: "Status",
-        cell: ({ row }: { row: any}) => {
-          const status = row.getValue("status");
-          const deliveredAt = row.original.delivered_at;
-          
-          const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: any }> = {
-            pending: { label: "Pending", variant: "outline", icon: Clock },
-            picked_up: { label: "Picked Up", variant: "secondary", icon: Package },
-            in_progress: { label: "In Progress", variant: "secondary", icon: Truck },
-            delivered: { label: "Delivered", variant: "default", icon: CheckCircle },
-            cancelled: { label: "Cancelled", variant: "destructive", icon: AlertCircle }
-          };
-          
-          const config = statusConfig[status] || { label: status, variant: "outline", icon: AlertCircle };
-          const Icon = config.icon;
-          
-          return (
-            <div className="space-y-2">
-              <Badge variant={config.variant} className="flex items-center gap-1">
-                <Icon className="w-3 h-3" />
-                {config.label}
-              </Badge>
-              {deliveredAt && (
-                <div className="text-xs text-muted-foreground">
-                  {new Date(deliveredAt).toLocaleDateString()}
-                </div>
-              )}
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "amount",
-        id: "amount",
-        header: ({ column }) => (
-          <Button
-            variant="ghost"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-            className="text-sm"
-          >
-            Amount
-            <ArrowUpDown className="ml-2 h-4 w-4" />
-          </Button>
-        ),
-        cell: ({ row }: { row: any}) => (
-          <div className="space-y-1">
-            <div className="font-bold text-sm">
-              {formatCurrency(row.getValue("amount"))}
-            </div>
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <CreditCard className="w-3 h-3" />
-              {row.original.payment_method || 'N/A'}
-            </div>
-          </div>
-        ),
-      },
-      {
-        accessorKey: "delivery_rating",
-        id: "delivery_rating",
-        header: "Rating",
-        cell: ({ row }: { row: any}) => {
-          const rating: number = row.getValue("delivery_rating");
-          return rating > 0 ? (
-            <div className="flex items-center gap-1">
-              {[...Array(5)].map((_, i) => (
-                <Star 
-                  key={i} 
-                  className={`w-4 h-4 ${i < rating ? 'text-yellow-500 fill-current' : 'text-gray-300'}`} 
-                />
-              ))}
-              <span className="text-sm ml-1">{rating}</span>
-            </div>
-          ) : (
-            <span className="text-muted-foreground text-sm">No rating</span>
-          );
-        },
-      },
-      {
-        accessorKey: "actual_minutes",
-        id: "actual_minutes",
-        header: "Delivery Time",
-        cell: ({ row }: { row: any}) => {
-          const actual = row.getValue("actual_minutes");
-          const estimated = row.original.estimated_minutes;
-          const isLate = row.original.is_late;
-          
-          return (
-            <div className="space-y-1">
-              <div className="text-sm">
-                {actual ? formatTime(actual) : 'N/A'}
-              </div>
-              {estimated && (
-                <div className="text-xs text-muted-foreground">
-                  Est: {formatTime(estimated)}
-                </div>
-              )}
-              {isLate && (
-                <Badge variant="destructive" className="mt-1 text-xs">
-                  Late
-                </Badge>
-              )}
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "delivered_at",
-        id: "delivered_at",
-        header: "Delivered Date",
-        cell: ({ row }: { row: any}) => {
-          const deliveredAt = row.getValue("delivered_at");
-          return deliveredAt ? (
-            <div className="text-sm">
-              {new Date(deliveredAt).toLocaleDateString()}
-              <div className="text-xs text-muted-foreground">
-                {new Date(deliveredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </div>
-            </div>
-          ) : (
-            <span className="text-muted-foreground text-sm">-</span>
-          );
-        },
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        cell: ({ row }: { row: any}) => {
-          const delivery = row.original.original;
-          return (
-            <div className="flex items-center gap-2">
-              <Button 
-                size="sm" 
-                variant="ghost" 
-                className="text-xs"
-                asChild
-              >
-                <Link to={`/rider/deliveries/${delivery.id}`}>
-                  <Eye className="w-3 h-3 mr-1" />
-                  View
-                </Link>
-              </Button>
-              <Button 
-                size="sm" 
-                variant="outline"
-                className="text-xs"
-                asChild
-              >
-                <Link to={`/rider/orders/${delivery.order_id}`}>
-                  <Navigation className="w-3 h-3 mr-1" />
-                  Details
-                </Link>
-              </Button>
-            </div>
-          );
-        },
-      },
-    ];
+
+
 
     // Refresh data when date range changes
     useEffect(() => {
@@ -575,131 +365,175 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                         </div>
                     </div>
 
-                    <DateRangeFilter 
-                      onDateRangeChange={handleDateRangeChange}
-                      isLoading={isLoading}
-                    />
 
-                    {/* Key Metrics */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {isLoading ? (
-                            <>
-                                <MetricCardSkeleton />
-                                <MetricCardSkeleton />
-                                <MetricCardSkeleton />
-                                <MetricCardSkeleton />
-                            </>
-                        ) : (
-                            <>
-                                <Card>
-                                  <CardContent className="p-6">
-                                    <div className="flex items-center justify-between">
-                                      <div>
-                                        <p className="text-sm text-muted-foreground">Total Deliveries</p>
-                                        <p className="text-2xl font-bold mt-1">{metrics.total_deliveries}</p>
-                                        <div className="flex gap-2 text-xs text-muted-foreground mt-2">
-                                          <span className="flex items-center gap-1">
-                                            <CheckCircle className="w-3 h-3 text-green-500" /> {metrics.delivered_count} delivered
-                                          </span>
-                                          <span className="flex items-center gap-1">
-                                            <AlertCircle className="w-3 h-3 text-red-500" /> {metrics.cancelled_count} cancelled
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <div className="p-3 bg-blue-100 rounded-full">
-                                        <History className="w-6 h-6 text-blue-600" />
-                                      </div>
-                                    </div>
-                                  </CardContent>
-                                </Card>
 
-                                <Card>
-                                  <CardContent className="p-6">
-                                    <div className="flex items-center justify-between">
-                                      <div>
-                                        <p className="text-sm text-muted-foreground">Total Earnings</p>
-                                        <p className="text-2xl font-bold mt-1">
-                                          {formatCurrency(metrics.total_earnings)}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground mt-2">
-                                          {formatCurrency(metrics.week_earnings)} this week
-                                        </p>
-                                      </div>
-                                      <div className="p-3 bg-green-100 rounded-full">
-                                        <DollarSign className="w-6 h-6 text-green-600" />
-                                      </div>
-                                    </div>
-                                  </CardContent>
-                                </Card>
+                    <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                      {isLoading ? (
+                        <>
+                          <MetricCardSkeleton />
+                          <MetricCardSkeleton />
+                          <MetricCardSkeleton />
+                          <MetricCardSkeleton />
+                        </>
+                      ) : (
+                        <>
+                          <Card>
+                            <CardContent className="p-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Total Deliveries</p>
+                                  <p className="text-lg font-bold mt-1">{metrics.total_deliveries}</p>
+                                  <div className="flex gap-2 text-[10px] text-muted-foreground mt-1">
+                                    <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-green-500" /> {metrics.delivered_count} delivered</span>
+                                    <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-red-500" /> {metrics.cancelled_count} cancelled</span>
+                                  </div>
+                                </div>
+                                <div className="p-1.5 bg-blue-100 rounded-full">
+                                  <History className="w-4 h-4 text-blue-600" />
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
 
-                                <Card>
-                                  <CardContent className="p-6">
-                                    <div className="flex items-center justify-between">
-                                      <div>
-                                        <p className="text-sm text-muted-foreground">Avg Rating</p>
-                                        <p className="text-2xl font-bold mt-1">
-                                          {metrics.avg_rating > 0 ? `${metrics.avg_rating.toFixed(1)}★` : 'No ratings'}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground mt-2">
-                                          {metrics.on_time_percentage}% on-time delivery
-                                        </p>
-                                      </div>
-                                      <div className="p-3 bg-yellow-100 rounded-full">
-                                        <Star className="w-6 h-6 text-yellow-600" />
-                                      </div>
-                                    </div>
-                                  </CardContent>
-                                </Card>
+                          <Card>
+                            <CardContent className="p-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Total Earnings</p>
+                                  <p className="text-lg font-bold mt-1">{formatCurrency(metrics.total_earnings)}</p>
+                                  <p className="text-[10px] text-muted-foreground mt-1">{formatCurrency(metrics.week_earnings)} this week</p>
+                                </div>
+                                <div className="p-1.5 bg-green-100 rounded-full">
+                                  <DollarSign className="w-4 h-4 text-green-600" />
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
 
-                                <Card>
-                                  <CardContent className="p-6">
-                                    <div className="flex items-center justify-between">
-                                      <div>
-                                        <p className="text-sm text-muted-foreground">Performance</p>
-                                        <p className="text-2xl font-bold mt-1">
-                                          {formatTime(metrics.avg_delivery_time)}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground mt-2">
-                                          {metrics.today_deliveries} deliveries today
-                                        </p>
-                                      </div>
-                                      <div className="p-3 bg-purple-100 rounded-full">
-                                        <BarChart3 className="w-6 h-6 text-purple-600" />
-                                      </div>
-                                    </div>
-                                  </CardContent>
-                                </Card>
-                            </>
-                        )}
+                          <Card>
+                            <CardContent className="p-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Avg Rating</p>
+                                  <p className="text-lg font-bold mt-1">{metrics.avg_rating > 0 ? `${metrics.avg_rating.toFixed(1)}★` : 'No ratings'}</p>
+                                  <p className="text-[10px] text-muted-foreground mt-1">{metrics.on_time_percentage}% on-time</p>
+                                </div>
+                                <div className="p-1.5 bg-yellow-100 rounded-full">
+                                  <Star className="w-4 h-4 text-yellow-600" />
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card>
+                            <CardContent className="p-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Performance</p>
+                                  <p className="text-lg font-bold mt-1">{formatTime(metrics.avg_delivery_time)}</p>
+                                  <p className="text-[10px] text-muted-foreground mt-1">{metrics.today_deliveries} today</p>
+                                </div>
+                                <div className="p-1.5 bg-purple-100 rounded-full">
+                                  <BarChart3 className="w-4 h-4 text-purple-600" />
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </>
+                      )}
                     </div>
 
                     {/* Delivery History Table */}
                     <Card>
                       <CardHeader className="pb-3">
-                        <div className="flex justify-between items-center">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                           <div>
                             <CardTitle className="text-xl">Delivery History</CardTitle>
                             <CardDescription>
-                              {isLoading ? 'Loading history...' : `Showing ${historyData.length} deliveries from ${dateRange.start.toLocaleDateString()} to ${dateRange.end.toLocaleDateString()}`}
+                              {isLoading ? 'Loading history...' : `Showing ${historyData.length} deliveries`}
                             </CardDescription>
                           </div>
-                          <div className="text-sm text-muted-foreground">
-                            {!isLoading && `${metrics.delivered_count} completed deliveries`}
+
+                          {/* Tabs (Active / Completed / Cancelled) */}
+                          <div className="flex items-center gap-2">
+                            {STATUS_TABS.map(tab => {
+                              const Icon = tab.icon;
+                              const isActive = activeTab === tab.id;
+                              const count = counts[tab.id as keyof typeof counts] || 0;
+                              return (
+                                <button
+                                  key={tab.id}
+                                  onClick={() => setActiveTab(tab.id as 'active' | 'completed' | 'cancelled')}
+                                  className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs whitespace-nowrap ${isActive ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'text-gray-600 hover:bg-gray-100'}`}
+                                >
+                                  <Icon className="w-3 h-3" />
+                                  <span>{tab.label}</span>
+                                  {count > 0 && (
+                                    <span className={`text-[10px] px-1 py-0.5 rounded ${isActive ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                                      {count}
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       </CardHeader>
                       <CardContent>
                         <div className="rounded-md">
-                          <DataTable 
-                            columns={columns} 
-                            data={tableData}
-                            filterConfig={getFilterOptions()}
-                            searchConfig={{
-                              column: "order_number",
-                              placeholder: "Search by order ID or customer name..."
-                            }}
-                            isLoading={isLoading}
-                          />
+                          {/* Compact list view (minimalist) */}
+                          {isLoading ? (
+                            <div className="space-y-3">
+                              {[1,2,3,4].map(i => (
+                                <Card key={i} className="p-3">
+                                  <div className="flex items-center justify-between gap-4">
+                                    <div className="flex-1">
+                                      <Skeleton className="h-4 w-40 mb-2" />
+                                      <Skeleton className="h-3 w-32" />
+                                    </div>
+                                    <Skeleton className="h-6 w-20" />
+                                  </div>
+                                </Card>
+                              ))}
+                            </div>
+                          ) : filteredTableData.length === 0 ? (
+                            <div className="p-6 text-center text-sm text-muted-foreground">No deliveries found for the selected range.</div>
+                          ) : (
+                            <div className="space-y-3">
+                              {filteredTableData.map(d => (
+                                <Card key={d.id} className="p-3">
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-3">
+                                        <div className="text-sm font-semibold truncate">{d.order_number}</div>
+                                        <div className="text-xs text-muted-foreground">{new Date(d.order_created_at).toLocaleDateString()}</div>
+                                      </div>
+                                      <div className="text-sm text-muted-foreground truncate mt-1">{d.recipient_name} • {d.delivery_location}</div>
+                                      <div className="text-xs text-muted-foreground mt-2 truncate">{d.items_summary || `${d.items_count || 0} items`} • {d.payment_method || 'N/A'}</div>
+                                    </div>
+
+                                    <div className="flex flex-col items-end gap-2">
+                                      <div>{renderStatusBadge(d.status)}</div>
+                                      <div className="text-sm font-bold">{formatCurrency(d.amount || 0)}</div>
+                                      <div className="text-xs text-muted-foreground">{d.time_elapsed || ''}{d.distance_km ? ` • ${d.distance_km} km` : ''}</div>
+                                      <div className="flex items-center gap-2 mt-2">
+                                        <Button size="sm" variant="ghost" className="text-xs" asChild>
+                                          <Link to={`/rider/deliveries/${d.id}`}>
+                                            <Eye className="w-3 h-3 mr-1" />View
+                                          </Link>
+                                        </Button>
+                                        <Button size="sm" variant="outline" className="text-xs" asChild>
+                                          <Link to={`/rider/orders/${d.order_id}`}>
+                                            <Navigation className="w-3 h-3 mr-1" />Details
+                                          </Link>
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </Card>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
