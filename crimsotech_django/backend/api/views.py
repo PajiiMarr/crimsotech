@@ -3952,10 +3952,6 @@ class AdminProduct(viewsets.ViewSet):
 
 
 class AdminShops(viewsets.ViewSet):
-    """
-    ViewSet for admin shop management and analytics
-    """
-    
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
         if not date_str:
@@ -4126,14 +4122,33 @@ class AdminShops(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Base queryset - filter by date range if provided
+            # Base queryset
             shops_qs = Shop.objects.all().select_related('customer__customer')
             
+            # FIX: Filter shops that were active during the date range
+            # A shop is considered active during the range if it was created before or during the range
+            # and not suspended during the entire range
             if start_date and end_date:
-                shops_qs = shops_qs.filter(created_at__range=[start_date, end_date])
+                shops_qs = shops_qs.filter(
+                    # Shop must have been created before or during the range
+                    created_at__lte=end_date,
+                    # Shop must not be suspended throughout the entire range
+                    # Either not suspended, or suspended after the range, or suspension ended before the range
+                ).exclude(
+                    # Exclude shops that were suspended for the entire range
+                    is_suspended=True,
+                    suspended_until__gte=end_date,
+                    created_at__lte=start_date
+                ).exclude(
+                    # Exclude shops that were suspended before the range and still suspended
+                    is_suspended=True,
+                    suspended_until__isnull=False,
+                    suspended_until__gte=start_date,
+                    created_at__lte=start_date
+                )
             
             # DEBUG: Print query info
-            print(f"Found {shops_qs.count()} shops in date range")
+            print(f"Found {shops_qs.count()} shops active during date range")
             
             # Get shop IDs for related data queries
             shop_ids = list(shops_qs.values_list('id', flat=True))
@@ -4206,7 +4221,10 @@ class AdminShops(viewsets.ViewSet):
                     'joinedDate': shop.created_at.isoformat() if shop.created_at else None,
                     'totalSales': float(shop.total_sales),
                     'activeBoosts': active_boosts,
-                    'verified': shop.verified
+                    'verified': shop.verified,
+                    # Add suspension info for debugging
+                    'is_suspended': shop.is_suspended,
+                    'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None
                 }
                 shops_data.append(shop_data)
             
@@ -4230,7 +4248,6 @@ class AdminShops(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving shops: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
 
 class AdminBoosting(viewsets.ViewSet):
     """
@@ -15737,7 +15754,7 @@ class AddToCartView(APIView):
     def post(self, request):
         user_id = request.data.get("user_id") 
         product_id = request.data.get("product_id")
-        sku_id = request.data.get("sku_id")
+        variant_id = request.data.get("variant_id")  # Changed from sku_id to variant_id
         quantity = int(request.data.get("quantity", 1))
        
 
@@ -15763,67 +15780,67 @@ class AddToCartView(APIView):
             return Response({"success": False, "error": "Product not found."},
                             status=status.HTTP_404_NOT_FOUND)
 
-        # If sku_id provided, validate it belongs to product and check availability
-        sku = None
-        if sku_id:
+        # If variant_id provided, validate it belongs to product and check availability
+        variant = None
+        if variant_id:
             try:
-                sku = ProductSKU.objects.get(id=sku_id, product=product)
-            except ProductSKU.DoesNotExist:
-                return Response({"success": False, "error": "SKU not found for this product."}, status=status.HTTP_404_NOT_FOUND)
+                variant = Variants.objects.get(id=variant_id, product=product)  # Changed from ProductSKU to Variants
+            except Variants.DoesNotExist:  # Changed exception
+                return Response({"success": False, "error": "Variant not found for this product."}, status=status.HTTP_404_NOT_FOUND)
 
-            if not sku.is_active:
+            if not variant.is_active:  # Changed from sku.is_active
                 return Response({"success": False, "error": "Selected variant is not available."}, status=status.HTTP_400_BAD_REQUEST)
 
-            if sku.quantity < quantity:
-                return Response({"success": False, "error": f"Only {sku.quantity} units available for selected variant.", "available_quantity": sku.quantity}, status=status.HTTP_400_BAD_REQUEST)
+            if variant.quantity < quantity:  # Changed from sku.quantity
+                return Response({"success": False, "error": f"Only {variant.quantity} units available for selected variant.", "available_quantity": variant.quantity}, status=status.HTTP_400_BAD_REQUEST)
 
-        # If sku provided, try to update/merge intelligently
-        if sku:
-            print(f"AddToCart: user={user_id}, product={product_id}, sku={sku_id}, quantity={quantity}")
-            # 1) Try to find existing cart item with same sku
+        # If variant provided, try to update/merge intelligently
+        if variant:
+            print(f"AddToCart: user={user_id}, product={product_id}, variant={variant_id}, quantity={quantity}")
+            # 1) Try to find existing cart item with same variant
             try:
-                cart_item = CartItem.objects.get(user=user, product=product, sku=sku)
+                cart_item = CartItem.objects.get(user=user, product=product, variant=variant)  # Changed from sku to variant
                 new_qty = cart_item.quantity + quantity
-                print(f"Found existing SKU cart item {cart_item.id} qty={cart_item.quantity}, new_qty={new_qty}")
-                if new_qty > sku.quantity:
-                    print(f"Cannot add: requested {new_qty} > sku.quantity {sku.quantity}")
-                    return Response({"success": False, "error": f"Only {sku.quantity} units available for selected variant.", "available_quantity": sku.quantity}, status=status.HTTP_400_BAD_REQUEST)
+                print(f"Found existing variant cart item {cart_item.id} qty={cart_item.quantity}, new_qty={new_qty}")
+                if new_qty > variant.quantity:  # Changed from sku.quantity
+                    print(f"Cannot add: requested {new_qty} > variant.quantity {variant.quantity}")
+                    return Response({"success": False, "error": f"Only {variant.quantity} units available for selected variant.", "available_quantity": variant.quantity}, status=status.HTTP_400_BAD_REQUEST)
                 cart_item.quantity = new_qty
                 cart_item.save()
                 serializer = CartItemSerializer(cart_item, context={"request": request})
-                print("Updated cart_item with sku", serializer.data)
+                print("Updated cart_item with variant", serializer.data)
                 return Response({"success": True, "cart_item": serializer.data})
             except CartItem.DoesNotExist:
-                # 2) Try to find an existing cart item for this user/product without a sku (generic) and attach sku
+                # 2) Try to find an existing cart item for this user/product without a variant (generic) and attach variant
                 try:
-                    generic = CartItem.objects.get(user=user, product=product, sku__isnull=True)
+                    generic = CartItem.objects.get(user=user, product=product, variant__isnull=True)  # Changed from sku__isnull to variant__isnull
                     new_qty = generic.quantity + quantity
-                    print(f"Found generic cart item {generic.id} qty={generic.quantity}, attaching sku -> new_qty={new_qty}")
-                    if new_qty > sku.quantity:
-                        print(f"Cannot attach: requested {new_qty} > sku.quantity {sku.quantity}")
-                        return Response({"success": False, "error": f"Only {sku.quantity} units available for selected variant.", "available_quantity": sku.quantity}, status=status.HTTP_400_BAD_REQUEST)
-                    generic.sku = sku
+                    print(f"Found generic cart item {generic.id} qty={generic.quantity}, attaching variant -> new_qty={new_qty}")
+                    if new_qty > variant.quantity:  # Changed from sku.quantity
+                        print(f"Cannot attach: requested {new_qty} > variant.quantity {variant.quantity}")
+                        return Response({"success": False, "error": f"Only {variant.quantity} units available for selected variant.", "available_quantity": variant.quantity}, status=status.HTTP_400_BAD_REQUEST)
+                    generic.variant = variant  # Changed from sku to variant
                     generic.quantity = new_qty
                     generic.save()
                     serializer = CartItemSerializer(generic, context={"request": request})
-                    print("Attached sku to generic cart item", serializer.data)
+                    print("Attached variant to generic cart item", serializer.data)
                     return Response({"success": True, "cart_item": serializer.data})
                 except CartItem.DoesNotExist:
-                    # 3) Create new cart item with sku
-                    print("No existing cart item found, creating new with sku")
-                    if quantity > sku.quantity:
-                        print(f"Cannot create: requested {quantity} > sku.quantity {sku.quantity}")
-                        return Response({"success": False, "error": f"Only {sku.quantity} units available for selected variant.", "available_quantity": sku.quantity}, status=status.HTTP_400_BAD_REQUEST)
-                    cart_item = CartItem.objects.create(user=user, product=product, sku=sku, quantity=quantity)
+                    # 3) Create new cart item with variant
+                    print("No existing cart item found, creating new with variant")
+                    if quantity > variant.quantity:  # Changed from sku.quantity
+                        print(f"Cannot create: requested {quantity} > variant.quantity {variant.quantity}")
+                        return Response({"success": False, "error": f"Only {variant.quantity} units available for selected variant.", "available_quantity": variant.quantity}, status=status.HTTP_400_BAD_REQUEST)
+                    cart_item = CartItem.objects.create(user=user, product=product, variant=variant, quantity=quantity)  # Changed from sku to variant
                     serializer = CartItemSerializer(cart_item, context={"request": request})
-                    print("Created cart_item with sku", serializer.data)
+                    print("Created cart_item with variant", serializer.data)
                     return Response({"success": True, "cart_item": serializer.data})
         else:
-            # No SKU specified: use or create generic cart item
+            # No variant specified: use or create generic cart item
             cart_item, created = CartItem.objects.get_or_create(
                 user=user,
                 product=product,
-                sku=None,
+                variant=None,  # Changed from sku=None to variant=None
                 defaults={"quantity": quantity}
             )
 
@@ -15833,7 +15850,7 @@ class AddToCartView(APIView):
 
             serializer = CartItemSerializer(cart_item, context={"request": request})
             return Response({"success": True, "cart_item": serializer.data})
-
+        
 class CartListView(APIView):
     """
     Returns all cart items for a given session user.
