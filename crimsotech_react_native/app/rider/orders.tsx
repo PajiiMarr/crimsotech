@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   SafeAreaView,
   View,
@@ -7,9 +7,14 @@ import {
   TouchableOpacity,
   StatusBar,
   ScrollView,
+  FlatList,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { MaterialIcons, Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { useAuth } from "../../contexts/AuthContext";
+import AxiosInstance from "../../contexts/axios";
 
 // --- Theme Colors (Minimalist Softened) ---
 const COLORS = {
@@ -122,24 +127,87 @@ const EXAMPLE_ORDERS = [
 ];
 
 export default function OrdersPage() {
-  const [activeStatus, setActiveStatus] = useState<string>("accepted");
+  const { user } = useAuth();
+  const [activeStatus, setActiveStatus] = useState<string>("all");
+  const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [metrics, setMetrics] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const statuses = [
-    { id: "accepted", label: "Accepted" },
+    { id: "all", label: "All Orders" },
+    { id: "pending", label: "Pending" },
     { id: "picked_up", label: "Picked Up" },
-    { id: "on_the_way", label: "On the Way" },
+    { id: "in_progress", label: "In Progress" },
     { id: "delivered", label: "Delivered" },
     { id: "cancelled", label: "Cancelled" },
   ];
 
+  // Fetch orders data from API
+  const fetchOrdersData = async () => {
+    try {
+      setError(null);
+      const [metricsRes, ordersRes] = await Promise.all([
+        AxiosInstance.get('/rider-orders-active/get_metrics/', {
+          headers: { 'X-User-Id': user?.id || user?.user_id }
+        }),
+        AxiosInstance.get(`/rider-orders-active/get_deliveries/?page=1&page_size=50&status=${activeStatus === 'all' ? 'all' : activeStatus}`, {
+          headers: { 'X-User-Id': user?.id || user?.user_id }
+        })
+      ]);
+
+      if (metricsRes.data?.success && metricsRes.data?.metrics) {
+        setMetrics(metricsRes.data.metrics);
+      }
+
+      if (ordersRes.data?.success && ordersRes.data?.deliveries) {
+        // Format API response to match UI structure
+        const formattedOrders = ordersRes.data.deliveries.map((delivery: any) => ({
+          id: delivery.id,
+          order_id: delivery.order?.order_id,
+          store: delivery.order?.user?.first_name || 'Unknown Shop',
+          price: `₱${parseFloat(delivery.order?.total_amount || 0).toLocaleString()}`,
+          status: delivery.status,
+          items: `Delivery to ${delivery.order?.shipping_address?.city || 'Location'}`,
+          itemName: delivery.order?.shipping_address?.recipient_name || 'Customer',
+          category: 'Delivery',
+          deliveryFee: `₱${delivery.delivery_fee || 150}`,
+          customer: delivery.order?.customer,
+          shipping_address: delivery.order?.shipping_address,
+          picked_at: delivery.picked_at,
+          delivered_at: delivery.delivered_at,
+          created_at: delivery.created_at,
+          raw: delivery
+        }));
+        setOrders(formattedOrders);
+      }
+    } catch (err: any) {
+      console.log('Orders fetch error:', err);
+      setError(err.message || 'Failed to load orders');
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user?.id || user?.user_id) {
+      fetchOrdersData();
+    }
+  }, [user, activeStatus]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchOrdersData();
+  };
+
   // Filter logic
-  const filteredOrders = EXAMPLE_ORDERS.filter(
-    (order) => order.status === activeStatus,
-  );
+  const filteredOrders = orders;
 
   // Count pending orders for badge
-  const pendingCount = EXAMPLE_ORDERS.filter(
-    (order) => order.status === "pending",
+  const pendingCount = orders.filter(
+    (order) => order.status === "pending"
   ).length;
 
   const handleOrderPress = (order: any) => {
@@ -166,6 +234,16 @@ export default function OrdersPage() {
         return COLORS.muted;
     }
   };
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.center}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={styles.messageText}>Loading orders...</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -194,6 +272,7 @@ export default function OrdersPage() {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* --- Top Nav Card --- */}
         <View style={styles.section}>
@@ -315,6 +394,18 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.bg,
+  },
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: COLORS.bg,
+  },
+  messageText: {
+    fontSize: 14,
+    color: COLORS.muted,
+    marginTop: 12,
+    textAlign: "center",
   },
   scrollContent: {
     paddingBottom: 20,

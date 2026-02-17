@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   StatusBar,
   ScrollView,
   FlatList,
+  ActivityIndicator,
 } from "react-native";
 import {
   Feather,
@@ -16,6 +17,7 @@ import {
 } from "@expo/vector-icons";
 import { useAuth } from "../../contexts/AuthContext";
 import { router } from "expo-router";
+import AxiosInstance from "../../contexts/axios";
 
 // --- Color Palette (Minimalist Theme) ---
 const COLORS = {
@@ -136,14 +138,75 @@ const DUMMY_DELIVERIES: DeliveryEarnings[] = [
 ];
 
 export default function EarningsPage() {
-  const { userRole } = useAuth();
+  const { userRole, user } = useAuth();
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Using static dummy data as requested
-  const earnings = DUMMY_EARNINGS;
-  const breakdown = DUMMY_BREAKDOWN;
-  const stats = DUMMY_STATS;
-  const deliveries = DUMMY_DELIVERIES;
+  // Initialize with dummy data as fallback
+  const [earnings, setEarnings] = useState(DUMMY_EARNINGS);
+  const [breakdown, setBreakdown] = useState(DUMMY_BREAKDOWN);
+  const [stats, setStats] = useState(DUMMY_STATS);
+  const [deliveries, setDeliveries] = useState(DUMMY_DELIVERIES);
+
+  // Fetch earnings data from API
+  useEffect(() => {
+    const fetchEarningsData = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        const response = await AxiosInstance.get('/rider-earnings/', {
+          headers: { 'X-User-Id': user?.id || user?.user_id }
+        });
+
+        if (response.data) {
+          // Format API response to match UI structure
+          setEarnings({
+            today: response.data.today_earnings || 0,
+            thisWeek: response.data.week_earnings || 0,
+            thisMonth: response.data.month_earnings || 0,
+            availableBalance: response.data.month_earnings || 0,
+            pendingBalance: 0,
+          });
+
+          // Format deliveries
+          if (response.data.deliveries && Array.isArray(response.data.deliveries)) {
+            const formattedDeliveries = response.data.deliveries.map((d: any) => ({
+              id: d.id,
+              orderId: `ORD-${d.id.slice(0, 8).toUpperCase()}`,
+              pickup: d.shop_name || 'Unknown',
+              dropoff: 'Delivery Location',
+              dateTime: d.created_at ? new Date(d.created_at).toLocaleString() : 'N/A',
+              amount: d.delivery_fee || 0,
+              status: d.status === 'delivered' ? 'Completed' : 'Cancelled',
+            }));
+            setDeliveries(formattedDeliveries);
+          }
+        }
+      } catch (err: any) {
+        console.log('Earnings fetch error:', err);
+        setError(err.message || 'Failed to load earnings data');
+        // Keep using dummy data on error
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (user?.id || user?.user_id) {
+      fetchEarningsData();
+    }
+  }, [user]);
+
+  // If loading, show loader
+  if (isLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={styles.message}>Loading earnings data...</Text>
+      </View>
+    );
+  }
 
   // Get status badge color
   const getStatusColor = (status: string) => {
