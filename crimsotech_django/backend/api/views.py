@@ -3950,8 +3950,11 @@ class AdminProduct(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
 class AdminShops(viewsets.ViewSet):
+    """
+    ViewSet for admin shop management with comprehensive endpoints
+    """
+    
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
         if not date_str:
@@ -4016,7 +4019,7 @@ class AdminShops(viewsets.ViewSet):
             start_date = end_date - timedelta(days=30)
         
         return start_date, end_date
-    
+
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """
@@ -4035,36 +4038,31 @@ class AdminShops(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # DEBUG: Print date range for troubleshooting
-            print(f"Date range filter: {start_date} to {end_date}")
-            
-            # Base queryset for ALL shops (not filtered by date for total counts)
+            # Base queryset for ALL shops
             all_shops_qs = Shop.objects.all()
             total_shops = all_shops_qs.count()
             
-            # Get shop IDs for the date range (shops created in that period)
-            date_filtered_shops_qs = Shop.objects.all()
+            # Shops created in the date range
+            new_shops_qs = Shop.objects.all()
             if start_date and end_date:
-                date_filtered_shops_qs = date_filtered_shops_qs.filter(
-                    created_at__range=[start_date, end_date]
-                )
+                new_shops_qs = new_shops_qs.filter(created_at__range=[start_date, end_date])
+            new_shops_in_period = new_shops_qs.count()
             
-            date_filtered_shop_ids = list(date_filtered_shops_qs.values_list('id', flat=True))
-            
-            # Calculate total followers from ShopFollow (for all shops, not just date-filtered)
+            # Calculate total followers
             total_followers = ShopFollow.objects.count()
             
-            # Calculate average rating from Reviews (for all shops)
+            # Calculate average rating
             rating_agg = Review.objects.aggregate(
                 avg_rating=Avg('rating'),
                 total_reviews=Count('id')
             )
             avg_rating = rating_agg['avg_rating'] or 0.0
             
-            # Get verified shops count (for all shops)
+            # Get verified shops count
             verified_shops = all_shops_qs.filter(verified=True).count()
+            verified_shops_in_period = new_shops_qs.filter(verified=True).count()
             
-            # Get top shop by rating (for all shops)
+            # Get top shop by rating
             top_shop = all_shops_qs.annotate(
                 avg_rating=Avg('reviews__rating'),
                 followers_count=Count('followers')
@@ -4072,9 +4070,20 @@ class AdminShops(viewsets.ViewSet):
             
             top_shop_name = top_shop.name if top_shop else "No shops"
             
-            # Additional metrics for date range
-            new_shops_in_period = date_filtered_shops_qs.count()
-            verified_shops_in_period = date_filtered_shops_qs.filter(verified=True).count()
+            # Get active reports count
+            active_reports = Report.objects.filter(
+                report_type='shop',
+                status__in=['pending', 'under_review']
+            ).count()
+            
+            # Get suspended shops count
+            suspended_shops = all_shops_qs.filter(is_suspended=True).count()
+            
+            # Get total products across all shops
+            total_products = Product.objects.filter(shop__isnull=False).count()
+            
+            # Get total sales across all shops
+            total_sales_all = all_shops_qs.aggregate(total=Sum('total_sales'))['total'] or 0
             
             response_data = {
                 'success': True,
@@ -4086,6 +4095,10 @@ class AdminShops(viewsets.ViewSet):
                     'top_shop_name': top_shop_name,
                     'new_shops_in_period': new_shops_in_period,
                     'verified_shops_in_period': verified_shops_in_period,
+                    'active_reports': active_reports,
+                    'suspended_shops': suspended_shops,
+                    'total_products': total_products,
+                    'total_sales': float(total_sales_all),
                 },
                 'message': 'Metrics retrieved successfully',
                 'date_range': {
@@ -4122,80 +4135,94 @@ class AdminShops(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Base queryset
+            # Base queryset with related data
             shops_qs = Shop.objects.all().select_related('customer__customer')
             
-            # FIX: Filter shops that were active during the date range
-            # A shop is considered active during the range if it was created before or during the range
-            # and not suspended during the entire range
+            # Filter shops that were active during the date range
             if start_date and end_date:
                 shops_qs = shops_qs.filter(
                     # Shop must have been created before or during the range
-                    created_at__lte=end_date,
-                    # Shop must not be suspended throughout the entire range
-                    # Either not suspended, or suspended after the range, or suspension ended before the range
+                    created_at__lte=end_date
                 ).exclude(
                     # Exclude shops that were suspended for the entire range
-                    is_suspended=True,
-                    suspended_until__gte=end_date,
-                    created_at__lte=start_date
-                ).exclude(
-                    # Exclude shops that were suspended before the range and still suspended
-                    is_suspended=True,
-                    suspended_until__isnull=False,
-                    suspended_until__gte=start_date,
-                    created_at__lte=start_date
+                    Q(is_suspended=True, suspended_until__gte=end_date, created_at__lte=start_date) |
+                    Q(is_suspended=True, suspended_until__isnull=False, suspended_until__gte=start_date, created_at__lte=start_date)
                 )
             
-            # DEBUG: Print query info
-            print(f"Found {shops_qs.count()} shops active during date range")
-            
-            # Get shop IDs for related data queries
+            # Get shop IDs
             shop_ids = list(shops_qs.values_list('id', flat=True))
             
-            # Compute followers count for each shop
+            # Compute followers count
             followers_data = ShopFollow.objects.filter(
                 shop__in=shop_ids
             ).values('shop').annotate(
                 followers_count=Count('id')
             )
-            followers_map = {fd['shop']: fd['followers_count'] for fd in followers_data}
+            followers_map = {str(fd['shop']): fd['followers_count'] for fd in followers_data}
             
-            # Compute products count for each shop
+            # Compute products count
             products_data = Product.objects.filter(
-                shop__in=shop_ids
+                shop__in=shop_ids,
+                upload_status='published'
             ).values('shop').annotate(
                 products_count=Count('id')
             )
-            products_map = {pd['shop']: pd['products_count'] for pd in products_data}
+            products_map = {str(pd['shop']): pd['products_count'] for pd in products_data}
             
-            # Compute ratings for each shop
+            # Compute favorites count per shop
+            favorites_data = Product.objects.filter(
+                shop__in=shop_ids,
+                upload_status='published'
+            ).values('shop').annotate(
+                total_favorites=Sum('favorites_count')
+            )
+            favorites_map = {str(fd['shop']): fd['total_favorites'] or 0 for fd in favorites_data}
+            
+            # Compute ratings
             ratings_data = Review.objects.filter(
                 shop__in=shop_ids
             ).values('shop').annotate(
                 avg_rating=Avg('rating'),
                 total_ratings=Count('id')
             )
-            ratings_map = {rd['shop']: rd for rd in ratings_data}
+            ratings_map = {str(rd['shop']): rd for rd in ratings_data}
             
-            # Compute active boosts for each shop
+            # Compute active boosts
             boosts_data = Boost.objects.filter(
                 shop__in=shop_ids,
                 status='active'
             ).values('shop').annotate(
                 active_boosts=Count('id')
             )
-            boosts_map = {bd['shop']: bd['active_boosts'] for bd in boosts_data}
+            boosts_map = {str(bd['shop']): bd['active_boosts'] for bd in boosts_data}
+            
+            # Compute report counts per shop
+            reports_data = Report.objects.filter(
+                reported_shop__in=shop_ids,
+                status__in=['pending', 'under_review']
+            ).values('reported_shop').annotate(
+                active_reports=Count('id')
+            )
+            reports_map = {str(rd['reported_shop']): rd['active_reports'] for rd in reports_data}
             
             # Build shops data
             shops_data = []
             for shop in shops_qs:
-                shop_id = shop.id
+                shop_id = str(shop.id)
                 
-                # Get owner name
+                # Get owner info
                 customer = shop.customer
+                owner_info = None
                 if customer and customer.customer:
                     user = customer.customer
+                    owner_info = {
+                        'id': str(user.id),
+                        'username': user.username,
+                        'email': user.email,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                        'contact_number': user.contact_number
+                    }
                     owner_name = f"{user.first_name} {user.last_name}".strip()
                     if not owner_name:
                         owner_name = user.username or "Unknown"
@@ -4205,25 +4232,43 @@ class AdminShops(viewsets.ViewSet):
                 # Get computed metrics
                 followers = followers_map.get(shop_id, 0)
                 products_count = products_map.get(shop_id, 0)
+                total_favorites = favorites_map.get(shop_id, 0)
                 rating_info = ratings_map.get(shop_id, {'avg_rating': 0.0, 'total_ratings': 0})
                 active_boosts = boosts_map.get(shop_id, 0)
+                active_reports = reports_map.get(shop_id, 0)
                 
                 shop_data = {
-                    'id': str(shop_id),
+                    'id': shop_id,
+                    'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
                     'name': shop.name,
+                    'description': shop.description,
                     'owner': owner_name,
+                    'customer': owner_info,
+                    'province': shop.province,
+                    'city': shop.city,
+                    'barangay': shop.barangay,
+                    'street': shop.street,
+                    'contact_number': shop.contact_number,
                     'location': f"{shop.city}, {shop.province}" if shop.city and shop.province else shop.city or shop.province or 'Unknown',
                     'followers': followers,
+                    'followers_count': followers,
+                    'favorites_count': total_favorites,
                     'products': products_count,
+                    'products_count': products_count,
                     'rating': round(float(rating_info['avg_rating']), 1),
                     'totalRatings': rating_info['total_ratings'],
+                    'total_ratings': rating_info['total_ratings'],
                     'status': shop.status,
-                    'joinedDate': shop.created_at.isoformat() if shop.created_at else None,
-                    'totalSales': float(shop.total_sales),
-                    'activeBoosts': active_boosts,
                     'verified': shop.verified,
-                    # Add suspension info for debugging
+                    'joinedDate': shop.created_at.isoformat() if shop.created_at else None,
+                    'created_at': shop.created_at.isoformat() if shop.created_at else None,
+                    'totalSales': float(shop.total_sales),
+                    'total_sales': float(shop.total_sales),
+                    'activeBoosts': active_boosts,
+                    'active_boosts': active_boosts,
+                    'active_report_count': active_reports,
                     'is_suspended': shop.is_suspended,
+                    'suspension_reason': shop.suspension_reason,
                     'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None
                 }
                 shops_data.append(shop_data)
@@ -4248,7 +4293,543 @@ class AdminShops(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving shops: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+    
+    @action(detail=True, methods=['get'])
+    def get_shop_details(self, request, pk=None):
+        """
+        Get detailed information for a specific shop
+        """
+        try:
+            shop = Shop.objects.select_related('customer__customer').get(pk=pk)
+            
+            # Get owner info
+            customer = shop.customer
+            owner_info = None
+            if customer and customer.customer:
+                user = customer.customer
+                owner_info = {
+                    'id': str(user.id),
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'contact_number': user.contact_number,
+                    'product_limit': customer.product_limit,
+                    'current_product_count': customer.current_product_count
+                }
+            
+            # Get followers count
+            followers_count = ShopFollow.objects.filter(shop=shop).count()
+            
+            # Get favorites count across all products
+            favorites_count = Product.objects.filter(
+                shop=shop,
+                upload_status='published'
+            ).aggregate(total=Sum('favorites_count'))['total'] or 0
+            
+            # Get active reports count
+            active_reports = Report.objects.filter(
+                reported_shop=shop,
+                status__in=['pending', 'under_review']
+            ).count()
+            
+            # Get product categories
+            categories = Category.objects.filter(
+                products__shop=shop
+            ).distinct().values('id', 'name')
+            
+            shop_data = {
+                'id': str(shop.id),
+                'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
+                'customer': owner_info,
+                'description': shop.description,
+                'name': shop.name,
+                'province': shop.province,
+                'city': shop.city,
+                'barangay': shop.barangay,
+                'street': shop.street,
+                'contact_number': shop.contact_number,
+                'verified': shop.verified,
+                'status': shop.status,
+                'total_sales': float(shop.total_sales),
+                'created_at': shop.created_at.isoformat() if shop.created_at else None,
+                'updated_at': shop.updated_at.isoformat() if shop.updated_at else None,
+                'is_suspended': shop.is_suspended,
+                'suspension_reason': shop.suspension_reason,
+                'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None,
+                'active_report_count': active_reports,
+                'favorites_count': favorites_count,
+                'followers_count': followers_count,
+                'categories': list(categories)
+            }
+            
+            return Response({
+                'success': True,
+                'shop': shop_data,
+                'message': 'Shop details retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving shop details: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def get_products(self, request, pk=None):
+        """
+        Get products for a specific shop
+        """
+        try:
+            shop = Shop.objects.get(pk=pk)
+            
+            # Optional category filter
+            category_id = request.GET.get('category')
+            
+            products_qs = Product.objects.filter(
+                shop=shop,
+                upload_status='published'
+            ).select_related('category')
+            
+            if category_id:
+                products_qs = products_qs.filter(category_id=category_id)
+            
+            products_data = []
+            for product in products_qs:
+                # Get variants info
+                variants = product.variants.filter(is_active=True)
+                min_price = variants.aggregate(Min('price'))['price__min']
+                total_stock = variants.aggregate(Sum('quantity'))['quantity__sum'] or 0
+                
+                products_data.append({
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description,
+                    'quantity': total_stock,
+                    'price': float(min_price) if min_price else 0,
+                    'status': 'Available' if total_stock > 10 else 'Low Stock' if total_stock > 0 else 'Out of Stock',
+                    'condition': product.condition,
+                    'upload_status': product.upload_status,
+                    'created_at': product.created_at.isoformat() if product.created_at else None,
+                    'category': {
+                        'id': str(product.category.id) if product.category else None,
+                        'name': product.category.name if product.category else None
+                    } if product.category else None,
+                    'active_report_count': product.active_report_count,
+                    'favorites_count': product.favorites_count
+                })
+            
+            return Response({
+                'success': True,
+                'products': products_data,
+                'total_count': len(products_data),
+                'message': 'Products retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving products: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def get_categories(self, request, pk=None):
+        """
+        Get categories for a specific shop based on its products
+        """
+        try:
+            shop = Shop.objects.get(pk=pk)
+            
+            categories = Category.objects.filter(
+                products__shop=shop
+            ).distinct().annotate(
+                product_count=Count('products')
+            ).order_by('name')
+            
+            categories_data = [{
+                'id': str(cat.id),
+                'name': cat.name,
+                'product_count': cat.product_count
+            } for cat in categories]
+            
+            return Response({
+                'success': True,
+                'categories': categories_data,
+                'message': 'Categories retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving categories: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def get_reviews(self, request, pk=None):
+        """
+        Get reviews for a specific shop
+        """
+        try:
+            shop = Shop.objects.get(pk=pk)
+            
+            reviews = Review.objects.filter(
+                shop=shop
+            ).select_related('customer__customer').order_by('-created_at')
+            
+            reviews_data = []
+            for review in reviews:
+                customer = review.customer
+                user_info = None
+                if customer and customer.customer:
+                    user = customer.customer
+                    user_info = {
+                        'id': str(user.id),
+                        'username': user.username,
+                        'email': user.email,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                        'contact_number': user.contact_number
+                    }
+                
+                reviews_data.append({
+                    'id': str(review.id),
+                    'customer': {
+                        'customer': user_info,
+                        'product_limit': customer.product_limit if customer else None,
+                        'current_product_count': customer.current_product_count if customer else None
+                    } if customer else None,
+                    'rating': review.rating,
+                    'comment': review.comment,
+                    'created_at': review.created_at.isoformat() if review.created_at else None
+                })
+            
+            # Calculate average rating
+            avg_rating = reviews.aggregate(avg=Avg('rating'))['avg'] or 0
+            
+            return Response({
+                'success': True,
+                'reviews': reviews_data,
+                'average_rating': round(float(avg_rating), 1),
+                'total_count': len(reviews_data),
+                'message': 'Reviews retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving reviews: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def get_vouchers(self, request, pk=None):
+        """
+        Get vouchers for a specific shop
+        """
+        try:
+            shop = Shop.objects.get(pk=pk)
+            
+            vouchers = Voucher.objects.filter(
+                shop=shop
+            ).order_by('-valid_until')
+            
+            vouchers_data = [{
+                'id': str(v.id),
+                'name': v.name,
+                'code': v.code,
+                'discount_type': v.discount_type,
+                'value': float(v.value),
+                'valid_until': v.valid_until.isoformat() if v.valid_until else None,
+                'is_active': v.is_active
+            } for v in vouchers]
+            
+            return Response({
+                'success': True,
+                'vouchers': vouchers_data,
+                'message': 'Vouchers retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving vouchers: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def get_boosts(self, request, pk=None):
+        """
+        Get active boosts for a specific shop
+        """
+        try:
+            shop = Shop.objects.get(pk=pk)
+            
+            boosts = Boost.objects.filter(
+                shop=shop
+            ).select_related('product', 'boost_plan').order_by('-end_date')
+            
+            boosts_data = []
+            for boost in boosts:
+                product = boost.product
+                plan = boost.boost_plan
+                
+                boosts_data.append({
+                    'id': str(boost.id),
+                    'product': {
+                        'id': str(product.id) if product else None,
+                        'name': product.name if product else None
+                    } if product else None,
+                    'boost_plan': {
+                        'id': str(plan.id) if plan else None,
+                        'name': plan.name if plan else None,
+                        'price': float(plan.price) if plan else 0
+                    } if plan else None,
+                    'status': boost.status,
+                    'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                    'end_date': boost.end_date.isoformat() if boost.end_date else None
+                })
+            
+            return Response({
+                'success': True,
+                'boosts': boosts_data,
+                'message': 'Boosts retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving boosts: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def get_reports(self, request, pk=None):
+        """
+        Get reports for a specific shop
+        """
+        try:
+            shop = Shop.objects.get(pk=pk)
+            
+            reports = Report.objects.filter(
+                reported_shop=shop
+            ).select_related('reporter').order_by('-created_at')
+            
+            reports_data = []
+            for report in reports:
+                reporter = report.reporter
+                reporter_info = None
+                if reporter:
+                    reporter_info = {
+                        'id': str(reporter.id),
+                        'username': reporter.username,
+                        'email': reporter.email,
+                        'first_name': reporter.first_name,
+                        'last_name': reporter.last_name
+                    }
+                
+                reports_data.append({
+                    'id': str(report.id),
+                    'reporter': reporter_info,
+                    'reason': report.reason,
+                    'description': report.description,
+                    'status': report.status,
+                    'created_at': report.created_at.isoformat() if report.created_at else None
+                })
+            
+            return Response({
+                'success': True,
+                'reports': reports_data,
+                'message': 'Reports retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving reports: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'])
+    def execute_action(self, request, pk=None):
+        """
+        Execute admin actions on a shop (suspend, unsuspend, verify, unverify, delete)
+        """
+        try:
+            shop = Shop.objects.get(pk=pk)
+            action = request.data.get('action')
+            reason = request.data.get('reason', '')
+            suspension_days = request.data.get('suspension_days')
+            
+            if not action:
+                return Response({
+                    'success': False,
+                    'error': 'Action is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate reason for suspend and delete actions
+            if action in ['suspend', 'delete'] and not reason:
+                return Response({
+                    'success': False,
+                    'error': f'Reason is required for {action} action'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Execute action
+            if action == 'suspend':
+                if not suspension_days:
+                    suspension_days = 7
+                
+                shop.is_suspended = True
+                shop.status = 'Suspended'
+                shop.suspension_reason = reason
+                shop.suspended_until = timezone.now() + timedelta(days=int(suspension_days))
+                
+                # Create notification for shop owner
+                if shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title='Shop Suspended',
+                        type='shop_suspension',
+                        message=f'Your shop "{shop.name}" has been suspended. Reason: {reason}'
+                    )
+                
+            elif action == 'unsuspend':
+                shop.is_suspended = False
+                shop.status = 'Active'
+                shop.suspension_reason = None
+                shop.suspended_until = None
+                
+                # Create notification for shop owner
+                if shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title='Shop Unsuspended',
+                        type='shop_unsuspension',
+                        message=f'Your shop "{shop.name}" has been unsuspended.'
+                    )
+                
+            elif action == 'verify':
+                shop.verified = True
+                
+                # Create notification for shop owner
+                if shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title='Shop Verified',
+                        type='shop_verification',
+                        message=f'Your shop "{shop.name}" has been verified!'
+                    )
+                
+            elif action == 'unverify':
+                shop.verified = False
+                
+                # Create notification for shop owner
+                if shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title='Shop Verification Removed',
+                        type='shop_unverification',
+                        message=f'Verification has been removed from your shop "{shop.name}".'
+                    )
+                
+            elif action == 'delete':
+                # Log the deletion
+                if request.user:
+                    Logs.objects.create(
+                        user=request.user,
+                        action=f'Deleted shop: {shop.name} (ID: {shop.id}) - Reason: {reason}'
+                    )
+                
+                # Create notification before deletion
+                if shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title='Shop Deleted',
+                        type='shop_deletion',
+                        message=f'Your shop "{shop.name}" has been deleted. Reason: {reason}'
+                    )
+                
+                # Delete the shop
+                shop.delete()
+                
+                return Response({
+                    'success': True,
+                    'message': f'Shop deleted successfully',
+                    'action': action
+                }, status=status.HTTP_200_OK)
+            
+            else:
+                return Response({
+                    'success': False,
+                    'error': f'Invalid action: {action}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            shop.save()
+            
+            # Log the action
+            if request.user:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f'{action} on shop: {shop.name} (ID: {shop.id})'
+                )
+            
+            # Return updated shop data
+            return Response({
+                'success': True,
+                'shop': {
+                    'id': str(shop.id),
+                    'name': shop.name,
+                    'verified': shop.verified,
+                    'status': shop.status,
+                    'is_suspended': shop.is_suspended,
+                    'suspension_reason': shop.suspension_reason,
+                    'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None
+                },
+                'message': f'Action {action} completed successfully',
+                'action': action
+            }, status=status.HTTP_200_OK)
+            
+        except Shop.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Shop not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error executing action: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 class AdminBoosting(viewsets.ViewSet):
     """
     ViewSet for admin boost management and analytics
@@ -18426,10 +19007,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
             ) 
 
     
-
-    
-        
-
 class PurchasesBuyer(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def user_purchases(self, request):
@@ -18524,6 +19101,12 @@ class PurchasesBuyer(viewsets.ViewSet):
                     if checkout.cart_item and checkout.cart_item.product:
                         product = checkout.cart_item.product
                         
+                        # Get variant information if available
+                        variant = checkout.cart_item.variant
+                        variant_title = variant.title if variant else None
+                        variant_price = str(variant.price) if variant and variant.price else str(product.price)
+                        variant_sku = variant.sku_code if variant else None
+                        
                         # Get product media (images)
                         product_images = []
                         for media in product.productmedia_set.all():
@@ -18565,14 +19148,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'product_description': product.description,
                             'product_condition': product.condition,
                             'product_status': product.status,
+                            'variant_id': str(variant.id) if variant else None,
+                            'variant_title': variant_title,
+                            'variant_sku': variant_sku,
                             'shop_id': str(product.shop.id) if product.shop else None,
                             'shop_name': product.shop.name if product.shop else None,
                             'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
                             'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
                             'quantity': checkout.quantity,
-                            'price': str(product.price),
+                            'price': variant_price,
                             'subtotal': str(checkout.total_amount),
-                            'status': order.status,  # CHANGED: Use order.status instead of checkout.status
+                            'status': order.status,
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                             'product_images': product_images,
@@ -18582,7 +19168,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'name': checkout.voucher.name,
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
-                            'can_review': not has_reviewed and order.status == 'delivered'  # Using order.status here
+                            'can_review': not has_reviewed and order.status == 'delivered'
                         }
                         order_data['items'].append(item_data)
                     else:
@@ -18595,6 +19181,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'product_description': '',
                             'product_condition': '',
                             'product_status': '',
+                            'variant_id': None,
+                            'variant_title': None,
+                            'variant_sku': None,
                             'shop_id': None,
                             'shop_name': 'Unknown Shop',
                             'shop_picture': None,
@@ -18602,7 +19191,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'quantity': checkout.quantity,
                             'price': '0.00',
                             'subtotal': str(checkout.total_amount),
-                            'status': order.status,  # CHANGED: Use order.status instead of checkout.status
+                            'status': order.status,
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                             'product_images': [],
@@ -18733,6 +19322,12 @@ class PurchasesBuyer(viewsets.ViewSet):
             if checkout.cart_item and checkout.cart_item.product:
                 product = checkout.cart_item.product
                 
+                # Get variant information if available
+                variant = checkout.cart_item.variant
+                variant_title = variant.title if variant else None
+                variant_price = str(variant.price) if variant and variant.price else str(product.price)
+                variant_sku = variant.sku_code if variant else None
+                
                 # Get product media (images)
                 product_images = []
                 for media in product.productmedia_set.all():
@@ -18774,14 +19369,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'product_description': product.description,
                     'product_condition': product.condition,
                     'product_status': product.status,
+                    'variant_id': str(variant.id) if variant else None,
+                    'variant_title': variant_title,
+                    'variant_sku': variant_sku,
                     'shop_id': str(product.shop.id) if product.shop else None,
                     'shop_name': product.shop.name if product.shop else None,
                     'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
                     'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
                     'quantity': checkout.quantity,
-                    'price': str(product.price),
+                    'price': variant_price,
                     'subtotal': str(checkout.total_amount),
-                    'status': order.status,  # Use order status for all items
+                    'status': order.status,
                     'remarks': checkout.remarks,
                     'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                     'product_images': product_images,
@@ -18791,7 +19389,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'name': checkout.voucher.name,
                         'code': checkout.voucher.code
                     } if checkout.voucher else None,
-                    'can_review': not has_reviewed and order.status == 'delivered'  # Using order.status here
+                    'can_review': not has_reviewed and order.status == 'delivered'
                 }
                 items_data.append(item_data)
             else:
@@ -18804,6 +19402,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'product_description': '',
                     'product_condition': '',
                     'product_status': '',
+                    'variant_id': None,
+                    'variant_title': None,
+                    'variant_sku': None,
                     'shop_id': None,
                     'shop_name': 'Unknown Shop',
                     'shop_picture': None,
@@ -18811,7 +19412,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'quantity': checkout.quantity,
                     'price': '0.00',
                     'subtotal': str(checkout.total_amount),
-                    'status': order.status,  # Use order status
+                    'status': order.status,
                     'remarks': checkout.remarks,
                     'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                     'product_images': [],
@@ -18917,6 +19518,14 @@ class PurchasesBuyer(viewsets.ViewSet):
             if checkout.cart_item and checkout.cart_item.product:
                 product = checkout.cart_item.product
                 total_items += checkout.quantity
+                
+                # Get variant information
+                variant = checkout.cart_item.variant
+                variant_title = variant.title if variant else 'Default'
+                variant_price = str(variant.price) if variant and variant.price else str(product.price)
+                variant_original_price = str(variant.compare_price) if variant and variant.compare_price else str(float(product.price) * 1.1)
+                variant_is_refundable = variant.is_refundable if variant else product.is_refundable
+                
                 subtotal += float(checkout.total_amount)
                 
                 # Get product media (images)
@@ -18963,29 +19572,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                 except Customer.DoesNotExist:
                     has_reviewed = False
                 
-                # Determine refundable flag (SKU-level overrides product-level)
-                is_refundable = False
-                try:
-                    sku_obj = None
-                    if hasattr(checkout, 'variant') and checkout.variant:
-                        sku_obj = ProductSKU.objects.filter(product=product, sku_code=checkout.variant).first()
-                    if sku_obj is not None:
-                        is_refundable = bool(sku_obj.is_refundable)
-                    else:
-                        is_refundable = bool(product.is_refundable)
-                except Exception:
-                    # Fallback to product-level flag in case of any error
-                    is_refundable = bool(product.is_refundable)
-
                 item_data = {
                     'checkout_id': str(checkout.id),
                     'product_id': str(product.id),
                     'product_name': product.name,
                     'product_description': product.description,
-                    'product_variant': checkout.variant if hasattr(checkout, 'variant') else 'Default',
+                    'variant_id': str(variant.id) if variant else None,
+                    'product_variant': variant_title,
+                    'variant_sku': variant.sku_code if variant else None,
                     'quantity': checkout.quantity,
-                    'price': str(product.price),
-                    'original_price': str(float(product.price) * 1.1),  # 10% markup for original price
+                    'price': variant_price,
+                    'original_price': variant_original_price,
                     'subtotal': str(checkout.total_amount),
                     'status': order.status,
                     'purchased_at': checkout.created_at.isoformat(),
@@ -18994,7 +19591,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'shop_info': shop_info,
                     'can_review': not has_reviewed and order.status == 'delivered',
                     'can_return': order.status == 'delivered' and not has_reviewed,  # Only if delivered and not reviewed
-                    'is_refundable': is_refundable,
+                    'is_refundable': variant_is_refundable,
                     'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
                 }
                 items_data.append(item_data)
@@ -19005,7 +19602,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             'shipping_fee': '0.00',  # You should add shipping_fee field to Order model
             'tax': str(float(subtotal) * 0.12),  # 12% VAT - adjust as needed
             'discount': '0.00',  # You should add discount field to Order model
-            'total': order.total_amount,
+            'total': str(order.total_amount),
             'payment_fee': '0.00',  # Add payment fee if applicable
         }
         
@@ -19044,7 +19641,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             }
         }
         
-        return Response(response_data)\
+        return Response(response_data)
     
     def _get_status_display(self, status):
         status_map = {
@@ -19298,8 +19895,18 @@ class PurchasesBuyer(viewsets.ViewSet):
             if checkout.cart_item and checkout.cart_item.product:
                 prod = checkout.cart_item.product
                 qty = checkout.quantity
-                val = float(prod.price) * qty
-                package_items.append({'name': prod.name, 'quantity': qty, 'value': str(val)})
+                
+                # Get variant price if available
+                variant = checkout.cart_item.variant
+                price = float(variant.price) if variant and variant.price else float(prod.price)
+                
+                val = price * qty
+                package_items.append({
+                    'name': prod.name,
+                    'variant': variant.title if variant else 'Default',
+                    'quantity': qty, 
+                    'value': str(val)
+                })
                 total_value += val
                 total_items += qty
 
@@ -19351,462 +19958,6 @@ class PurchasesBuyer(viewsets.ViewSet):
 
         return Response(data, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=['get'])
-    def user_purchases(self, request):
-        user_id = request.headers.get('X-User-Id')
-        
-        if not user_id:
-            return Response(
-                {'error': 'X-User-Id header is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response(
-                {'error': 'User not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        try:
-            # Get all orders for this user
-            orders = Order.objects.filter(user=user).prefetch_related(
-                Prefetch(
-                    'checkout_set',
-                    queryset=Checkout.objects.select_related(
-                        'cart_item__product__shop',
-                        'cart_item__product__customer__customer',
-                        'voucher'
-                    ).prefetch_related(
-                        Prefetch(
-                            'cart_item__product__productmedia_set',
-                            queryset=ProductMedia.objects.only('id', 'file_data', 'file_type')
-                        )
-                    ).order_by('created_at')
-                ),
-                'shipping_address'
-            ).order_by('-created_at')
-            
-            # Get related payments and deliveries in bulk
-            order_ids = list(orders.values_list('order', flat=True))
-            payments = Payment.objects.filter(order_id__in=order_ids)
-            deliveries = Delivery.objects.filter(order_id__in=order_ids)
-            
-            # Create lookup dictionaries
-            payment_dict = {str(payment.order_id): payment for payment in payments}
-            delivery_dict = {str(delivery.order_id): delivery for delivery in deliveries}
-            
-            # Prepare response data
-            purchases = []
-            for order in orders:
-                # Get payment and delivery for this order
-                payment = payment_dict.get(str(order.order))
-                delivery = delivery_dict.get(str(order.order))
-
-                # If order is delivered, set completed_at (use delivery.delivery_date if available)
-                if order.status == 'delivered' and not getattr(order, 'completed_at', None):
-                    try:
-                        if delivery and getattr(delivery, 'delivery_date', None):
-                            order.completed_at = delivery.delivery_date
-                        else:
-                            order.completed_at = timezone.now()
-                        # Save only the completed_at field to avoid unintended updates
-                        order.save(update_fields=['completed_at'])
-                    except Exception as _e:
-                        # Log but don't break the response building
-                        print(f"DEBUG: Failed to set completed_at for order {order.order}: {_e}")
-
-                # Get delivery address
-                delivery_address = None
-                if order.shipping_address:
-                    delivery_address = order.shipping_address.get_full_address()
-                elif order.delivery_address_text:
-                    delivery_address = order.delivery_address_text
-
-                order_data = {
-                    'order_id': str(order.order),
-                    'status': order.status,  # From Order table
-                    'total_amount': str(order.total_amount),
-                    'payment_method': order.payment_method,
-                    'delivery_method': order.delivery_method,
-                    'delivery_address': delivery_address,
-                    'created_at': order.created_at.isoformat(),
-                    'completed_at': order.completed_at.isoformat() if getattr(order, 'completed_at', None) else None,
-                    'payment_status': payment.status if payment else None,
-                    'delivery_status': delivery.status if delivery else None,
-                    'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
-                    'items': []
-                }
-                
-                # Process all checkouts for this order
-                for checkout in order.checkout_set.all():
-                    if checkout.cart_item and checkout.cart_item.product:
-                        product = checkout.cart_item.product
-                        
-                        # Get product media (images)
-                        product_images = []
-                        for media in product.productmedia_set.all():
-                            if media.file_data:
-                                try:
-                                    url = media.file_data.url
-                                    if request:
-                                        url = request.build_absolute_uri(url)
-                                    product_images.append({
-                                        'id': str(media.id),
-                                        'url': url,
-                                        'file_type': media.file_type
-                                    })
-                                except ValueError:
-                                    # If file doesn't exist, skip it
-                                    continue
-                        
-                        # Get primary image (first image)
-                        primary_image = product_images[0] if product_images else None
-                        
-                        # Check if user has reviewed this product
-                        has_reviewed = False
-                        try:
-                            # First check if user has a Customer profile
-                            customer_profile = Customer.objects.get(customer=user)
-                            has_reviewed = Review.objects.filter(
-                                customer=customer_profile,
-                                product=product
-                            ).exists()
-                        except Customer.DoesNotExist:
-                            # User doesn't have a customer profile yet
-                            has_reviewed = False
-                        
-                        item_data = {
-                            'checkout_id': str(checkout.id),
-                            'cart_item_id': str(checkout.cart_item.id) if checkout.cart_item else None,
-                            'product_id': str(product.id),
-                            'product_name': product.name,
-                            'product_description': product.description,
-                            'product_condition': product.condition,
-                            'product_status': product.status,
-                            'shop_id': str(product.shop.id) if product.shop else None,
-                            'shop_name': product.shop.name if product.shop else None,
-                            'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
-                            'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
-                            'quantity': checkout.quantity,
-                            'price': str(product.price),
-                            'subtotal': str(checkout.total_amount),
-                            'status': order.status,  # CHANGED: Use order.status instead of checkout.status
-                            'remarks': checkout.remarks,
-                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
-                            'product_images': product_images,
-                            'primary_image': primary_image,
-                            'voucher_applied': {
-                                'id': str(checkout.voucher.id),
-                                'name': checkout.voucher.name,
-                                'code': checkout.voucher.code
-                            } if checkout.voucher else None,
-                            'can_review': not has_reviewed and order.status == 'delivered'  # Using order.status here
-                        }
-                        order_data['items'].append(item_data)
-                    else:
-                        # Handle case where cart_item or product might be null
-                        item_data = {
-                            'checkout_id': str(checkout.id),
-                            'cart_item_id': None,
-                            'product_id': None,
-                            'product_name': 'Item no longer available',
-                            'product_description': '',
-                            'product_condition': '',
-                            'product_status': '',
-                            'shop_id': None,
-                            'shop_name': 'Unknown Shop',
-                            'shop_picture': None,
-                            'seller_username': None,
-                            'quantity': checkout.quantity,
-                            'price': '0.00',
-                            'subtotal': str(checkout.total_amount),
-                            'status': order.status,  # CHANGED: Use order.status instead of checkout.status
-                            'remarks': checkout.remarks,
-                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
-                            'product_images': [],
-                            'primary_image': None,
-                            'voucher_applied': None,
-                            'can_review': False
-                        }
-                        order_data['items'].append(item_data)
-                
-                purchases.append(order_data)
-            
-            return Response({
-                'user_id': str(user.id),
-                'username': user.username,
-                'total_purchases': len(purchases),
-                'purchases': purchases
-            })
-            
-        except Exception as e:
-            import traceback
-            print(f"Error in user_purchases: {str(e)}")
-            print(traceback.format_exc())
-            return Response(
-                {'error': 'Internal server error', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @action(detail=False, methods=['get'], url_path='status-counts')
-    def status_counts(self, request):
-        """Return counts per order status for the session user."""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            processing = Order.objects.filter(user=user, status__in=['pending', 'processing']).count()
-            shipped = Order.objects.filter(user=user, status='shipped').count()
-            rate = Order.objects.filter(user=user, status='completed').count()
-            returns = Order.objects.filter(user=user, status__in=['cancelled', 'refunded']).count()
-
-            return Response({
-                'processing': processing,
-                'shipped': shipped,
-                'rate': rate,
-                'returns': returns
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.exception('Error computing status counts: %s', e)
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['post'], url_path='cancel')
-    def cancel(self, request, pk=None):
-        """Allow buyer to cancel an order if it's still cancellable."""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            order = Order.objects.get(order=pk, user=user)
-        except Order.DoesNotExist:
-            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Do not allow cancelling if already shipped/delivered/completed or already cancelled/refunded
-        if order.status in ['shipped', 'delivered', 'completed', 'cancelled', 'refunded']:
-            return Response({'error': 'Order cannot be cancelled at this stage'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            order.status = 'cancelled'
-            order.save()
-
-            # Optionally: create a log entry or send notification here
-            return Response({'success': True, 'message': 'Order cancelled successfully'}, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.exception('Error cancelling order: %s', e)
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def retrieve(self, request, pk=None):
-        """
-        Get a single order by ID
-        """
-        user_id = request.headers.get("X-User-Id")
-        if not user_id:
-            return Response(
-                {"error": "User ID required"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response(
-                {"error": "User not found"}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        try:
-            order = Order.objects.get(order=pk, user=user)
-        except Order.DoesNotExist:
-            return Response(
-                {"error": "Order not found"}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Get payment and delivery for this order
-        payment = Payment.objects.filter(order_id=order.order).first()
-        delivery = Delivery.objects.filter(order_id=order.order).first()
-        
-        # Get delivery address
-        delivery_address = None
-        if order.shipping_address:
-            delivery_address = order.shipping_address.get_full_address()
-        elif order.delivery_address_text:
-            delivery_address = order.delivery_address_text
-        
-        # Get order items
-        items_data = []
-        for checkout in order.checkout_set.all():
-            if checkout.cart_item and checkout.cart_item.product:
-                product = checkout.cart_item.product
-                
-                # Get product media (images)
-                product_images = []
-                for media in product.productmedia_set.all():
-                    if media.file_data:
-                        try:
-                            url = media.file_data.url
-                            if request:
-                                url = request.build_absolute_uri(url)
-                            product_images.append({
-                                'id': str(media.id),
-                                'url': url,
-                                'file_type': media.file_type
-                            })
-                        except ValueError:
-                            # If file doesn't exist, skip it
-                            continue
-                
-                # Get primary image (first image)
-                primary_image = product_images[0] if product_images else None
-                
-                # Check if user has reviewed this product
-                has_reviewed = False
-                try:
-                    # First check if user has a Customer profile
-                    customer_profile = Customer.objects.get(customer=user)
-                    has_reviewed = Review.objects.filter(
-                        customer=customer_profile,
-                        product=product
-                    ).exists()
-                except Customer.DoesNotExist:
-                    # User doesn't have a customer profile yet
-                    has_reviewed = False
-                
-                item_data = {
-                    'checkout_id': str(checkout.id),
-                    'cart_item_id': str(checkout.cart_item.id) if checkout.cart_item else None,
-                    'product_id': str(product.id),
-                    'product_name': product.name,
-                    'product_description': product.description,
-                    'product_condition': product.condition,
-                    'product_status': product.status,
-                    'shop_id': str(product.shop.id) if product.shop else None,
-                    'shop_name': product.shop.name if product.shop else None,
-                    'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
-                    'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
-                    'quantity': checkout.quantity,
-                    'price': str(product.price),
-                    'subtotal': str(checkout.total_amount),
-                    'status': order.status,  # Use order status for all items
-                    'remarks': checkout.remarks,
-                    'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
-                    'product_images': product_images,
-                    'primary_image': primary_image,
-                    'voucher_applied': {
-                        'id': str(checkout.voucher.id),
-                        'name': checkout.voucher.name,
-                        'code': checkout.voucher.code
-                    } if checkout.voucher else None,
-                    'can_review': not has_reviewed and order.status == 'delivered'  # Using order.status here
-                }
-                items_data.append(item_data)
-            else:
-                # Handle case where cart_item or product might be null
-                item_data = {
-                    'checkout_id': str(checkout.id),
-                    'cart_item_id': None,
-                    'product_id': None,
-                    'product_name': 'Item no longer available',
-                    'product_description': '',
-                    'product_condition': '',
-                    'product_status': '',
-                    'shop_id': None,
-                    'shop_name': 'Unknown Shop',
-                    'shop_picture': None,
-                    'seller_username': None,
-                    'quantity': checkout.quantity,
-                    'price': '0.00',
-                    'subtotal': str(checkout.total_amount),
-                    'status': order.status,  # Use order status
-                    'remarks': checkout.remarks,
-                    'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
-                    'product_images': [],
-                    'primary_image': None,
-                    'voucher_applied': None,
-                    'can_review': False
-                }
-                items_data.append(item_data)
-        
-        order_data = {
-            'order_id': str(order.order),
-            'status': order.status,
-            'total_amount': str(order.total_amount),
-            'payment_method': order.payment_method,
-            'delivery_method': order.delivery_method,
-            'delivery_address': delivery_address,
-            'created_at': order.created_at.isoformat(),
-            'payment_status': payment.status if payment else None,
-            'delivery_status': delivery.status if delivery else None,
-            'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
-            'items': items_data
-        }
-        
-        return Response(order_data)
-
-    @action(detail=True, methods=['get'], url_path='view-order')
-    def view_order_detail(self, request, pk=None):
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = User.objects.get(id=user_id)
-            order = Order.objects.get(order=pk, user=user)
-        except (User.DoesNotExist, Order.DoesNotExist) as e:
-            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Get basic order data
-        order_data = {
-            'order': {
-                'id': str(order.order),
-                'status': order.status,
-                'status_display': order.get_status_display() if hasattr(order, 'get_status_display') else order.status,
-                'created_at': order.created_at.isoformat(),
-                'updated_at': order.updated_at.isoformat() if order.updated_at else None,
-                'completed_at': order.completed_at.isoformat() if getattr(order, 'completed_at', None) else None,
-                'payment_method': order.payment_method,
-                'total_amount': str(order.total_amount),
-            },
-            'items': [],
-            'shipping_info': {
-                'delivery_method': order.delivery_method or 'Standard Delivery',
-            },
-            'delivery_address': {
-                'address': order.delivery_address_text or (order.shipping_address.get_full_address() if order.shipping_address else ''),
-            }
-        }
-        
-        # Add simple items
-        for checkout in order.checkout_set.all():
-            if checkout.cart_item and checkout.cart_item.product:
-                product = checkout.cart_item.product
-                item_data = {
-                    'product_id': str(product.id),
-                    'product_name': product.name,
-                    'quantity': checkout.quantity,
-                    'price': str(product.price),
-                    'subtotal': str(checkout.total_amount),
-                    'is_refundable': bool(getattr(product, 'is_refundable', False)),
-                }
-                order_data['items'].append(item_data)
-        
-        return Response(order_data)
-
-    
     # Add: return rider info for an order
     @action(detail=True, methods=['get'], url_path='get-rider-info')
     def get_rider_info(self, request, pk=None):
@@ -19840,30 +19991,6 @@ class PurchasesBuyer(viewsets.ViewSet):
 
         return Response({"success": True, "order_id": str(order.order), "riders": riders_data})
 
-    # These helper methods should be at the same level as get_delivery_proofs_for_customer
-    def _get_status_display(self, status):
-        status_map = {
-            'pending': 'Pending',
-            'processing': 'Processing',
-            'shipped': 'Shipped',
-            'delivered': 'Delivered',
-            'completed': 'Completed',
-            'cancelled': 'Cancelled',
-            'refunded': 'Refunded',
-        }
-        return status_map.get(status, status)
-    
-    def _get_status_color(self, status):
-        color_map = {
-            'pending': '#F59E0B',  # Amber
-            'processing': '#F59E0B',  # Amber
-            'shipped': '#3B82F6',  # Blue
-            'delivered': '#10B981',  # Green
-            'completed': '#10B981',  # Green
-            'cancelled': '#EF4444',  # Red
-            'refunded': '#EF4444',  # Red
-        }
-        return color_map.get(status, '#6B7280')
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
@@ -21575,7 +21702,7 @@ class SwapViewset(viewsets.ViewSet):
     def get_swap(self, request):
         """
         Get all products available for swapping
-        Simple endpoint that respects ProductSKU model integrity
+        Simple endpoint that respects Variants model integrity
         """
         try:
             # Get user_id from headers
@@ -21596,16 +21723,14 @@ class SwapViewset(viewsets.ViewSet):
             max_price = request.GET.get('max_price', None)
             search = request.GET.get('search', '')
             
-            # Start with base query - only products that allow swapping
-            swap_products = ProductSKU.objects.select_related(
+            # Start with base query - only variants that allow swapping
+            swap_variants = Variants.objects.select_related(
                 'product',
                 'product__shop',
                 'product__customer',
                 'product__customer__customer'
             ).prefetch_related(
-                'accepted_categories',
-                'product__productmedia_set',
-                'variant_options'
+                'product__productmedia_set'
             ).filter(
                 allow_swap=True,
                 is_active=True,
@@ -21617,7 +21742,7 @@ class SwapViewset(viewsets.ViewSet):
             if current_user and current_user.is_customer:
                 try:
                     customer_profile = current_user.customer
-                    swap_products = swap_products.exclude(
+                    swap_variants = swap_variants.exclude(
                         product__customer=customer_profile
                     )
                 except:
@@ -21625,48 +21750,49 @@ class SwapViewset(viewsets.ViewSet):
             
             # Apply filters
             if swap_type:
-                swap_products = swap_products.filter(swap_type=swap_type)
+                swap_variants = swap_variants.filter(swap_type=swap_type)
             
             if category_id:
-                # Filter by accepted categories
-                swap_products = swap_products.filter(
-                    accepted_categories__id=category_id
+                # Filter by product category
+                swap_variants = swap_variants.filter(
+                    product__category__id=category_id
                 ).distinct()
             
             if min_price:
                 try:
                     min_price_decimal = Decimal(min_price)
-                    swap_products = swap_products.filter(price__gte=min_price_decimal)
+                    swap_variants = swap_variants.filter(price__gte=min_price_decimal)
                 except:
                     pass
             
             if max_price:
                 try:
                     max_price_decimal = Decimal(max_price)
-                    swap_products = swap_products.filter(price__lte=max_price_decimal)
+                    swap_variants = swap_variants.filter(price__lte=max_price_decimal)
                 except:
                     pass
             
-            # Search filter (product name or description)
+            # Search filter (product name or description or variant title/sku)
             if search:
-                swap_products = swap_products.filter(
+                swap_variants = swap_variants.filter(
                     Q(product__name__icontains=search) |
                     Q(product__description__icontains=search) |
+                    Q(title__icontains=search) |
                     Q(sku_code__icontains=search)
                 )
             
             # Prepare response data
             swap_list = []
-            for sku in swap_products[:50]:  # Limit to 50 results for performance
+            for variant in swap_variants[:50]:  # Limit to 50 results for performance
                 # Get main product image
                 product_image = None
-                if sku.image:
-                    product_image = request.build_absolute_uri(sku.image.url) if sku.image else None
+                if variant.image:
+                    product_image = request.build_absolute_uri(variant.image.url) if variant.image else None
                 else:
                     # Try to get from product media
                     try:
                         media = ProductMedia.objects.filter(
-                            product=sku.product,
+                            product=variant.product,
                             file_type__startswith='image/'
                         ).first()
                         if media and media.file_data:
@@ -21676,96 +21802,93 @@ class SwapViewset(viewsets.ViewSet):
                 
                 # Calculate stock status
                 stock_status = 'available'
-                if sku.quantity <= 0:
+                if variant.quantity <= 0:
                     stock_status = 'out_of_stock'
-                elif sku.critical_trigger and sku.quantity <= sku.critical_trigger:
+                elif variant.critical_trigger and variant.quantity <= variant.critical_trigger:
                     stock_status = 'low_stock'
                 
-                # Get accepted categories
-                accepted_categories = []
-                for cat in sku.accepted_categories.all():
-                    accepted_categories.append({
-                        'id': str(cat.id),
-                        'name': cat.name
-                    })
-                
-                # Get variant options
+                # Get variant options (from the option_map or option_ids)
                 variant_options = []
-                for opt in sku.variant_options.all():
-                    variant_options.append({
-                        'id': str(opt.id),
-                        'title': opt.title,
-                        'variant_id': str(opt.variant_id) if opt.variant_id else None
-                    })
+                if variant.option_map:
+                    for key, value in variant.option_map.items():
+                        variant_options.append({
+                            'option_name': key,
+                            'option_value': value
+                        })
+                elif variant.option_ids:
+                    # If you have a separate VariantOptions model, you would fetch them here
+                    # This is a placeholder for that functionality
+                    pass
                 
                 swap_data = {
-                    'id': str(sku.id),
-                    'product_id': str(sku.product.id) if sku.product else None,
-                    'product_name': sku.product.name if sku.product else 'Unknown Product',
-                    'product_description': sku.product.description if sku.product else '',
-                    'product_price': str(sku.product.price) if sku.product and sku.product.price else '0.00',
-                    'product_condition': sku.product.condition if sku.product else '',
+                    'id': str(variant.id),
+                    'product_id': str(variant.product.id) if variant.product else None,
+                    'product_name': variant.product.name if variant.product else 'Unknown Product',
+                    'product_description': variant.product.description if variant.product else '',
+                    'product_price': str(variant.product.price) if variant.product and variant.product.price else '0.00',
+                    'product_condition': variant.product.condition if variant.product else '',
                     
-                    # SKU Details
-                    'sku_code': sku.sku_code,
-                    'price': str(sku.price) if sku.price else None,
-                    'compare_price': str(sku.compare_price) if sku.compare_price else None,
-                    'quantity': sku.quantity,
+                    # Variant Details
+                    'variant_title': variant.title,
+                    'sku_code': variant.sku_code,
+                    'price': str(variant.price) if variant.price else None,
+                    'compare_price': str(variant.compare_price) if variant.compare_price else None,
+                    'quantity': variant.quantity,
                     
                     # Physical Details
-                    'length': str(sku.length) if sku.length else None,
-                    'width': str(sku.width) if sku.width else None,
-                    'height': str(sku.height) if sku.height else None,
-                    'weight': str(sku.weight) if sku.weight else None,
-                    'weight_unit': sku.weight_unit,
+                    'weight': str(variant.weight) if variant.weight else None,
+                    'weight_unit': variant.weight_unit,
                     
                     # Swap Details
-                    'allow_swap': sku.allow_swap,
-                    'swap_type': sku.swap_type,
-                    'minimum_additional_payment': str(sku.minimum_additional_payment),
-                    'maximum_additional_payment': str(sku.maximum_additional_payment),
-                    'swap_description': sku.swap_description,
+                    'allow_swap': variant.allow_swap,
+                    'swap_type': variant.swap_type,
+                    'minimum_additional_payment': str(variant.minimum_additional_payment),
+                    'maximum_additional_payment': str(variant.maximum_additional_payment),
+                    'swap_description': variant.swap_description,
                     
-                    # Accepted Categories
-                    'accepted_categories': accepted_categories,
+                    # Original item details (for swap valuation)
+                    'original_price': str(variant.original_price) if variant.original_price else None,
+                    'usage_period': variant.usage_period,
+                    'usage_unit': variant.usage_unit,
+                    'depreciation_rate': variant.depreciation_rate,
                     
                     # Variant Options
                     'variant_options': variant_options,
                     
                     # Shop Information
                     'shop': {
-                        'id': str(sku.product.shop.id) if sku.product and sku.product.shop else None,
-                        'name': sku.product.shop.name if sku.product and sku.product.shop else None,
-                        'verified': sku.product.shop.verified if sku.product and sku.product.shop else False,
-                        'province': sku.product.shop.province if sku.product and sku.product.shop else None,
-                        'city': sku.product.shop.city if sku.product and sku.product.shop else None,
+                        'id': str(variant.product.shop.id) if variant.product and variant.product.shop else None,
+                        'name': variant.product.shop.name if variant.product and variant.product.shop else None,
+                        'verified': variant.product.shop.verified if variant.product and variant.product.shop else False,
+                        'province': variant.product.shop.province if variant.product and variant.product.shop else None,
+                        'city': variant.product.shop.city if variant.product and variant.product.shop else None,
                     },
                     
                     # Seller Information
                     'seller': {
-                        'id': str(sku.product.customer.customer.id) if sku.product and sku.product.customer and sku.product.customer.customer else None,
-                        'username': sku.product.customer.customer.username if sku.product and sku.product.customer and sku.product.customer.customer else None,
-                        'first_name': sku.product.customer.customer.first_name if sku.product and sku.product.customer and sku.product.customer.customer else '',
-                        'last_name': sku.product.customer.customer.last_name if sku.product and sku.product.customer and sku.product.customer.customer else '',
+                        'id': str(variant.product.customer.customer.id) if variant.product and variant.product.customer and variant.product.customer.customer else None,
+                        'username': variant.product.customer.customer.username if variant.product and variant.product.customer and variant.product.customer.customer else None,
+                        'first_name': variant.product.customer.customer.first_name if variant.product and variant.product.customer and variant.product.customer.customer else '',
+                        'last_name': variant.product.customer.customer.last_name if variant.product and variant.product.customer and variant.product.customer.customer else '',
                     },
                     
                     # Category
                     'category': {
-                        'id': str(sku.product.category.id) if sku.product and sku.product.category else None,
-                        'name': sku.product.category.name if sku.product and sku.product.category else None,
-                    } if sku.product and sku.product.category else None,
+                        'id': str(variant.product.category.id) if variant.product and variant.product.category else None,
+                        'name': variant.product.category.name if variant.product and variant.product.category else None,
+                    } if variant.product and variant.product.category else None,
                     
                     # Media
                     'product_image': product_image,
                     
                     # Status
                     'stock_status': stock_status,
-                    'is_active': sku.is_active,
-                    'critical_trigger': sku.critical_trigger,
+                    'is_active': variant.is_active,
+                    'critical_trigger': variant.critical_trigger,
                     
                     # Timestamps
-                    'created_at': sku.created_at.isoformat() if sku.created_at else timezone.now().isoformat(),
-                    'updated_at': sku.updated_at.isoformat() if sku.updated_at else timezone.now().isoformat(),
+                    'created_at': variant.created_at.isoformat() if variant.created_at else timezone.now().isoformat(),
+                    'updated_at': variant.updated_at.isoformat() if variant.updated_at else timezone.now().isoformat(),
                     
                     # Current user info (for frontend)
                     'current_user_id': user_id,
@@ -21773,9 +21896,9 @@ class SwapViewset(viewsets.ViewSet):
                 }
                 
                 # Check if current user is the seller of this product
-                if current_user and sku.product and sku.product.customer:
+                if current_user and variant.product and variant.product.customer:
                     swap_data['is_current_user_seller'] = (
-                        sku.product.customer.customer.id == current_user.id
+                        variant.product.customer.customer.id == current_user.id
                     )
                 
                 swap_list.append(swap_data)
@@ -21797,7 +21920,7 @@ class SwapViewset(viewsets.ViewSet):
                 'total': 0,
                 'message': 'Error fetching swap products'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 class CustomerProductViewSet(viewsets.ViewSet):
     """
     Comprehensive ViewSet for customer product management 
@@ -21851,8 +21974,8 @@ class CustomerProductViewSet(viewsets.ViewSet):
         - Basic product info
         - Categories (global only)
         - Media files
-        - Variants & SKUs
-        - Swap settings (per SKU or product-level)
+        - Variants 
+        - Swap settings (per variant or product-level)
         - No shop required
         """
         try:
@@ -21884,8 +22007,7 @@ class CustomerProductViewSet(viewsets.ViewSet):
             # Handle single values (fix duplicates from FormData)
             single_value_fields = [
                 'name', 'description', 'condition', 'category_admin_id', 
-                'weight_unit', 'swap_type', 'swap_description',
-                'upload_status', 'status', 'compare_price'
+                'weight_unit', 'upload_status', 'status'
             ]
             
             for field in single_value_fields:
@@ -21895,28 +22017,10 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 elif value is not None:
                     product_data[field] = value
             
-            # Handle numeric fields with validation
-            numeric_fields = ['quantity', 'price', 'compare_price', 'length', 'width', 'height', 'weight', 'critical_stock']
-            for field in numeric_fields:
-                value = request.data.get(field)
-                if value:
-                    try:
-                        if isinstance(value, list) and len(value) > 0:
-                            product_data[field] = float(value[0])
-                        else:
-                            product_data[field] = float(value)
-                    except (ValueError, TypeError):
-                        pass
-            
             # Set customer and defaults
             product_data['customer'] = customer.customer_id
             product_data['upload_status'] = product_data.get('upload_status', 'draft')
             product_data['status'] = product_data.get('status', 'active')
-            
-            # Handle product-level swap
-            open_for_swap = request.data.get('open_for_swap')
-            if open_for_swap:
-                product_data['open_for_swap'] = True if open_for_swap in ['true', 'True', True] else False
             
             # Validate global category if provided
             category_admin_id = product_data.get('category_admin_id')
@@ -21934,52 +22038,6 @@ class CustomerProductViewSet(viewsets.ViewSet):
                     }, status=status.HTTP_400_BAD_REQUEST)
             else:
                 print(f"DEBUG: No category provided or category is 'none'")
-            
-            # Handle accepted_categories for product-level swap
-            accepted_categories_raw = request.data.get('accepted_categories')
-            if accepted_categories_raw:
-                try:
-                    if isinstance(accepted_categories_raw, str):
-                        accepted_list = json.loads(accepted_categories_raw)
-                    else:
-                        accepted_list = accepted_categories_raw
-                    
-                    # Validate categories exist and are global
-                    valid_categories = []
-                    for cat_id in accepted_list:
-                        try:
-                            Category.objects.get(id=cat_id, shop__isnull=True)
-                            valid_categories.append(cat_id)
-                        except Category.DoesNotExist:
-                            pass
-                    
-                    product_data['accepted_categories'] = valid_categories
-                except (json.JSONDecodeError, TypeError):
-                    product_data['accepted_categories'] = []
-            
-            # Handle shipping zones (for customer products if needed)
-            shipping_zones_raw = request.data.get('shipping_zones')
-            if shipping_zones_raw:
-                try:
-                    if isinstance(shipping_zones_raw, str):
-                        shipping_zones = json.loads(shipping_zones_raw)
-                    else:
-                        shipping_zones = shipping_zones_raw
-                    
-                    # Validate shipping zones
-                    valid_zones = []
-                    for zone in shipping_zones:
-                        if isinstance(zone, dict) and 'name' in zone:
-                            valid_zones.append({
-                                'name': zone.get('name'),
-                                'fee': float(zone.get('fee', 0)),
-                                'free_shipping': bool(zone.get('free_shipping', False))
-                            })
-                    
-                    if valid_zones:
-                        product_data['shipping_zones'] = valid_zones
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    pass
             
             # Create product with transaction
             with transaction.atomic():
@@ -22039,51 +22097,31 @@ class CustomerProductViewSet(viewsets.ViewSet):
                             file_type=media_file.content_type
                         )
                     
-                    # Handle variants and SKUs if provided
+                    # Handle variants if provided
                     variants_raw = request.data.get('variants')
-                    skus_raw = request.data.get('skus')
                     
-                    # In the create_product method, modify the variants handling section:
                     if variants_raw:
                         # Parse variants data
                         try:
                             # Normalize list/tuple wrappers that can occur from multipart FormData
                             if isinstance(variants_raw, (list, tuple)) and len(variants_raw) > 0:
                                 variants_raw = variants_raw[0]
-                            if isinstance(skus_raw, (list, tuple)) and len(skus_raw) > 0:
-                                skus_raw = skus_raw[0]
 
                             variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
                             
-                            # Parse SKUs data robustly
-                            skus_list = []
-                            if skus_raw:
-                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
-
-                            # Debug: show skus_list and refundable flags if present
-                            try:
-                                print('DEBUG:create_product - parsed skus_list:', skus_list)
-                                for i, s in enumerate(skus_list):
-                                    try:
-                                        print(f"DEBUG:create_product - sku[{i}] is_refundable keys: is_refundable={s.get('is_refundable')}, refundable={s.get('refundable')}")
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
-                            
-                            # Process variants and SKUs
-                            self._create_variants_with_skus(
+                            # Process variants
+                            self._create_variants(
                                 product=product,
                                 variants_data=variants_list,
-                                skus_data=skus_list,
                                 files=request.FILES
                             )
                         except Exception as e:
-                            print(f"Error processing variants/SKUs: {type(e)} - {str(e)}")
+                            print(f"Error processing variants: {type(e)} - {str(e)}")
                             import traceback
                             traceback.print_exc()
                             # Rollback transaction if variant creation fails
                             raise ValidationError(f"Failed to create variants: {str(e)}")
+                    
                     # Increment customer's product count
                     customer.increment_product_count()
                     
@@ -22118,175 +22156,97 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _create_variants_with_skus(self, product, variants_data, skus_data, files):
+    def _create_variants(self, product, variants_data, files):
         from decimal import Decimal, InvalidOperation
 
-        """Helper method to create variants and SKUs for customer products"""
-        option_image_files = {}
-        option_id_map = {}
+        """Helper method to create variants for customer products"""
         
         print(f"Creating variants for product {product.id}")
         print(f"Variants data: {variants_data}")
-        print(f"SKUs data: {skus_data}")
         print(f"Files keys: {list(files.keys())}")
         
-        # Create variant groups and options
-        for variant_group in variants_data:
+        # Create variants
+        for variant_data in variants_data:
+            # Safe Decimal conversion helper function
+            def safe_decimal(value, default=None):
+                if value is None or value == '':
+                    return default
+                try:
+                    # Handle string or numeric values
+                    if isinstance(value, str):
+                        # Remove any whitespace and check if empty
+                        value = value.strip()
+                        if value == '':
+                            return default
+                        # Replace comma with dot for decimal separator
+                        value = value.replace(',', '.')
+                    return Decimal(str(value))
+                except (ValueError, TypeError, InvalidOperation):
+                    print(f"Warning: Could not convert '{value}' to Decimal, using default: {default}")
+                    return default
+            
+            # Normalize refundable flag
+            try:
+                if 'is_refundable' in variant_data:
+                    ref_flag = variant_data.get('is_refundable')
+                elif 'refundable' in variant_data:
+                    ref_flag = variant_data.get('refundable')
+                else:
+                    ref_flag = product.is_refundable if product and getattr(product, 'is_refundable', False) else False
+                    
+                if isinstance(ref_flag, bool):
+                    is_refundable_val = ref_flag
+                else:
+                    is_refundable_val = str(ref_flag).strip().lower() in ('true','1','yes','y')
+            except Exception:
+                is_refundable_val = False
+
+            # Get swap data
+            allow_swap = variant_data.get('allow_swap', False)
+            swap_type = variant_data.get('swap_type', 'direct_swap')
+            min_payment = variant_data.get('minimum_additional_payment', 0)
+            max_payment = variant_data.get('maximum_additional_payment', 0)
+            
+            # Create variant
             variant = Variants.objects.create(
                 product=product,
                 shop=None,  # Customer products have no shop
-                title=variant_group.get('title', '')
+                title=variant_data.get('title', ''),
+                option_title=variant_data.get('option_title', ''),
+                option_ids=variant_data.get('option_ids', []),
+                option_map=variant_data.get('option_map', {}),
+                sku_code=variant_data.get('sku_code', ''),
+                price=safe_decimal(variant_data.get('price'), None),
+                compare_price=safe_decimal(variant_data.get('compare_price'), None),
+                quantity=int(variant_data.get('quantity', 0)),
+                weight=safe_decimal(variant_data.get('weight'), None),
+                weight_unit=variant_data.get('weight_unit', 'g'),
+                critical_trigger=int(variant_data.get('critical_trigger')) if variant_data.get('critical_trigger') not in (None, '') else None,
+                is_active=True,
+                allow_swap=bool(allow_swap),
+                swap_type=swap_type if allow_swap else 'direct_swap',
+                minimum_additional_payment=safe_decimal(min_payment, Decimal('0.00')),
+                maximum_additional_payment=safe_decimal(max_payment, Decimal('0.00')),
+                swap_description=variant_data.get('swap_description', ''),
+                is_refundable=is_refundable_val,
+                refund_days=int(variant_data.get('refund_days', 0)) if variant_data.get('refund_days') else 0,
+                original_price=safe_decimal(variant_data.get('original_price'), None),
+                usage_period=float(variant_data.get('usage_period')) if variant_data.get('usage_period') else None,
+                usage_unit=variant_data.get('usage_unit', None),
+                depreciation_rate=float(variant_data.get('depreciation_rate')) if variant_data.get('depreciation_rate') else None,
+                critical_stock=int(variant_data.get('critical_stock')) if variant_data.get('critical_stock') not in (None, '') else None
             )
+            
             print(f"Created variant: {variant.id} - {variant.title}")
             
-            for option in variant_group.get('options', []):
-                provided_option_id = option.get('id', str(uuid.uuid4()))
-                voption = VariantOptions.objects.create(
-                    variant=variant,
-                    title=option.get('title', '')
-                )
-                print(f"Created variant option: {voption.id} - {voption.title}")
-                
-                # Map provided ID to actual DB ID
-                option_id_map[str(provided_option_id)] = str(voption.id)
-                
-                # Store variant images if any
-                file_key = f"variant_image_{variant_group.get('id', '')}_{provided_option_id}"
-                if file_key in files:
-                    option_image_files[str(provided_option_id)] = files[file_key]
-                    option_image_files[str(voption.id)] = files[file_key]
-                    print(f"Stored variant image for option {provided_option_id}")
-        
-        # Create SKUs if provided
-        if skus_data:
-            print(f"Creating {len(skus_data)} SKUs")
-            for sku_data in skus_data:
-                provided_option_ids = sku_data.get('option_ids', [])
-                mapped_option_ids = [
-                    option_id_map.get(str(oid), str(oid)) 
-                    for oid in provided_option_ids
-                ]
-                
-                # Get swap data from SKU
-                allow_swap = sku_data.get('allow_swap', False)
-                swap_type = sku_data.get('swap_type', 'direct_swap')
-                min_payment = sku_data.get('minimum_additional_payment', 0)
-                max_payment = sku_data.get('maximum_additional_payment', 0)
-                
-                # DEBUG: Print SKU data before conversion
-                print(f"SKU Data before conversion: {sku_data}")
-                
-                # Safe Decimal conversion helper function
-                def safe_decimal(value, default=None):
-                    if value is None or value == '':
-                        return default
-                    try:
-                        # Handle string or numeric values
-                        if isinstance(value, str):
-                            # Remove any whitespace and check if empty
-                            value = value.strip()
-                            if value == '':
-                                return default
-                            # Replace comma with dot for decimal separator
-                            value = value.replace(',', '.')
-                        return Decimal(str(value))
-                    except (ValueError, TypeError, InvalidOperation):
-                        print(f"Warning: Could not convert '{value}' to Decimal, using default: {default}")
-                        return default
-                
-                # Create SKU with safe conversions
-                # Normalize refundable flag on SKU payload (accept 'is_refundable' or 'refundable')
-                try:
-                    if 'is_refundable' in sku_data:
-                        ref_flag = sku_data.get('is_refundable')
-                    elif 'refundable' in sku_data:
-                        ref_flag = sku_data.get('refundable')
-                    else:
-                        ref_flag = product.is_refundable if product and getattr(product, 'is_refundable', False) else False
-                    if isinstance(ref_flag, bool):
-                        is_refundable_val = ref_flag
-                    else:
-                        is_refundable_val = str(ref_flag).strip().lower() in ('true','1','yes','y')
-                except Exception:
-                    is_refundable_val = False
-
-                sku = ProductSKU.objects.create(
-                    product=product,
-                    option_ids=mapped_option_ids,
-                    option_map=sku_data.get('option_map', {}),
-                    price=safe_decimal(sku_data.get('price'), None),
-                    compare_price=safe_decimal(sku_data.get('compare_price'), None),
-                    quantity=int(sku_data.get('quantity', 0)),
-                    length=safe_decimal(sku_data.get('length'), None),
-                    width=safe_decimal(sku_data.get('width'), None),
-                    height=safe_decimal(sku_data.get('height'), None),
-                    weight=safe_decimal(sku_data.get('weight'), None),
-                    weight_unit=sku_data.get('weight_unit', 'g'),
-                    sku_code=sku_data.get('sku_code', ''),
-                    critical_trigger=int(sku_data.get('critical_trigger')) if sku_data.get('critical_trigger') not in (None, '') else None,
-                    allow_swap=bool(allow_swap),
-                    swap_type=swap_type if allow_swap else 'direct_swap',
-                    minimum_additional_payment=safe_decimal(min_payment, Decimal('0.00')),
-                    maximum_additional_payment=safe_decimal(max_payment, Decimal('0.00')),
-                    refund_days=(int(sku_data.get('refund_days')) if sku_data.get('refund_days') not in (None, '') else (30 if is_refundable_val else 0)),
-                    swap_description=sku_data.get('swap_description', ''),
-                    is_refundable=is_refundable_val,
-                )
-                print(f"Created SKU: {sku.id}")
-                
-                # Handle accepted categories for swap
-                accepted_categories = sku_data.get('accepted_categories', [])
-                for cat_id in accepted_categories:
-                    try:
-                        category = Category.objects.get(id=cat_id, shop__isnull=True)
-                        sku.accepted_categories.add(category)
-                        print(f"Added accepted category {category.name} to SKU {sku.id}")
-                    except Category.DoesNotExist:
-                        pass
-                
-                # Handle SKU images
-                sku_id = sku_data.get('id')
-                file_key = f"sku_image_{sku_id}" if sku_id else None
-                
-                if file_key and file_key in files:
-                    sku.image = files[file_key]
-                    sku.save()
-                    print(f"Added explicit image to SKU {sku.id}")
-                else:
-                    # Try to get image from option images
-                    for oid in provided_option_ids:
-                        if str(oid) in option_image_files:
-                            sku.image = option_image_files[str(oid)]
-                            sku.save()
-                            print(f"Added option image to SKU {sku.id}")
-                            break
-        else:
-            # Auto-create SKUs from variants if no SKUs provided
-            print("Auto-creating SKUs from variants")
-            for variant_group in variants_data:
-                for option in variant_group.get('options', []):
-                    provided_option_id = option.get('id', str(uuid.uuid4()))
-                    mapped_option_id = option_id_map.get(str(provided_option_id), str(provided_option_id))
-                    
-                    # Safe price conversion for auto-created SKUs
-                    option_price = option.get('price', 0)
-                    try:
-                        if option_price and option_price != '':
-                            price_decimal = Decimal(str(option_price).replace(',', '.'))
-                        else:
-                            price_decimal = None
-                    except (ValueError, TypeError, InvalidOperation):
-                        price_decimal = None
-                    
-                    sku = ProductSKU.objects.create(
-                        product=product,
-                        option_ids=[mapped_option_id],
-                        option_map={variant_group.get('title', 'Option'): option.get('title', '')},
-                        price=price_decimal,
-                        quantity=int(option.get('quantity', 0)),
-                        is_refundable=getattr(product, 'is_refundable', False)
-                    )
-                    # objects.create() already persists the instance; do any additional setup here if needed
+            # Handle variant image
+            variant_id = variant_data.get('id')
+            file_key = f"variant_image_{variant_id}" if variant_id else None
+            
+            if file_key and file_key in files:
+                variant.image = files[file_key]
+                variant.save()
+                print(f"Added image to variant {variant.id}")
 
     def _get_product_detail_data(self, product):
         """Get detailed product data for response"""
@@ -22299,81 +22259,52 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 "file_type": media.file_type
             })
         
-        # Get SKUs
-        skus = []
-        for sku in product.skus.all():
-            sku_data = {
-                "id": str(sku.id),
-                "option_ids": sku.option_ids,
-                "option_map": sku.option_map,
-                "sku_code": sku.sku_code,
-                "price": str(sku.price) if sku.price else None,
-                "compare_price": str(sku.compare_price) if sku.compare_price else None,
-                "quantity": sku.quantity,
-                "allow_swap": sku.allow_swap,
-                "swap_type": sku.swap_type,
-                "minimum_additional_payment": str(sku.minimum_additional_payment) if sku.minimum_additional_payment else "0.00",
-                "maximum_additional_payment": str(sku.maximum_additional_payment) if sku.maximum_additional_payment else "0.00",
-                "swap_description": sku.swap_description,
-                "image": sku.image.url if sku.image else None,
-                "is_refundable": sku.is_refundable,
-            }
-            
-            # Add accepted categories for this SKU
-            accepted_cats = []
-            for cat in sku.accepted_categories.all():
-                accepted_cats.append({
-                    "id": str(cat.id),
-                    "name": cat.name
-                })
-            sku_data["accepted_categories"] = accepted_cats
-            skus.append(sku_data)
-            
         # Get variants
         variants = []
-        for variant in product.variants_set.all():
+        for variant in product.variants.all():
             variant_data = {
                 "id": str(variant.id),
                 "title": variant.title,
-                "options": []
+                "option_title": variant.option_title,
+                "option_ids": variant.option_ids,
+                "option_map": variant.option_map,
+                "sku_code": variant.sku_code,
+                "price": str(variant.price) if variant.price else None,
+                "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                "quantity": variant.quantity,
+                "weight": str(variant.weight) if variant.weight else None,
+                "weight_unit": variant.weight_unit,
+                "allow_swap": variant.allow_swap,
+                "swap_type": variant.swap_type,
+                "minimum_additional_payment": str(variant.minimum_additional_payment) if variant.minimum_additional_payment else "0.00",
+                "maximum_additional_payment": str(variant.maximum_additional_payment) if variant.maximum_additional_payment else "0.00",
+                "swap_description": variant.swap_description,
+                "image": variant.image.url if variant.image else None,
+                "is_refundable": variant.is_refundable,
+                "refund_days": variant.refund_days,
+                "original_price": str(variant.original_price) if variant.original_price else None,
+                "usage_period": variant.usage_period,
+                "usage_unit": variant.usage_unit,
+                "depreciation_rate": variant.depreciation_rate,
+                "critical_stock": variant.critical_stock,
+                "is_active": variant.is_active,
+                "created_at": variant.created_at.isoformat() if variant.created_at else None,
             }
-            
-            for option in variant.variantoptions_set.all():
-                option_data = {
-                    "id": str(option.id),
-                    "title": option.title,
-                }
-                variant_data["options"].append(option_data)
-            
             variants.append(variant_data)
         
         return {
             "id": str(product.id),
             "name": product.name,
             "description": product.description,
-            "quantity": product.quantity,
-            "price": str(product.price),
-            "compare_price": str(product.compare_price) if product.compare_price else None,
             "upload_status": product.upload_status,
             "status": product.status,
             "condition": product.condition,
-            "open_for_swap": getattr(product, 'open_for_swap', False),
-            "swap_type": getattr(product, 'swap_type', None),
-            "swap_description": getattr(product, 'swap_description', None),
             "category_admin": {
                 "id": str(product.category_admin.id),
                 "name": product.category_admin.name
             } if product.category_admin else None,
             "media_files": media_files,
-            "skus": skus,
             "variants": variants,
-            "dimensions": {
-                "length": str(product.length) if product.length else None,
-                "width": str(product.width) if product.width else None,
-                "height": str(product.height) if product.height else None,
-                "weight": str(product.weight) if product.weight else None,
-                "weight_unit": product.weight_unit,
-            } if any([product.length, product.width, product.height, product.weight]) else None,
             "created_at": product.created_at.isoformat(),
             "updated_at": product.updated_at.isoformat(),
             "is_refundable": getattr(product, 'is_refundable', False),
@@ -22571,7 +22502,6 @@ class CustomerProductViewSet(viewsets.ViewSet):
             return Response({'success': False, 'error': f'Prediction failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
 class CustomerProductsList(viewsets.ViewSet):
     """
     ViewSet for listing customer's PERSONAL products (without shop)
@@ -22619,7 +22549,7 @@ class CustomerProductsList(viewsets.ViewSet):
                 'category'
             ).prefetch_related(
                 Prefetch('productmedia_set', queryset=ProductMedia.objects.all()),
-                Prefetch('skus', queryset=ProductSKU.objects.all())
+                Prefetch('variants', queryset=Variants.objects.all())
             ).order_by('-created_at')
             
             # Apply filters
@@ -22632,8 +22562,7 @@ class CustomerProductsList(viewsets.ViewSet):
             if search_query:
                 products = products.filter(
                     Q(name__icontains=search_query) |
-                    Q(description__icontains=search_query) |
-                    Q(sku_code__icontains=search_query)
+                    Q(description__icontains=search_query)
                 )
             
             # Get total count before pagination
@@ -22643,7 +22572,7 @@ class CustomerProductsList(viewsets.ViewSet):
             products_data = []
             
             for product in products:
-                product_data = self._prepare_product_data(product)
+                product_data = self._prepare_product_data(product, request)
                 products_data.append(product_data)
             
             # Get summary statistics (only for personal products)
@@ -22684,18 +22613,17 @@ class CustomerProductsList(viewsets.ViewSet):
             shop__isnull=True
         ).count()
     
-    def _prepare_product_data(self, product):
+    def _prepare_product_data(self, product, request=None):
         """Helper method to prepare individual product data"""
         # Get first media file for thumbnail (ensure absolute URLs)
         main_image = None
         media_files = list(product.productmedia_set.all())
-        request_obj = getattr(self, 'request', None)
         if media_files:
             main_media = media_files[0]
             main_url = None
             if main_media.file_data:
                 try:
-                    main_url = request_obj.build_absolute_uri(main_media.file_data.url) if request_obj else main_media.file_data.url
+                    main_url = request.build_absolute_uri(main_media.file_data.url) if request else main_media.file_data.url
                 except Exception:
                     main_url = main_media.file_data.url
             main_image = {
@@ -22710,7 +22638,7 @@ class CustomerProductsList(viewsets.ViewSet):
             file_url = None
             if media.file_data:
                 try:
-                    file_url = request_obj.build_absolute_uri(media.file_data.url) if request_obj else media.file_data.url
+                    file_url = request.build_absolute_uri(media.file_data.url) if request else media.file_data.url
                 except Exception:
                     file_url = media.file_data.url
             all_media.append({
@@ -22720,32 +22648,34 @@ class CustomerProductsList(viewsets.ViewSet):
                 "raw_url": media.file_data.url if media.file_data else None
             })
         
-        # Get SKU information
-        skus = list(product.skus.all())
-        sku_data = []
+        # Get variant information
+        variants = list(product.variants.all())
+        variant_data = []
         total_quantity = 0
         
-        for sku in skus:
-            sku_data.append({
-                "id": str(sku.id),
-                "option_ids": sku.option_ids or [],
-                "option_map": sku.option_map or {},
-                "sku_code": sku.sku_code,
-                "price": str(sku.price) if sku.price else None,
-                "compare_price": str(sku.compare_price) if sku.compare_price else None,
-                "quantity": sku.quantity,
-                "allow_swap": sku.allow_swap,
-                "swap_type": sku.swap_type if sku.allow_swap else None,
-                "is_active": sku.is_active,
-                "critical_trigger": sku.critical_trigger,
-                "stock_status": self._get_stock_status(sku.quantity, sku.critical_trigger),
-                "image": sku.image.url if sku.image else None
+        for variant in variants:
+            variant_data.append({
+                "id": str(variant.id),
+                "title": variant.title,
+                "option_title": variant.option_title,
+                "option_ids": variant.option_ids or [],
+                "option_map": variant.option_map or {},
+                "sku_code": variant.sku_code,
+                "price": str(variant.price) if variant.price else None,
+                "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                "quantity": variant.quantity,
+                "allow_swap": variant.allow_swap,
+                "swap_type": variant.swap_type if variant.allow_swap else None,
+                "is_active": variant.is_active,
+                "critical_trigger": variant.critical_trigger,
+                "stock_status": self._get_stock_status(variant.quantity, variant.critical_trigger),
+                "image": variant.image.url if variant.image else None
             })
-            total_quantity += sku.quantity
+            total_quantity += variant.quantity
         
         # Calculate overall stock status
-        if skus:
-            has_swap = any(sku.allow_swap for sku in skus)
+        if variants:
+            has_swap = any(variant.allow_swap for variant in variants)
             overall_stock_status = self._get_stock_status(total_quantity, product.critical_stock)
         else:
             has_swap = False
@@ -22780,7 +22710,7 @@ class CustomerProductsList(viewsets.ViewSet):
             "description": product.description,
             "short_description": product.description[:100] + "..." if len(product.description) > 100 else product.description,
             "quantity": product.quantity,
-            "total_sku_quantity": total_quantity,
+            "total_variant_quantity": total_quantity,
             "price": str(product.price),
             "compare_price": str(product.compare_price) if product.compare_price else None,
             "upload_status": product.upload_status,
@@ -22806,15 +22736,15 @@ class CustomerProductsList(viewsets.ViewSet):
             "media_count": len(all_media),
             "all_media": all_media,
             
-            # SKUs
-            "has_variants": len(skus) > 0,
-            "sku_count": len(skus),
-            "skus": sku_data,
+            # Variants
+            "has_variants": len(variants) > 0,
+            "variant_count": len(variants),
+            "variants": variant_data,
             
             # Swap information
             "allow_swap": has_swap,
             "has_swap": has_swap,
-            "swap_type": skus[0].swap_type if has_swap and skus else None,
+            "swap_type": variants[0].swap_type if has_swap and variants else None,
             
             # Shop information (will be null for personal listings)
             "shop_id": None,
@@ -22913,7 +22843,7 @@ class CustomerProductsList(viewsets.ViewSet):
         # Count personal products with swap enabled
         swap_products_count = 0
         for product in products:
-            if product.skus.filter(allow_swap=True).exists():
+            if product.variants.filter(allow_swap=True).exists():
                 swap_products_count += 1
         
         # Get recent personal products (last 7 days)
@@ -23003,7 +22933,7 @@ class CustomerProductsList(viewsets.ViewSet):
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # Prepare detailed product data
-            product_data = self._prepare_product_data(product)
+            product_data = self._prepare_product_data(product, request)
             
             # Add additional details for single product view
             product_data.update({
@@ -23098,7 +23028,6 @@ class CustomerProductsList(viewsets.ViewSet):
                 "error": "Failed to fetch shop products",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 
 
@@ -23424,7 +23353,7 @@ class RefundViewSet(viewsets.ViewSet):
                 # Map legacy category to current refund_type, and create Refund with current field names
                 refund_type = 'return' if str(refund_data.get('refund_category', 'return_item')).lower().startswith('return') else 'keep'
                 refund = Refund.objects.create(
-                        order_id=order,
+                    order_id=order,
                     requested_by=user,
                     reason=refund_data['reason'],
                     buyer_preferred_refund_method=refund_data.get('preferred_refund_method'),
@@ -24037,7 +23966,6 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "User not found"}, 
                             status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=True, methods=['post'])
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def process_refund(self, request, pk=None):
         """
@@ -25463,7 +25391,7 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "Failed to save payment detail", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _get_order_items_for_refund(self, refund, request):
-        """Get order items for a refund (used in list views)"""
+        """Get order items for a refund (used in list views) with variant information"""
         if not refund.order_id:
             return []
         
@@ -25482,48 +25410,31 @@ class RefundViewSet(viewsets.ViewSet):
                     if first_image and first_image.image:
                         product_image = request.build_absolute_uri(first_image.image.url)
                 
-                # Build a robust skus list with absolute image URLs
-                skus_qs = product.skus.all()
-                skus = []
-                for s in skus_qs:
-                    skus.append({
-                        'id': str(s.id),
-                        'sku_code': s.sku_code,
-                        'price': float(s.price) if s.price is not None else None,
-                        'image': request.build_absolute_uri(s.image.url) if getattr(s, 'image', None) else None,
-                        'option_ids': s.option_ids or None,
-                    })
-
-                # Heuristic: pick selected sku by matching unit price when possible, otherwise fallback to first SKU
-                selected_sku = None
-                try:
-                    unit_price = (float(checkout.total_amount) / float(checkout.quantity)) if checkout.quantity else None
-                except Exception:
-                    unit_price = None
-
-                if unit_price is not None:
-                    for s in skus:
-                        if s.get('price') is not None and abs(float(s['price']) - float(unit_price)) < 0.01:
-                            selected_sku = s
-                            break
-
-                if not selected_sku and skus:
-                    selected_sku = skus[0]
+                # Get variant information
+                variant = cart_item.variant
+                variant_data = None
+                if variant:
+                    variant_data = {
+                        'id': str(variant.id),
+                        'title': variant.title,
+                        'sku_code': variant.sku_code,
+                        'price': float(variant.price) if variant.price is not None else None,
+                        'image': request.build_absolute_uri(variant.image.url) if getattr(variant, 'image', None) else None,
+                        'option_ids': variant.option_ids or None,
+                        'option_map': variant.option_map or {},
+                    }
 
                 # Build variants payload (include option titles) for frontend label resolution
                 variants = []
                 try:
                     variant_qs = Variants.objects.filter(product=product)
                     for v in variant_qs:
-                        options_qs = VariantOptions.objects.filter(variant=v)
-                        opts = [{
-                            'id': str(o.id),
-                            'title': o.title
-                        } for o in options_qs]
                         variants.append({
                             'id': str(v.id),
                             'title': v.title,
-                            'options': opts
+                            'sku_code': v.sku_code,
+                            'price': float(v.price) if v.price else None,
+                            'option_map': v.option_map or {},
                         })
                 except Exception:
                     variants = []
@@ -25546,7 +25457,6 @@ class RefundViewSet(viewsets.ViewSet):
                     'condition': getattr(product, 'condition', None),
                     'category_name': product.category.name if getattr(product, 'category', None) else None,
                     'shop_name': product.shop.name if getattr(product, 'shop', None) else None,
-                    'skus': skus,
                     'variants': variants,
                     'media_files': media_files,
                 }
@@ -25555,18 +25465,12 @@ class RefundViewSet(viewsets.ViewSet):
                     "product_id": str(product.id),
                     "product_name": product.name,
                     "quantity": checkout.quantity,
-                    "price": float(product.price) if product.price else None,
+                    "price": float(variant.price) if variant and variant.price else (float(product.price) if product.price else None),
                     "total": float(checkout.total_amount) if checkout.total_amount else None,
                     "product_image": product_image,
-                    # selected sku exposed explicitly for frontend (may be heuristic)
-                    "sku": {
-                        'sku_id': selected_sku['id'] if selected_sku else None,
-                        'sku_code': selected_sku['sku_code'] if selected_sku else None,
-                        'sku_image': selected_sku['image'] if selected_sku else None,
-                        'price': selected_sku['price'] if selected_sku else None,
-                        'option_ids': selected_sku['option_ids'] if selected_sku else None,
-                    } if selected_sku else None,
-                    "skus": skus,
+                    # selected variant exposed explicitly for frontend
+                    "variant": variant_data,
+                    "variants": variants,
                     # Provide nested product object (image present) for easier frontend fallbacks
                     "product": product_obj,
                     "shop": {
@@ -25841,7 +25745,6 @@ class RefundViewSet(viewsets.ViewSet):
                 {'value': 'voucher', 'label': 'Store Voucher'},
             ]
         })
-    
 
 class ReturnAddressViewSet(viewsets.ViewSet):
     """
@@ -26235,9 +26138,6 @@ class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
-
 
 
 class SellerGifts(viewsets.ModelViewSet):
@@ -26769,222 +26669,64 @@ class SellerGifts(viewsets.ModelViewSet):
                     except Exception as e:
                         print(f"Error creating ProductMedia: {e}")  # Debug
 
-                # Process variants JSON (if provided) to create Variants and VariantOptions
+                # Process variants JSON (if provided) to create Variants
                 variants_raw = request.data.get('variants')
                 if variants_raw:
                     try:
                         import json
                         variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
-                        # Collect uploaded files per option_id to later apply to matching SKUs
+                        # Collect uploaded files per option_id to later apply to matching variants
                         option_image_files = {}
-                        # Map payload option ids -> created VariantOptions DB id
-                        option_id_map = {}
-                        for g in variants_list:
-                            group_id = g.get('id') or g.get('uid') or str(uuid.uuid4())
+                        
+                        for variant_data in variants_list:
+                            # Create variant
                             variant = Variants.objects.create(
                                 product=product,
                                 shop=shop,
-                                title=g.get('title') or ''
+                                title=variant_data.get('title', ''),
+                                option_title=variant_data.get('option_title', ''),
+                                option_ids=variant_data.get('option_ids', []),
+                                option_map=variant_data.get('option_map', {}),
+                                sku_code=variant_data.get('sku_code', ''),
+                                price=Decimal('0.00'),  # SET VARIANT PRICE TO 0
+                                compare_price=Decimal(str(variant_data.get('compare_price'))) if variant_data.get('compare_price') not in (None, '') else None,
+                                quantity=int(variant_data.get('quantity', 0)),
+                                weight=Decimal(str(variant_data.get('weight'))) if variant_data.get('weight') not in (None, '') else None,
+                                weight_unit=variant_data.get('weight_unit', 'g'),
+                                critical_trigger=int(variant_data.get('critical_trigger')) if variant_data.get('critical_trigger') not in (None, '') else None,
+                                is_active=True,
+                                allow_swap=bool(variant_data.get('allow_swap', False)),
+                                swap_type=variant_data.get('swap_type', 'direct_swap'),
+                                minimum_additional_payment=Decimal(str(variant_data.get('minimum_additional_payment'))) if variant_data.get('minimum_additional_payment') not in (None, '') else Decimal('0.00'),
+                                maximum_additional_payment=Decimal(str(variant_data.get('maximum_additional_payment'))) if variant_data.get('maximum_additional_payment') not in (None, '') else Decimal('0.00'),
+                                swap_description=variant_data.get('swap_description', ''),
+                                is_refundable=bool(variant_data.get('is_refundable', False)),
+                                refund_days=int(variant_data.get('refund_days', 0)) if variant_data.get('refund_days') else 0,
+                                original_price=Decimal(str(variant_data.get('original_price'))) if variant_data.get('original_price') not in (None, '') else None,
+                                usage_period=float(variant_data.get('usage_period')) if variant_data.get('usage_period') else None,
+                                usage_unit=variant_data.get('usage_unit', None),
+                                depreciation_rate=float(variant_data.get('depreciation_rate')) if variant_data.get('depreciation_rate') else None,
+                                critical_stock=int(variant_data.get('critical_stock')) if variant_data.get('critical_stock') not in (None, '') else None
                             )
-                            for opt in g.get('options', []):
-                                provided_option_id = opt.get('id') or str(uuid.uuid4())
-                                vopt = VariantOptions.objects.create(
-                                    variant=variant,
-                                    title=opt.get('title') or ''
-                                )
-                                # Record mapping from provided option id to the actual DB id (string)
-                                option_id_map[str(provided_option_id)] = str(vopt.id)
-
-                                file_key = f"variant_image_{group_id}_{provided_option_id}"
-                                # Debug: log presence of file key and available FILES keys
+                            
+                            print(f"Created variant: {variant.id} - {variant.title}")
+                            
+                            # Handle variant image
+                            variant_id = variant_data.get('id')
+                            file_key = f"variant_image_{variant_id}" if variant_id else None
+                            
+                            if file_key and file_key in request.FILES:
                                 try:
-                                    files_keys = list(request.FILES.keys())
-                                except Exception:
-                                    files_keys = []
-                                print(f"Looking for variant file key '{file_key}' in request.FILES. Available keys: {files_keys}")
-
-                                target_key = None
-                                if file_key in request.FILES:
-                                    target_key = file_key
-                                else:
-                                    # Fallback: try match by option_id suffix if group_id mismatch occurred
-                                    for k in files_keys:
-                                        if k.endswith(f"_{provided_option_id}") and k.startswith("variant_image_"):
-                                            target_key = k
-                                            print(f"Fallback matched variant image key '{k}' for option {provided_option_id}")
-                                            break
-
-                                if target_key:
-                                    try:
-                                        file_obj = request.FILES[target_key]
-                                        print(f"Queued variant image for option {provided_option_id} (db id {vopt.id}): name={getattr(file_obj, 'name', None)}, size={getattr(file_obj, 'size', None)}, content_type={getattr(file_obj, 'content_type', None)}")
-                                        # Store to map for assignment to SKUs later
-                                        # Keep both keys: the provided id and the actual DB id, so lookups using either work
-                                        option_image_files[str(provided_option_id)] = file_obj
-                                        option_image_files[str(vopt.id)] = file_obj
-                                    except Exception as e:
-                                        print('Failed to read variant image file', e)
-
-                        # Handle SKUs payload (per-variant combination config including swap)
-                        skus_raw = request.data.get('skus')
-                        if skus_raw:
-                            try:
-                                import json
-                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
-                                from decimal import Decimal
-                                # Debug: list incoming file keys and prepare available explicit sku image keys (preserve order)
-                                try:
-                                    files_keys = list(request.FILES.keys())
-                                except Exception:
-                                    files_keys = []
-                                print(f"Incoming FILES keys: {files_keys}")
-                                sku_file_keys = [k for k in files_keys if k.startswith('sku_image_')]
-                                print(f"Detected sku_image keys (ordered): {sku_file_keys}")
-                                print(f"SKUs payload: {skus_list}")
-                                for s in skus_list:
-                                    # Map provided option ids to DB VariantOptions ids when possible
-                                    provided_oids = s.get('option_ids') or []
-                                    mapped_oids = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oids ]
-
-                                    sku = ProductSKU.objects.create(
-                                        product=product,
-                                        option_ids=mapped_oids,
-                                        option_map=s.get('option_map'),
-                                        price=Decimal('0.00'),  # SET SKU PRICE TO 0
-                                        compare_price=(Decimal(str(s.get('compare_price'))) if s.get('compare_price') not in (None, '') else None),
-                                        quantity=int(s.get('quantity') or 0),
-                                        length=(Decimal(str(s.get('length'))) if s.get('length') not in (None, '') else None),
-                                        width=(Decimal(str(s.get('width'))) if s.get('width') not in (None, '') else None),
-                                        height=(Decimal(str(s.get('height'))) if s.get('height') not in (None, '') else None),
-                                        weight=(Decimal(str(s.get('weight'))) if s.get('weight') not in (None, '') else None),
-                                        weight_unit=s.get('weight_unit') or 'g',
-                                        sku_code=s.get('sku_code') or '',
-                                        critical_trigger=s.get('critical_trigger') if s.get('critical_trigger') not in (None, '') else None,
-                                        allow_swap=bool(s.get('allow_swap', False)),
-                                        swap_type=s.get('swap_type') or 'direct_swap',
-                                        minimum_additional_payment=(Decimal(str(s.get('minimum_additional_payment'))) if s.get('minimum_additional_payment') not in (None, '') else Decimal('0.00')),
-                                        maximum_additional_payment=(Decimal(str(s.get('maximum_additional_payment'))) if s.get('maximum_additional_payment') not in (None, '') else Decimal('0.00')),
-                                        swap_description=s.get('swap_description') or '',
-                                    )
-
-                                    # Attach accepted categories if provided
-                                    accepted = s.get('accepted_categories') or []
-                                    if isinstance(accepted, str):
-                                        try:
-                                            import json
-                                            accepted = json.loads(accepted)
-                                        except Exception:
-                                            accepted = []
-                                    for cat_id in accepted:
-                                        try:
-                                            cat = Category.objects.get(id=cat_id)
-                                            sku.accepted_categories.add(cat)
-                                        except Exception:
-                                            pass
-
-                                    # Save SKU image if present in FILES keyed by provided sku id OR fallback to next available sku_image_* file key
-                                    provided_id = s.get('id')
-                                    print(f"Processing SKU: provided_id={provided_id}, option_ids={s.get('option_ids')}")
-                                    file_key = f"sku_image_{provided_id}" if provided_id else None
-                                    assigned = False
-                                    if file_key and file_key in request.FILES:
-                                        try:
-                                            sku.image = request.FILES[file_key]
-                                            sku.save()
-                                            assigned = True
-                                            print(f"SKU {sku.id} saved image from explicit key {file_key}: {sku.image.name}")
-                                        except Exception as e:
-                                            print('Failed to save sku image', e)
-                                    # Fallback: if explicit key not found, consume next sku_image_* from the FormData (preserve order)
-                                    if not assigned and sku_file_keys:
-                                        next_key = sku_file_keys.pop(0)
-                                        print(f"No explicit sku key for SKU {sku.id}; using next sku_image key {next_key}")
-                                        try:
-                                            sku.image = request.FILES[next_key]
-                                            sku.save()
-                                            assigned = True
-                                            print(f"SKU {sku.id} saved image from fallback key {next_key}: {sku.image.name}")
-                                        except Exception as e:
-                                            print('Failed to save sku image from fallback', e)
-                                    # Final fallback: map from option images by option_ids
-                                    if not assigned:
-                                        try:
-                                            provided_oid_list = s.get('option_ids') or []
-                                            # Prefer mapped DB option ids first, then the provided ids
-                                            mapped_oid_list = [ option_id_map.get(str(oid), str(oid)) for oid in provided_oid_list ]
-                                            search_list = mapped_oid_list + [str(x) for x in provided_oid_list]
-                                            print(f"Attempting option->sku mapping using option_image_files keys: {list(option_image_files.keys())}; searching: {search_list}")
-                                            for oid in search_list:
-                                                f = option_image_files.get(str(oid))
-                                                if f:
-                                                    sku.image = f
-                                                    sku.save()
-                                                    print(f"SKU {sku.id} saved image from option {oid}: {sku.image.name}")
-                                                    break
-                                        except Exception as e:
-                                            print('Failed to map option image to sku', e)
-                            except Exception as e:
-                                print('Failed to parse skus payload:', e)
-                            else:
-                                # No SKUs provided - create simple SKU per option so images/quantities are stored
-                                try:
-                                    from decimal import Decimal
-                                    for g in variants_list:
-                                        for opt in g.get('options', []):
-                                            option_id = opt.get('id') or str(uuid.uuid4())
-                                            sku = ProductSKU.objects.create(
-                                                product=product,
-                                                option_ids=[option_id],
-                                                option_map={g.get('title') or 'Option': opt.get('title')},
-                                                price=Decimal('0.00'),  # SET SKU PRICE TO 0
-                                                quantity=int(opt.get('quantity') or 0),
-                                                is_refundable=product.is_refundable,
-                                            )
-                                            f = option_image_files.get(str(option_id))
-                                            if f:
-                                                sku.image = f
-                                                sku.save()
-                                                print(f"Auto-created SKU {sku.id} for option {option_id} and saved image {sku.image.name}")
+                                    variant.image = request.FILES[file_key]
+                                    variant.save()
+                                    print(f"Added image to variant {variant.id}")
                                 except Exception as e:
-                                    print('Failed to auto-create SKUs from variants:', e)
-                        else:
-                            # No SKUs provided - create simple SKU per option so images/quantities are stored
-                            try:
-                                from decimal import Decimal
-                                for g in variants_list:
-                                    for opt in g.get('options', []):
-                                        option_id = opt.get('id') or str(uuid.uuid4())
-                                        # Use DB id mapping when available
-                                        mapped_option_id = option_id_map.get(str(option_id), str(option_id))
-                                        sku = ProductSKU.objects.create(
-                                            product=product,
-                                            option_ids=[mapped_option_id],
-                                            option_map={g.get('title') or 'Option': opt.get('title')},
-                                            price=Decimal('0.00'),  # SET SKU PRICE TO 0
-                                            quantity=int(opt.get('quantity') or 0),
-                                        )
-                                        # Try to get image by mapped id first, then provided id
-                                        f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(option_id))
-                                        if f:
-                                            sku.image = f
-                                            sku.save()
-                                            print(f"Auto-created SKU {sku.id} for option {option_id} (mapped {mapped_option_id}) and saved image {sku.image.name}")
-                            except Exception as e:
-                                print('Failed to auto-create SKUs from variants:', e)
+                                    print('Failed to save variant image', e)
+                            
                     except Exception as e:
                         print('Failed to parse variants payload:', e)
 
                 # Return same format as get_product_list
-                # Debug: list SKUs and their images
-                try:
-                    sku_debug = [{
-                        'id': str(s.id),
-                        'image': (s.image.name if s.image else None)
-                    } for s in product.skus.all()]
-                    print(f"Product {product.id} SKUs after creation: {sku_debug}")
-                except Exception as e:
-                    print('Failed to list skus after creation', e)
-
                 return Response({
                     "success": True,
                     "products": [
@@ -27038,9 +26780,9 @@ class SellerGifts(viewsets.ModelViewSet):
             
         try:
             seller = Customer.objects.get(customer_id=user_id)
-            # Prefetch variants and variant options to avoid N+1 queries
+            # Prefetch variants to avoid N+1 queries
             queryset = Product.objects.filter(customer=seller)\
-                .prefetch_related('variants_set__variantoptions_set')\
+                .prefetch_related('variants')\
                 .order_by('-created_at')
             
             # Build response manually like in create method
@@ -27049,20 +26791,32 @@ class SellerGifts(viewsets.ModelViewSet):
                 # Build variants data
                 variants_data = []
                 # Get all variants for this product
-                for variant in product.variants_set.all():
+                for variant in product.variants.all():
                     variant_data = {
                         "id": str(variant.id),
                         "title": variant.title,
-                        "options": []
+                        "option_title": variant.option_title,
+                        "option_ids": variant.option_ids,
+                        "option_map": variant.option_map,
+                        "sku_code": variant.sku_code,
+                        "price": str(variant.price) if variant.price else "0.00",
+                        "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                        "quantity": variant.quantity,
+                        "allow_swap": variant.allow_swap,
+                        "swap_type": variant.swap_type,
+                        "minimum_additional_payment": str(variant.minimum_additional_payment),
+                        "maximum_additional_payment": str(variant.maximum_additional_payment),
+                        "swap_description": variant.swap_description,
+                        "image": variant.image.url if variant.image else None,
+                        "is_refundable": variant.is_refundable,
+                        "refund_days": variant.refund_days,
+                        "original_price": str(variant.original_price) if variant.original_price else None,
+                        "usage_period": variant.usage_period,
+                        "usage_unit": variant.usage_unit,
+                        "depreciation_rate": variant.depreciation_rate,
+                        "critical_stock": variant.critical_stock,
+                        "is_active": variant.is_active
                     }
-                    # Get all options for this variant
-                    for option in variant.variantoptions_set.all():
-                        variant_data["options"].append({
-                            "id": str(option.id),
-                            "title": option.title,
-                            "quantity": option.quantity,
-                            "price": str(option.price)
-                        })
                     variants_data.append(variant_data)
                 
                 product_data = {
@@ -27420,7 +27174,7 @@ class SellerGifts(viewsets.ModelViewSet):
             "eligible_product_ids": eligible_ids,
             "message": f"Successfully added {len(added)} product(s) to gift promotion"
         }, status=status.HTTP_200_OK)
-
+    
 class CustomerGiftViewSet(viewsets.ViewSet):
     """
     Comprehensive ViewSet for customer gift management 
@@ -27466,7 +27220,7 @@ class CustomerGiftViewSet(viewsets.ViewSet):
         - Basic gift info
         - Categories (global only)
         - Media files
-        - Variants & SKUs
+        - Variants
         - No price (always 0) and no swap features
         - No shop required
         """
@@ -27584,29 +27338,22 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                             file_type=media_file.content_type
                         )
                     
-                    # Handle variants and SKUs if provided
+                    # Handle variants if provided
                     variants_raw = request.data.get('variants')
-                    skus_raw = request.data.get('skus')
                     
                     if variants_raw:
                         # Parse variants data
                         try:
                             variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
                             
-                            # Parse SKUs data
-                            skus_list = []
-                            if skus_raw:
-                                skus_list = json.loads(skus_raw) if isinstance(skus_raw, str) else skus_raw
-                            
-                            # Process variants and SKUs (without swap features)
-                            self._create_variants_with_skus(
+                            # Process variants (without swap features)
+                            self._create_variants(
                                 product=gift,
                                 variants_data=variants_list,
-                                skus_data=skus_list,
                                 files=request.FILES
                             )
                         except Exception as e:
-                            print(f"Error processing variants/SKUs: {type(e)} - {str(e)}")
+                            print(f"Error processing variants: {type(e)} - {str(e)}")
                             import traceback
                             traceback.print_exc()
                             # Rollback transaction if variant creation fails
@@ -27646,145 +27393,78 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _create_variants_with_skus(self, product, variants_data, skus_data, files):
+    def _create_variants(self, product, variants_data, files):
         from decimal import Decimal, InvalidOperation
 
-        """Helper method to create variants and SKUs for customer gifts (no swap features)"""
-        option_image_files = {}
-        option_id_map = {}
+        """Helper method to create variants for customer gifts (no swap features)"""
         
         print(f"Creating variants for gift {product.id}")
         print(f"Variants data: {variants_data}")
-        print(f"SKUs data: {skus_data}")
         print(f"Files keys: {list(files.keys())}")
         
-        # Create variant groups and options
-        for variant_group in variants_data:
+        # Create variants
+        for variant_data in variants_data:
+            # Safe Decimal conversion helper function
+            def safe_decimal(value, default=None):
+                if value is None or value == '':
+                    return default
+                try:
+                    # Handle string or numeric values
+                    if isinstance(value, str):
+                        # Remove any whitespace and check if empty
+                        value = value.strip()
+                        if value == '':
+                            return default
+                        # Replace comma with dot for decimal separator
+                        value = value.replace(',', '.')
+                    return Decimal(str(value))
+                except (ValueError, TypeError, InvalidOperation):
+                    print(f"Warning: Could not convert '{value}' to Decimal, using default: {default}")
+                    return default
+            
+            # Create variant - price always 0 for gifts
             variant = Variants.objects.create(
                 product=product,
                 shop=None,  # Customer gifts have no shop
-                title=variant_group.get('title', '')
+                title=variant_data.get('title', ''),
+                option_title=variant_data.get('option_title', ''),
+                option_ids=variant_data.get('option_ids', []),
+                option_map=variant_data.get('option_map', {}),
+                sku_code=variant_data.get('sku_code', ''),
+                price=Decimal('0.00'),  # Gifts always have price 0
+                compare_price=safe_decimal(variant_data.get('compare_price'), None),
+                quantity=int(variant_data.get('quantity', 0)),
+                weight=safe_decimal(variant_data.get('weight'), None),
+                weight_unit=variant_data.get('weight_unit', 'g'),
+                critical_trigger=int(variant_data.get('critical_trigger')) if variant_data.get('critical_trigger') not in (None, '') else None,
+                is_active=True,
+                allow_swap=False,  # No swap for gifts
+                swap_type='direct_swap',  # Default, not used
+                minimum_additional_payment=Decimal('0.00'),  # No swap
+                maximum_additional_payment=Decimal('0.00'),  # No swap
+                swap_description='',  # No swap
+                is_refundable=False,  # Gifts typically not refundable
+                refund_days=0,
+                original_price=None,
+                usage_period=None,
+                usage_unit=None,
+                depreciation_rate=None,
+                critical_stock=int(variant_data.get('critical_stock')) if variant_data.get('critical_stock') not in (None, '') else None
             )
+            
             print(f"Created variant: {variant.id} - {variant.title}")
             
-            for option in variant_group.get('options', []):
-                provided_option_id = option.get('id', str(uuid.uuid4()))
-                voption = VariantOptions.objects.create(
-                    variant=variant,
-                    title=option.get('title', '')
-                )
-                print(f"Created variant option: {voption.id} - {voption.title}")
-                
-                # Map provided ID to actual DB ID
-                option_id_map[str(provided_option_id)] = str(voption.id)
-                
-                # Store variant images if any
-                file_key = f"variant_image_{variant_group.get('id', '')}_{provided_option_id}"
-                if file_key in files:
-                    option_image_files[str(provided_option_id)] = files[file_key]
-                    option_image_files[str(voption.id)] = files[file_key]
-                    print(f"Stored variant image for option {provided_option_id}")
-        
-        # Create SKUs if provided
-        if skus_data:
-            print(f"Creating {len(skus_data)} SKUs")
-            for sku_data in skus_data:
-                provided_option_ids = sku_data.get('option_ids', [])
-                mapped_option_ids = [
-                    option_id_map.get(str(oid), str(oid)) 
-                    for oid in provided_option_ids
-                ]
-                
-                # Safe Decimal conversion helper function
-                def safe_decimal(value, default=None):
-                    if value is None or value == '':
-                        return default
-                    try:
-                        # Handle string or numeric values
-                        if isinstance(value, str):
-                            # Remove any whitespace and check if empty
-                            value = value.strip()
-                            if value == '':
-                                return default
-                            # Replace comma with dot for decimal separator
-                            value = value.replace(',', '.')
-                        return Decimal(str(value))
-                    except (ValueError, TypeError, InvalidOperation):
-                        print(f"Warning: Could not convert '{value}' to Decimal, using default: {default}")
-                        return default
-                
-                # Create SKU with safe conversions - price always 0 for gifts
-                # Normalize refundable in gift SKU payload
-                ref_flag = sku_data.get('is_refundable') if 'is_refundable' in sku_data else sku_data.get('refundable', False)
-                if isinstance(ref_flag, bool):
-                    is_refundable_val = ref_flag
-                else:
-                    try:
-                        is_refundable_val = str(ref_flag).strip().lower() in ('true', '1', 'yes', 'y')
-                    except Exception:
-                        is_refundable_val = False
-
-                sku = ProductSKU.objects.create(
-                    product=product,
-                    option_ids=mapped_option_ids,
-                    option_map=sku_data.get('option_map', {}),
-                    price=Decimal('0.00'),  # Gifts always have price 0
-                    compare_price=safe_decimal(sku_data.get('compare_price'), None),
-                    quantity=int(sku_data.get('quantity', 0)),
-                    length=safe_decimal(sku_data.get('length'), None),
-                    width=safe_decimal(sku_data.get('width'), None),
-                    height=safe_decimal(sku_data.get('height'), None),
-                    weight=safe_decimal(sku_data.get('weight'), None),
-                    weight_unit=sku_data.get('weight_unit', 'g'),
-                    sku_code=sku_data.get('sku_code', ''),
-                    critical_trigger=int(sku_data.get('critical_trigger')) if sku_data.get('critical_trigger') not in (None, '') else None,
-                    allow_swap=False,  # No swap for gifts
-                    swap_type='direct_swap',  # Default, not used
-                    minimum_additional_payment=Decimal('0.00'),  # No swap
-                    maximum_additional_payment=Decimal('0.00'),  # No swap
-                    swap_description='',  # No swap
-                    is_refundable=is_refundable_val,
-                )
-                print(f"Created SKU: {sku.id}")
-                
-                # Handle SKU images
-                sku_id = sku_data.get('id')
-                file_key = f"sku_image_{sku_id}" if sku_id else None
-                
-                if file_key and file_key in files:
-                    sku.image = files[file_key]
-                    sku.save()
-                    print(f"Added explicit image to SKU {sku.id}")
-                else:
-                    # Try to get image from option images
-                    for oid in provided_option_ids:
-                        if str(oid) in option_image_files:
-                            sku.image = option_image_files[str(oid)]
-                            sku.save()
-                            print(f"Added option image to SKU {sku.id}")
-                            break
-        else:
-            # Auto-create SKUs from variants if no SKUs provided
-            print("Auto-creating SKUs from variants")
-            for variant_group in variants_data:
-                for option in variant_group.get('options', []):
-                    provided_option_id = option.get('id', str(uuid.uuid4()))
-                    mapped_option_id = option_id_map.get(str(provided_option_id), str(provided_option_id))
-                    
-                    sku = ProductSKU.objects.create(
-                        product=product,
-                        option_ids=[mapped_option_id],
-                        option_map={variant_group.get('title', 'Option'): option.get('title', '')},
-                        price=Decimal('0.00'),  # Gifts always have price 0
-                        quantity=int(option.get('quantity', 0)),
-                        allow_swap=False,  # No swap for gifts
-                    )
-                    
-                    # Add image if available
-                    f = option_image_files.get(str(mapped_option_id)) or option_image_files.get(str(provided_option_id))
-                    if f:
-                        sku.image = f
-                        sku.save()
+            # Handle variant image
+            variant_id = variant_data.get('id')
+            file_key = f"variant_image_{variant_id}" if variant_id else None
+            
+            if file_key and file_key in files:
+                try:
+                    variant.image = files[file_key]
+                    variant.save()
+                    print(f"Added image to variant {variant.id}")
+                except Exception as e:
+                    print('Failed to save variant image', e)
 
     def _get_gift_detail_data(self, gift):
         """Get detailed gift data for response"""
@@ -27797,42 +27477,37 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                 "file_type": media.file_type
             })
         
-        # Get SKUs
-        skus = []
-        for sku in gift.skus.all():
-            sku_data = {
-                "id": str(sku.id),
-                "option_ids": sku.option_ids,
-                "option_map": sku.option_map,
-                "sku_code": sku.sku_code,
-                "price": str(sku.price) if sku.price else None,  # Will be "0.00"
-                "compare_price": str(sku.compare_price) if sku.compare_price else None,
-                "quantity": sku.quantity,
-                "allow_swap": sku.allow_swap,  # Will always be False
-                "swap_type": sku.swap_type,
-                "minimum_additional_payment": str(sku.minimum_additional_payment) if sku.minimum_additional_payment else "0.00",
-                "maximum_additional_payment": str(sku.maximum_additional_payment) if sku.maximum_additional_payment else "0.00",
-                "swap_description": sku.swap_description,
-                "image": sku.image.url if sku.image else None,
-            }
-            skus.append(sku_data)
-        
         # Get variants
         variants = []
-        for variant in gift.variants_set.all():
+        for variant in gift.variants.all():
             variant_data = {
                 "id": str(variant.id),
                 "title": variant.title,
-                "options": []
+                "option_title": variant.option_title,
+                "option_ids": variant.option_ids,
+                "option_map": variant.option_map,
+                "sku_code": variant.sku_code,
+                "price": str(variant.price) if variant.price else "0.00",  # Will be "0.00"
+                "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                "quantity": variant.quantity,
+                "weight": str(variant.weight) if variant.weight else None,
+                "weight_unit": variant.weight_unit,
+                "allow_swap": variant.allow_swap,  # Will always be False
+                "swap_type": variant.swap_type,
+                "minimum_additional_payment": str(variant.minimum_additional_payment) if variant.minimum_additional_payment else "0.00",
+                "maximum_additional_payment": str(variant.maximum_additional_payment) if variant.maximum_additional_payment else "0.00",
+                "swap_description": variant.swap_description,
+                "image": variant.image.url if variant.image else None,
+                "is_refundable": variant.is_refundable,
+                "refund_days": variant.refund_days,
+                "original_price": str(variant.original_price) if variant.original_price else None,
+                "usage_period": variant.usage_period,
+                "usage_unit": variant.usage_unit,
+                "depreciation_rate": variant.depreciation_rate,
+                "critical_stock": variant.critical_stock,
+                "is_active": variant.is_active,
+                "created_at": variant.created_at.isoformat() if variant.created_at else None,
             }
-            
-            for option in variant.variantoptions_set.all():
-                option_data = {
-                    "id": str(option.id),
-                    "title": option.title,
-                }
-                variant_data["options"].append(option_data)
-            
             variants.append(variant_data)
         
         return {
@@ -27850,7 +27525,6 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                 "name": gift.category_admin.name
             } if gift.category_admin else None,
             "media_files": media_files,
-            "skus": skus,
             "variants": variants,
             "dimensions": {
                 "length": str(gift.length) if gift.length else None,
@@ -28077,7 +27751,7 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+        
 class RiderDashboardViewSet(viewsets.ViewSet):
     """
     Rider Dashboard API endpoints with optimized queries and data integrity
