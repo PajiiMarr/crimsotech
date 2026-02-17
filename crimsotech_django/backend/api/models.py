@@ -1032,6 +1032,7 @@ class Delivery(models.Model):
     distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     estimated_minutes = models.IntegerField(null=True, blank=True)
     actual_minutes = models.IntegerField(null=True, blank=True)
+    delivery_fee = models.IntegerField(null=True, blank=True)
     delivery_rating = models.IntegerField(null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)])
     notes = models.TextField(blank=True, null=True)
     picked_at = models.DateTimeField(null=True, blank=True)
