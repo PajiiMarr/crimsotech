@@ -28589,7 +28589,7 @@ class RiderProfileViewSet(viewsets.ViewSet):
                     'zip_code': user.zip_code or '',
                 },
                 'rider': {
-                    'id': str(rider.id),
+                    'id': str(rider.rider),
                     'vehicle_type': rider.vehicle_type or '',
                     'plate_number': rider.plate_number or '',
                     'vehicle_brand': rider.vehicle_brand or '',
@@ -29305,7 +29305,7 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             return Response({
                 'success': True,
                 'rider': {
-                    'id': str(rider.id),
+                    'id': str(rider.rider),
                     'availability_status': getattr(rider, 'availability_status', 'offline'),
                     'is_accepting_deliveries': getattr(rider, 'is_accepting_deliveries', True),
                     'last_status_update': getattr(rider, 'last_status_update', timezone.now()),
