@@ -216,23 +216,6 @@ export default function IncomingOrdersPage() {
           </TouchableOpacity>
           <Text style={styles.title}>Incoming Deliveries</Text>
         </View>
-
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => router.push("/rider/notification")}
-          >
-            <Feather name="bell" size={22} color={COLORS.secondary} />
-            <View style={styles.notificationBadge} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => router.push("/rider/settings")}
-          >
-            <Feather name="settings" size={22} color={COLORS.secondary} />
-          </TouchableOpacity>
-        </View>
       </View>
 
       {/* Orders List */}
@@ -294,28 +277,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: COLORS.secondary,
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  iconButton: {
-    padding: 5,
-    backgroundColor: "#F3F4F6",
-    borderRadius: 6,
-    position: "relative",
-  },
-  notificationBadge: {
-    position: "absolute",
-    top: 5,
-    right: 5,
-    backgroundColor: COLORS.muted,
-    borderRadius: 3,
-    width: 6,
-    height: 6,
-    borderWidth: 1,
-    borderColor: "#FFFFFF",
   },
 
   // List

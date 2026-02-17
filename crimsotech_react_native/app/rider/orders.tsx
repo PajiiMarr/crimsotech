@@ -179,14 +179,14 @@ export default function OrdersPage() {
             style={styles.iconButton}
             onPress={() => router.push("/rider/notification")}
           >
-            <Feather name="bell" size={22} color={COLORS.secondary} />
+            <Feather name="bell" size={20} color={COLORS.secondary} />
             <View style={styles.notificationBadge} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => router.push("/rider/settings")}
           >
-            <Feather name="settings" size={22} color={COLORS.secondary} />
+            <Feather name="settings" size={20} color={COLORS.secondary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -345,12 +345,17 @@ const styles = StyleSheet.create({
     padding: 6,
     backgroundColor: "#F3F4F6",
     borderRadius: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
   },
   notificationBadge: {
     position: "absolute",
     top: 6,
     right: 6,
-    backgroundColor: COLORS.muted,
+    backgroundColor: "#EF4444",
     width: 6,
     height: 6,
     borderRadius: 3,

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -9,328 +9,772 @@ import {
   StatusBar,
   ScrollView,
   Alert,
-} from 'react-native';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useAuth } from '../../contexts/AuthContext';
-import { router } from 'expo-router'; // Ensure this is imported for navigation
+  Modal,
+} from "react-native";
+import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import { useAuth } from "../../contexts/AuthContext";
+import { router } from "expo-router";
 
-// --- Color Palette (Minimalist Theme - Softened) ---
+// --- Theme Colors (Minimalist) ---
 const COLORS = {
-  primary: '#1F2937',
-  primaryDark: '#111827',
-  primaryLight: '#F9FAFB',
-  secondary: '#374151',
-  muted: '#9CA3AF',
-  bg: '#FFFFFF',
-  cardBg: '#FFFFFF',
-  dangerBg: '#F9FAFB',
-  dangerText: '#374151',
-  bookedBg: '#F3F4F6',
-  bookedText: '#1F2937',
-  surge: '#4B5563',
+  primary: "#111827",
+  secondary: "#6B7280",
+  muted: "#9CA3AF",
+  bg: "#FFFFFF",
+  cardBg: "#FFFFFF",
+  border: "#E5E7EB",
+  lightGray: "#F9FAFB",
 };
 
-// --- Types & Mock Data ---
-type ShiftStatus = 'available' | 'booked' | 'completed' | 'full';
-
-interface Shift {
-  id: string;
-  timeRange: string;
-  zone: string;
-  status: ShiftStatus;
-  surge?: number;
-  estEarnings?: string;
+// --- Types ---
+interface DaySchedule {
+  date: string;
+  day: string;
+  dayNum: number;
+  startTime?: string;
+  endTime?: string;
+  status: "scheduled" | "off" | "completed";
+  earnings?: number;
 }
 
-const SHIFT_DATA: Record<string, Shift[]> = {
-  '2025-01-29': [
-    { id: '1', timeRange: '08:00 AM - 11:00 AM', zone: 'Quezon', status: 'completed', estEarnings: '₱250' },
-    { id: '2', timeRange: '12:00 PM - 03:00 PM', zone: 'Tagaytay', status: 'booked', surge: 1.2, estEarnings: '₱350' },
-    { id: '3', timeRange: '05:00 PM - 09:00 PM', zone: 'Makati', status: 'available', surge: 1.5, estEarnings: '₱500' },
-  ],
-  '2025-01-30': [
-    { id: '4', timeRange: '10:00 AM - 02:00 PM', zone: 'Tagaytay', status: 'available', estEarnings: '₱400' },
-    { id: '5', timeRange: '06:00 PM - 10:00 PM', zone: 'Quezon', status: 'full', estEarnings: '₱450' },
-  ],
-};
+interface UpcomingShift {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  earnings?: number;
+  status: "upcoming" | "completed";
+}
 
-const StatusBadge = ({ status, surge }: { status: ShiftStatus; surge?: number }) => {
-  const getStyle = () => {
-    switch (status) {
-      case 'available': return { bg: '#F3F4F6', text: '#374151', label: 'Open' };
-      case 'booked': return { bg: '#E5E7EB', text: '#1F2937', label: 'Booked' };
-      case 'completed': return { bg: '#F9FAFB', text: '#9CA3AF', label: 'Done' };
-      case 'full': return { bg: '#F9FAFB', text: '#6B7280', label: 'Full' };
-      default: return { bg: '#F3F4F6', text: '#374151', label: status };
-    }
-  };
+// --- Dummy Data ---
+const WEEKLY_SCHEDULE: DaySchedule[] = [
+  {
+    date: "2026-02-16",
+    day: "Mon",
+    dayNum: 16,
+    startTime: "09:00 AM",
+    endTime: "06:00 PM",
+    status: "completed",
+    earnings: 850,
+  },
+  {
+    date: "2026-02-17",
+    day: "Tue",
+    dayNum: 17,
+    startTime: "09:00 AM",
+    endTime: "06:00 PM",
+    status: "scheduled",
+    earnings: 0,
+  },
+  {
+    date: "2026-02-18",
+    day: "Wed",
+    dayNum: 18,
+    startTime: "10:00 AM",
+    endTime: "07:00 PM",
+    status: "scheduled",
+    earnings: 0,
+  },
+  { date: "2026-02-19", day: "Thu", dayNum: 19, status: "off" },
+  {
+    date: "2026-02-20",
+    day: "Fri",
+    dayNum: 20,
+    startTime: "09:00 AM",
+    endTime: "05:00 PM",
+    status: "scheduled",
+    earnings: 0,
+  },
+  {
+    date: "2026-02-21",
+    day: "Sat",
+    dayNum: 21,
+    startTime: "10:00 AM",
+    endTime: "08:00 PM",
+    status: "scheduled",
+    earnings: 0,
+  },
+  { date: "2026-02-22", day: "Sun", dayNum: 22, status: "off" },
+];
 
-  const style = getStyle();
-
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-      {surge && (
-        <View style={styles.surgeBadge}>
-          <Feather name="zap" size={9} color="#FFFFFF" />
-          <Text style={styles.surgeText}>{surge}x</Text>
-        </View>
-      )}
-      <View style={[styles.badge, { backgroundColor: style.bg }]}>
-        <Text style={[styles.badgeText, { color: style.text }]}>{style.label}</Text>
-      </View>
-    </View>
-  );
-};
+const UPCOMING_SHIFTS: UpcomingShift[] = [
+  {
+    id: "1",
+    date: "2026-02-17",
+    startTime: "09:00 AM",
+    endTime: "06:00 PM",
+    duration: 9,
+    status: "upcoming",
+  },
+  {
+    id: "2",
+    date: "2026-02-18",
+    startTime: "10:00 AM",
+    endTime: "07:00 PM",
+    duration: 9,
+    status: "upcoming",
+  },
+  {
+    id: "3",
+    date: "2026-02-20",
+    startTime: "09:00 AM",
+    endTime: "05:00 PM",
+    duration: 8,
+    status: "upcoming",
+  },
+  {
+    id: "4",
+    date: "2026-02-21",
+    startTime: "10:00 AM",
+    endTime: "08:00 PM",
+    duration: 10,
+    status: "upcoming",
+  },
+];
 
 export default function SchedulePage() {
   const { userRole } = useAuth();
-  const [selectedDate, setSelectedDate] = useState('2025-01-29');
 
-  if (userRole && userRole !== 'rider') {
+  // Get today's schedule
+  const todaySchedule = WEEKLY_SCHEDULE.find((s) => s.date === "2026-02-17");
+  const totalHoursToday =
+    todaySchedule?.startTime && todaySchedule?.endTime ? 9 : 0;
+
+  if (userRole && userRole !== "rider") {
     return (
       <SafeAreaView style={styles.center}>
-        <MaterialCommunityIcons name="shield-alert-outline" size={48} color={COLORS.muted} />
+        <MaterialCommunityIcons
+          name="shield-alert-outline"
+          size={48}
+          color={COLORS.muted}
+        />
         <Text style={styles.messageTitle}>Access Restricted</Text>
-        <Text style={styles.messageSub}>Only verified riders can access the schedule.</Text>
+        <Text style={styles.messageSub}>
+          Only verified riders can access the schedule.
+        </Text>
       </SafeAreaView>
     );
   }
 
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const dates = useMemo(() => {
-    const arr = [];
-    const today = new Date('2025-01-29'); 
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      arr.push({
-        full: d.toISOString().split('T')[0],
-        day: d.toLocaleDateString('en-US', { weekday: 'short' }),
-        date: d.getDate(),
-      });
-    }
-    return arr;
-  }, []);
-
-  const currentShifts = SHIFT_DATA[selectedDate] || [];
-
-  const handleBooking = (id: string) => {
-    Alert.alert("Confirm Booking", "Do you want to grab this shift?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Book Shift", onPress: () => console.log(`Booked shift ${id}`) }
+  // Handle Cancel Shift
+  const handleCancelShift = (id: string) => {
+    Alert.alert("Cancel Shift", "Are you sure you want to cancel this shift?", [
+      { text: "No", style: "cancel" },
+      { text: "Yes", onPress: () => console.log(`Cancelled shift ${id}`) },
     ]);
+  };
+
+  // Handle Edit Shift
+  const handleEditShift = (id: string) => {
+    console.log(`Editing shift ${id}`);
+    router.push("/rider/set-availability");
+  };
+
+  // Get status badge style
+  const getStatusBadgeStyle = (status: string) => {
+    switch (status) {
+      case "scheduled":
+        return {
+          bg: COLORS.lightGray,
+          text: COLORS.primary,
+          label: "Scheduled",
+        };
+      case "completed":
+        return {
+          bg: COLORS.lightGray,
+          text: COLORS.secondary,
+          label: "Completed",
+        };
+      case "off":
+        return { bg: COLORS.lightGray, text: COLORS.muted, label: "Off" };
+      default:
+        return { bg: COLORS.lightGray, text: COLORS.muted, label: "N/A" };
+    }
+  };
+
+  // Render Day Schedule Card
+  const renderDaySchedule = ({ item }: { item: DaySchedule }) => {
+    const isToday = item.date === "2026-02-17";
+    const badgeStyle = getStatusBadgeStyle(item.status);
+
+    return (
+      <View style={[styles.dayCard, isToday && styles.dayCardActive]}>
+        <Text style={[styles.dayName, isToday && styles.dayNameActive]}>
+          {item.day}
+        </Text>
+        <Text style={[styles.dayNumber, isToday && styles.dayNumberActive]}>
+          {item.dayNum}
+        </Text>
+
+        {item.startTime && item.endTime ? (
+          <View style={styles.dayTimeContainer}>
+            <Text style={[styles.dayTime, isToday && styles.dayTimeActive]}>
+              {item.startTime.replace(":00", "")}
+            </Text>
+            <Text
+              style={[styles.dayTimeSeparator, isToday && styles.dayTimeActive]}
+            >
+              -
+            </Text>
+            <Text style={[styles.dayTime, isToday && styles.dayTimeActive]}>
+              {item.endTime.replace(":00", "")}
+            </Text>
+          </View>
+        ) : (
+          <Text style={[styles.dayOff, isToday && styles.dayOffActive]}>
+            Off
+          </Text>
+        )}
+
+        <View style={[styles.dayBadge, { backgroundColor: badgeStyle.bg }]}>
+          <Text style={[styles.dayBadgeText, { color: badgeStyle.text }]}>
+            {badgeStyle.label}
+          </Text>
+        </View>
+
+        {item.earnings ? (
+          <Text style={styles.dayEarnings}>₱{item.earnings}</Text>
+        ) : null}
+      </View>
+    );
+  };
+
+  // Render Upcoming Shift
+  const renderUpcomingShift = ({ item }: { item: UpcomingShift }) => {
+    return (
+      <View style={styles.shiftCard}>
+        <View style={styles.shiftHeader}>
+          <View style={styles.shiftDateContainer}>
+            <Ionicons
+              name="calendar-outline"
+              size={18}
+              color={COLORS.primary}
+            />
+            <Text style={styles.shiftDate}>
+              {new Date(item.date).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </Text>
+          </View>
+          {item.earnings && (
+            <Text style={styles.shiftEarnings}>₱{item.earnings}</Text>
+          )}
+        </View>
+
+        <View style={styles.shiftBody}>
+          <View style={styles.shiftTimeRow}>
+            <Feather name="clock" size={16} color={COLORS.muted} />
+            <Text style={styles.shiftTime}>
+              {item.startTime} - {item.endTime}
+            </Text>
+          </View>
+          <View style={styles.shiftDurationRow}>
+            <MaterialCommunityIcons
+              name="timer-outline"
+              size={16}
+              color={COLORS.muted}
+            />
+            <Text style={styles.shiftDuration}>{item.duration} hours</Text>
+          </View>
+        </View>
+
+        <View style={styles.shiftFooter}>
+          <TouchableOpacity
+            style={styles.shiftEditBtn}
+            onPress={() => handleEditShift(item.id)}
+          >
+            <Feather name="edit-2" size={14} color={COLORS.primary} />
+            <Text style={styles.shiftEditText}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.shiftCancelBtn}
+            onPress={() => handleCancelShift(item.id)}
+          >
+            <Feather name="x" size={14} color={COLORS.muted} />
+            <Text style={styles.shiftCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.cardBg} />
-      
-      {/* --- Header & Action Icons --- */}
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+
+      {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.greeting}>My Schedule</Text>
-            <Text style={styles.subHeader}>Plan your week ahead</Text>
-          </View>
-          
-          <View style={styles.headerActions}>
-            <TouchableOpacity 
-              style={styles.iconBtn} 
-              onPress={() => router.push("/rider/notification")}
-            >
-              <Feather name="bell" size={22} color={COLORS.secondary} />
-              <View style={styles.notifBadge} />
-            </TouchableOpacity>
-
-            {/* FIXED ROUTE HERE: Points to /rider/settings */}
-            <TouchableOpacity 
-              style={styles.iconBtn} 
-              onPress={() => router.push('/rider/settings')} 
-            >
-              <Feather name="settings" size={22} color={COLORS.secondary} />
-            </TouchableOpacity>
-          </View>
+        <View>
+          <Text style={styles.headerTitle}>My Schedule</Text>
+          <Text style={styles.headerSubtitle}>Manage your availability</Text>
         </View>
-
-        {/* Bento Stats */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, { backgroundColor: COLORS.primary }]}>
-            <View style={styles.statIconBgWhite}>
-              <Feather name="clock" size={16} color={COLORS.primary} />
-            </View>
-            <View>
-              <Text style={styles.statLabelLight}>Booked Hours</Text>
-              <Text style={styles.statValueLight}>12.5 hrs</Text>
-            </View>
-          </View>
-          
-          <View style={[styles.statCard, { backgroundColor: '#F3F4F6' }]}>
-             <View style={[styles.statIconBg, { backgroundColor: '#E5E7EB' }]}>
-              <MaterialCommunityIcons name="currency-php" size={18} color={COLORS.secondary} />
-            </View>
-            <View>
-              <Text style={styles.statLabel}>Est. Earnings</Text>
-              <Text style={styles.statValue}>₱1,450.00</Text>
-            </View>
-          </View>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.push("/rider/notification")}
+          >
+            <Feather name="bell" size={20} color={COLORS.primary} />
+            <View style={styles.notifBadge} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.push("/rider/settings")}
+          >
+            <Feather name="settings" size={20} color={COLORS.primary} />
+          </TouchableOpacity>
         </View>
       </View>
 
-      {/* --- Date Strip --- */}
-      <View style={styles.dateStripContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateStrip}>
-          {dates.map((item) => {
-            const isSelected = selectedDate === item.full;
-            return (
-              <TouchableOpacity
-                key={item.full}
-                style={[styles.dateItem, isSelected && styles.dateItemActive]}
-                onPress={() => setSelectedDate(item.full)}
-                activeOpacity={0.7}
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        {/* 1️⃣ Schedule Overview */}
+        <View style={styles.overviewCard}>
+          <View style={styles.overviewHeader}>
+            <Text style={styles.overviewTitle}>Today&apos;s Summary</Text>
+          </View>
+
+          <View style={styles.overviewStats}>
+            <View style={styles.overviewStatItem}>
+              <View
+                style={[styles.statIcon, { backgroundColor: COLORS.lightGray }]}
               >
-                <Text style={[styles.dayText, isSelected && styles.dayTextActive]}>{item.day}</Text>
-                <Text style={[styles.dateText, isSelected && styles.dateTextActive]}>{item.date}</Text>
-                {isSelected && <View style={styles.activeDot} />}
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {/* --- Shift List --- */}
-      <FlatList
-        data={currentShifts}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Feather name="calendar" size={40} color="#D1D5DB" />
-            <Text style={styles.emptyText}>No shifts available for this day.</Text>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <View style={[styles.card, item.status === 'completed' && styles.cardDimmed]}>
-            <View style={styles.cardHeader}>
-              <StatusBadge status={item.status} surge={item.surge} />
-              <Text style={styles.earningsText}>{item.estEarnings}</Text>
-            </View>
-
-            <View style={styles.cardBody}>
-              <Text style={styles.timeText}>{item.timeRange}</Text>
-              <View style={styles.zoneRow}>
-                <Feather name="map-pin" size={14} color={COLORS.muted} />
-                <Text style={styles.zoneText}>{item.zone}</Text>
+                <Feather name="clock" size={20} color={COLORS.primary} />
               </View>
+              <Text style={styles.statLabel}>Scheduled Hours</Text>
+              <Text style={styles.statValue}>{totalHoursToday}h</Text>
             </View>
 
-            <View style={styles.cardFooter}>
-              {item.status === 'available' && (
-                <TouchableOpacity style={styles.actionBtnPrimary} onPress={() => handleBooking(item.id)}>
-                  <Text style={styles.actionBtnTextPrimary}>Book Shift</Text>
-                </TouchableOpacity>
-              )}
-              {item.status === 'booked' && (
-                <TouchableOpacity style={styles.actionBtnSecondary}>
-                  <Text style={styles.actionBtnTextSecondary}>Cancel Booking</Text>
-                </TouchableOpacity>
-              )}
-               {item.status === 'completed' && (
-                <View style={styles.completedRow}>
-                  <Feather name="check-circle" size={16} color={COLORS.primary} />
-                  <Text style={styles.completedText}>Shift Complete</Text>
-                </View>
-              )}
-              {item.status === 'full' && (
-                <View style={styles.completedRow}>
-                   <Feather name="lock" size={16} color={COLORS.muted} />
-                   <Text style={styles.lockedText}>Waitlist Only</Text>
-                </View>
-              )}
+            <View style={styles.overviewStatItem}>
+              <View
+                style={[styles.statIcon, { backgroundColor: COLORS.lightGray }]}
+              >
+                <Feather name="calendar" size={20} color={COLORS.primary} />
+              </View>
+              <Text style={styles.statLabel}>Upcoming Shift</Text>
+              <Text style={styles.statValue}>
+                {todaySchedule?.startTime || "None"}
+              </Text>
             </View>
           </View>
-        )}
-      />
+        </View>
+
+        {/* 2️⃣ Weekly Schedule Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Weekly Schedule</Text>
+          <FlatList
+            horizontal
+            data={WEEKLY_SCHEDULE}
+            renderItem={renderDaySchedule}
+            keyExtractor={(item) => item.date}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.weeklyList}
+          />
+        </View>
+
+        {/* 3️⃣ Set Availability Button */}
+        <TouchableOpacity
+          style={styles.setAvailabilityBtn}
+          onPress={() => router.push("/rider/set-availability")}
+        >
+          <Feather name="plus" size={20} color="#FFFFFF" />
+          <Text style={styles.setAvailabilityText}>Set Availability</Text>
+        </TouchableOpacity>
+
+        {/* 5️⃣ Upcoming Shifts List */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Upcoming Shifts</Text>
+            <Text style={styles.sectionCount}>
+              {UPCOMING_SHIFTS.length} shifts
+            </Text>
+          </View>
+
+          {UPCOMING_SHIFTS.map((shift) => (
+            <View key={shift.id}>{renderUpcomingShift({ item: shift })}</View>
+          ))}
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 },
-  messageTitle: { fontSize: 15, fontWeight: '700', color: COLORS.secondary, marginTop: 10 },
-  messageSub: { fontSize: 12, color: COLORS.muted, textAlign: 'center', marginTop: 4 },
-  
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  messageTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.secondary,
+    marginTop: 12,
+  },
+  messageSub: {
+    fontSize: 12,
+    color: COLORS.muted,
+    textAlign: "center",
+    marginTop: 4,
+  },
+  scrollContent: {
+    paddingBottom: 16,
+  },
+
   // Header
-  header: { padding: 12, paddingHorizontal: 16, backgroundColor: COLORS.cardBg, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  greeting: { fontSize: 18, fontWeight: '700', color: COLORS.secondary },
-  subHeader: { fontSize: 11, color: COLORS.muted },
-  
-  // New Header Actions
-  headerActions: { flexDirection: 'row', gap: 6 },
-  iconBtn: { 
-    padding: 6, 
-    backgroundColor: '#F3F4F6', 
-    borderRadius: 8,
-    position: 'relative' 
+  header: {
+    padding: 12,
+    backgroundColor: COLORS.cardBg,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: COLORS.muted,
+    marginTop: 1,
+  },
+  headerActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  iconBtn: {
+    padding: 6,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 6,
+    position: "relative",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
   },
   notifBadge: {
-    position: 'absolute',
+    position: "absolute",
     top: 6,
     right: 6,
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#6B7280',
+    backgroundColor: "#EF4444",
     borderWidth: 1,
-    borderColor: '#FFFFFF',
+    borderColor: "#FFFFFF",
   },
 
-  // Stats
-  statsRow: { flexDirection: 'row', gap: 6 },
-  statCard: { flex: 1, borderRadius: 8, padding: 8, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statIconBg: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
-  statIconBgWhite: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
-  statLabel: { fontSize: 9, color: COLORS.muted, fontWeight: '500' },
-  statValue: { fontSize: 13, fontWeight: '700', color: COLORS.secondary },
-  statLabelLight: { fontSize: 9, color: 'rgba(255,255,255,0.9)', fontWeight: '500' },
-  statValueLight: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  // 1️⃣ Overview Card
+  overviewCard: {
+    margin: 12,
+    padding: 12,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  overviewHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  overviewTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  statusToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  statusLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.muted,
+  },
+  statusLabelActive: {
+    color: COLORS.primary,
+  },
+  overviewStats: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 8,
+  },
+  overviewStatItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  statIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  statLabel: {
+    fontSize: 10,
+    color: COLORS.muted,
+    marginBottom: 3,
+  },
+  statValue: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  statusBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 8,
+  },
+  statusBannerText: {
+    fontSize: 12,
+    fontWeight: "600",
+    flex: 1,
+  },
 
-  // Date Strip
-  dateStripContainer: { backgroundColor: COLORS.cardBg, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  dateStrip: { paddingHorizontal: 16, gap: 6 },
-  dateItem: { width: 44, height: 54, borderRadius: 8, backgroundColor: '#F9FAFB', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6' },
-  dateItemActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  dayText: { fontSize: 9, color: COLORS.muted, marginBottom: 1 },
-  dayTextActive: { color: 'rgba(255,255,255,0.9)' },
-  dateText: { fontSize: 14, fontWeight: '700', color: COLORS.secondary },
-  dateTextActive: { color: '#FFFFFF' },
-  activeDot: { width: 2, height: 2, borderRadius: 1, backgroundColor: '#FFFFFF', position: 'absolute', bottom: 3 },
+  // Section
+  section: {
+    marginHorizontal: 12,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.primary,
+    marginBottom: 6,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  sectionCount: {
+    fontSize: 12,
+    color: COLORS.muted,
+  },
 
-  // List
-  listContent: { padding: 12, paddingBottom: 24 },
-  emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 32 },
-  emptyText: { marginTop: 10, fontSize: 13, color: '#9CA3AF' },
+  // 2️⃣ Weekly Schedule
+  weeklyList: {
+    gap: 10,
+  },
+  dayCard: {
+    width: 90,
+    padding: 10,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  dayCardActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  dayName: {
+    fontSize: 11,
+    color: COLORS.muted,
+    marginBottom: 4,
+  },
+  dayNameActive: {
+    color: "rgba(255,255,255,0.8)",
+  },
+  dayNumber: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: COLORS.primary,
+    marginBottom: 6,
+  },
+  dayNumberActive: {
+    color: "#FFFFFF",
+  },
+  dayTimeContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    marginBottom: 8,
+  },
+  dayTime: {
+    fontSize: 9,
+    color: COLORS.secondary,
+    fontWeight: "500",
+  },
+  dayTimeActive: {
+    color: "rgba(255,255,255,0.9)",
+  },
+  dayTimeSeparator: {
+    fontSize: 10,
+    color: COLORS.muted,
+  },
+  dayOff: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginBottom: 8,
+  },
+  dayOffActive: {
+    color: "rgba(255,255,255,0.7)",
+  },
+  dayBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  dayBadgeText: {
+    fontSize: 9,
+    fontWeight: "600",
+  },
+  dayEarnings: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.primary,
+    marginTop: 4,
+  },
 
-  // Cards
-  card: { backgroundColor: COLORS.cardBg, borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#F3F4F6' },
-  cardDimmed: { opacity: 0.6 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  earningsText: { fontSize: 13, fontWeight: '700', color: COLORS.secondary },
-  badge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
-  badgeText: { fontSize: 9, fontWeight: '600' },
-  surgeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#6B7280', paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4, gap: 2 },
-  surgeText: { color: '#FFFFFF', fontSize: 8, fontWeight: '700' },
-  cardBody: { marginBottom: 10 },
-  timeText: { fontSize: 13, fontWeight: '700', color: COLORS.secondary, marginBottom: 1 },
-  zoneRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  zoneText: { fontSize: 11, color: COLORS.muted },
-  cardFooter: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 8 },
-  actionBtnPrimary: { backgroundColor: COLORS.primary, paddingVertical: 6, borderRadius: 6, alignItems: 'center' },
-  actionBtnTextPrimary: { color: '#FFFFFF', fontWeight: '600', fontSize: 12 },
-  actionBtnSecondary: { backgroundColor: '#F3F4F6', paddingVertical: 6, borderRadius: 6, alignItems: 'center' },
-  actionBtnTextSecondary: { color: '#000000', fontWeight: '600', fontSize: 12 },
-  completedRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingTop: 1 },
-  completedText: { color: '#9CA3AF', fontSize: 11, fontWeight: '600' },
-  lockedText: { color: COLORS.muted, fontSize: 11, fontWeight: '500' },
+  // 3️⃣ Set Availability Button
+  setAvailabilityBtn: {
+    marginHorizontal: 12,
+    marginBottom: 10,
+    backgroundColor: COLORS.primary,
+    paddingVertical: 10,
+    borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  setAvailabilityText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  // 5️⃣ Upcoming Shifts
+  shiftCard: {
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  shiftHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  shiftDateContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  shiftDate: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.primary,
+  },
+  shiftEarnings: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  shiftBody: {
+    gap: 6,
+    marginBottom: 8,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#F3F4F6",
+  },
+  shiftTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  shiftTime: {
+    fontSize: 12,
+    color: COLORS.secondary,
+    fontWeight: "500",
+  },
+  shiftDurationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  shiftDuration: {
+    fontSize: 12,
+    color: COLORS.muted,
+  },
+  shiftFooter: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  shiftEditBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 8,
+    backgroundColor: COLORS.lightGray,
+    borderRadius: 6,
+  },
+  shiftEditText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.primary,
+  },
+  shiftCancelBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 8,
+    backgroundColor: COLORS.lightGray,
+    borderRadius: 6,
+  },
+  shiftCancelText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.muted,
+  },
 });
