@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from "react";
 import {
   SafeAreaView,
   View,
@@ -9,328 +9,1179 @@ import {
   StatusBar,
   ScrollView,
   Alert,
-} from 'react-native';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useAuth } from '../../contexts/AuthContext';
-import { router } from 'expo-router'; // Ensure this is imported for navigation
+  Modal,
+  ActivityIndicator,
+  Switch,
+  TextInput,
+  RefreshControl,
+} from "react-native";
+import { Picker } from "@react-native-picker/picker";
+import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import { useAuth } from "../../contexts/AuthContext";
+import { router } from "expo-router";
+import AxiosInstance from "../../contexts/axios";
 
-// --- Color Palette (Minimalist Theme - Softened) ---
+// --- Theme Colors (Minimalist) ---
 const COLORS = {
-  primary: '#1F2937',
-  primaryDark: '#111827',
-  primaryLight: '#F9FAFB',
-  secondary: '#374151',
-  muted: '#9CA3AF',
-  bg: '#FFFFFF',
-  cardBg: '#FFFFFF',
-  dangerBg: '#F9FAFB',
-  dangerText: '#374151',
-  bookedBg: '#F3F4F6',
-  bookedText: '#1F2937',
-  surge: '#4B5563',
+  primary: "#111827",
+  secondary: "#6B7280",
+  muted: "#9CA3AF",
+  bg: "#FFFFFF",
+  cardBg: "#FFFFFF",
+  border: "#E5E7EB",
+  lightGray: "#F9FAFB",
 };
 
-// --- Types & Mock Data ---
-type ShiftStatus = 'available' | 'booked' | 'completed' | 'full';
-
-interface Shift {
-  id: string;
-  timeRange: string;
-  zone: string;
-  status: ShiftStatus;
-  surge?: number;
-  estEarnings?: string;
+// --- Types ---
+interface DaySchedule {
+  value: number;
+  label: string;
+  is_available: boolean;
+  start_time: string;
+  end_time: string;
+  id?: string;
 }
 
-const SHIFT_DATA: Record<string, Shift[]> = {
-  '2025-01-29': [
-    { id: '1', timeRange: '08:00 AM - 11:00 AM', zone: 'Quezon', status: 'completed', estEarnings: '₱250' },
-    { id: '2', timeRange: '12:00 PM - 03:00 PM', zone: 'Tagaytay', status: 'booked', surge: 1.2, estEarnings: '₱350' },
-    { id: '3', timeRange: '05:00 PM - 09:00 PM', zone: 'Makati', status: 'available', surge: 1.5, estEarnings: '₱500' },
-  ],
-  '2025-01-30': [
-    { id: '4', timeRange: '10:00 AM - 02:00 PM', zone: 'Tagaytay', status: 'available', estEarnings: '₱400' },
-    { id: '5', timeRange: '06:00 PM - 10:00 PM', zone: 'Quezon', status: 'full', estEarnings: '₱450' },
-  ],
-};
+interface UpcomingShift {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  earnings?: number;
+  status: "upcoming" | "completed";
+}
 
-const StatusBadge = ({ status, surge }: { status: ShiftStatus; surge?: number }) => {
-  const getStyle = () => {
-    switch (status) {
-      case 'available': return { bg: '#F3F4F6', text: '#374151', label: 'Open' };
-      case 'booked': return { bg: '#E5E7EB', text: '#1F2937', label: 'Booked' };
-      case 'completed': return { bg: '#F9FAFB', text: '#9CA3AF', label: 'Done' };
-      case 'full': return { bg: '#F9FAFB', text: '#6B7280', label: 'Full' };
-      default: return { bg: '#F3F4F6', text: '#374151', label: status };
+interface RiderAvailabilityData {
+  id: string;
+  rider_id: string;
+  availability_status: 'offline' | 'available' | 'busy' | 'break' | 'unavailable';
+  is_accepting_deliveries: boolean;
+  last_status_update: string;
+}
+
+interface ScheduleMetrics {
+  total_deliveries?: number;
+  upcoming_deliveries?: number;
+  in_progress_deliveries?: number;
+  completed_deliveries?: number;
+  avg_delivery_time?: number;
+  total_distance_km?: number;
+  average_rating?: number;
+  today_deliveries?: number;
+  peak_day?: string;
+  availability_percentage?: number;
+  avg_deliveries_per_day?: number;
+}
+
+export default function SchedulePage() {
+  const { userRole, user } = useAuth();
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Data states
+  const [riderData, setRiderData] = useState<RiderAvailabilityData | null>(null);
+  const [schedule, setSchedule] = useState<DaySchedule[]>([]);
+  const [scheduleMetrics, setScheduleMetrics] = useState<ScheduleMetrics>({});
+  const [online, setOnline] = useState(true);
+  
+  // Modal states
+  const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [editingDay, setEditingDay] = useState<DaySchedule | null>(null);
+  
+  // Form states
+  const [availabilityForm, setAvailabilityForm] = useState({
+    availability_status: 'available' as RiderAvailabilityData['availability_status'],
+    is_accepting_deliveries: true
+  });
+  
+  const [scheduleForm, setScheduleForm] = useState<Partial<DaySchedule>>({
+    value: 0,
+    label: 'Monday',
+    start_time: '09:00',
+    end_time: '17:00',
+    is_available: true
+  });
+
+  const userId = user?.user_id || user?.id;
+
+  // Fetch all schedule data
+  const fetchAllData = useCallback(async (showToast = false) => {
+    try {
+      setIsRefreshing(true);
+      
+      const response = await AxiosInstance.get('/rider-schedule/get_schedule_data/', {
+        headers: { 'X-User-Id': userId }
+      });
+
+      if (response.data && response.data.success) {
+        // Set rider data
+        setRiderData(response.data.rider);
+        setAvailabilityForm({
+          availability_status: response.data.rider.availability_status,
+          is_accepting_deliveries: response.data.rider.is_accepting_deliveries
+        });
+        
+        // Format schedule data
+        if (response.data.schedule && Array.isArray(response.data.schedule)) {
+          const formattedSchedule = response.data.schedule.map((day: any) => ({
+            value: day.day_of_week,
+            label: day.day_name,
+            is_available: day.is_available,
+            start_time: day.start_time,
+            end_time: day.end_time,
+            id: day.id
+          }));
+          setSchedule(formattedSchedule);
+        }
+
+        // Store metrics
+        if (response.data.metrics) {
+          setScheduleMetrics(response.data.metrics);
+        }
+        
+        setOnline(response.data.rider.availability_status === 'available');
+      }
+    } catch (err: any) {
+      console.log('Schedule fetch error:', err);
+      setError(err.message || 'Failed to load schedule data');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [userId]);
+
+  // Initial load
+  useEffect(() => {
+    if (userId) {
+      fetchAllData();
+    }
+  }, [userId, fetchAllData]);
+
+  // Handle toggle day availability
+  const handleToggle = (index: number) => {
+    const updated = [...schedule];
+    updated[index].is_available = !updated[index].is_available;
+    setSchedule(updated);
+    saveSchedulePayload(updated);
+  };
+
+  // Handle time change
+  const handleTimeChange = (index: number, field: 'start_time' | 'end_time', value: string) => {
+    const updated = [...schedule];
+    updated[index][field] = value;
+    setSchedule(updated);
+    saveSchedulePayload(updated);
+  };
+
+  // Save schedule payload
+  const saveSchedulePayload = async (scheduleArray: DaySchedule[]) => {
+    try {
+      const schedulePayload = scheduleArray.map(day => ({
+        day_of_week: day.value,
+        start_time: day.start_time,
+        end_time: day.end_time,
+        is_available: day.is_available
+      }));
+
+      const response = await AxiosInstance.post('/rider-schedule/update_schedule/',
+        { schedule: schedulePayload },
+        { headers: { 'X-User-Id': userId } }
+      );
+
+      if (response.data.success) {
+        await fetchAllData(false);
+      }
+    } catch (error: any) {
+      console.error('Error saving schedule:', error);
+      Alert.alert('Error', 'Failed to update schedule');
     }
   };
 
-  const style = getStyle();
+  // Handle save schedule
+  const handleSave = async () => {
+    await saveSchedulePayload(schedule);
+  };
 
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-      {surge && (
-        <View style={styles.surgeBadge}>
-          <Feather name="zap" size={9} color="#FFFFFF" />
-          <Text style={styles.surgeText}>{surge}x</Text>
-        </View>
-      )}
-      <View style={[styles.badge, { backgroundColor: style.bg }]}>
-        <Text style={[styles.badgeText, { color: style.text }]}>{style.label}</Text>
-      </View>
-    </View>
-  );
-};
+  // Handle updating availability status
+  const handleUpdateAvailability = async () => {
+    try {
+      setIsLoading(true);
+      
+      const response = await AxiosInstance.post('/rider-schedule/update_availability/', 
+        availabilityForm,
+        { headers: { 'X-User-Id': userId } }
+      );
 
-export default function SchedulePage() {
-  const { userRole } = useAuth();
-  const [selectedDate, setSelectedDate] = useState('2025-01-29');
+      if (response.data.success) {
+        await fetchAllData(false);
+        setShowAvailabilityModal(false);
+        Alert.alert('Success', 'Availability updated successfully');
+      }
+    } catch (error: any) {
+      console.error('Error updating availability:', error);
+      Alert.alert('Error', 'Failed to update availability');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  if (userRole && userRole !== 'rider') {
+  // Handle saving a specific day's schedule
+  const handleSaveDaySchedule = async () => {
+    try {
+      setIsLoading(true);
+      
+      if (scheduleForm.value === undefined) return;
+      
+      const updatedSchedule = [...schedule];
+      const index = updatedSchedule.findIndex(d => d.value === scheduleForm.value);
+      
+      if (index !== -1) {
+        updatedSchedule[index] = {
+          ...updatedSchedule[index],
+          start_time: scheduleForm.start_time || '09:00',
+          end_time: scheduleForm.end_time || '17:00',
+          is_available: scheduleForm.is_available || false
+        };
+        setSchedule(updatedSchedule);
+      }
+      
+      const schedulePayload = updatedSchedule.map(day => ({
+        day_of_week: day.value,
+        start_time: day.start_time,
+        end_time: day.end_time,
+        is_available: day.is_available
+      }));
+      
+      const response = await AxiosInstance.post('/rider-schedule/update_schedule/', 
+        { schedule: schedulePayload },
+        { headers: { 'X-User-Id': userId } }
+      );
+
+      if (response.data.success) {
+        await fetchAllData(false);
+        setShowScheduleModal(false);
+        setEditingDay(null);
+        setScheduleForm({
+          value: 0,
+          label: 'Monday',
+          start_time: '09:00',
+          end_time: '17:00',
+          is_available: true
+        });
+        Alert.alert('Success', 'Schedule updated successfully');
+      }
+    } catch (error: any) {
+      console.error('Error saving schedule:', error);
+      Alert.alert('Error', 'Failed to save schedule');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle editing a day
+  const handleEditDay = (day: DaySchedule) => {
+    setEditingDay(day);
+    setScheduleForm({
+      value: day.value,
+      label: day.label,
+      start_time: day.start_time,
+      end_time: day.end_time,
+      is_available: day.is_available
+    });
+    setShowScheduleModal(true);
+  };
+
+  // Handle deleting a day
+  const handleDeleteDay = async (dayOfWeek: number) => {
+    Alert.alert('Reset Schedule', 'Reset this day to default schedule?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset',
+        onPress: async () => {
+          try {
+            setIsLoading(true);
+            
+            const updatedSchedule = [...schedule];
+            const index = updatedSchedule.findIndex(d => d.value === dayOfWeek);
+            
+            if (index !== -1) {
+              updatedSchedule[index] = {
+                ...updatedSchedule[index],
+                start_time: '09:00',
+                end_time: '17:00',
+                is_available: dayOfWeek < 5
+              };
+              setSchedule(updatedSchedule);
+            }
+            
+            const schedulePayload = updatedSchedule.map(day => ({
+              day_of_week: day.value,
+              start_time: day.start_time,
+              end_time: day.end_time,
+              is_available: day.is_available
+            }));
+            
+            await AxiosInstance.post('/rider-schedule/update_schedule/', 
+              { schedule: schedulePayload },
+              { headers: { 'X-User-Id': userId } }
+            );
+            
+            await fetchAllData(false);
+            Alert.alert('Success', 'Schedule reset to default');
+          } catch (error) {
+            console.error('Error resetting schedule:', error);
+            Alert.alert('Error', 'Failed to reset schedule');
+          } finally {
+            setIsLoading(false);
+          }
+        }
+      }
+    ]);
+  };
+
+  // Handle online toggle
+  const handleOnlineToggle = async (checked: boolean) => {
+    setOnline(checked);
+    
+    try {
+      const newStatus = checked ? 'available' : 'offline';
+      await AxiosInstance.post('/rider-schedule/update_availability/', 
+        {
+          availability_status: newStatus,
+          is_accepting_deliveries: checked
+        },
+        { headers: { 'X-User-Id': userId } }
+      );
+      
+      await fetchAllData(false);
+      Alert.alert('Success', `You are now ${checked ? 'online' : 'offline'}`);
+    } catch (error) {
+      console.error('Error updating online status:', error);
+      setOnline(!checked);
+      Alert.alert('Error', 'Failed to update online status');
+    }
+  };
+
+  // Format time string
+  const formatTime = (timeString: string) => {
+    try {
+      const [hours, minutes] = timeString.split(':');
+      const h = parseInt(hours);
+      const m = parseInt(minutes);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const displayHours = h % 12 || 12;
+      return `${displayHours}:${String(m).padStart(2, '0')} ${ampm}`;
+    } catch {
+      return timeString;
+    }
+  };
+
+  // Get status badge colors
+  const getStatusColors = (status: string) => {
+    switch (status) {
+      case 'available':
+        return { bg: '#D1FAE5', text: '#065F46' };
+      case 'offline':
+        return { bg: '#E5E7EB', text: '#374151' };
+      case 'busy':
+        return { bg: '#FEF3C7', text: '#92400E' };
+      case 'break':
+        return { bg: '#DBEAFE', text: '#0C4A6E' };
+      case 'unavailable':
+        return { bg: '#FEE2E2', text: '#7F1D1D' };
+      default:
+        return { bg: '#E5E7EB', text: '#6B7280' };
+    }
+  };
+
+  // If loading, show loader
+  if (isLoading) {
     return (
       <SafeAreaView style={styles.center}>
-        <MaterialCommunityIcons name="shield-alert-outline" size={48} color={COLORS.muted} />
-        <Text style={styles.messageTitle}>Access Restricted</Text>
-        <Text style={styles.messageSub}>Only verified riders can access the schedule.</Text>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={styles.messageTitle}>Loading schedule...</Text>
       </SafeAreaView>
     );
   }
 
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const dates = useMemo(() => {
-    const arr = [];
-    const today = new Date('2025-01-29'); 
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
-      arr.push({
-        full: d.toISOString().split('T')[0],
-        day: d.toLocaleDateString('en-US', { weekday: 'short' }),
-        date: d.getDate(),
-      });
-    }
-    return arr;
-  }, []);
+  if (userRole && userRole !== "rider") {
+    return (
+      <SafeAreaView style={styles.center}>
+        <MaterialCommunityIcons
+          name="shield-alert-outline"
+          size={48}
+          color={COLORS.muted}
+        />
+        <Text style={styles.messageTitle}>Access Restricted</Text>
+        <Text style={styles.messageSub}>
+          Only verified riders can access the schedule.
+        </Text>
+      </SafeAreaView>
+    );
+  }
 
-  const currentShifts = SHIFT_DATA[selectedDate] || [];
-
-  const handleBooking = (id: string) => {
-    Alert.alert("Confirm Booking", "Do you want to grab this shift?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Book Shift", onPress: () => console.log(`Booked shift ${id}`) }
+  // Handle Cancel Shift
+  const handleCancelShift = (id: string) => {
+    Alert.alert("Cancel Shift", "Are you sure you want to cancel this shift?", [
+      { text: "No", style: "cancel" },
+      { text: "Yes", onPress: () => handleDeleteDay(parseInt(id)) },
     ]);
+  };
+
+  // Handle Edit Shift
+  const handleEditShift = (dayValue: number) => {
+    const day = schedule.find(d => d.value === dayValue);
+    if (day) {
+      handleEditDay(day);
+    }
+  };
+
+  // Get status badge style
+  const getStatusBadgeStyle = (status: string) => {
+    switch (status) {
+      case "scheduled":
+        return {
+          bg: COLORS.lightGray,
+          text: COLORS.primary,
+          label: "Scheduled",
+        };
+      case "completed":
+        return {
+          bg: COLORS.lightGray,
+          text: COLORS.secondary,
+          label: "Completed",
+        };
+      case "off":
+        return { bg: COLORS.lightGray, text: COLORS.muted, label: "Off" };
+      default:
+        return { bg: COLORS.lightGray, text: COLORS.muted, label: "N/A" };
+    }
+  };
+
+  // Render Day Schedule Card
+  const renderDaySchedule = ({ item }: { item: DaySchedule }) => {
+    const badgeStyle = getStatusBadgeStyle(item.is_available ? "scheduled" : "off");
+
+    return (
+      <TouchableOpacity 
+        style={styles.dayCard}
+        onPress={() => handleEditDay(item)}
+      >
+        <Text style={styles.dayName}>{item.label.substring(0, 3)}</Text>
+
+        {item.is_available ? (
+          <View style={styles.dayTimeContainer}>
+            <Text style={styles.dayTime}>{formatTime(item.start_time)}</Text>
+            <Text style={styles.dayTimeSeparator}>-</Text>
+            <Text style={styles.dayTime}>{formatTime(item.end_time)}</Text>
+          </View>
+        ) : (
+          <Text style={styles.dayOff}>Off</Text>
+        )}
+
+        <View style={[styles.dayBadge, { backgroundColor: badgeStyle.bg }]}>
+          <Text style={[styles.dayBadgeText, { color: badgeStyle.text }]}>
+            {item.is_available ? 'Available' : 'Off'}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.cardBg} />
-      
-      {/* --- Header & Action Icons --- */}
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+
+      {/* Header with Online Toggle */}
       <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.greeting}>My Schedule</Text>
-            <Text style={styles.subHeader}>Plan your week ahead</Text>
-          </View>
-          
-          <View style={styles.headerActions}>
-            <TouchableOpacity 
-              style={styles.iconBtn} 
-              onPress={() => router.push("/rider/notification")}
-            >
-              <Feather name="bell" size={22} color={COLORS.secondary} />
-              <View style={styles.notifBadge} />
-            </TouchableOpacity>
-
-            {/* FIXED ROUTE HERE: Points to /rider/settings */}
-            <TouchableOpacity 
-              style={styles.iconBtn} 
-              onPress={() => router.push('/rider/settings')} 
-            >
-              <Feather name="settings" size={22} color={COLORS.secondary} />
-            </TouchableOpacity>
-          </View>
+        <View>
+          <Text style={styles.headerTitle}>My Schedule</Text>
+          <Text style={styles.headerSubtitle}>Manage your availability</Text>
         </View>
-
-        {/* Bento Stats */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, { backgroundColor: COLORS.primary }]}>
-            <View style={styles.statIconBgWhite}>
-              <Feather name="clock" size={16} color={COLORS.primary} />
-            </View>
-            <View>
-              <Text style={styles.statLabelLight}>Booked Hours</Text>
-              <Text style={styles.statValueLight}>12.5 hrs</Text>
-            </View>
+        <View style={styles.statusContainer}>
+          <View
+            style={[
+              styles.statusBadge,
+              { backgroundColor: online ? '#D1FAE5' : '#F3F4F6' }
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBadgeText,
+                { color: online ? '#065F46' : COLORS.muted }
+              ]}
+            >
+              {online ? 'Online' : 'Offline'}
+            </Text>
           </View>
-          
-          <View style={[styles.statCard, { backgroundColor: '#F3F4F6' }]}>
-             <View style={[styles.statIconBg, { backgroundColor: '#E5E7EB' }]}>
-              <MaterialCommunityIcons name="currency-php" size={18} color={COLORS.secondary} />
-            </View>
-            <View>
-              <Text style={styles.statLabel}>Est. Earnings</Text>
-              <Text style={styles.statValue}>₱1,450.00</Text>
-            </View>
-          </View>
+          <Switch
+            value={online}
+            onValueChange={handleOnlineToggle}
+            trackColor={{ false: '#D1D5DB', true: '#86EFAC' }}
+            thumbColor={online ? '#22C55E' : '#9CA3AF'}
+          />
         </View>
       </View>
 
-      {/* --- Date Strip --- */}
-      <View style={styles.dateStripContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateStrip}>
-          {dates.map((item) => {
-            const isSelected = selectedDate === item.full;
-            return (
-              <TouchableOpacity
-                key={item.full}
-                style={[styles.dateItem, isSelected && styles.dateItemActive]}
-                onPress={() => setSelectedDate(item.full)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.dayText, isSelected && styles.dayTextActive]}>{item.day}</Text>
-                <Text style={[styles.dateText, isSelected && styles.dateTextActive]}>{item.date}</Text>
-                {isSelected && <View style={styles.activeDot} />}
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {/* --- Shift List --- */}
-      <FlatList
-        data={currentShifts}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Feather name="calendar" size={40} color="#D1D5DB" />
-            <Text style={styles.emptyText}>No shifts available for this day.</Text>
-          </View>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => fetchAllData(true)}
+            tintColor={COLORS.primary}
+          />
         }
-        renderItem={({ item }) => (
-          <View style={[styles.card, item.status === 'completed' && styles.cardDimmed]}>
-            <View style={styles.cardHeader}>
-              <StatusBadge status={item.status} surge={item.surge} />
-              <Text style={styles.earningsText}>{item.estEarnings}</Text>
-            </View>
-
-            <View style={styles.cardBody}>
-              <Text style={styles.timeText}>{item.timeRange}</Text>
-              <View style={styles.zoneRow}>
-                <Feather name="map-pin" size={14} color={COLORS.muted} />
-                <Text style={styles.zoneText}>{item.zone}</Text>
+      >
+        {/* Metrics Cards */}
+        {scheduleMetrics && (
+          <View style={styles.metricsContainer}>
+            <View style={styles.metricCard}>
+              <View style={styles.metricIcon}>
+                <Feather name="calendar" size={20} color={COLORS.primary} />
               </View>
+              <Text style={styles.metricLabel}>Today Deliveries</Text>
+              <Text style={styles.metricValue}>
+                {scheduleMetrics.today_deliveries || 0}
+              </Text>
             </View>
 
-            <View style={styles.cardFooter}>
-              {item.status === 'available' && (
-                <TouchableOpacity style={styles.actionBtnPrimary} onPress={() => handleBooking(item.id)}>
-                  <Text style={styles.actionBtnTextPrimary}>Book Shift</Text>
-                </TouchableOpacity>
-              )}
-              {item.status === 'booked' && (
-                <TouchableOpacity style={styles.actionBtnSecondary}>
-                  <Text style={styles.actionBtnTextSecondary}>Cancel Booking</Text>
-                </TouchableOpacity>
-              )}
-               {item.status === 'completed' && (
-                <View style={styles.completedRow}>
-                  <Feather name="check-circle" size={16} color={COLORS.primary} />
-                  <Text style={styles.completedText}>Shift Complete</Text>
-                </View>
-              )}
-              {item.status === 'full' && (
-                <View style={styles.completedRow}>
-                   <Feather name="lock" size={16} color={COLORS.muted} />
-                   <Text style={styles.lockedText}>Waitlist Only</Text>
-                </View>
-              )}
+            <View style={styles.metricCard}>
+              <View style={styles.metricIcon}>
+                <Feather name="star" size={20} color={COLORS.primary} />
+              </View>
+              <Text style={styles.metricLabel}>Rating</Text>
+              <Text style={styles.metricValue}>
+                {scheduleMetrics.average_rating || 0}
+              </Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <View style={styles.metricIcon}>
+                <Feather name="trending-up" size={20} color={COLORS.primary} />
+              </View>
+              <Text style={styles.metricLabel}>Availability</Text>
+              <Text style={styles.metricValue}>
+                {scheduleMetrics.availability_percentage || 0}%
+              </Text>
             </View>
           </View>
         )}
-      />
+
+        {/* Working Hours Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Working Hours</Text>
+            <TouchableOpacity
+              style={styles.editAllBtn}
+              onPress={() => Alert.alert('Info', 'Tap a day to edit or toggle availability')}
+            >
+              <Feather name="info" size={16} color={COLORS.muted} />
+            </TouchableOpacity>
+          </View>
+
+          <FlatList
+            data={schedule}
+            renderItem={renderDaySchedule}
+            keyExtractor={(item) => item.value.toString()}
+            scrollEnabled={false}
+            contentContainerStyle={styles.scheduleList}
+          />
+        </View>
+
+        {/* Availability Status Section */}
+        <TouchableOpacity
+          style={styles.availabilityCard}
+          onPress={() => setShowAvailabilityModal(true)}
+        >
+          <View style={styles.availabilityHeader}>
+            <View>
+              <Text style={styles.availabilityLabel}>Current Status</Text>
+              <Text style={styles.availabilityValue}>
+                {availabilityForm.availability_status.charAt(0).toUpperCase() +
+                  availabilityForm.availability_status.slice(1)}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.statusIndicator,
+                {
+                  backgroundColor: getStatusColors(
+                    availabilityForm.availability_status
+                  ).bg
+                }
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusIndicatorText,
+                  {
+                    color: getStatusColors(
+                      availabilityForm.availability_status
+                    ).text
+                  }
+                ]}
+              >
+                {availabilityForm.availability_status === 'available'
+                  ? '✓'
+                  : '○'}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.availabilityDesc}>
+            Accepting deliveries:{' '}
+            {availabilityForm.is_accepting_deliveries ? 'Yes' : 'No'}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      {/* Availability Modal */}
+      <Modal
+        visible={showAvailabilityModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAvailabilityModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Update Availability Status</Text>
+              <TouchableOpacity onPress={() => setShowAvailabilityModal(false)}>
+                <Feather name="x" size={24} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <Text style={styles.formLabel}>Status</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={availabilityForm.availability_status}
+                  onValueChange={(value) =>
+                    setAvailabilityForm({
+                      ...availabilityForm,
+                      availability_status: value as any
+                    })
+                  }
+                  mode="dropdown"
+                >
+                  <Picker.Item label="Available" value="available" />
+                  <Picker.Item label="Busy" value="busy" />
+                  <Picker.Item label="On Break" value="break" />
+                  <Picker.Item label="Unavailable" value="unavailable" />
+                  <Picker.Item label="Offline" value="offline" />
+                </Picker>
+              </View>
+
+              <View style={styles.switchContainer}>
+                <Text style={styles.formLabel}>Accept new deliveries</Text>
+                <Switch
+                  value={availabilityForm.is_accepting_deliveries}
+                  onValueChange={(value) =>
+                    setAvailabilityForm({
+                      ...availabilityForm,
+                      is_accepting_deliveries: value
+                    })
+                  }
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnSecondary]}
+                onPress={() => setShowAvailabilityModal(false)}
+                disabled={isLoading}
+              >
+                <Text style={styles.btnSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnPrimary]}
+                onPress={handleUpdateAvailability}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.btnPrimaryText}>Update Status</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Schedule Edit Modal */}
+      <Modal
+        visible={showScheduleModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowScheduleModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {editingDay ? 'Edit Schedule' : 'Add Schedule'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowScheduleModal(false)}>
+                <Feather name="x" size={24} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <Text style={styles.formLabel}>Day</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={scheduleForm.value?.toString()}
+                  onValueChange={(value) => {
+                    const dayNum = parseInt(value);
+                    const days = [
+                      'Monday',
+                      'Tuesday',
+                      'Wednesday',
+                      'Thursday',
+                      'Friday',
+                      'Saturday',
+                      'Sunday'
+                    ];
+                    setScheduleForm({
+                      ...scheduleForm,
+                      value: dayNum,
+                      label: days[dayNum]
+                    });
+                  }}
+                  enabled={!editingDay}
+                >
+                  {[
+                    'Monday',
+                    'Tuesday',
+                    'Wednesday',
+                    'Thursday',
+                    'Friday',
+                    'Saturday',
+                    'Sunday'
+                  ].map((day, index) => (
+                    <Picker.Item
+                      key={index}
+                      label={day}
+                      value={index.toString()}
+                    />
+                  ))}
+                </Picker>
+              </View>
+
+              <Text style={styles.formLabel}>Start Time</Text>
+              <TextInput
+                style={styles.timeInput}
+                placeholder="09:00"
+                value={scheduleForm.start_time}
+                onChangeText={(text) =>
+                  setScheduleForm({ ...scheduleForm, start_time: text })
+                }
+              />
+
+              <Text style={styles.formLabel}>End Time</Text>
+              <TextInput
+                style={styles.timeInput}
+                placeholder="17:00"
+                value={scheduleForm.end_time}
+                onChangeText={(text) =>
+                  setScheduleForm({ ...scheduleForm, end_time: text })
+                }
+              />
+
+              <View style={styles.switchContainer}>
+                <Text style={styles.formLabel}>
+                  Available for deliveries
+                </Text>
+                <Switch
+                  value={scheduleForm.is_available}
+                  onValueChange={(value) =>
+                    setScheduleForm({ ...scheduleForm, is_available: value })
+                  }
+                />
+              </View>
+
+              {editingDay && (
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnDanger]}
+                  onPress={() => {
+                    if (editingDay.value !== undefined) {
+                      handleDeleteDay(editingDay.value);
+                      setShowScheduleModal(false);
+                    }
+                  }}
+                >
+                  <Feather name="trash-2" size={16} color="#fff" />
+                  <Text style={styles.btnDangerText}>Reset to Default</Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnSecondary]}
+                onPress={() => {
+                  setShowScheduleModal(false);
+                  setEditingDay(null);
+                  setScheduleForm({
+                    value: 0,
+                    label: 'Monday',
+                    start_time: '09:00',
+                    end_time: '17:00',
+                    is_available: true
+                  });
+                }}
+                disabled={isLoading}
+              >
+                <Text style={styles.btnSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnPrimary]}
+                onPress={handleSaveDaySchedule}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.btnPrimaryText}>Save Schedule</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 },
-  messageTitle: { fontSize: 15, fontWeight: '700', color: COLORS.secondary, marginTop: 10 },
-  messageSub: { fontSize: 12, color: COLORS.muted, textAlign: 'center', marginTop: 4 },
-  
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  messageTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.secondary,
+    marginTop: 12,
+  },
+  messageSub: {
+    fontSize: 12,
+    color: COLORS.muted,
+    textAlign: "center",
+    marginTop: 4,
+  },
+  scrollContent: {
+    paddingBottom: 20,
+  },
+
   // Header
-  header: { padding: 12, paddingHorizontal: 16, backgroundColor: COLORS.cardBg, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  greeting: { fontSize: 18, fontWeight: '700', color: COLORS.secondary },
-  subHeader: { fontSize: 11, color: COLORS.muted },
-  
-  // New Header Actions
-  headerActions: { flexDirection: 'row', gap: 6 },
-  iconBtn: { 
-    padding: 6, 
-    backgroundColor: '#F3F4F6', 
-    borderRadius: 8,
-    position: 'relative' 
+  header: {
+    padding: 14,
+    backgroundColor: COLORS.cardBg,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  notifBadge: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#6B7280',
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: COLORS.muted,
+    marginTop: 2,
+  },
+  statusContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+
+  // Metrics
+  metricsContainer: {
+    marginHorizontal: 12,
+    marginBottom: 16,
+    flexDirection: "row",
+    gap: 8,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 10,
+    padding: 12,
     borderWidth: 1,
-    borderColor: '#FFFFFF',
+    borderColor: COLORS.border,
+    alignItems: "center",
+  },
+  metricIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.lightGray,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  metricLabel: {
+    fontSize: 10,
+    color: COLORS.muted,
+    marginBottom: 4,
+  },
+  metricValue: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.primary,
   },
 
-  // Stats
-  statsRow: { flexDirection: 'row', gap: 6 },
-  statCard: { flex: 1, borderRadius: 8, padding: 8, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statIconBg: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
-  statIconBgWhite: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
-  statLabel: { fontSize: 9, color: COLORS.muted, fontWeight: '500' },
-  statValue: { fontSize: 13, fontWeight: '700', color: COLORS.secondary },
-  statLabelLight: { fontSize: 9, color: 'rgba(255,255,255,0.9)', fontWeight: '500' },
-  statValueLight: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  // Section
+  section: {
+    marginHorizontal: 12,
+    marginBottom: 16,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  editAllBtn: {
+    padding: 6,
+  },
 
-  // Date Strip
-  dateStripContainer: { backgroundColor: COLORS.cardBg, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  dateStrip: { paddingHorizontal: 16, gap: 6 },
-  dateItem: { width: 44, height: 54, borderRadius: 8, backgroundColor: '#F9FAFB', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#F3F4F6' },
-  dateItemActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  dayText: { fontSize: 9, color: COLORS.muted, marginBottom: 1 },
-  dayTextActive: { color: 'rgba(255,255,255,0.9)' },
-  dateText: { fontSize: 14, fontWeight: '700', color: COLORS.secondary },
-  dateTextActive: { color: '#FFFFFF' },
-  activeDot: { width: 2, height: 2, borderRadius: 1, backgroundColor: '#FFFFFF', position: 'absolute', bottom: 3 },
+  // Schedule List
+  scheduleList: {
+    gap: 8,
+  },
+  dayCard: {
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  dayName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.primary,
+    minWidth: 50,
+  },
+  dayTimeContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    flex: 1,
+    justifyContent: "center",
+  },
+  dayTime: {
+    fontSize: 12,
+    color: COLORS.secondary,
+    fontWeight: "500",
+  },
+  dayTimeSeparator: {
+    fontSize: 12,
+    color: COLORS.muted,
+  },
+  dayOff: {
+    fontSize: 12,
+    color: COLORS.muted,
+    fontWeight: "500",
+  },
+  dayBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  dayBadgeText: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
 
-  // List
-  listContent: { padding: 12, paddingBottom: 24 },
-  emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 32 },
-  emptyText: { marginTop: 10, fontSize: 13, color: '#9CA3AF' },
+  // Availability Card
+  availabilityCard: {
+    marginHorizontal: 12,
+    marginBottom: 20,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  availabilityHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  availabilityLabel: {
+    fontSize: 11,
+    color: COLORS.muted,
+    marginBottom: 4,
+  },
+  availabilityValue: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  statusIndicator: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  statusIndicatorText: {
+    fontSize: 24,
+    fontWeight: "700",
+  },
+  availabilityDesc: {
+    fontSize: 12,
+    color: COLORS.muted,
+  },
 
-  // Cards
-  card: { backgroundColor: COLORS.cardBg, borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#F3F4F6' },
-  cardDimmed: { opacity: 0.6 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  earningsText: { fontSize: 13, fontWeight: '700', color: COLORS.secondary },
-  badge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
-  badgeText: { fontSize: 9, fontWeight: '600' },
-  surgeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#6B7280', paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4, gap: 2 },
-  surgeText: { color: '#FFFFFF', fontSize: 8, fontWeight: '700' },
-  cardBody: { marginBottom: 10 },
-  timeText: { fontSize: 13, fontWeight: '700', color: COLORS.secondary, marginBottom: 1 },
-  zoneRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  zoneText: { fontSize: 11, color: COLORS.muted },
-  cardFooter: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 8 },
-  actionBtnPrimary: { backgroundColor: COLORS.primary, paddingVertical: 6, borderRadius: 6, alignItems: 'center' },
-  actionBtnTextPrimary: { color: '#FFFFFF', fontWeight: '600', fontSize: 12 },
-  actionBtnSecondary: { backgroundColor: '#F3F4F6', paddingVertical: 6, borderRadius: 6, alignItems: 'center' },
-  actionBtnTextSecondary: { color: '#000000', fontWeight: '600', fontSize: 12 },
-  completedRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingTop: 1 },
-  completedText: { color: '#9CA3AF', fontSize: 11, fontWeight: '600' },
-  lockedText: { color: COLORS.muted, fontSize: 11, fontWeight: '500' },
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    backgroundColor: COLORS.bg,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "85%",
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  modalBody: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+
+  // Form
+  formLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.primary,
+    marginBottom: 8,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    marginBottom: 16,
+    overflow: "hidden",
+    backgroundColor: COLORS.lightGray,
+  },
+  timeInput: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: COLORS.primary,
+    marginBottom: 14,
+    backgroundColor: COLORS.lightGray,
+  },
+  switchContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+
+  // Buttons
+  modalFooter: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  btn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+  },
+  btnPrimary: {
+    backgroundColor: COLORS.primary,
+  },
+  btnPrimaryText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  btnSecondary: {
+    backgroundColor: COLORS.lightGray,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  btnSecondaryText: {
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  btnDanger: {
+    backgroundColor: "#EF4444",
+    marginTop: 8,
+  },
+  btnDangerText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+  },
 });
