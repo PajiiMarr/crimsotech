@@ -150,7 +150,7 @@ class VariantsSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'product', 'shop', 'title', 'option_title', 'option_created_at',
             'option_ids', 'option_map', 'sku_code', 'price', 'compare_price',
-            'quantity', 'length', 'width', 'height', 'weight', 'weight_unit',
+            'quantity', 'weight', 'weight_unit',  # Removed length, width, height
             'critical_trigger', 'is_active', 'is_refundable', 'refund_days',
             'allow_swap', 'swap_type', 'minimum_additional_payment',
             'maximum_additional_payment', 'swap_description', 'image', 'image_url',
@@ -170,7 +170,7 @@ class VariantsSerializer(serializers.ModelSerializer):
         # This method can be customized if you have a relationship for accepted categories
         # For now, returning None or you can implement based on your model structure
         return None
-
+    
 class IssuesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Issues
