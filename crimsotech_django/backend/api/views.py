@@ -5110,7 +5110,7 @@ class AdminShops(viewsets.ViewSet):
                 'error': f'Error executing action: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            
+
 class AdminBoosting(viewsets.ViewSet):
     """
     ViewSet for admin boost management and analytics
@@ -14622,37 +14622,23 @@ class SellerDashboard(viewsets.ViewSet):
         if previous_period_order_count > 0:
             orders_change = ((current_period_order_count - previous_period_order_count) / previous_period_order_count) * 100
         
-        # Low stock products count
-        low_stock_count = Product.objects.filter(
-            shop=shop,
-            upload_status='published',
-            is_removed=False
-        ).annotate(
-            # Check both product quantity and variant quantities
-            total_quantity=Case(
-                When(variants__isnull=True, then=F('quantity')),
-                default=F('variants__quantity'),
-                output_field=IntegerField()
-            ),
-            critical_level=Case(
-                When(variants__isnull=True, then=F('critical_stock')),
-                default=F('variants__critical_trigger'),
-                output_field=IntegerField()
-            )
+        # FIXED: Low stock products count - Using Variants model instead of Product fields
+        low_stock_count = Variants.objects.filter(
+            product__shop=shop,
+            product__upload_status='published',
+            product__is_removed=False,
+            is_active=True,
+            quantity__gt=0,  # Only include items with stock > 0
+            quantity__lte=F('critical_trigger')  # quantity <= critical_trigger
         ).filter(
-            Q(total_quantity__lte=F('critical_level')) & 
-            Q(critical_level__isnull=False) &
-            Q(total_quantity__gt=0)
-        ).distinct().count()
+            critical_trigger__isnull=False  # critical_trigger must be set
+        ).count()
         
-        # Previous period low stock for comparison
-        previous_low_stock_count = Product.objects.filter(
-            shop=shop,
-            upload_status='published',
-            is_removed=False
-        ).count()  # Simplified - in reality you'd need historical data
+        # Previous period low stock - Since we don't have historical data, use same logic
+        # In a real app, you'd track this over time
+        previous_low_stock_count = low_stock_count
         
-        low_stock_change = 0
+        low_stock_change = low_stock_count - previous_low_stock_count
         
         # Refund requests count
         refund_requests = Refund.objects.filter(
@@ -14716,57 +14702,32 @@ class SellerDashboard(viewsets.ViewSet):
         ]
     
     def _get_low_stock_data(self, shop, limit=5):
-        """Get low stock products with variant information"""
-        # Get products with low stock
-        low_stock_products = Product.objects.filter(
-            shop=shop,
-            upload_status='published',
-            is_removed=False
-        ).annotate(
-            total_quantity=Case(
-                When(variants__isnull=True, then=F('quantity')),
-                default=F('variants__quantity'),
-                output_field=IntegerField()
-            ),
-            critical_level=Case(
-                When(variants__isnull=True, then=F('critical_stock')),
-                default=F('variants__critical_trigger'),
-                output_field=IntegerField()
-            )
+        """Get low stock variants"""
+        # FIXED: Query variants directly instead of products
+        low_stock_variants = Variants.objects.filter(
+            product__shop=shop,
+            product__upload_status='published',
+            product__is_removed=False,
+            is_active=True,
+            quantity__gt=0,
+            quantity__lte=F('critical_trigger')
         ).filter(
-            Q(total_quantity__lte=F('critical_level')) & 
-            Q(critical_level__isnull=False) &
-            Q(total_quantity__gt=0)
-        ).prefetch_related('variants')[:limit]
+            critical_trigger__isnull=False
+        ).select_related('product').order_by('quantity')[:limit]
         
         low_stock_items = []
-        for product in low_stock_products:
-            # Get the lowest stock variant or use product data
-            if product.variants.exists():
-                for variant in product.variants.all():
-                    if variant.quantity <= (variant.critical_trigger or 0) and variant.quantity > 0:
-                        low_stock_items.append({
-                            'id': str(variant.id),
-                            'product_id': str(product.id),
-                            'product_name': product.name,
-                            'quantity': variant.quantity,
-                            'critical_stock': variant.critical_trigger,
-                            'sku_code': variant.sku_code,
-                        })
-                        break
-            else:
-                # Product without variants
-                if product.quantity <= (product.critical_stock or 0) and product.quantity > 0:
-                    low_stock_items.append({
-                        'id': str(product.id),
-                        'product_id': str(product.id),
-                        'product_name': product.name,
-                        'quantity': product.quantity,
-                        'critical_stock': product.critical_stock,
-                        'sku_code': None,
-                    })
+        for variant in low_stock_variants:
+            low_stock_items.append({
+                'id': str(variant.id),
+                'product_id': str(variant.product.id),
+                'product_name': variant.product.name,
+                'quantity': variant.quantity,
+                'critical_stock': variant.critical_trigger,
+                'sku_code': variant.sku_code,
+                'variant_title': variant.title,
+            })
         
-        return low_stock_items[:limit]
+        return low_stock_items
     
     def _get_refund_data(self, shop, start_date, end_date, limit=3):
         """Get refund and dispute data"""
@@ -14912,7 +14873,10 @@ class SellerDashboard(viewsets.ViewSet):
         elif diff.seconds > 60:
             minutes = diff.seconds // 60
             return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+        else:
+            return "just now"
 
+            
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
