@@ -184,7 +184,10 @@ const STATUS_CONFIG = {
 
 // Helper function to map backend status to frontend status
 const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
-  switch(backendStatus.toLowerCase()) {
+  // Normalize input to avoid mismatches from casing or stray whitespace
+  const normalized = (backendStatus || '').toString().trim().toLowerCase();
+
+  switch (normalized) {
     case 'pending':
       return 'pending';
     case 'processing':
@@ -378,12 +381,14 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
 
       // Shipped tab:
       // Includes shipping flows and pickup completion/picked states
+      const rawOrderStatus = (item.order?.status || '').toString().trim().toLowerCase();
       if (
         status === 'to_ship' ||
         status === 'to_receive' ||
         status === 'delivered' ||
         status === 'picked_up' ||
-        status === 'completed'
+        status === 'completed' ||
+        rawOrderStatus === 'delivered'
       ) {
         counts.shipped++;
       }
@@ -431,13 +436,18 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
           });
           break;
         case 'shipped':
-          filtered = filtered.filter(item => 
-            item.status === 'to_ship' || 
-            item.status === 'to_receive' ||
-            item.status === 'delivered' ||
-            item.status === 'picked_up' ||
-            item.status === 'completed'
-          );
+          filtered = filtered.filter(item => {
+            const rawOrderStatus = (item.order?.status || '').toString().trim().toLowerCase();
+
+            return (
+              item.status === 'to_ship' ||
+              item.status === 'to_receive' ||
+              item.status === 'delivered' ||
+              item.status === 'picked_up' ||
+              item.status === 'completed' ||
+              rawOrderStatus === 'delivered'
+            );
+          });
           break;
         case 'rate':
           // Show completed items that can be rated (keep this as a separate view for ratings)
