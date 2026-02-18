@@ -3959,7 +3959,7 @@ class AdminShops(viewsets.ViewSet):
         """Parse date string in multiple formats"""
         if not date_str:
             return None
-            
+
         try:
             # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
             if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
@@ -4020,7 +4020,7 @@ class AdminShops(viewsets.ViewSet):
         
         return start_date, end_date
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='get_metrics')
     def get_metrics(self, request):
         """
         Get comprehensive shop metrics for admin dashboard with date range support
@@ -4117,7 +4117,7 @@ class AdminShops(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='get_shops_list')
     def get_shops_list(self, request):
         """
         Get list of all shops with computed metrics with optional date range filtering
@@ -4169,14 +4169,20 @@ class AdminShops(viewsets.ViewSet):
             )
             products_map = {str(pd['shop']): pd['products_count'] for pd in products_data}
             
-            # Compute favorites count per shop
-            favorites_data = Product.objects.filter(
+            # FIX: Compute favorites count per shop by counting Favorites entries
+            # Get all product IDs for these shops
+            product_ids = Product.objects.filter(
                 shop__in=shop_ids,
                 upload_status='published'
-            ).values('shop').annotate(
-                total_favorites=Sum('favorites_count')
+            ).values_list('id', flat=True)
+            
+            # Count favorites per product and group by shop
+            favorites_data = Favorites.objects.filter(
+                product__in=product_ids
+            ).values('product__shop').annotate(
+                total_favorites=Count('id')
             )
-            favorites_map = {str(fd['shop']): fd['total_favorites'] or 0 for fd in favorites_data}
+            favorites_map = {str(fd['product__shop']): fd['total_favorites'] for fd in favorites_data}
             
             # Compute ratings
             ratings_data = Review.objects.filter(
@@ -4294,7 +4300,7 @@ class AdminShops(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='get_shop_details')
     def get_shop_details(self, request, pk=None):
         """
         Get detailed information for a specific shop
@@ -4302,7 +4308,7 @@ class AdminShops(viewsets.ViewSet):
         try:
             shop = Shop.objects.select_related('customer__customer').get(pk=pk)
             
-            # Get owner info
+            # Get owner info - handle case when customer is None
             customer = shop.customer
             owner_info = None
             if customer and customer.customer:
@@ -4317,15 +4323,31 @@ class AdminShops(viewsets.ViewSet):
                     'product_limit': customer.product_limit,
                     'current_product_count': customer.current_product_count
                 }
+            else:
+                # Provide default values when no customer exists
+                owner_info = {
+                    'id': None,
+                    'username': 'No Owner',
+                    'email': '',
+                    'first_name': '',
+                    'last_name': '',
+                    'contact_number': '',
+                    'product_limit': 0,
+                    'current_product_count': 0
+                }
             
             # Get followers count
             followers_count = ShopFollow.objects.filter(shop=shop).count()
             
-            # Get favorites count across all products
-            favorites_count = Product.objects.filter(
+            # Calculate favorites count properly
+            shop_products = Product.objects.filter(
                 shop=shop,
                 upload_status='published'
-            ).aggregate(total=Sum('favorites_count'))['total'] or 0
+            ).values_list('id', flat=True)
+            
+            favorites_count = Favorites.objects.filter(
+                product__in=shop_products
+            ).count()
             
             # Get active reports count
             active_reports = Report.objects.filter(
@@ -4333,15 +4355,17 @@ class AdminShops(viewsets.ViewSet):
                 status__in=['pending', 'under_review']
             ).count()
             
-            # Get product categories
+            # Get product categories - distinct categories from shop's products
+            # Using both category and category_admin to get all categories
             categories = Category.objects.filter(
-                products__shop=shop
+                Q(products__shop=shop) |  # Shop owner categories
+                Q(admin_products__shop=shop)  # Global admin categories used by shop
             ).distinct().values('id', 'name')
             
             shop_data = {
                 'id': str(shop.id),
                 'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
-                'customer': owner_info,
+                'customer': owner_info,  # Always returns an object, never None
                 'description': shop.description,
                 'name': shop.name,
                 'province': shop.province,
@@ -4379,57 +4403,278 @@ class AdminShops(viewsets.ViewSet):
                 'success': False,
                 'error': f'Error retrieving shop details: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    @action(detail=True, methods=['get'])
+
+            
+    @action(detail=True, methods=['get'], url_path='get_products')
     def get_products(self, request, pk=None):
         """
-        Get products for a specific shop
+        Get products for a specific shop with detailed information matching AdminProduct pattern
+        Properly handles category_admin (global) and category (shop owner) fields
+        Displays price as price range since products have multiple variants
         """
         try:
             shop = Shop.objects.get(pk=pk)
             
-            # Optional category filter
-            category_id = request.GET.get('category')
+            # Get query parameters
+            search = request.GET.get('search', '')
+            category = request.GET.get('category', 'all')
+            start_date = request.GET.get('start_date')
+            end_date = request.GET.get('end_date')
             
-            products_qs = Product.objects.filter(
-                shop=shop,
-                upload_status='published'
-            ).select_related('category')
+            # Start with base query - include all products regardless of upload_status for admin view
+            products = Product.objects.filter(
+                shop=shop
+            ).order_by('-created_at').select_related(
+                'shop', 
+                'category',      # Shop owner's category
+                'category_admin' # Global admin category
+            )
             
-            if category_id:
-                products_qs = products_qs.filter(category_id=category_id)
+            # Apply date range filter if provided
+            start_datetime = None
+            end_datetime = None
             
-            products_data = []
-            for product in products_qs:
-                # Get variants info
-                variants = product.variants.filter(is_active=True)
-                min_price = variants.aggregate(Min('price'))['price__min']
-                total_stock = variants.aggregate(Sum('quantity'))['quantity__sum'] or 0
+            if start_date and end_date:
+                try:
+                    start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+                    
+                    end_date_obj_with_time = datetime.combine(end_date_obj, time.max)
+                    
+                    tz = timezone.get_current_timezone()
+                    start_datetime = timezone.make_aware(datetime.combine(start_date_obj, time.min), tz)
+                    end_datetime = timezone.make_aware(end_date_obj_with_time, tz)
+                    
+                    products = products.filter(
+                        created_at__gte=start_datetime,
+                        created_at__lte=end_datetime
+                    )
+                    
+                except ValueError as e:
+                    print(f"Date parsing error: {str(e)}")
+            
+            # Apply search filter
+            if search:
+                products = products.filter(
+                    Q(name__icontains=search) | 
+                    Q(description__icontains=search)
+                )
+            
+            # Apply category filter - check both category and category_admin
+            if category != 'all':
+                products = products.filter(
+                    Q(category__name=category) | 
+                    Q(category_admin__name=category)
+                )
+            
+            # Get all products
+            all_products = list(products)
+            total_count = len(all_products)
+            
+            # Get product IDs for related data queries
+            product_ids = [product.id for product in all_products]
+            
+            # Compute engagement data from CustomerActivity
+            engagement_filters = {}
+            if start_datetime and end_datetime:
+                engagement_filters = {
+                    'created_at__gte': start_datetime,
+                    'created_at__lte': end_datetime
+                }
+            
+            engagement_data = CustomerActivity.objects.filter(
+                product__in=product_ids,
+                **engagement_filters
+            ).values('product', 'activity_type').annotate(
+                count=Count('activity_type')
+            )
+            
+            engagement_map = {}
+            for engagement in engagement_data:
+                product_id = engagement['product']
+                activity_type = engagement['activity_type']
+                count = engagement['count']
                 
-                products_data.append({
-                    'id': str(product.id),
+                if product_id not in engagement_map:
+                    engagement_map[product_id] = {'views': 0, 'purchases': 0, 'favorites': 0}
+                
+                if activity_type == 'view':
+                    engagement_map[product_id]['views'] = count
+                elif activity_type == 'purchase':
+                    engagement_map[product_id]['purchases'] = count
+                elif activity_type == 'favorite':
+                    engagement_map[product_id]['favorites'] = count
+            
+            # Compute variants data - get price range and total quantity
+            variants_data = Variants.objects.filter(
+                product__in=product_ids,
+                is_active=True
+            ).values('product').annotate(
+                variants_count=Count('id'),
+                min_price=Min('price'),
+                max_price=Max('price'),
+                total_quantity=Sum('quantity')
+            )
+            
+            variants_map = {}
+            for vd in variants_data:
+                variants_map[vd['product']] = {
+                    'variants_count': vd['variants_count'],
+                    'min_price': vd['min_price'],
+                    'max_price': vd['max_price'],
+                    'total_quantity': vd['total_quantity'] or 0
+                }
+            
+            # Compute issues count
+            issues_data = Issues.objects.filter(
+                product__in=product_ids
+            ).values('product').annotate(
+                issues_count=Count('id')
+            )
+            
+            issues_map = {id['product']: id['issues_count'] for id in issues_data}
+            
+            # Compute boost plan
+            boost_data = Boost.objects.filter(
+                product__in=product_ids,
+                status='active'
+            ).select_related('boost_plan')
+            
+            boost_map = {}
+            for boost in boost_data:
+                if boost.boost_plan and boost.product_id:
+                    boost_map[boost.product_id] = boost.boost_plan.name
+            
+            # Get reviews for rating calculation
+            review_data = Review.objects.filter(
+                product__in=product_ids
+            ).values('product').annotate(
+                avg_rating=Avg('rating')
+            )
+            
+            rating_map = {rd['product']: rd['avg_rating'] or 0.0 for rd in review_data}
+            
+            # Serialize with computed fields
+            products_data = []
+            for product in all_products:
+                product_id = product.id
+                
+                # Get computed engagement data
+                engagement = engagement_map.get(product_id, {'views': 0, 'purchases': 0, 'favorites': 0})
+                
+                # Get rating
+                product_rating = rating_map.get(product_id, 0.0)
+                
+                # Get variants data
+                variant_info = variants_map.get(product_id, {
+                    'variants_count': 0,
+                    'min_price': None,
+                    'max_price': None,
+                    'total_quantity': 0
+                })
+                
+                # Get issues count
+                issues_count = issues_map.get(product_id, 0)
+                
+                # Get boost plan
+                boost_plan = boost_map.get(product_id, 'None')
+                
+                # Determine low stock based on variants
+                low_stock = variant_info['total_quantity'] < 5 if variant_info['total_quantity'] else True
+                
+                # Get category name - category_admin (global) takes precedence over category (shop owner)
+                category_name = 'Uncategorized'
+                category_type = 'none'
+                category_id = None
+                
+                if product.category_admin:
+                    category_name = product.category_admin.name
+                    category_type = 'global'
+                    category_id = str(product.category_admin.id)
+                elif product.category:
+                    category_name = product.category.name
+                    category_type = 'shop'
+                    category_id = str(product.category.id)
+                
+                # Format price display as price range (since products have multiple variants)
+                min_price = variant_info['min_price']
+                max_price = variant_info['max_price']
+                
+                price_display = "No price"
+                price_range = {
+                    'min': None,
+                    'max': None
+                }
+                
+                if min_price and max_price:
+                    price_range = {
+                        'min': float(min_price),
+                        'max': float(max_price)
+                    }
+                    if min_price == max_price:
+                        price_display = f"₱{min_price:,.2f}"
+                    else:
+                        price_display = f"₱{min_price:,.2f} - ₱{max_price:,.2f}"
+                elif min_price:
+                    price_range = {
+                        'min': float(min_price),
+                        'max': float(min_price)
+                    }
+                    price_display = f"₱{min_price:,.2f}"
+                
+                # Build product data matching AdminProduct pattern with enhanced category and price information
+                product_data = {
+                    'id': str(product_id),
                     'name': product.name,
                     'description': product.description,
-                    'quantity': total_stock,
-                    'price': float(min_price) if min_price else 0,
-                    'status': 'Available' if total_stock > 10 else 'Low Stock' if total_stock > 0 else 'Out of Stock',
-                    'condition': product.condition,
-                    'upload_status': product.upload_status,
-                    'created_at': product.created_at.isoformat() if product.created_at else None,
                     'category': {
-                        'id': str(product.category.id) if product.category else None,
-                        'name': product.category.name if product.category else None
-                    } if product.category else None,
-                    'active_report_count': product.active_report_count,
-                    'favorites_count': product.favorites_count
-                })
+                        'id': category_id,
+                        'name': category_name,
+                        'type': category_type  # 'global' for admin categories, 'shop' for shop owner categories
+                    },
+                    'shop': {
+                        'id': str(product.shop.id) if product.shop else None,
+                        'name': product.shop.name if product.shop else 'No Shop'
+                    },
+                    'price': {
+                        'display': price_display,
+                        'min': price_range['min'],
+                        'max': price_range['max']
+                    },
+                    'quantity': variant_info['total_quantity'],
+                    'condition': product.condition,
+                    'status': product.status,
+                    'upload_status': product.upload_status,
+                    'views': engagement['views'],
+                    'purchases': engagement['purchases'],
+                    'favorites': engagement['favorites'],
+                    'rating': round(product_rating, 1),
+                    'boostPlan': boost_plan,
+                    'variants_count': variant_info['variants_count'],
+                    'issues_count': issues_count,
+                    'lowStock': low_stock,
+                    'is_refundable': product.is_refundable,
+                    'refund_days': product.refund_days,
+                    'is_removed': product.is_removed,
+                    'removal_reason': product.removal_reason,
+                    'created_at': product.created_at.isoformat() if product.created_at else None,
+                    'updated_at': product.updated_at.isoformat() if product.updated_at else None
+                }
+                products_data.append(product_data)
             
-            return Response({
+            response_data = {
                 'success': True,
                 'products': products_data,
-                'total_count': len(products_data),
-                'message': 'Products retrieved successfully'
-            }, status=status.HTTP_200_OK)
+                'total_count': total_count,
+                'date_range': {
+                    'start_date': start_date,
+                    'end_date': end_date
+                } if start_date and end_date else None,
+                'message': f'{total_count} products retrieved successfully',
+                'data_source': 'database'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
             
         except Shop.DoesNotExist:
             return Response({
@@ -4437,34 +4682,68 @@ class AdminShops(viewsets.ViewSet):
                 'error': 'Shop not found'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            print(f"Error retrieving products: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': f'Error retrieving products: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    @action(detail=True, methods=['get'])
+        
+    @action(detail=True, methods=['get'], url_path='get_categories')
     def get_categories(self, request, pk=None):
         """
         Get categories for a specific shop based on its products
+        Includes both global categories (category_admin) and shop owner categories (category)
         """
         try:
             shop = Shop.objects.get(pk=pk)
             
-            categories = Category.objects.filter(
-                products__shop=shop
-            ).distinct().annotate(
-                product_count=Count('products')
-            ).order_by('name')
+            # Get distinct categories from shop's products - including both category and category_admin
+            # Using Union or combined approach to get unique categories
+            from django.db.models import Value, CharField
             
-            categories_data = [{
-                'id': str(cat.id),
-                'name': cat.name,
-                'product_count': cat.product_count
-            } for cat in categories]
+            # Get shop owner categories
+            shop_categories = Category.objects.filter(
+                products__shop=shop
+            ).annotate(
+                category_type=Value('shop', output_field=CharField())
+            ).values('id', 'name', 'category_type').distinct()
+            
+            # Get global admin categories used by shop
+            global_categories = Category.objects.filter(
+                admin_products__shop=shop
+            ).annotate(
+                category_type=Value('global', output_field=CharField())
+            ).values('id', 'name', 'category_type').distinct()
+            
+            # Combine and remove duplicates by name (case-insensitive)
+            combined = list(shop_categories) + list(global_categories)
+            
+            # Use a dictionary to deduplicate by name (case-insensitive)
+            unique_categories = {}
+            for cat in combined:
+                key = cat['name'].lower()
+                if key not in unique_categories:
+                    # Get product count for this category in this shop
+                    product_count = Product.objects.filter(
+                        shop=shop
+                    ).filter(
+                        Q(category_id=cat['id']) | Q(category_admin_id=cat['id'])
+                    ).count()
+                    
+                    cat['product_count'] = product_count
+                    unique_categories[key] = cat
+            
+            categories_data = list(unique_categories.values())
+            
+            # Sort by name
+            categories_data.sort(key=lambda x: x['name'])
             
             return Response({
                 'success': True,
                 'categories': categories_data,
+                'total_count': len(categories_data),
                 'message': 'Categories retrieved successfully'
             }, status=status.HTTP_200_OK)
             
@@ -4474,12 +4753,13 @@ class AdminShops(viewsets.ViewSet):
                 'error': 'Shop not found'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            print(f"Error retrieving categories: {str(e)}")
             return Response({
                 'success': False,
                 'error': f'Error retrieving categories: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='get_reviews')
     def get_reviews(self, request, pk=None):
         """
         Get reviews for a specific shop
@@ -4540,7 +4820,7 @@ class AdminShops(viewsets.ViewSet):
                 'error': f'Error retrieving reviews: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='get_vouchers')
     def get_vouchers(self, request, pk=None):
         """
         Get vouchers for a specific shop
@@ -4579,7 +4859,7 @@ class AdminShops(viewsets.ViewSet):
                 'error': f'Error retrieving vouchers: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='get_boosts')
     def get_boosts(self, request, pk=None):
         """
         Get active boosts for a specific shop
@@ -4629,7 +4909,7 @@ class AdminShops(viewsets.ViewSet):
                 'error': f'Error retrieving boosts: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='get_reports')
     def get_reports(self, request, pk=None):
         """
         Get reports for a specific shop
@@ -4680,7 +4960,7 @@ class AdminShops(viewsets.ViewSet):
                 'error': f'Error retrieving reports: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], url_path='execute_action')
     def execute_action(self, request, pk=None):
         """
         Execute admin actions on a shop (suspend, unsuspend, verify, unverify, delete)
@@ -4829,7 +5109,8 @@ class AdminShops(viewsets.ViewSet):
                 'success': False,
                 'error': f'Error executing action: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
+            
 class AdminBoosting(viewsets.ViewSet):
     """
     ViewSet for admin boost management and analytics

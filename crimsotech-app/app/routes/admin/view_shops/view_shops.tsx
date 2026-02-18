@@ -2,6 +2,7 @@ import type { Route } from "./+types/view_shops"
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider'
 import { useState, useEffect } from 'react'
+import AxiosInstance from '~/components/axios/Axios'
 
 // shadcn imports
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '~/components/ui/card'
@@ -83,32 +84,18 @@ export function meta(): Route.MetaDescriptors {
     ]
 }
 
-interface LoaderData {
-    user: any;
-    shopId: string;
+// Updated interfaces to match API response from AdminShops
+interface Customer {
+    id: string;
+    username: string | null;
+    email: string | null;
+    first_name: string;
+    last_name: string;
+    contact_number: string;
+    product_limit: number;
+    current_product_count: number;
 }
 
-export async function loader({ request, context, params }: Route.LoaderArgs): Promise<LoaderData> {
-    const { registrationMiddleware } = await import("~/middleware/registration.server")
-    await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any)
-    const { requireRole } = await import("~/middleware/role-require.server")
-    const { fetchUserRole } = await import("~/middleware/role.server")
-
-    let user = (context as any).user
-    if (!user) {
-        user = await fetchUserRole({ request, context })
-    }
-
-    await requireRole(request, context, ["isAdmin"])
-
-    // Extract shop ID from URL params
-    const url = new URL(request.url)
-    const shopId = url.pathname.split('/').pop() || ''
-
-    return { user, shopId }
-}
-
-// Interface definitions matching Django models
 interface Shop {
     id: string;
     shop_picture: string | null;
@@ -131,46 +118,58 @@ interface Shop {
     active_report_count: number;
     favorites_count: number;
     followers_count: number;
+    categories?: Category[]; // Added from shop details response
 }
 
-interface Customer {
-    customer: User;
-    product_limit: number;
-    current_product_count: number;
-}
-
-interface User {
-    id: string;
-    username: string | null;
-    email: string | null;
-    first_name: string;
-    last_name: string;
-    contact_number: string;
-}
-
+// Updated Product interface to match the enhanced API response with price range and category object
 interface Product {
     id: string;
     name: string;
     description: string;
     quantity: number;
-    price: number;
-    status: string;
+    price: {
+        display: string;
+        min: number | null;
+        max: number | null;
+    };
     condition: string;
+    status: string;
     upload_status: string;
     created_at: string;
-    category: Category | null;
-    active_report_count: number;
-    favorites_count: number;
+    updated_at: string | null;
+    category: {
+        id: string | null;
+        name: string;
+        type: 'global' | 'shop' | 'none';
+    };
+    shop: {
+        id: string | null;
+        name: string;
+    };
+    views: number;
+    purchases: number;
+    favorites: number;
+    rating: number;
+    boostPlan: string;
+    variants_count: number;
+    issues_count: number;
+    lowStock: boolean;
+    is_refundable: boolean | null;
+    refund_days: number;
+    is_removed: boolean;
+    removal_reason: string | null;
 }
 
 interface Category {
     id: string;
     name: string;
+    category_type?: 'global' | 'shop';
+    product_count?: number;
 }
 
 interface Review {
     id: string;
-    customer: Customer;
+    customer: Customer | null;
     rating: number;
     comment: string | null;
     created_at: string;
@@ -188,25 +187,140 @@ interface Voucher {
 
 interface Boost {
     id: string;
-    product: Product;
-    boost_plan: BoostPlan;
+    product: {
+        id: string | null;
+        name: string | null;
+    };
+    boost_plan: {
+        id: string | null;
+        name: string | null;
+        price: number;
+    } | null;
     status: string;
-    start_date: string;
-    end_date: string;
-}
-
-interface BoostPlan {
-    id: string;
-    name: string;
-    price: number;
+    start_date: string | null;
+    end_date: string | null;
 }
 
 interface Report {
     id: string;
+    reporter?: {
+        first_name?: string;
+        last_name?: string;
+    };
     reason: string;
     description: string | null;
     status: string;
     created_at: string;
+}
+
+interface ShopDetailsData {
+    shop: Shop;
+    products: Product[];
+    categories: Category[];
+    reviews: Review[];
+    vouchers: Voucher[];
+    boosts: Boost[];
+    reports: Report[];
+}
+
+interface LoaderData {
+    user: any;
+    shopId: string;
+    shopData: ShopDetailsData | null;
+    error: string | null;
+}
+
+export async function loader({ request, context, params }: Route.LoaderArgs): Promise<LoaderData> {
+    const { registrationMiddleware } = await import("~/middleware/registration.server")
+    await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any)
+    const { requireRole } = await import("~/middleware/role-require.server")
+    const { fetchUserRole } = await import("~/middleware/role.server")
+
+    let user = (context as any).user
+    if (!user) {
+        user = await fetchUserRole({ request, context })
+    }
+
+    await requireRole(request, context, ["isAdmin"])
+
+    // Get shop ID from params
+    const shopId = params.shop_id || ''
+
+    if (!shopId) {
+        return { 
+            user, 
+            shopId: '', 
+            shopData: null, 
+            error: 'Shop ID is required' 
+        };
+    }
+
+    // Validate that shopId is a valid UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(shopId)) {
+        return { 
+            user, 
+            shopId, 
+            shopData: null, 
+            error: 'Invalid shop ID format' 
+        };
+    }
+
+    try {
+        // Fetch all shop data in parallel with the correct API path
+        const [
+            shopResponse,
+            productsResponse,
+            categoriesResponse,
+            reviewsResponse,
+            vouchersResponse,
+            boostsResponse,
+            reportsResponse
+        ] = await Promise.allSettled([
+            AxiosInstance.get(`/admin-shops/${shopId}/get_shop_details/`),
+            AxiosInstance.get(`/admin-shops/${shopId}/get_products/`),
+            AxiosInstance.get(`/admin-shops/${shopId}/get_categories/`),
+            AxiosInstance.get(`/admin-shops/${shopId}/get_reviews/`),
+            AxiosInstance.get(`/admin-shops/${shopId}/get_vouchers/`),
+            AxiosInstance.get(`/admin-shops/${shopId}/get_boosts/`),
+            AxiosInstance.get(`/admin-shops/${shopId}/get_reports/`)
+        ]);
+
+        // Handle shop response
+        if (shopResponse.status === 'rejected') {
+            console.error('Shop fetch failed:', shopResponse.reason);
+            throw new Error('Failed to fetch shop details');
+        }
+
+        // Extract data from responses - note the API returns data wrapped in { success: true, ... }
+        const shopData: ShopDetailsData = {
+            shop: shopResponse.value.data.shop,
+            products: productsResponse.status === 'fulfilled' ? productsResponse.value.data.products || [] : [],
+            categories: categoriesResponse.status === 'fulfilled' 
+                ? [{ id: "all", name: "All Products" }, ...(categoriesResponse.value.data.categories || [])]
+                : [{ id: "all", name: "All Products" }],
+            reviews: reviewsResponse.status === 'fulfilled' ? reviewsResponse.value.data.reviews || [] : [],
+            vouchers: vouchersResponse.status === 'fulfilled' ? vouchersResponse.value.data.vouchers || [] : [],
+            boosts: boostsResponse.status === 'fulfilled' ? boostsResponse.value.data.boosts || [] : [],
+            reports: reportsResponse.status === 'fulfilled' ? reportsResponse.value.data.reports || [] : []
+        };
+
+        return { 
+            user, 
+            shopId, 
+            shopData, 
+            error: null 
+        };
+
+    } catch (error: any) {
+        console.error('Error fetching shop data:', error);
+        return { 
+            user, 
+            shopId, 
+            shopData: null, 
+            error: error.response?.data?.error || error.message || 'Failed to load shop data' 
+        };
+    }
 }
 
 // Action configurations
@@ -258,227 +372,31 @@ const actionConfigs = {
   },
 };
 
-// Placeholder data
-const placeholderShop: Shop = {
-    id: "550e8400-e29b-41d4-a716-446655440000",
-    shop_picture: "https://via.placeholder.com/150",
-    customer: {
-        customer: {
-            id: "550e8400-e29b-41d4-a716-446655440001",
-            username: "john_shopowner",
-            email: "john@example.com",
-            first_name: "John",
-            last_name: "Doe",
-            contact_number: "+639123456789"
-        },
-        product_limit: 50,
-        current_product_count: 28
-    },
-    description: "Premium electronics and gadgets shop with best prices in the city.",
-    name: "Tech Haven",
-    province: "Metro Manila",
-    city: "Quezon City",
-    barangay: "Cubao",
-    street: "Aurora Boulevard",
-    contact_number: "+639123456789",
-    verified: true,
-    status: "Active",
-    total_sales: 125450.75,
-    created_at: "2024-01-15T10:30:00Z",
-    updated_at: "2024-03-20T14:45:00Z",
-    is_suspended: false,
-    suspension_reason: null,
-    suspended_until: null,
-    active_report_count: 2,
-    favorites_count: 345,
-    followers_count: 1289
-}
-
-const placeholderProducts: Product[] = [
-    {
-        id: "550e8400-e29b-41d4-a716-446655440010",
-        name: "Wireless Bluetooth Headphones",
-        description: "Noise cancelling wireless headphones with 30-hour battery",
-        quantity: 45,
-        price: 2999.99,
-        status: "Available",
-        condition: "New",
-        upload_status: "published",
-        created_at: "2024-02-10T09:15:00Z",
-        category: { id: "1", name: "Electronics" },
-        active_report_count: 0,
-        favorites_count: 23
-    },
-    {
-        id: "550e8400-e29b-41d4-a716-446655440011",
-        name: "Smart Watch Series 5",
-        description: "Latest smart watch with health monitoring features",
-        quantity: 25,
-        price: 5999.99,
-        status: "Available",
-        condition: "New",
-        upload_status: "published",
-        created_at: "2024-02-15T14:20:00Z",
-        category: { id: "1", name: "Electronics" },
-        active_report_count: 1,
-        favorites_count: 45
-    },
-    {
-        id: "550e8400-e29b-41d4-a716-446655440012",
-        name: "Laptop Backpack",
-        description: "Waterproof laptop backpack with USB charging port",
-        quantity: 60,
-        price: 1499.99,
-        status: "Available",
-        condition: "New",
-        upload_status: "published",
-        created_at: "2024-01-25T11:30:00Z",
-        category: { id: "2", name: "Accessories" },
-        active_report_count: 0,
-        favorites_count: 12
-    },
-    {
-        id: "550e8400-e29b-41d4-a716-446655440013",
-        name: "iPhone 15 Pro Max",
-        description: "Latest Apple smartphone with dynamic island",
-        quantity: 15,
-        price: 75999.99,
-        status: "Available",
-        condition: "New",
-        upload_status: "published",
-        created_at: "2024-03-01T10:00:00Z",
-        category: { id: "3", name: "Mobile Phones" },
-        active_report_count: 0,
-        favorites_count: 89
-    },
-    {
-        id: "550e8400-e29b-41d4-a716-446655440014",
-        name: "Gaming Laptop RTX 4070",
-        description: "High performance gaming laptop with latest GPU",
-        quantity: 8,
-        price: 89999.99,
-        status: "Low Stock",
-        condition: "New",
-        upload_status: "published",
-        created_at: "2024-02-28T16:45:00Z",
-        category: { id: "4", name: "Computers" },
-        active_report_count: 0,
-        favorites_count: 34
-    }
-]
-
-const placeholderCategories: Category[] = [
-    { id: "all", name: "All Products" },
-    { id: "1", name: "Electronics" },
-    { id: "2", name: "Accessories" },
-    { id: "3", name: "Mobile Phones" },
-    { id: "4", name: "Computers" }
-]
-
-const placeholderReviews: Review[] = [
-    {
-        id: "1",
-        customer: {
-            customer: {
-                id: "1",
-                username: "customer1",
-                email: "cust1@example.com",
-                first_name: "Alice",
-                last_name: "Smith",
-                contact_number: "+639987654321"
-            },
-            product_limit: 10,
-            current_product_count: 3
-        },
-        rating: 5,
-        comment: "Great products and fast shipping!",
-        created_at: "2024-03-15T10:30:00Z"
-    },
-    {
-        id: "2",
-        customer: {
-            customer: {
-                id: "2",
-                username: "customer2",
-                email: "cust2@example.com",
-                first_name: "Bob",
-                last_name: "Johnson",
-                contact_number: "+639876543210"
-            },
-            product_limit: 10,
-            current_product_count: 1
-        },
-        rating: 4,
-        comment: "Good quality but shipping was delayed",
-        created_at: "2024-03-10T14:20:00Z"
-    }
-]
-
-const placeholderVouchers: Voucher[] = [
-    {
-        id: "1",
-        name: "Summer Sale",
-        code: "SUMMER20",
-        discount_type: "percentage",
-        value: 20,
-        valid_until: "2024-08-31",
-        is_active: true
-    },
-    {
-        id: "2",
-        name: "First Purchase",
-        code: "WELCOME10",
-        discount_type: "fixed",
-        value: 100,
-        valid_until: "2024-12-31",
-        is_active: true
-    }
-]
-
-const placeholderBoosts: Boost[] = [
-    {
-        id: "1",
-        product: placeholderProducts[0],
-        boost_plan: { id: "1", name: "Premium Boost", price: 299 },
-        status: "active",
-        start_date: "2024-03-01T00:00:00Z",
-        end_date: "2024-03-31T23:59:59Z"
-    }
-]
-
-const placeholderReports: Report[] = [
-    {
-        id: "1",
-        reason: "inappropriate_content",
-        description: "Product image contains inappropriate content",
-        status: "pending",
-        created_at: "2024-03-18T09:15:00Z"
-    },
-    {
-        id: "2",
-        reason: "misleading",
-        description: "Product description is misleading",
-        status: "resolved",
-        created_at: "2024-02-28T14:30:00Z"
-    }
-]
-
-// Product table columns - Responsive version
+// Product table columns - Responsive version updated for new API response
 const productColumns: ColumnDef<Product>[] = [
     {
         accessorKey: "name",
         header: "Product Name",
         cell: ({ row }) => {
             const product = row.original
+            const lowStock = product.lowStock;
             return (
                 <div className="flex items-center space-x-3">
                     <div className="h-8 w-8 sm:h-10 sm:w-10 rounded bg-gray-200 flex items-center justify-center flex-shrink-0">
                         <Package className="h-4 w-4 sm:h-5 sm:w-5 text-gray-500" />
                     </div>
                     <div className="min-w-0 flex-1">
-                        <div className="font-medium text-sm sm:text-base truncate">{product.name}</div>
+                        <div className="font-medium text-sm sm:text-base truncate flex items-center gap-2">
+                            {product.name}
+                            {lowStock && (
+                                <Badge variant="destructive" className="text-xs px-1 py-0 h-5">
+                                    Low Stock
+                                </Badge>
+                            )}
+                        </div>
                         <div className="text-xs sm:text-sm text-gray-500 truncate">
-                            {product.description}
+                            {product.description?.substring(0, 50)}
+                            {product.description?.length > 50 ? '...' : ''}
                         </div>
                     </div>
                 </div>
@@ -489,11 +407,14 @@ const productColumns: ColumnDef<Product>[] = [
         accessorKey: "category.name",
         header: "Category",
         cell: ({ row }) => {
-            const category = row.getValue("category.name") as string
+            const category = row.original.category
             return (
                 <div className="hidden sm:block">
                     <Badge variant="outline" className="text-xs">
-                        {category}
+                        {category?.name || 'Uncategorized'}
+                        {category?.type === 'global' && (
+                            <span className="ml-1 text-[10px] text-blue-500">(Global)</span>
+                        )}
                     </Badge>
                 </div>
             )
@@ -503,10 +424,10 @@ const productColumns: ColumnDef<Product>[] = [
         accessorKey: "price",
         header: "Price",
         cell: ({ row }) => {
-            const price = parseFloat(row.getValue("price"))
+            const price = row.original.price
             return (
                 <div className="font-medium text-sm sm:text-base">
-                    ₱{price.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                    {price.display}
                 </div>
             )
         }
@@ -515,7 +436,7 @@ const productColumns: ColumnDef<Product>[] = [
         accessorKey: "quantity",
         header: "Stock",
         cell: ({ row }) => {
-            const quantity = row.getValue("quantity") as number
+            const quantity = row.original.quantity
             return (
                 <div className="hidden md:block">
                     {quantity}
@@ -527,34 +448,49 @@ const productColumns: ColumnDef<Product>[] = [
         }
     },
     {
-        accessorKey: "status",
-        header: "Status",
+        accessorKey: "rating",
+        header: "Rating",
         cell: ({ row }) => {
-            const status = row.getValue("status") as string
+            const rating = row.original.rating
             return (
-                <div className="hidden lg:block">
-                    <Badge variant={
-                        status === "Available" ? "default" :
-                        status === "Low Stock" ? "secondary" :
-                        "destructive"
-                    } className="text-xs">
-                        {status}
-                    </Badge>
+                <div className="hidden lg:flex items-center gap-1">
+                    <Star className={`h-3 w-3 ${rating > 0 ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`} />
+                    <span className="text-sm">{rating.toFixed(1)}</span>
                 </div>
             )
         }
     },
     {
-        accessorKey: "favorites_count",
+        accessorKey: "favorites",
         header: "Favorites",
         cell: ({ row }) => {
-            const count = row.getValue("favorites_count") as number
+            const favorites = row.original.favorites
             return (
                 <div className="hidden xl:block">
                     <div className="flex items-center gap-1">
                         <Heart className="h-3 w-3 text-red-500" />
-                        <span className="font-medium">{count}</span>
+                        <span className="font-medium">{favorites}</span>
                     </div>
+                </div>
+            )
+        }
+    },
+    {
+        accessorKey: "upload_status",
+        header: "Status",
+        cell: ({ row }) => {
+            const status = row.original.upload_status
+            const isRemoved = row.original.is_removed
+            return (
+                <div className="hidden xl:block">
+                    <Badge variant={
+                        isRemoved ? "destructive" :
+                        status === "published" ? "default" :
+                        status === "draft" ? "secondary" :
+                        "outline"
+                    } className="text-xs">
+                        {isRemoved ? 'Removed' : status}
+                    </Badge>
                 </div>
             )
         }
@@ -600,13 +536,18 @@ const mobileProductColumns: ColumnDef<Product>[] = [
                     </div>
                     <div>
                         <div className="font-medium text-sm">{product.name}</div>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
                             <Badge variant="outline" className="text-xs">
-                                {product.category?.name}
+                                {product.category?.name || 'Uncategorized'}
                             </Badge>
                             <span className="text-xs font-medium">
-                                ₱{product.price.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                                {product.price.display}
                             </span>
+                            {product.lowStock && (
+                                <Badge variant="destructive" className="text-xs px-1 py-0 h-5">
+                                    Low
+                                </Badge>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -616,14 +557,14 @@ const mobileProductColumns: ColumnDef<Product>[] = [
 ]
 
 export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) {
-    const { user } = loaderData
-    const [shop, setShop] = useState<Shop>(placeholderShop)
-    const [allProducts, setAllProducts] = useState<Product[]>(placeholderProducts)
-    const [categories, setCategories] = useState<Category[]>(placeholderCategories)
-    const [reviews, setReviews] = useState<Review[]>(placeholderReviews)
-    const [vouchers, setVouchers] = useState<Voucher[]>(placeholderVouchers)
-    const [boosts, setBoosts] = useState<Boost[]>(placeholderBoosts)
-    const [reports, setReports] = useState<Report[]>(placeholderReports)
+    const { user, shopData, error } = loaderData
+    const [shop, setShop] = useState<Shop | null>(shopData?.shop || null)
+    const [products, setProducts] = useState<Product[]>(shopData?.products || [])
+    const [categories, setCategories] = useState<Category[]>(shopData?.categories || [])
+    const [reviews, setReviews] = useState<Review[]>(shopData?.reviews || [])
+    const [vouchers, setVouchers] = useState<Voucher[]>(shopData?.vouchers || [])
+    const [boosts, setBoosts] = useState<Boost[]>(shopData?.boosts || [])
+    const [reports, setReports] = useState<Report[]>(shopData?.reports || [])
     const [selectedCategory, setSelectedCategory] = useState<string>("all")
     const [activeAction, setActiveAction] = useState<string | null>(null)
     const [showDialog, setShowDialog] = useState(false)
@@ -632,27 +573,70 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
     const [processing, setProcessing] = useState(false)
     const { toast } = useToast()
 
+    // Show error toast if there was an error loading data
+    useEffect(() => {
+        if (error) {
+            toast({
+                title: "Error",
+                description: error,
+                variant: "destructive",
+            })
+        }
+    }, [error])
+
+    if (error && !shop) {
+        return (
+            <UserProvider user={user}>
+                <div className="container mx-auto p-3 sm:p-4 md:p-6">
+                    <div className="text-center py-12">
+                        <Store className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                        <h2 className="text-xl font-semibold mb-2">Shop Not Found</h2>
+                        <p className="text-muted-foreground mb-4">{error}</p>
+                        <Button asChild>
+                            <a href="/admin/shops">Back to Shops</a>
+                        </Button>
+                    </div>
+                </div>
+            </UserProvider>
+        )
+    }
+
+    if (!shop) {
+        return (
+            <UserProvider user={user}>
+                <div className="container mx-auto p-3 sm:p-4 md:p-6">
+                    <div className="flex items-center justify-center min-h-[400px]">
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                            <p className="text-sm text-muted-foreground">Loading shop details...</p>
+                        </div>
+                    </div>
+                </div>
+            </UserProvider>
+        )
+    }
+
     // Filter products based on selected category
     const filteredProducts = selectedCategory === "all" 
-        ? allProducts 
-        : allProducts.filter(product => product.category?.id === selectedCategory)
+        ? products 
+        : products.filter(product => product.category?.id === selectedCategory)
 
     // Calculate statistics
     const avgRating = reviews.length > 0 
         ? reviews.reduce((acc, review) => acc + review.rating, 0) / reviews.length 
         : 0
     
-    const totalProducts = allProducts.length
+    const totalProducts = products.length
     const totalCategories = categories.length - 1 // exclude "all" category
-    const activeReports = reports.filter(r => r.status === 'pending').length
-    const totalFavorites = allProducts.reduce((sum, product) => sum + product.favorites_count, 0)
+    const activeReports = reports.filter(r => r.status === 'pending' || r.status === 'under_review').length
+    const totalFavorites = products.reduce((sum, product) => sum + product.favorites, 0)
 
     // Calculate category distribution
     const categoryDistribution = categories
         .filter(cat => cat.id !== "all")
         .map(category => ({
             ...category,
-            count: allProducts.filter(p => p.category?.id === category.id).length
+            count: products.filter(p => p.category?.id === category.id).length
         }))
 
     // Get current columns based on screen size
@@ -736,8 +720,11 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
         
         setProcessing(true)
         try {
-            // Simulate API call
-            await new Promise(resolve => setTimeout(resolve, 1000))
+            const response = await AxiosInstance.post(`/admin-shops/${shop.id}/execute_action/`, {
+                action: activeAction,
+                reason: reason,
+                suspension_days: suspensionDays,
+            })
             
             toast({
                 title: "Success",
@@ -745,15 +732,9 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                 variant: "success",
             })
             
-            // Update shop state based on action
-            if (activeAction === 'suspend') {
-                setShop(prev => ({ ...prev, is_suspended: true, status: 'Suspended' }))
-            } else if (activeAction === 'unsuspend') {
-                setShop(prev => ({ ...prev, is_suspended: false, status: 'Active' }))
-            } else if (activeAction === 'verify') {
-                setShop(prev => ({ ...prev, verified: true }))
-            } else if (activeAction === 'unverify') {
-                setShop(prev => ({ ...prev, verified: false }))
+            // Update shop state with returned data
+            if (response.data.shop) {
+                setShop(prev => ({ ...prev, ...response.data.shop }))
             }
             
         } catch (error: any) {
@@ -761,7 +742,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
             
             toast({
                 title: "Error",
-                description: "Failed to complete action. Please try again.",
+                description: error.response?.data?.error || error.message || "Failed to complete action. Please try again.",
                 variant: "destructive",
             })
         } finally {
@@ -805,7 +786,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                 {shop.is_suspended ? "Suspended" : "Active"}
                             </Badge>
                             <span className="text-xs text-muted-foreground">
-                                {shop.followers_count.toLocaleString()} followers
+                                {shop.followers_count?.toLocaleString() || 0} followers
                             </span>
                         </div>
                     </div>
@@ -885,7 +866,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
     return (
         <UserProvider user={user}>
             <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
-                {/* Loading indicator */}
+                {/* Loading indicator for actions */}
                 {processing && (
                     <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
                         <div className="flex flex-col items-center gap-2">
@@ -946,7 +927,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                             <CardContent className="p-4 sm:p-6">
                                 <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
                                     <Avatar className="h-24 w-24 sm:h-28 sm:w-28 md:h-32 md:w-32 mx-auto sm:mx-0">
-                                        <AvatarImage src={shop.shop_picture || undefined} />
+                                        {shop.shop_picture && <AvatarImage src={shop.shop_picture} />}
                                         <AvatarFallback className="text-xl sm:text-2xl">
                                             <Store className="h-8 w-8 sm:h-10 sm:w-10 md:h-12 md:w-12" />
                                         </AvatarFallback>
@@ -1006,13 +987,13 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                             <div className="flex items-center gap-1">
                                                 <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
                                                 <span className="text-xs sm:text-sm text-muted-foreground">
-                                                    {shop.favorites_count.toLocaleString()} favorites
+                                                    {shop.favorites_count?.toLocaleString() || 0} favorites
                                                 </span>
                                             </div>
                                             <div className="flex items-center gap-1">
                                                 <Users className="w-3 h-3 sm:w-4 sm:h-4 text-blue-500" />
                                                 <span className="text-xs sm:text-sm text-muted-foreground">
-                                                    {shop.followers_count.toLocaleString()} followers
+                                                    {shop.followers_count?.toLocaleString() || 0} followers
                                                 </span>
                                             </div>
                                         </div>
@@ -1053,7 +1034,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                                     Total Sales
                                                 </div>
                                                 <p className="font-medium text-sm sm:text-base">
-                                                    ₱{shop.total_sales.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                                                    ₱{shop.total_sales?.toLocaleString('en-PH', { minimumFractionDigits: 2 }) || '0.00'}
                                                 </p>
                                             </div>
                                         </div>
@@ -1080,11 +1061,11 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                             <div className="flex justify-between text-xs text-gray-500 mb-1">
                                                 <span>Product Limit</span>
                                                 <span>
-                                                    {shop.customer.current_product_count}/{shop.customer.product_limit}
+                                                    {shop.customer.current_product_count || 0}/{shop.customer.product_limit || 0}
                                                 </span>
                                             </div>
                                             <Progress 
-                                                value={(shop.customer.current_product_count / shop.customer.product_limit) * 100}
+                                                value={((shop.customer.current_product_count || 0) / (shop.customer.product_limit || 1)) * 100}
                                                 className="h-1 sm:h-2"
                                             />
                                         </div>
@@ -1103,12 +1084,14 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                             <Tag className="h-4 w-4 sm:h-5 sm:w-5 text-green-600" />
                                         </div>
                                     </div>
-                                    <div className="mt-2 sm:mt-3">
-                                        <p className="text-xs text-gray-500 mb-1">Most Popular</p>
-                                        <p className="text-sm font-medium truncate">
-                                            {categoryDistribution.sort((a, b) => b.count - a.count)[0]?.name}
-                                        </p>
-                                    </div>
+                                    {categoryDistribution.length > 0 && (
+                                        <div className="mt-2 sm:mt-3">
+                                            <p className="text-xs text-gray-500 mb-1">Most Popular</p>
+                                            <p className="text-sm font-medium truncate">
+                                                {categoryDistribution.sort((a, b) => b.count - a.count)[0]?.name}
+                                            </p>
+                                        </div>
+                                    )}
                                 </CardContent>
                             </Card>
 
@@ -1123,12 +1106,14 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                             <Heart className="h-4 w-4 sm:h-5 sm:w-5 text-pink-600" />
                                         </div>
                                     </div>
-                                    <div className="mt-2 sm:mt-3">
-                                        <p className="text-xs text-gray-500 mb-1">Avg per Product</p>
-                                        <p className="text-sm font-medium">
-                                            {Math.round(totalFavorites / totalProducts)} favs
-                                        </p>
-                                    </div>
+                                    {totalProducts > 0 && (
+                                        <div className="mt-2 sm:mt-3">
+                                            <p className="text-xs text-gray-500 mb-1">Avg per Product</p>
+                                            <p className="text-sm font-medium">
+                                                {Math.round(totalFavorites / totalProducts)} favs
+                                            </p>
+                                        </div>
+                                    )}
                                 </CardContent>
                             </Card>
 
@@ -1143,7 +1128,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                             <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 text-red-600" />
                                         </div>
                                     </div>
-                                    <p className="text-xs text-gray-500 mt-1 sm:mt-2">{shop.active_report_count} shop reports</p>
+                                    <p className="text-xs text-gray-500 mt-1 sm:mt-2">{shop.active_report_count || 0} shop reports</p>
                                 </CardContent>
                             </Card>
                         </div>
@@ -1164,16 +1149,16 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                     <div className="flex items-center gap-3">
                                         <Avatar className="h-10 w-10 sm:h-12 sm:w-12">
                                             <AvatarFallback>
-                                                {shop.customer.customer.first_name?.[0]}
-                                                {shop.customer.customer.last_name?.[0]}
+                                                {shop.customer.first_name?.[0]}
+                                                {shop.customer.last_name?.[0]}
                                             </AvatarFallback>
                                         </Avatar>
                                         <div className="min-w-0">
                                             <div className="font-medium text-sm sm:text-base">
-                                                {shop.customer.customer.first_name} {shop.customer.customer.last_name}
+                                                {shop.customer.first_name} {shop.customer.last_name}
                                             </div>
                                             <div className="text-xs sm:text-sm text-gray-500">
-                                                @{shop.customer.customer.username}
+                                                @{shop.customer.username}
                                             </div>
                                         </div>
                                     </div>
@@ -1181,18 +1166,20 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                     <div className="space-y-2">
                                         <div className="flex items-center gap-2 text-xs sm:text-sm">
                                             <span className="text-gray-500">Email:</span>
-                                            <span className="font-medium truncate">{shop.customer.customer.email}</span>
+                                            <span className="font-medium truncate">{shop.customer.email}</span>
                                         </div>
                                         <div className="flex items-center gap-2 text-xs sm:text-sm">
                                             <span className="text-gray-500">Contact:</span>
-                                            <span className="font-medium">{shop.customer.customer.contact_number}</span>
+                                            <span className="font-medium">{shop.customer.contact_number}</span>
                                         </div>
                                     </div>
 
                                     <Separator />
 
-                                    <Button variant="outline" size="sm" className="w-full">
-                                        View Full Profile
+                                    <Button variant="outline" size="sm" className="w-full" asChild>
+                                        <a href={`/admin/users/${shop.customer.id}`}>
+                                            View Full Profile
+                                        </a>
                                     </Button>
                                 </CardContent>
                             </Card>
@@ -1224,51 +1211,19 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                         <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Followers</span>
                                         <div className="flex items-center gap-1">
                                             <Users className="w-3 h-3 sm:w-4 sm:h-4 text-blue-500" />
-                                            <span className="font-medium text-base sm:text-lg">{shop.followers_count.toLocaleString()}</span>
+                                            <span className="font-medium text-base sm:text-lg">{shop.followers_count?.toLocaleString() || 0}</span>
                                         </div>
                                     </div>
                                     <div className="flex flex-col items-center justify-center p-3 border rounded-lg bg-muted/50">
                                         <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Total Sales</span>
                                         <div className="flex items-center gap-1">
                                             <DollarSign className="w-3 h-3 sm:w-4 sm:h-4 text-green-500" />
-                                            <span className="font-medium text-sm">₱{Math.round(shop.total_sales / 1000)}k</span>
+                                            <span className="font-medium text-sm">₱{Math.round((shop.total_sales || 0) / 1000)}k</span>
                                         </div>
                                     </div>
                                 </div>
                             </CardContent>
                         </Card>
-
-                        {/* Admin Actions - Desktop only */}
-                        {/* {typeof window !== 'undefined' && window.innerWidth >= 1024 && availableActions.length > 0 && (
-                            <Card>
-                                <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                                    <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                                        <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
-                                        Admin Actions
-                                    </CardTitle>
-                                    <CardDescription className="text-xs sm:text-sm">
-                                        Available actions based on shop status
-                                    </CardDescription>
-                                </CardHeader>
-                                <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
-                                    <div className="flex flex-col gap-2">
-                                        {availableActions.map((action, index) => (
-                                            <Button
-                                                key={index}
-                                                variant={action.variant}
-                                                className="flex items-center justify-start gap-2 text-xs sm:text-sm w-full"
-                                                onClick={() => handleActionClick(action.id)}
-                                                disabled={processing}
-                                                size="sm"
-                                            >
-                                                <action.icon className="w-3 h-3 sm:w-4 sm:h-4" />
-                                                {action.label}
-                                            </Button>
-                                        ))}
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        )} */}
                     </div>
                 </div>
 
@@ -1281,10 +1236,6 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                 {filteredProducts.length} products in this shop
                             </CardDescription>
                         </div>
-                        <Button variant="outline" size="sm" className="hidden sm:flex">
-                            <Package className="h-3 w-3 sm:h-4 sm:w-4 mr-2" />
-                            <span className="text-xs sm:text-sm">Add Product</span>
-                        </Button>
                     </CardHeader>
                     <CardContent className="px-4 py-3 sm:px-6 sm:py-4 pt-0">
                         {/* Category Tabs - Responsive */}
@@ -1301,7 +1252,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                             <span className="truncate max-w-[60px] sm:max-w-none">{category.name}</span>
                                             {category.id !== "all" && (
                                                 <Badge variant="secondary" className="ml-1 text-xs">
-                                                    {allProducts.filter(p => p.category?.id === category.id).length}
+                                                    {products.filter(p => p.category?.id === category.id).length}
                                                 </Badge>
                                             )}
                                         </TabsTrigger>
@@ -1369,7 +1320,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                                 ))}
                                             </div>
                                             <span className="text-xs sm:text-sm font-medium">
-                                                {review.customer.customer.first_name} {review.customer.customer.last_name}
+                                                {review.customer?.first_name} {review.customer?.last_name}
                                             </span>
                                             <span className="text-xs text-muted-foreground">
                                                 {new Date(review.created_at).toLocaleDateString()}
@@ -1441,9 +1392,9 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                                         <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
                                                     </div>
                                                     <div>
-                                                        <div className="font-medium text-sm sm:text-base">{boost.product.name}</div>
+                                                        <div className="font-medium text-sm sm:text-base">{boost.product?.name || 'Unknown Product'}</div>
                                                         <div className="text-xs sm:text-sm text-gray-500">
-                                                            Plan: {boost.boost_plan.name} • ₱{boost.boost_plan.price}
+                                                            Plan: {boost.boost_plan?.name || 'No Plan'} • ₱{boost.boost_plan?.price || 0}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1456,7 +1407,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                                         {boost.status}
                                                     </Badge>
                                                     <div className="text-xs sm:text-sm text-gray-500">
-                                                        Ends: {new Date(boost.end_date).toLocaleDateString()}
+                                                        Ends: {boost.end_date ? new Date(boost.end_date).toLocaleDateString() : 'N/A'}
                                                     </div>
                                                 </div>
                                             </div>
@@ -1493,7 +1444,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                     </div>
                                     <div>
                                         <p className="text-xs sm:text-sm text-muted-foreground">Shop Reports</p>
-                                        <p className="font-medium text-sm sm:text-base">{shop.active_report_count} active</p>
+                                        <p className="font-medium text-sm sm:text-base">{shop.active_report_count || 0} active</p>
                                     </div>
                                 </div>
                                 
@@ -1505,7 +1456,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                                 <div key={report.id} className="border rounded p-2">
                                                     <div className="flex items-center justify-between mb-1">
                                                         <div className="font-medium capitalize text-xs sm:text-sm">
-                                                            {report.reason.replace('_', ' ')}
+                                                            {report.reason.replace(/_/g, ' ')}
                                                         </div>
                                                         <Badge variant={
                                                             report.status === 'pending' ? 'secondary' :
@@ -1528,11 +1479,15 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                 )}
                                 
                                 <div className="flex gap-2 flex-wrap">
-                                    <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                                        View All Reports
+                                    <Button variant="outline" size="sm" className="text-xs sm:text-sm" asChild>
+                                        <a href={`/admin/shops/${shop.id}/reports`}>
+                                            View All Reports
+                                        </a>
                                     </Button>
-                                    <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                                        Moderate Shop
+                                    <Button variant="outline" size="sm" className="text-xs sm:text-sm" asChild>
+                                        <a href={`/admin/shops/${shop.id}/moderate`}>
+                                            Moderate Shop
+                                        </a>
                                     </Button>
                                 </div>
                             </CardContent>
