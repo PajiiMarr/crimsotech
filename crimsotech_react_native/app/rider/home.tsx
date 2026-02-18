@@ -479,7 +479,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: COLORS.muted,
+    backgroundColor: COLORS.danger,
     borderWidth: 1,
     borderColor: "#FFFFFF",
   },
