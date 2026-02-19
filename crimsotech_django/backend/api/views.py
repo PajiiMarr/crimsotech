@@ -16327,15 +16327,20 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user_id = self.request.headers.get('X-User-Id')
         
-        # Start with base queryset - show only published, non-removed products with active variants
+        # Start with base queryset - show only published, non-removed products
         queryset = Product.objects.filter(
             upload_status='published',
-            is_removed=False,
-            variants__is_active=True  # Only products with at least one active variant
+            is_removed=False
         ).annotate(
+            # Get min and max prices from active variants (including those with 0 stock)
             min_variant_price=Min('variants__price', filter=Q(variants__is_active=True)),
             max_variant_price=Max('variants__price', filter=Q(variants__is_active=True)),
-            total_variant_stock=Sum('variants__quantity', filter=Q(variants__is_active=True))
+            # Calculate total stock from active variants
+            total_variant_stock=Sum('variants__quantity', filter=Q(variants__is_active=True)),
+            # Count active variants
+            active_variant_count=Count('variants', filter=Q(variants__is_active=True)),
+            # Count variants with stock > 0
+            in_stock_variant_count=Count('variants', filter=Q(variants__is_active=True, variants__quantity__gt=0))
         ).select_related(
             'shop',
             'shop__customer__customer',
@@ -16349,9 +16354,9 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             ),
             Prefetch(
                 'variants',
-                queryset=Variants.objects.filter(is_active=True)
+                queryset=Variants.objects.filter(is_active=True).order_by('price')
             )
-        ).distinct()  # Add distinct to avoid duplicates from join
+        ).distinct()
 
         if user_id:
             # Exclude user's own products and shops
@@ -16360,9 +16365,17 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 Q(shop__customer__customer__id=user_id)
             )
 
+        # Filter to products that have at least one active variant
+        queryset = queryset.filter(active_variant_count__gt=0)
+        
+        # CRITICAL: Only show products that have total stock > 0
+        # This filters out products where all variants have quantity = 0
+        queryset = queryset.filter(total_variant_stock__gt=0)
+        
         print(f"PublicProducts: Returning {queryset.count()} products for user {user_id}")
         
         return queryset.order_by('-created_at')
+
 
     def get_detail_queryset(self):
         """Detail view with all variants for single product page"""
@@ -16372,7 +16385,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         ).annotate(
             min_variant_price=Min('variants__price', filter=Q(variants__is_active=True)),
             max_variant_price=Max('variants__price', filter=Q(variants__is_active=True)),
-            total_variant_stock=Sum('variants__quantity', filter=Q(variants__is_active=True))
+            total_variant_stock=Sum('variants__quantity', filter=Q(variants__is_active=True)),
+            active_variant_count=Count('variants', filter=Q(variants__is_active=True))
         ).select_related(
             'shop',
             'shop__customer__customer',
@@ -16386,9 +16400,58 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             ),
             Prefetch(
                 'variants',
-                queryset=Variants.objects.filter(is_active=True)
+                queryset=Variants.objects.filter(is_active=True).order_by('price')
             )
         )
+    
+    def _get_ordered_quantities(self, product_ids=None):
+        """
+        Helper method to get ordered quantities for products
+        Returns a dictionary with product_id as keys and ordered quantity as values
+        """
+        from django.db.models import Sum, Q
+        
+        # Get cart items that are in active orders through the Checkout model
+        # We need to go through Checkout to get to Order
+        ordered_cart_items = CartItem.objects.filter(
+            is_ordered=True,
+            checkout__order__status__in=['pending', 'processing']
+        )
+        
+        if product_ids:
+            ordered_cart_items = ordered_cart_items.filter(product_id__in=product_ids)
+        
+        # Group by product and sum quantities
+        product_ordered = {}
+        for item in ordered_cart_items.values('product_id').annotate(total=Sum('quantity')):
+            if item['product_id']:
+                product_ordered[str(item['product_id'])] = item['total']
+        
+        return product_ordered
+    
+    def _get_variant_ordered_quantities(self, variant_ids=None):
+        """
+        Helper method to get ordered quantities for specific variants
+        Returns a dictionary with variant_id as keys and ordered quantity as values
+        """
+        from django.db.models import Sum
+        
+        # Get cart items that are in active orders through the Checkout model
+        ordered_cart_items = CartItem.objects.filter(
+            is_ordered=True,
+            checkout__order__status__in=['pending', 'processing']
+        )
+        
+        if variant_ids:
+            ordered_cart_items = ordered_cart_items.filter(variant_id__in=variant_ids)
+        
+        # Group by variant and sum quantities
+        variant_ordered = {}
+        for item in ordered_cart_items.values('variant_id').annotate(total=Sum('quantity')):
+            if item['variant_id']:
+                variant_ordered[str(item['variant_id'])] = item['total']
+        
+        return variant_ordered
     
     def list(self, request, *args, **kwargs):
         """Return list of products with only basic info and price range"""
@@ -16397,19 +16460,53 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         # Debug logging
         print(f"PublicProducts.list: Found {queryset.count()} products")
         
+        # Get ordered quantities for all products in the queryset
+        product_ids = [str(p.id) for p in queryset]
+        ordered_quantities = self._get_ordered_quantities(product_ids)
+        
         serializer = self.get_serializer(queryset, many=True)
         data = serializer.data
         
-        # Transform data to show variant-based pricing
+        # Transform data to show variant-based pricing and availability
         for item in data:
+            product_id = item.get('id')
+            
+            # Set display price
             if item.get('min_variant_price') and item.get('max_variant_price'):
                 if item['min_variant_price'] == item['max_variant_price']:
                     item['display_price'] = f"₱{item['min_variant_price']}"
                 else:
                     item['display_price'] = f"₱{item['min_variant_price']} - ₱{item['max_variant_price']}"
+            elif item.get('min_variant_price'):
+                item['display_price'] = f"₱{item['min_variant_price']}"
+            else:
+                item['display_price'] = "Price not available"
+            
+            # Calculate available stock (total stock - ordered quantity)
+            total_stock = item.get('total_variant_stock', 0) or 0
+            ordered_quantity = ordered_quantities.get(product_id, 0)
+            available_stock = max(0, total_stock - ordered_quantity)
             
             # Add total available stock from variants
-            item['total_stock'] = item.get('total_variant_stock', 0)
+            item['total_stock'] = total_stock
+            item['available_stock'] = available_stock
+            item['ordered_quantity'] = ordered_quantity
+            
+            # Add availability status based on available stock, not total stock
+            in_stock_variant_count = item.get('in_stock_variant_count', 0)
+            item['has_stock'] = available_stock > 0
+            item['in_stock_variant_count'] = in_stock_variant_count
+            
+            # Add status message
+            if item['has_stock']:
+                item['availability_status'] = 'in_stock'
+                item['availability_message'] = f"{available_stock} items available"
+            elif total_stock > 0 and ordered_quantity >= total_stock:
+                item['availability_status'] = 'sold_out'
+                item['availability_message'] = 'Sold out - All items are in orders'
+            else:
+                item['availability_status'] = 'out_of_stock'
+                item['availability_message'] = 'Out of stock'
             
             # Remove variant details from list view to keep it light
             item.pop('variants', None)
@@ -16427,17 +16524,76 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
         
-        # Ensure variants are properly structured
+        # Process variants
         if 'variants' in data and data['variants']:
-            # Sort variants by price if needed
+            # Sort variants by price
             data['variants'] = sorted(data['variants'], key=lambda x: float(x.get('price', 0) or 0))
             
-            # Add variant count
+            # Get variant IDs
+            variant_ids = [v.get('id') for v in data['variants'] if v.get('id')]
+            
+            # Get ordered quantities for these variants
+            ordered_quantities = self._get_variant_ordered_quantities(variant_ids)
+            
+            # Add variant count and stock info with available quantities
             data['variant_count'] = len(data['variants'])
             
-            # Set default selected variant as the first one (lowest price)
-            if data['variants']:
+            # Calculate available stock for each variant and overall
+            total_available_stock = 0
+            in_stock_variants = []
+            
+            for variant in data['variants']:
+                variant_id = variant.get('id')
+                total_qty = variant.get('quantity', 0) or 0
+                ordered_qty = ordered_quantities.get(variant_id, 0)
+                available_qty = max(0, total_qty - ordered_qty)
+                
+                variant['total_quantity'] = total_qty
+                variant['ordered_quantity'] = ordered_qty
+                variant['available_quantity'] = available_qty
+                variant['in_stock'] = available_qty > 0
+                
+                if available_qty > 0:
+                    in_stock_variants.append(variant)
+                    total_available_stock += available_qty
+                
+                # Mark out of stock variants based on available quantity
+                if available_qty <= 0:
+                    variant['out_of_stock'] = True
+                    variant['stock_status'] = 'out_of_stock'
+                else:
+                    variant['out_of_stock'] = False
+                    variant['stock_status'] = 'in_stock'
+                    variant['stock_quantity'] = available_qty
+            
+            data['in_stock_variant_count'] = len(in_stock_variants)
+            data['has_stock'] = len(in_stock_variants) > 0
+            data['total_stock'] = sum(v.get('quantity', 0) for v in data['variants'])
+            data['total_available_stock'] = total_available_stock
+            data['total_ordered_stock'] = data['total_stock'] - total_available_stock
+            
+            # Set default selected variant as first in-stock variant based on available stock
+            if in_stock_variants:
+                data['default_variant'] = in_stock_variants[0]
+            elif data['variants']:
                 data['default_variant'] = data['variants'][0]
+                data['default_variant']['out_of_stock'] = True
+        else:
+            data['variant_count'] = 0
+            data['has_stock'] = False
+            data['total_stock'] = 0
+            data['total_available_stock'] = 0
+        
+        # Add availability message based on available stock
+        if data.get('total_available_stock', 0) > 0:
+            data['availability_status'] = 'in_stock'
+            data['availability_message'] = f"{data['total_available_stock']} items available"
+        elif data.get('total_stock', 0) > 0:
+            data['availability_status'] = 'sold_out'
+            data['availability_message'] = 'Sold out - All items are in orders'
+        else:
+            data['availability_status'] = 'out_of_stock'
+            data['availability_message'] = 'Out of stock'
         
         # Convert media URLs to public format
         if data.get('primary_image'):
@@ -16484,6 +16640,16 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 break
         
         if matching_variant:
+            # Calculate available quantity through Checkout model
+            ordered_qty = CartItem.objects.filter(
+                variant=matching_variant,
+                is_ordered=True,
+                checkout__order__status__in=['pending', 'processing']
+            ).aggregate(total=Sum('quantity'))['total'] or 0
+            
+            total_qty = matching_variant.quantity or 0
+            available_qty = max(0, total_qty - ordered_qty)
+            
             # Build response with variant details
             image_url = None
             if matching_variant.image:
@@ -16496,7 +16662,12 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'sku_code': matching_variant.sku_code,
                 'price': float(matching_variant.price) if matching_variant.price else None,
                 'compare_price': float(matching_variant.compare_price) if matching_variant.compare_price else None,
-                'quantity': matching_variant.quantity,
+                'total_quantity': total_qty,
+                'ordered_quantity': ordered_qty,
+                'available_quantity': available_qty,
+                'quantity': matching_variant.quantity,  # Keep for backward compatibility
+                'in_stock': available_qty > 0,
+                'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
                 'image': image_url,
                 'weight': float(matching_variant.weight) if matching_variant.weight else None,
                 'weight_unit': matching_variant.weight_unit,
@@ -16537,7 +16708,24 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         for variant in all_variants:
             variant_option_ids = [str(oid) for oid in (variant.option_ids or [])]
             if sorted(variant_option_ids) == sorted(option_ids):
-                return Response({"variant_id": str(variant.id)})
+                # Calculate available quantity through Checkout model
+                ordered_qty = CartItem.objects.filter(
+                    variant=variant,
+                    is_ordered=True,
+                    checkout__order__status__in=['pending', 'processing']
+                ).aggregate(total=Sum('quantity'))['total'] or 0
+                
+                total_qty = variant.quantity or 0
+                available_qty = max(0, total_qty - ordered_qty)
+                
+                return Response({
+                    "variant_id": str(variant.id),
+                    "in_stock": available_qty > 0,
+                    "total_quantity": total_qty,
+                    "ordered_quantity": ordered_qty,
+                    "available_quantity": available_qty,
+                    "quantity": variant.quantity  # Keep for backward compatibility
+                })
 
         return Response({"variant_id": None, "message": "No matching variant found"}, status=404)
 
@@ -16549,22 +16737,38 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         except Product.DoesNotExist:
             return Response({"error": "Product not found"}, status=404)
         
-        variants = product.variants.filter(is_active=True)
+        variants = product.variants.filter(is_active=True).order_by('price')
+        
+        # Get variant IDs
+        variant_ids = [str(v.id) for v in variants]
+        
+        # Get ordered quantities for these variants
+        ordered_quantities = self._get_variant_ordered_quantities(variant_ids)
         
         variant_data = []
         for variant in variants:
+            variant_id = str(variant.id)
+            total_qty = variant.quantity or 0
+            ordered_qty = ordered_quantities.get(variant_id, 0)
+            available_qty = max(0, total_qty - ordered_qty)
+            
             image_url = None
             if variant.image:
                 image_url = request.build_absolute_uri(variant.image.url)
                 image_url = convert_s3_to_public_url(image_url)
             
             variant_data.append({
-                'id': str(variant.id),
+                'id': variant_id,
                 'title': variant.title,
                 'sku_code': variant.sku_code,
                 'price': float(variant.price) if variant.price else None,
                 'compare_price': float(variant.compare_price) if variant.compare_price else None,
-                'quantity': variant.quantity,
+                'total_quantity': total_qty,
+                'ordered_quantity': ordered_qty,
+                'available_quantity': available_qty,
+                'quantity': variant.quantity,  # Keep for backward compatibility
+                'in_stock': available_qty > 0,
+                'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
                 'image': image_url,
                 'option_ids': variant.option_ids,
                 'option_map': variant.option_map,
@@ -16585,174 +16789,216 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         except Product.DoesNotExist:
             return Response({"error": "Product not found"}, status=404)
         
-        has_stock = product.variants.filter(is_active=True, quantity__gt=0).exists()
-        total_variants = product.variants.filter(is_active=True).count()
-        total_stock = product.variants.filter(is_active=True).aggregate(Sum('quantity'))['quantity__sum'] or 0
+        active_variants = product.variants.filter(is_active=True)
+        
+        # Calculate total stock and ordered quantities through Checkout model
+        total_stock = active_variants.aggregate(Sum('quantity'))['quantity__sum'] or 0
+        
+        ordered_qty = CartItem.objects.filter(
+            variant__in=active_variants,
+            is_ordered=True,
+            checkout__order__status__in=['pending', 'processing']
+        ).aggregate(total=Sum('quantity'))['total'] or 0
+        
+        available_stock = max(0, total_stock - ordered_qty)
+        
+        # Count in-stock variants based on available quantity
+        in_stock_variants = []
+        variants_data = []
+        
+        for variant in active_variants[:5]:  # Limit to first 5 for performance
+            variant_ordered_qty = CartItem.objects.filter(
+                variant=variant,
+                is_ordered=True,
+                checkout__order__status__in=['pending', 'processing']
+            ).aggregate(total=Sum('quantity'))['total'] or 0
+            
+            variant_available = max(0, (variant.quantity or 0) - variant_ordered_qty)
+            
+            if variant_available > 0:
+                in_stock_variants.append(variant)
+            
+            variants_data.append({
+                'id': str(variant.id),
+                'title': variant.title,
+                'price': float(variant.price) if variant.price else None,
+                'total_quantity': variant.quantity,
+                'ordered_quantity': variant_ordered_qty,
+                'available_quantity': variant_available,
+                'in_stock': variant_available > 0
+            })
         
         return Response({
             'product_id': str(pk),
-            'has_available_variants': has_stock,
-            'total_variants': total_variants,
+            'product_name': product.name,
+            'has_active_variants': active_variants.exists(),
+            'total_active_variants': active_variants.count(),
+            'has_available_variants': len(in_stock_variants) > 0,
+            'in_stock_variants': len(in_stock_variants),
             'total_stock': total_stock,
+            'ordered_stock': ordered_qty,
+            'available_stock': available_stock,
             'min_price': float(product.min_price) if product.min_price else None,
             'max_price': float(product.max_price) if product.max_price else None,
+            'variants': variants_data
         })
-            
-class AddToCartView(APIView):
 
+
+        
+class AddToCartView(APIView):
+    """
+    Add a product/variant to the user's cart.
+    Expects: {
+        "user_id": "uuid",
+        "product_id": "uuid",
+        "variant_id": "uuid",  # required for products with variants
+        "quantity": 1
+    }
+    """
+    
     def post(self, request):
-        user_id = request.data.get("user_id") 
+        user_id = request.data.get("user_id")
         product_id = request.data.get("product_id")
         variant_id = request.data.get("variant_id")
         quantity = int(request.data.get("quantity", 1))
-       
-        if not product_id:
-            return Response({"success": False, "error": "Product ID is required."},
-                          status=status.HTTP_400_BAD_REQUEST)
-
+        
+        print(f"AddToCart: user={user_id}, product={product_id}, variant={variant_id}, quantity={quantity}")
+        
+        # Validate required fields
         if not user_id:
-            return Response({"success": False, "error": "Customer ID is required."},
-                          status=status.HTTP_400_BAD_REQUEST)
-
-        # Find user
+            return Response({"error": "user_id is required"}, status=400)
+        
+        if not product_id:
+            return Response({"error": "product_id is required"}, status=400)
+        
+        if not variant_id:
+            return Response({"error": "variant_id is required for this product"}, status=400)
+        
+        if quantity < 1:
+            return Response({"error": "Quantity must be at least 1"}, status=400)
+        
         try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({"success": False, "error": "User not found."},
-                          status=status.HTTP_404_NOT_FOUND)
-
-        # Find product
-        try:
-            product = Product.objects.get(id=product_id)
-        except Product.DoesNotExist:
-            return Response({"success": False, "error": "Product not found."},
-                          status=status.HTTP_404_NOT_FOUND)
-
-        # Check if product is active/available
-        if product.upload_status != 'published' or product.is_removed:
-            return Response({"success": False, "error": "Product is not available."},
-                          status=status.HTTP_400_BAD_REQUEST)
-
-        # If variant_id provided, validate it belongs to product and check availability
-        variant = None
-        if variant_id:
+            # Get user
+            user = get_object_or_404(User, id=user_id)
+            
+            # Get product
+            product = get_object_or_404(
+                Product, 
+                id=product_id, 
+                upload_status='published', 
+                is_removed=False
+            )
+            
+            # Get variant
             try:
-                variant = Variants.objects.get(id=variant_id, product=product)
+                variant = Variants.objects.get(
+                    id=variant_id, 
+                    product=product,
+                    is_active=True
+                )
             except Variants.DoesNotExist:
-                return Response({"success": False, "error": "Variant not found for this product."}, 
-                              status=status.HTTP_404_NOT_FOUND)
-
-            if not variant.is_active:
-                return Response({"success": False, "error": "Selected variant is not available."}, 
-                              status=status.HTTP_400_BAD_REQUEST)
-
-            if variant.quantity < quantity:
+                return Response({"error": "Variant not found or inactive"}, status=404)
+            
+            # Check variant stock
+            if quantity > variant.quantity:
                 return Response({
-                    "success": False, 
-                    "error": f"Only {variant.quantity} units available for selected variant.",
-                    "available_quantity": variant.quantity
-                }, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # No variant specified - check if product has any active variants
-            active_variants = Variants.objects.filter(product=product, is_active=True)
-            if not active_variants.exists():
-                return Response({"success": False, "error": "No active variants available for this product."},
-                              status=status.HTTP_400_BAD_REQUEST)
+                    "error": f"Cannot add: requested {quantity} > available stock {variant.quantity}",
+                    "available_quantity": variant.quantity,
+                    "variant_id": str(variant.id)
+                }, status=400)
             
-            # Optional: If product has only one variant, auto-select it
-            if active_variants.count() == 1:
-                variant = active_variants.first()
-                variant_id = str(variant.id)
-                print(f"Auto-selected only available variant: {variant_id}")
-
-        # Handle cart operations based on variant presence
-        if variant:
-            print(f"AddToCart: user={user_id}, product={product_id}, variant={variant_id}, quantity={quantity}")
-            
-            # 1) Try to find existing cart item with same variant
-            try:
-                cart_item = CartItem.objects.get(user=user, product=product, variant=variant)
-                new_qty = cart_item.quantity + quantity
-                print(f"Found existing variant cart item {cart_item.id} qty={cart_item.quantity}, new_qty={new_qty}")
-                
-                if new_qty > variant.quantity:
-                    print(f"Cannot add: requested {new_qty} > variant.quantity {variant.quantity}")
-                    return Response({
-                        "success": False, 
-                        "error": f"Only {variant.quantity} units available for selected variant.",
-                        "available_quantity": variant.quantity
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                cart_item.quantity = new_qty
-                cart_item.save()
-                
-            except CartItem.DoesNotExist:
-                # 2) Try to find an existing cart item for this user/product without a variant and attach variant
-                try:
-                    generic = CartItem.objects.get(user=user, product=product, variant__isnull=True)
-                    new_qty = generic.quantity + quantity
-                    print(f"Found generic cart item {generic.id} qty={generic.quantity}, attaching variant -> new_qty={new_qty}")
-                    
-                    if new_qty > variant.quantity:
-                        print(f"Cannot attach: requested {new_qty} > variant.quantity {variant.quantity}")
-                        return Response({
-                            "success": False, 
-                            "error": f"Only {variant.quantity} units available for selected variant.",
-                            "available_quantity": variant.quantity
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                    
-                    generic.variant = variant
-                    generic.quantity = new_qty
-                    generic.save()
-                    cart_item = generic
-                    
-                except CartItem.DoesNotExist:
-                    # 3) Create new cart item with variant
-                    print("No existing cart item found, creating new with variant")
-                    if quantity > variant.quantity:
-                        print(f"Cannot create: requested {quantity} > variant.quantity {variant.quantity}")
-                        return Response({
-                            "success": False, 
-                            "error": f"Only {variant.quantity} units available for selected variant.",
-                            "available_quantity": variant.quantity
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                    
-                    cart_item = CartItem.objects.create(
-                        user=user, 
-                        product=product, 
-                        variant=variant, 
-                        quantity=quantity
-                    )
-        else:
-            # No variant specified and no auto-selection - create/update generic cart item
-            print(f"AddToCart (no variant): user={user_id}, product={product_id}, quantity={quantity}")
-            
-            cart_item, created = CartItem.objects.get_or_create(
+            # First, check if there's an existing active cart item (not ordered)
+            existing_cart_item = CartItem.objects.filter(
                 user=user,
                 product=product,
-                variant=None,
-                defaults={"quantity": quantity}
-            )
-
-            if not created:
-                # Check total stock from all variants before updating
-                total_stock = product.total_stock
-                new_qty = cart_item.quantity + quantity
+                variant=variant,
+                is_ordered=False
+            ).first()
+            
+            if existing_cart_item:
+                # Update existing cart item
+                new_quantity = existing_cart_item.quantity + quantity
                 
-                if new_qty > total_stock:
+                # Check stock for the new total
+                if new_quantity > variant.quantity:
                     return Response({
-                        "success": False,
-                        "error": f"Only {total_stock} units available across all variants.",
-                        "available_quantity": total_stock
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                        "error": f"Cannot add: total requested {new_quantity} > available stock {variant.quantity}",
+                        "available_quantity": variant.quantity,
+                        "current_quantity": existing_cart_item.quantity,
+                        "variant_id": str(variant.id)
+                    }, status=400)
                 
-                cart_item.quantity = new_qty
-                cart_item.save()
+                existing_cart_item.quantity = new_quantity
+                existing_cart_item.save()
+                
+                print(f"Updated existing cart item {existing_cart_item.id} qty to {new_quantity}")
+                
+                return Response({
+                    "success": True,
+                    "message": "Cart updated successfully",
+                    "cart_item_id": str(existing_cart_item.id),
+                    "new_quantity": new_quantity,
+                    "is_new": False,
+                    "action": "updated"
+                })
+            
+            # Check if there's an existing item that's already ordered
+            # We need to handle this specially because of the unique constraint
+            existing_ordered_item = CartItem.objects.filter(
+                user=user,
+                product=product,
+                variant=variant,
+                is_ordered=True
+            ).first()
+            
+            if existing_ordered_item:
+                # There's already an ordered item with this combination
+                # Since we can't create a new one with the same product/variant/user due to unique constraint,
+                # and we can't use the ordered one for new cart items,
+                # we need to update the ordered item's is_ordered flag to False and use it
+                # This effectively "recycles" the old cart item for the new cart
+                print(f"Recycling ordered cart item {existing_ordered_item.id} for new cart")
+                existing_ordered_item.is_ordered = False
+                existing_ordered_item.quantity = quantity
+                existing_ordered_item.save()
+                
+                return Response({
+                    "success": True,
+                    "message": "Item added to cart successfully",
+                    "cart_item_id": str(existing_ordered_item.id),
+                    "is_new": False,
+                    "recycled": True,
+                    "action": "recycled"
+                })
+            
+            # No existing item found, create new one
+            cart_item = CartItem.objects.create(
+                user=user,
+                product=product,
+                variant=variant,
+                quantity=quantity,
+                is_ordered=False
+            )
+            
+            print(f"Created new cart item {cart_item.id}")
+            
+            return Response({
+                "success": True,
+                "message": "Item added to cart successfully",
+                "cart_item_id": str(cart_item.id),
+                "is_new": True,
+                "action": "created"
+            })
+                
+        except Exception as e:
+            import traceback
+            print("Error in AddToCartView:", str(e))
+            print(traceback.format_exc())
+            return Response({
+                "error": "Failed to add item to cart",
+                "details": str(e)
+            }, status=500)
 
-        # Serialize and return the response
-        serializer = CartItemSerializer(cart_item, context={"request": request})
-        print("Cart item operation successful", serializer.data)
-        return Response({"success": True, "cart_item": serializer.data})  
 
 class CartListView(APIView):
     """
@@ -18633,15 +18879,15 @@ class CheckoutOrder(viewsets.ViewSet):
             # Convert comma-separated string to list of UUIDs
             selected_ids = selected_ids_str.split(',')
             
-            # Get cart items for this user and selected IDs - ADDED is_ordered=False filter
+            # Get cart items for this user and selected IDs
             cart_items = CartItem.objects.filter(
                 id__in=selected_ids,
                 user_id=user_id,
-                is_ordered=False  # ADDED: Only get items that are not yet ordered
+                is_ordered=False
             ).select_related(
-                "product", 
+                "product",
                 "product__shop",
-                'sku'
+                "variant"  # Changed from 'sku' to 'variant'
             ).prefetch_related(
                 'product__productmedia_set'
             )
@@ -18652,13 +18898,11 @@ class CheckoutOrder(viewsets.ViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Check if any selected items are already ordered (not in filtered queryset)
-            # This provides more specific error information
+            # Check if any selected items are already ordered
             total_selected_count = len(selected_ids)
             found_count = cart_items.count()
             
             if found_count != total_selected_count:
-                # Some items are already ordered or don't exist
                 return Response(
                     {
                         "error": f"Some items cannot be checked out",
@@ -18669,18 +18913,37 @@ class CheckoutOrder(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Validate that all products have variants selected
+            for cart_item in cart_items:
+                if cart_item.product and not cart_item.variant:
+                    # Check if product has variants
+                    has_variants = Variants.objects.filter(
+                        product=cart_item.product,
+                        is_active=True
+                    ).exists()
+                    
+                    if has_variants:
+                        return Response(
+                            {
+                                "error": f"Please select a variant for product '{cart_item.product.name}'",
+                                "cart_item_id": str(cart_item.id),
+                                "product_id": str(cart_item.product.id)
+                            },
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+            
             # Prepare response data
             checkout_items = []
             shop_ids = set()
-            shop_addresses = {}  # Store shop addresses by shop_id
+            shop_addresses = {}
             
             for cart_item in cart_items:
                 product = cart_item.product
+                variant = cart_item.variant
                 shop = product.shop if product else None
                 
                 if shop:
                     shop_ids.add(shop.id)
-                    # Store shop address if not already stored
                     if shop.id not in shop_addresses:
                         shop_addresses[shop.id] = {
                             'shop_id': str(shop.id),
@@ -18693,29 +18956,31 @@ class CheckoutOrder(viewsets.ViewSet):
                             'shop_contact_number': shop.contact_number
                         }
                 
-                # Prefer SKU price when available; fall back to product price
+                # Get price from variant if available, otherwise from product
                 resolved_price = 0.0
-                sku_data = None
-
-                if getattr(cart_item, 'sku', None):
-                    sku = cart_item.sku
+                variant_data = None
+                
+                if variant:
                     try:
-                        if sku.price is not None:
-                            resolved_price = float(sku.price)
-                        else:
-                            resolved_price = float(product.price) if product else 0.0
+                        if variant.price is not None:
+                            resolved_price = float(variant.price)
                     except Exception:
-                        resolved_price = float(product.price) if product else 0.0
-
-                    sku_data = {
-                        'id': str(sku.id),
-                        'price': float(sku.price) if sku.price is not None else None,
-                        'quantity': sku.quantity,
-                        'sku_code': sku.sku_code
+                        resolved_price = 0.0
+                    
+                    variant_data = {
+                        'id': str(variant.id),
+                        'title': variant.title,
+                        'price': float(variant.price) if variant.price is not None else None,
+                        'quantity': variant.quantity,
+                        'sku_code': variant.sku_code,
+                        'option_title': variant.option_title,
+                        'option_ids': variant.option_ids,
+                        'option_map': variant.option_map
                     }
                 else:
-                    resolved_price = float(product.price) if product else 0.0
-
+                    # Fallback to product price (for products without variants)
+                    resolved_price = float(product.price) if product and product.price else 0.0
+                
                 item_data = {
                     "id": str(cart_item.id),
                     "product_id": str(product.id) if product else None,
@@ -18726,34 +18991,37 @@ class CheckoutOrder(viewsets.ViewSet):
                     "shop_id": str(shop.id) if shop else None,
                     "added_at": cart_item.added_at.isoformat() if cart_item.added_at else None,
                     "subtotal": resolved_price * cart_item.quantity,
-                    "is_ordered": cart_item.is_ordered  # Include in response for clarity
+                    "is_ordered": cart_item.is_ordered
                 }
-
-                # If SKU has its own image, prefer that; otherwise fallback to product media
-                if sku_data and getattr(cart_item.sku, 'image', None) and getattr(cart_item.sku.image, 'url', None):
+                
+                # Get image from variant first, then product media
+                if variant and variant.image and hasattr(variant.image, 'url'):
                     try:
-                        item_data['image'] = request.build_absolute_uri(cart_item.sku.image.url)
+                        item_data['image'] = request.build_absolute_uri(variant.image.url)
                     except Exception:
-                        item_data['image'] = cart_item.sku.image.url
+                        item_data['image'] = variant.image.url
                 elif product and product.productmedia_set.exists():
                     first_media = product.productmedia_set.first()
-                    if first_media.file_data:
-                        item_data["image"] = request.build_absolute_uri(first_media.file_data.url)
-
-                if sku_data:
-                    item_data['sku'] = sku_data
-
+                    if first_media and first_media.file_data:
+                        try:
+                            item_data["image"] = request.build_absolute_uri(first_media.file_data.url)
+                        except Exception:
+                            item_data["image"] = first_media.file_data.url
+                
+                if variant_data:
+                    item_data['variant'] = variant_data
+                
                 checkout_items.append(item_data)
             
             # Calculate totals
             subtotal = sum(item["subtotal"] for item in checkout_items)
-            delivery = 50.00  # Base delivery fee
+            delivery = 50.00
             total = subtotal + delivery
             
-            # Fetch user's purchase history (simplified)
+            # Get user's purchase history
             user_purchase_history = self._get_user_purchase_history(user_id)
             
-            # Get available vouchers (simplified)
+            # Get available vouchers
             available_vouchers = self._get_simple_available_vouchers(
                 list(shop_ids), 
                 user_id, 
@@ -18761,7 +19029,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 user_purchase_history
             )
             
-            # Get user's shipping addresses (simple fetch)
+            # Get user's shipping addresses
             shipping_addresses = list(
                 ShippingAddress.objects.filter(
                     user_id=user_id,
@@ -18777,22 +19045,18 @@ class CheckoutOrder(viewsets.ViewSet):
                     'zip_code',
                     'country',
                     'is_default'
-                )[:10]  # Limit to 10 addresses for efficiency
+                )[:10]
             )
             
-            # Format addresses if they exist
+            # Format addresses
             formatted_addresses = []
             for addr in shipping_addresses:
                 addr['id'] = str(addr['id'])
-                # Create full address string
                 parts = [addr['street'], addr['barangay'], addr['city'], addr['province']]
                 addr['full_address'] = ', '.join(filter(None, parts))
                 formatted_addresses.append(addr)
             
-            # Get default address (first one since we ordered by is_default)
             default_address = formatted_addresses[0] if formatted_addresses else None
-            
-            # Convert shop_addresses dict to list
             shop_addresses_list = list(shop_addresses.values())
             
             response_data = {
@@ -18807,44 +19071,42 @@ class CheckoutOrder(viewsets.ViewSet):
                 },
                 "available_vouchers": available_vouchers,
                 "user_purchase_stats": user_purchase_history,
-                "shipping_addresses": formatted_addresses or None,  # Return None if empty
+                "shipping_addresses": formatted_addresses or None,
                 "default_shipping_address": default_address,
-                "shop_addresses": shop_addresses_list  # Add shop addresses to response
+                "shop_addresses": shop_addresses_list
             }
             
             return Response(response_data)
             
         except Exception as e:
             logger.error(f"Error in get_checkout_items: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response(
                 {"error": "Internal server error", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+    
     def _get_user_purchase_history(self, user_id):
         """
         Get user's purchase history for personalized voucher recommendations
         """
         try:
-            # Simple aggregate queries
             completed_orders = Order.objects.filter(
                 user_id=user_id,
-                status__in=['completed', 'delivered']
+                status__in=['delivered', 'completed']
             )
             
-            # Get total spent
             total_spent_result = completed_orders.aggregate(
-                total_spent=Sum('total_amount')
+                total_spent=models.Sum('total_amount')
             )
             total_spent = total_spent_result['total_spent'] or 0
             
-            # Get recent order count (last 30 days)
             thirty_days_ago = timezone.now() - timedelta(days=30)
             recent_orders_count = completed_orders.filter(
                 created_at__gte=thirty_days_ago
             ).count()
             
-            # Get average order value
             order_count = completed_orders.count()
             avg_order_value = total_spent / order_count if order_count > 0 else 0
             
@@ -18876,16 +19138,14 @@ class CheckoutOrder(viewsets.ViewSet):
     
     def _get_simple_available_vouchers(self, shop_ids, user_id, current_subtotal, user_purchase_history):
         """
-        Simplified version without problematic model fields
+        Get available vouchers for the shops
         """
         if not shop_ids:
             return []
         
-        # Get current date
         current_date = timezone.now().date()
         
         try:
-            # Base query for active vouchers
             vouchers = Voucher.objects.filter(
                 shop_id__in=shop_ids,
                 is_active=True,
@@ -18894,9 +19154,8 @@ class CheckoutOrder(viewsets.ViewSet):
             ).select_related('shop').only(
                 'id', 'name', 'code', 'discount_type', 'value', 
                 'minimum_spend', 'shop__name'
-            ).order_by('-value')[:10]  # Limit to 10 for performance
+            ).order_by('-value')[:10]
             
-            # Build response
             voucher_list = []
             for voucher in vouchers:
                 potential_savings = self._calculate_discount(voucher, current_subtotal)
@@ -18914,7 +19173,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 }
                 voucher_list.append(voucher_data)
             
-            # Simple categorization
             if voucher_list:
                 return [{
                     "category": "Available Vouchers",
@@ -18950,7 +19208,6 @@ class CheckoutOrder(viewsets.ViewSet):
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Simple query with values() for efficiency
             addresses = list(
                 ShippingAddress.objects.filter(
                     user_id=user_id,
@@ -18973,14 +19230,12 @@ class CheckoutOrder(viewsets.ViewSet):
                     'address_type',
                     'is_default',
                     'created_at'
-                )[:20]  # Limit to 20 addresses
+                )[:20]
             )
             
-            # Format the addresses
             formatted_addresses = []
             for addr in addresses:
                 addr['id'] = str(addr['id'])
-                # Create full address
                 parts = [
                     addr.get('building_name'),
                     addr.get('floor_number') and f"Floor {addr['floor_number']}",
@@ -19006,7 +19261,7 @@ class CheckoutOrder(viewsets.ViewSet):
             
             return Response({
                 "success": True,
-                "shipping_addresses": formatted_addresses or None,  # Return None if empty
+                "shipping_addresses": formatted_addresses or None,
                 "default_shipping_address": default_address,
                 "count": len(formatted_addresses)
             })
@@ -19031,15 +19286,12 @@ class CheckoutOrder(viewsets.ViewSet):
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Get user's cart shop IDs
             user_cart_shop_ids = CartItem.objects.filter(
                 user_id=user_id
             ).values_list('product__shop_id', flat=True).distinct()
             
-            # Get user purchase history
             user_purchase_history = self._get_user_purchase_history(user_id)
             
-            # Get available vouchers
             available_vouchers = self._get_simple_available_vouchers(
                 list(user_cart_shop_ids), 
                 user_id, 
@@ -19047,7 +19299,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 user_purchase_history
             )
             
-            # Get general vouchers
             current_date = timezone.now().date()
             general_vouchers = Voucher.objects.filter(
                 shop__isnull=True,
@@ -19160,14 +19411,12 @@ class CheckoutOrder(viewsets.ViewSet):
     
     def _calculate_discount(self, voucher, subtotal):
         """Calculate discount amount based on voucher type"""
-        # Convert subtotal to Decimal if it's a float
         if isinstance(subtotal, float):
             subtotal = Decimal(str(subtotal))
         
         if voucher.discount_type == 'percentage':
             return subtotal * (Decimal(str(voucher.value)) / Decimal('100'))
         elif voucher.discount_type == 'fixed':
-            # Ensure both are Decimal
             voucher_value = Decimal(str(voucher.value))
             return min(voucher_value, subtotal)
         return Decimal('0')
@@ -19208,7 +19457,6 @@ class CheckoutOrder(viewsets.ViewSet):
             delivery_address_text = "Pickup from Store"
             
             if shipping_method == "Standard Delivery":
-                # For delivery, shipping address is required
                 if not shipping_address_id:
                     return Response(
                         {"error": "Shipping address is required for delivery"}, 
@@ -19222,48 +19470,61 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
                 delivery_address_text = shipping_address.get_full_address()
             
-# Get cart items (include sku)
+            # Get cart items with variant
             cart_items = CartItem.objects.filter(
                 id__in=selected_ids,
                 user=user
-            ).select_related("product", "product__shop", "product__customer__customer", 'sku')
-
+            ).select_related(
+                "product", 
+                "product__shop", 
+                "product__customer__customer",
+                "variant"
+            )
+            
             if not cart_items.exists():
                 return Response(
                     {"error": "No cart items found"}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Calculate total - ensure we use Decimal and prefer SKU price when present
+            # Validate variants and calculate subtotal
             subtotal = Decimal('0')
             for cart_item in cart_items:
-                # If product has SKUs and this cart item has no sku selected, require selection
-                try:
-                    has_active_skus = cart_item.product and cart_item.product.skus.filter(is_active=True).exists()
-                except Exception:
-                    has_active_skus = False
-
-                if has_active_skus and not getattr(cart_item, 'sku', None):
+                # Check if product has variants and variant is selected
+                has_variants = Variants.objects.filter(
+                    product=cart_item.product,
+                    is_active=True
+                ).exists()
+                
+                if has_variants and not cart_item.variant:
                     return Response({
                         "error": f"Please select a variant for product '{cart_item.product.name}' before placing your order.",
                         "cart_item_id": str(cart_item.id)
                     }, status=status.HTTP_400_BAD_REQUEST)
-
-                price = None
-                try:
-                    if getattr(cart_item, 'sku', None) and cart_item.sku and cart_item.sku.price is not None:
-                        price = Decimal(str(cart_item.sku.price))
-                    elif cart_item.product and cart_item.product.price is not None:
-                        price = Decimal(str(cart_item.product.price))
-                except Exception:
-                    price = None
-
-                if price is None:
-                    price = Decimal('0')
-
+                
+                # Get price from variant if available
+                price = Decimal('0')
+                if cart_item.variant and cart_item.variant.price is not None:
+                    price = Decimal(str(cart_item.variant.price))
+                elif cart_item.product and cart_item.product.price is not None:
+                    price = Decimal(str(cart_item.product.price))
+                
                 line_total = price * cart_item.quantity
                 subtotal += line_total
-                print(f"create_order: cart_item={cart_item.id} price={price} qty={cart_item.quantity} line_total={line_total}")
+                
+                # Check stock
+                if cart_item.variant:
+                    if cart_item.quantity > cart_item.variant.quantity:
+                        return Response({
+                            "error": f"Insufficient stock for {cart_item.variant.title}",
+                            "cart_item_id": str(cart_item.id)
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                elif cart_item.product:
+                    if cart_item.quantity > cart_item.product.quantity:
+                        return Response({
+                            "error": f"Insufficient stock for {cart_item.product.name}",
+                            "cart_item_id": str(cart_item.id)
+                        }, status=status.HTTP_400_BAD_REQUEST)
             
             # Apply voucher discount if provided
             discount_amount = Decimal('0')
@@ -19284,14 +19545,14 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
             
-            # Calculate final amount - all as Decimal
-            delivery_fee = Decimal('0') if shipping_method == "Pickup from Store" else Decimal('50.00')
+            # Calculate final amount
+            delivery_fee = Decimal('0') if shipping_method == "pickup" else Decimal('50.00')
             total_amount = subtotal + delivery_fee - discount_amount
             
-            # Create Order - shipping_address can be null for pickup
+            # Create Order
             order = Order.objects.create(
                 user=user,
-                shipping_address=shipping_address,  # Can be None for pickup
+                shipping_address=shipping_address,
                 status='pending',
                 total_amount=total_amount,
                 payment_method=payment_method,
@@ -19299,37 +19560,19 @@ class CheckoutOrder(viewsets.ViewSet):
                 delivery_address_text=delivery_address_text
             )
             
-            # Store cart item IDs and product information
             cart_item_ids = []
             
-            # Create Checkout entries
+            # Create Checkout entries and update stock
             for cart_item in cart_items:
-                checkout_total = Decimal('0')
-                product_name = "Unknown Product"
-                shop_name = "Unknown Shop"
-                seller_username = None
-                
-                # Resolve per-item total using SKU price when present
-                if cart_item.product:
-                    try:
-                        if getattr(cart_item, 'sku', None) and cart_item.sku and cart_item.sku.price is not None:
-                            unit_price = Decimal(str(cart_item.sku.price))
-                        else:
-                            unit_price = Decimal(str(cart_item.product.price))
-                    except Exception:
-                        unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
-
-                    checkout_total = unit_price * cart_item.quantity
-                    product_name = cart_item.product.name
-                    if cart_item.product.shop:
-                        shop_name = cart_item.product.shop.name
-                    if cart_item.product.customer and cart_item.product.customer.customer:
-                        seller_username = cart_item.product.customer.customer.username
+                # Get unit price
+                if cart_item.variant and cart_item.variant.price is not None:
+                    unit_price = Decimal(str(cart_item.variant.price))
                 else:
-                    unit_price = Decimal('0')
-                    checkout_total = Decimal('0')
-
-                checkout = Checkout.objects.create(
+                    unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
+                
+                checkout_total = unit_price * cart_item.quantity
+                
+                Checkout.objects.create(
                     order=order,
                     cart_item=cart_item,
                     voucher=voucher,
@@ -19338,35 +19581,15 @@ class CheckoutOrder(viewsets.ViewSet):
                     status='pending',
                     remarks=remarks[:500] if remarks else None
                 )
-
-                print(f"create_order: created checkout for cart_item={cart_item.id} unit_price={unit_price} qty={cart_item.quantity} checkout_total={checkout_total}")
-
-                # Decrement SKU or product stock accordingly
-                try:
-                    if getattr(cart_item, 'sku', None) and cart_item.sku:
-                        sku = cart_item.sku
-                        if cart_item.quantity > sku.quantity:
-                            return Response({"error": f"Insufficient SKU stock for {sku.sku_code}"}, status=status.HTTP_400_BAD_REQUEST)
-                        sku.quantity -= cart_item.quantity
-                        sku.save()
-                        # Update parent product.quantity to reflect sum of active sku quantities
-                        try:
-                            total = cart_item.product.skus.filter(is_active=True).aggregate(total=Coalesce(Sum('quantity'), 0))['total']
-                            cart_item.product.quantity = int(total or 0)
-                            cart_item.product.save(update_fields=['quantity'])
-                        except Exception:
-                            pass
-                    else:
-                        # No SKU: decrement product.quantity
-                        if cart_item.product:
-                            if cart_item.quantity > cart_item.product.quantity:
-                                return Response({"error": f"Insufficient stock for {cart_item.product.name}"}, status=status.HTTP_400_BAD_REQUEST)
-                            cart_item.product.quantity -= cart_item.quantity
-                            cart_item.product.save(update_fields=['quantity'])
-                except Exception as e:
-                    print(f"Error decrementing stock for cart_item={cart_item.id}: {e}")
-
-                # Store cart item ID for response
+                
+                # Decrement stock
+                if cart_item.variant:
+                    cart_item.variant.quantity -= cart_item.quantity
+                    cart_item.variant.save()
+                elif cart_item.product:
+                    cart_item.product.quantity -= cart_item.quantity
+                    cart_item.product.save()
+                
                 cart_item.is_ordered = True
                 cart_item_ids.append(str(cart_item.id))
                 cart_item.save()
@@ -19389,26 +19612,21 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-    @action(detail=False, methods=['Get'])
-    def get_order_details(self, request):
-        pass
-
+    
     @action(detail=False, methods=['GET'])
-    def get_order_details(self, request, order_id=None):
+    def get_order_details(self, request):
         """
         Get order details for payment page
         """
+        order_id = request.query_params.get('order_id')
+        
+        if not order_id:
+            return Response({
+                'success': False,
+                'error': 'Order ID is required'
+            }, status=400)
+        
         try:
-            if not order_id:
-                order_id = request.query_params.get('order_id')
-            
-            if not order_id:
-                return Response({
-                    'success': False,
-                    'error': 'Order ID is required'
-                }, status=400)
-            
             order = get_object_or_404(
                 Order.objects.select_related(
                     'user',
@@ -19438,24 +19656,12 @@ class CheckoutOrder(viewsets.ViewSet):
                 'order': order_details
             })
             
-        except (ValueError, uuid.UUID) as e:
-            return Response({
-                'success': False,
-                'error': 'Invalid Order ID format'
-            }, status=400)
-            
-        except Order.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Order not found'
-            }, status=404)
-            
-        except Exception as e:
+        except (ValueError, Exception) as e:
             return Response({
                 'success': False,
                 'error': str(e)
             }, status=500)
-        
+    
     @action(detail=False, methods=['POST'])
     def add_receipt(self, request):
         try:
@@ -19469,7 +19675,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 }, status=400)
             
             order = get_object_or_404(Order, order=order_id)
-            
             order.receipt = receipt_file
             order.save()
             
@@ -19484,15 +19689,13 @@ class CheckoutOrder(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=500)
-
+    
     @action(detail=False, methods=['POST'])
     def confirm_payment(self, request):
         try:
             order_id = request.data.get('order_id')
-            
             order = get_object_or_404(Order, order=order_id)
             
-            # Check if receipt exists
             if not order.receipt:
                 return Response({
                     'success': False,
@@ -19504,12 +19707,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 defaults={
                     'amount': order.total_amount,
                     'method': order.payment_method,
-                    'status': 'success'  # Admin will verify later
+                    'status': 'success'
                 }
             )
-            
-            # Order status remains 'pending' until admin verifies
-            # Don't change order.status here
             
             return Response({
                 'success': True,
@@ -19522,6 +19722,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=500)
+
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
@@ -21046,9 +21247,13 @@ class ViewShopAPIView(APIView):
 
 
 
-class OrderSuccessfull(viewsets.ViewSet):
+class OrderSuccessful(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_order_successful(self, request, pk=None):
+        """
+        Get order details for the success page after checkout
+        URL: /api/order-successful/{order_id}/get_order_successful/
+        """
         user_id = request.headers.get('X-User-Id')
         
         if not user_id:
@@ -21074,6 +21279,7 @@ class OrderSuccessfull(viewsets.ViewSet):
             ).select_related(
                 'cart_item__product',
                 'cart_item__product__shop',
+                'cart_item__variant',  # Include variant
                 'voucher'
             ).prefetch_related(
                 'cart_item__product__productmedia_set'
@@ -21113,6 +21319,7 @@ class OrderSuccessfull(viewsets.ViewSet):
             for checkout in checkouts:
                 if checkout.cart_item and checkout.cart_item.product:
                     product = checkout.cart_item.product
+                    variant = checkout.cart_item.variant
                     shop = product.shop
                     
                     if shop:
@@ -21122,19 +21329,32 @@ class OrderSuccessfull(viewsets.ViewSet):
                     item_subtotal = float(checkout.total_amount)
                     subtotal += item_subtotal
                     
-                    # Get product image
+                    # Get price from variant if available
+                    item_price = 0
+                    if variant and variant.price:
+                        item_price = float(variant.price)
+                    
+                    # Get product image (prefer variant image)
                     product_image = None
-                    if product.productmedia_set.exists():
+                    if variant and variant.image and hasattr(variant.image, 'url'):
+                        try:
+                            product_image = request.build_absolute_uri(variant.image.url)
+                        except:
+                            product_image = variant.image.url
+                    elif product.productmedia_set.exists():
                         first_media = product.productmedia_set.first()
-                        if first_media.file_data:
-                            product_image = request.build_absolute_uri(first_media.file_data.url)
+                        if first_media and first_media.file_data:
+                            try:
+                                product_image = request.build_absolute_uri(first_media.file_data.url)
+                            except:
+                                product_image = first_media.file_data.url
                     
                     item_data = {
                         "checkout_id": str(checkout.id),
                         "cart_item_id": str(checkout.cart_item.id),
                         "product_id": str(product.id),
                         "name": product.name,
-                        "price": float(product.price),
+                        "price": item_price,
                         "quantity": checkout.quantity,
                         "subtotal": item_subtotal,
                         "shop_name": shop.name if shop else "Unknown Shop",
@@ -21147,6 +21367,16 @@ class OrderSuccessfull(viewsets.ViewSet):
                         } if checkout.voucher else None,
                         "remarks": checkout.remarks,
                     }
+                    
+                    # Add variant info if available
+                    if variant:
+                        item_data["variant"] = {
+                            "id": str(variant.id),
+                            "title": variant.title,
+                            "sku_code": variant.sku_code,
+                            "option_title": variant.option_title,
+                            "option_map": variant.option_map
+                        }
                     
                     order_data["items"].append(item_data)
             
@@ -21171,10 +21401,15 @@ class OrderSuccessfull(viewsets.ViewSet):
             try:
                 delivery = Delivery.objects.get(order=order)
                 order_data["delivery"] = {
+                    "id": str(delivery.id),
                     "status": delivery.status,
                     "rider": delivery.rider.rider.username if delivery.rider else None,
+                    "rider_id": str(delivery.rider.rider.id) if delivery.rider else None,
                     "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
                     "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                    "delivery_fee": delivery.delivery_fee,
+                    "estimated_minutes": delivery.estimated_minutes,
+                    "tracking_number": delivery.tracking_number if hasattr(delivery, 'tracking_number') else None
                 }
             except Delivery.DoesNotExist:
                 order_data["delivery"] = None
@@ -21188,7 +21423,6 @@ class OrderSuccessfull(viewsets.ViewSet):
                 {"error": "Order not found or access denied"},
                 status=status.HTTP_404_NOT_FOUND
             )
-
 
 
 class UserPaymentMethodViewSet(viewsets.ViewSet):

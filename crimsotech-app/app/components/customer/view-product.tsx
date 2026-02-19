@@ -20,6 +20,7 @@ import { Label } from "~/components/ui/label";
 import { Button } from "~/components/ui/button";
 import Breadcrumbs from "~/components/ui/breadcrumbs";
 import AxiosInstance from "~/components/axios/Axios";
+import { toast } from "sonner";
 
 import type { Route } from './+types/view-product';
 
@@ -284,9 +285,14 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
     const fetchCartCount = async () => {
       if (user?.id) {
         try {
-          const response = await AxiosInstance.get("/cart/count/");
+          const response = await AxiosInstance.get("/cart/count/", {
+            params: { user_id: user.id }
+          });
+          // Check the response structure
           if (response.data && typeof response.data.count === 'number') {
             setCartItemCount(response.data.count);
+          } else if (response.data && typeof response.data === 'number') {
+            setCartItemCount(response.data);
           }
         } catch (err) {
           console.error("Error fetching cart count:", err);
@@ -309,7 +315,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
   const isAvailableForSwap = hasVariants
     ? (currentVariant && currentVariant.allow_swap)
-    : false; // No top-level swap flag in your response
+    : false;
 
   // Initialize product
   useEffect(() => {
@@ -340,8 +346,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const decreaseQuantity = () => setQuantity((q) => Math.max(1, q - 1));
 
   const handleSelectOption = (groupId: string, optionId: string) => {
-    // This function would be used if you have actual variant groups
-    // For now, just update selected options
     setSelectedOptions({ ...selectedOptions, [groupId]: optionId });
   };
 
@@ -409,39 +413,49 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
-      setCartError("Please login to add items to cart");
+      toast.error("Please login to add items to cart");
       return;
     }
 
-    if (hasVariants && variantGroups.length > 0) {
-      const allSelected = variantGroups.every(g => selectedOptions[g.id]);
-      if (!allSelected) {
-        setCartError("Please select all variant options");
-        return;
-      }
+    // Make sure we have a variant selected
+    if (!currentVariant) {
+      toast.error("Please select a variant");
+      return;
     }
 
     setAddingToCart(true);
     setCartError(null);
 
     try {
-      const payload: any = {
+      const payload = {
         user_id: user.id,
         product_id: product.id,
+        variant_id: currentVariant.id,
         quantity,
       };
-
-      if (currentVariant) {
-        payload.variant_id = currentVariant.id;
-      }
 
       const response = await AxiosInstance.post("/cart/add/", payload);
 
       if (response.data.success) {
-        alert("Product added to cart!");
+        // Show different messages based on what happened
+        switch (response.data.action) {
+          case 'updated':
+            toast.success(`Cart updated! Quantity is now ${response.data.new_quantity}`);
+            break;
+          case 'recycled':
+            toast.info("Item added to cart from previous order");
+            break;
+          case 'created':
+          default:
+            toast.success("Product added to cart!");
+            break;
+        }
+        
         // Update cart count after adding
         try {
-          const countResponse = await AxiosInstance.get("/cart/count/");
+          const countResponse = await AxiosInstance.get("/cart/count/", {
+            params: { user_id: user.id }
+          });
           if (countResponse.data && typeof countResponse.data.count === 'number') {
             setCartItemCount(countResponse.data.count);
           }
@@ -449,11 +463,21 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
           console.error("Error fetching cart count:", err);
         }
       } else {
-        setCartError(response.data.error || "Failed to add to cart");
+        const errorMsg = response.data.error || "Failed to add to cart";
+        setCartError(errorMsg);
+        toast.error(errorMsg);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setCartError("An error occurred while adding to cart");
+      // Check if the error response contains a message
+      let errorMsg = "An error occurred while adding to cart";
+      if (err.response?.data?.error) {
+        errorMsg = err.response.data.error;
+      } else if (err.response?.data?.details) {
+        errorMsg = err.response.data.details;
+      }
+      setCartError(errorMsg);
+      toast.error(errorMsg);
     } finally {
       setAddingToCart(false);
     }
@@ -461,12 +485,12 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
   const handleStartSwap = async () => {
     if (!product || !user?.id) {
-      setSwapError("Please login to start a swap");
+      toast.error("Please login to start a swap");
       return;
     }
 
     if (!currentVariant || !currentVariant.allow_swap) {
-      setSwapError("This variant is not available for swap");
+      toast.error("This variant is not available for swap");
       return;
     }
 
@@ -484,11 +508,13 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         maximum_additional_payment: currentVariant.maximum_additional_payment,
       };
 
-      alert("Swap functionality coming soon! You would be redirected to select items to trade with this product.");
+      toast.info("Swap functionality coming soon! You will be redirected to select items to trade with this product.");
 
     } catch (err: any) {
       console.error(err);
-      setSwapError("An error occurred while initiating swap: " + (err.message || "Unknown error"));
+      const errorMsg = "An error occurred while initiating swap: " + (err.message || "Unknown error");
+      setSwapError(errorMsg);
+      toast.error(errorMsg);
     } finally {
       setStartingSwap(false);
     }
@@ -735,18 +761,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                 <RefreshCw className="h-4 w-4 mr-1.5" />
                 {startingSwap ? "Starting Swap..." : "Swap This Item"}
               </Button>
-            )}
-            
-            {cartError && (
-              <div className="text-xs text-red-500 bg-red-50 p-1.5 rounded">
-                {cartError}
-              </div>
-            )}
-
-            {swapError && (
-              <div className="text-xs text-red-500 bg-red-50 p-1.5 rounded">
-                {swapError}
-              </div>
             )}
           </div>
         </div>
