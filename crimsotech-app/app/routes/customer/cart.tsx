@@ -1,6 +1,5 @@
 // app/routes/cart.tsx
 "use client";
-
 import { useState, useEffect } from "react";
 import { 
   ArrowLeft, 
@@ -13,8 +12,7 @@ import {
   X,
   Package,
   ChevronDown,
-  ChevronUp,
-  Image as ImageIcon
+  ChevronUp
 } from "lucide-react";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Button } from "~/components/ui/button";
@@ -26,145 +24,184 @@ import { UserProvider } from "~/components/providers/user-role-provider";
 import { useNavigate } from "react-router";
 import AxiosInstance from "~/components/axios/Axios";
 
-// ------------------ TYPES ------------------
-export type CartItemType = {
+// ------------------ TYPES based on your API response ------------------
+export type VariantDetails = {
   id: string;
-  product_id: string;
-  name: string;
-  price: number;
-  quantity: number;
-  image: string | null;
-  shop_name: string;
-  shop_id?: string;
-  selected: boolean;
-  added_at?: string;
-  subtotal?: number;
-};
-
-type MediaFile = {
-  file_url?: string;
-  file_data?: string;
-  file_type: string;
-};
-
-type ProductDetails = {
-  id: string;
-  name: string;
+  title: string;
+  sku_code: string;
   price: string;
-  shop_name: string;
-  shop_id?: string;
-  media_files: MediaFile[] | null;
-  sku?: {
-    price?: number | string;
-    [key: string]: any;
-  };
+  compare_price: string | null;
+  image: string | null;
+  option_title: string;
+  options: Record<string, any>;
+  quantity_available?: number;
 };
 
-type ApiCartItem = {
+export type ProductDetails = {
+  id: string;
+  name: string;
+  description: string;
+  condition: string;
+  shop_name: string;
+  shop_id: string;
+  main_image: string | null;
+  media_files?: { id: string; url: string; file_type: string }[];
+};
+
+export type ApiCartItem = {
   id: string;
   product: string;
-  product_details: ProductDetails | null;
-  item_name: string;
-  item_price: string;
-  item_image: string | null;
+  variant: string | null;
   quantity: number;
   added_at: string;
-  subtotal: number;
+  product_details: ProductDetails;
+  variant_details: VariantDetails | null;
+  total_price: string;
 };
 
-type CartApiResponse = {
+export type CartApiResponse = {
   success: boolean;
   cart_items: ApiCartItem[];
   error?: string;
 };
 
-// ------------------ CONSTANTS ------------------
-const DEFAULT_IMAGES = {
-  electronics: [
-    "/api/placeholder/64/64?text=📱",
-    "/api/placeholder/64/64?text=💻",
-    "/api/placeholder/64/64?text=🎮"
-  ],
-  gadgets: [
-    "/api/placeholder/64/64?text=⌚",
-    "/api/placeholder/64/64?text=🎧",
-    "/api/placeholder/64/64?text=🔋"
-  ],
-  home: [
-    "/api/placeholder/64/64?text=🏠",
-    "/api/placeholder/64/64?text=🔌",
-    "/api/placeholder/64/64?text=🛋️"
-  ],
-  default: [
-    "/api/placeholder/64/64?text=🛒",
-    "/api/placeholder/64/64?text=📦",
-    "/api/placeholder/64/64?text=🏪"
-  ]
+export type CartItemType = {
+  id: string;
+  product_id: string;
+  variant_id: string | null;
+  name: string;
+  price: number;
+  quantity: number;
+  image: string;
+  shop_name: string;
+  shop_id: string;
+  selected: boolean;
+  added_at: string;
+  subtotal: number;
+  variant_title: string | null;
+  max_available?: number;
 };
+
+export type CartCountResponse = {
+  success: boolean;
+  count: number;
+  error?: string;
+};
+
+// ------------------ CONSTANTS ------------------
+const DELIVERY_FEE = 50.00;
+const FALLBACK_IMAGE = "/Crimsotech.png";
 
 // ------------------ HELPER FUNCTIONS ------------------
-const getDefaultImage = (productName: string, shopName: string): string => {
-  const name = productName.toLowerCase();
-  
-  // Determine category based on product name
-  if (name.includes('iphone') || name.includes('alienware') || name.includes('vivo')) {
-    return DEFAULT_IMAGES.electronics[Math.floor(Math.random() * DEFAULT_IMAGES.electronics.length)];
-  } else if (name.includes('charger') || name.includes('freezer') || name.includes('balance')) {
-    return DEFAULT_IMAGES.gadgets[Math.floor(Math.random() * DEFAULT_IMAGES.gadgets.length)];
-  } else if (name.includes('home') || name.includes('control') || name.includes('smart')) {
-    return DEFAULT_IMAGES.home[Math.floor(Math.random() * DEFAULT_IMAGES.home.length)];
-  }
-  
-  return DEFAULT_IMAGES.default[Math.floor(Math.random() * DEFAULT_IMAGES.default.length)];
-};
-
 const formatImageUrl = (url: string | null | undefined): string | null => {
-  if (!url) return null;
-  
-  // If it's already a full URL
-  if (url.startsWith('http://') || url.startsWith('https://')) {
+  if (!url || url.trim() === "") return null;
+
+  // Already a full URL
+  if (url.startsWith("http://") || url.startsWith("https://")) {
     return url;
   }
-  
-  // If it's a media URL
-  if (url.startsWith('/media/')) {
-    const baseUrl = import.meta.env.VITE_MEDIA_URL || 'http://127.0.0.1:8000';
+
+  // Relative /media/ or any / path — prepend API base
+  if (url.startsWith("/")) {
+    const baseUrl = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
     return `${baseUrl}${url}`;
   }
-  
-  // If it starts with /, prepend base URL
-  if (url.startsWith('/')) {
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
-    return `${baseUrl}${url}`;
+
+  return url;
+};
+
+/**
+ * Resolve the best image for a cart item.
+ * Priority: variant image → product main_image → first media_file → fallback
+ */
+const resolveCartItemImage = (
+  variantDetails: VariantDetails | null,
+  productDetails: ProductDetails
+): string => {
+  // 1. Variant-specific image (most specific)
+  if (variantDetails?.image) {
+    const resolved = formatImageUrl(variantDetails.image);
+    if (resolved) return resolved;
   }
-  
-  // If it's just a filename, try to construct media URL
-  const baseUrl = import.meta.env.VITE_MEDIA_URL || 'http://127.0.0.1:8000';
-  return `${baseUrl}/media/${url}`;
+
+  // 2. Product main image
+  if (productDetails?.main_image) {
+    const resolved = formatImageUrl(productDetails.main_image);
+    if (resolved) return resolved;
+  }
+
+  // 3. First media file
+  if (productDetails?.media_files && productDetails.media_files.length > 0) {
+    const resolved = formatImageUrl(productDetails.media_files[0].url);
+    if (resolved) return resolved;
+  }
+
+  // 4. Fallback
+  return FALLBACK_IMAGE;
+};
+
+// ------------------ TRANSFORM API DATA ------------------
+const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
+  return apiItems.map((item) => {
+    const productDetails = item.product_details;
+    const variantDetails = item.variant_details;
+
+    const price = variantDetails?.price ? parseFloat(variantDetails.price) : 0;
+    const maxAvailable = variantDetails?.quantity_available ?? 999;
+
+    const image = resolveCartItemImage(variantDetails, productDetails);
+
+    const subtotal = item.total_price
+      ? parseFloat(item.total_price)
+      : price * item.quantity;
+
+    // Variant display title: prefer option_title if set, else title
+    const variantLabel =
+      variantDetails?.option_title?.trim()
+        ? variantDetails.option_title
+        : variantDetails?.title?.trim()
+        ? variantDetails.title
+        : null;
+
+    return {
+      id: item.id,
+      product_id: productDetails?.id || item.product,
+      variant_id: item.variant,
+      name: productDetails?.name || "Product",
+      price,
+      quantity: item.quantity,
+      image,
+      shop_name: productDetails?.shop_name || "Store",
+      shop_id: productDetails?.shop_id || "",
+      selected: true,
+      added_at: item.added_at,
+      subtotal,
+      variant_title: variantLabel,
+      max_available: maxAvailable,
+    };
+  });
 };
 
 // ------------------ META ------------------
 export function meta(): Route.MetaDescriptors {
-  return [{ title: "Cart" }];
+  return [{ title: "Shopping Cart" }];
 }
 
 // ------------------ LOADER ------------------
 export async function loader({ request }: Route.LoaderArgs) {
-  const { getSession, commitSession } = await import('~/sessions.server');
+  const { getSession, commitSession } = await import("~/sessions.server");
   const session = await getSession(request.headers.get("Cookie"));
   const userId = session.get("userId");
 
-  console.log(userId)
-
   return {
-    user: { 
+    user: {
       id: userId,
       isAdmin: false,
       isRider: false,
       isModerator: false,
       isCustomer: true,
-      username: userId ? `user_${userId}` : 'guest',
-      email: userId ? `user_${userId}@example.com` : 'guest@example.com',
+      username: userId ? `user_${userId}` : "guest",
+      email: userId ? `user_${userId}@example.com` : "guest@example.com",
     },
     headers: { "Set-Cookie": await commitSession(session) },
   };
@@ -172,16 +209,16 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 // ------------------ COMPONENTS ------------------
 
-// Shop Header Component with Select All for Shop
-const ShopHeader = ({ 
-  shopName, 
-  itemCount, 
+// Shop Header Component
+const ShopHeader = ({
+  shopName,
+  itemCount,
   shopTotal,
   allSelected,
   onSelectShop,
   isExpanded,
-  onToggleExpand
-}: { 
+  onToggleExpand,
+}: {
   shopName: string;
   itemCount: number;
   shopTotal: number;
@@ -208,7 +245,8 @@ const ShopHeader = ({
           <div className="flex-1">
             <h3 className="font-semibold text-sm text-gray-900">{shopName}</h3>
             <p className="text-xs text-gray-500">
-              {itemCount} {itemCount === 1 ? 'item' : 'items'} • ₱{shopTotal.toFixed(2)}
+              {itemCount} {itemCount === 1 ? "item" : "items"} • ₱
+              {shopTotal.toFixed(2)}
             </p>
           </div>
           {isExpanded ? (
@@ -222,21 +260,39 @@ const ShopHeader = ({
   );
 };
 
-// Compact Cart Item with Image Fallback
-const CompactCartItem = ({ 
-  item, 
-  onUpdateQuantity, 
-  onRemove, 
-  onSelect 
-}: { 
+// Compact Cart Item
+const CompactCartItem = ({
+  item,
+  onUpdateQuantity,
+  onRemove,
+  onSelect,
+}: {
   item: CartItemType;
   onUpdateQuantity: (id: string, quantity: number) => void;
   onRemove: (id: string) => void;
   onSelect: (id: string, checked: boolean) => void;
 }) => {
-  const finalImage = item.image || getDefaultImage(item.name, item.shop_name);
   const [imageError, setImageError] = useState(false);
-  
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const handleIncrement = () => {
+    if (item.max_available !== undefined && item.quantity >= item.max_available) {
+      alert(`Only ${item.max_available} items available`);
+      return;
+    }
+    onUpdateQuantity(item.id, item.quantity + 1);
+  };
+
+  const handleDecrement = () => {
+    if (item.quantity <= 1) {
+      if (confirm("Remove this item from cart?")) {
+        onRemove(item.id);
+      }
+      return;
+    }
+    onUpdateQuantity(item.id, item.quantity - 1);
+  };
+
   return (
     <div className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 transition-colors">
       <Checkbox
@@ -244,75 +300,86 @@ const CompactCartItem = ({
         onCheckedChange={(checked) => onSelect(item.id, Boolean(checked))}
         className="h-4 w-4"
       />
-      
+
       <div className="h-16 w-16 flex-shrink-0 relative">
         <img
-          src={imageError ? getDefaultImage(item.name, item.shop_name) : finalImage}
+          src={imageError ? FALLBACK_IMAGE : item.image}
           alt={item.name}
           className="h-full w-full object-cover rounded-md bg-gray-100"
           onError={() => setImageError(true)}
         />
-        {!item.image && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-md">
-            <ImageIcon className="h-6 w-6 text-gray-400" />
-          </div>
-        )}
       </div>
 
       <div className="flex-1 min-w-0">
         <div className="flex justify-between">
-          <h3 className="text-sm font-medium text-gray-900 truncate pr-2">
-            {item.name}
-          </h3>
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 truncate pr-2">
+              {item.name}
+            </h3>
+            {item.variant_title && (
+              <p className="text-xs text-gray-500 mt-0.5">{item.variant_title}</p>
+            )}
+          </div>
           <p className="text-sm font-semibold text-gray-900 whitespace-nowrap">
             ₱{(item.price * item.quantity).toFixed(2)}
           </p>
         </div>
-        
+
         <div className="flex items-center justify-between mt-1">
-          <p className="text-xs text-gray-500">
-            ₱{item.price.toFixed(2)} each
-          </p>
-          
+          <p className="text-xs text-gray-500">₱{item.price.toFixed(2)} each</p>
+
           <div className="flex items-center gap-3">
             <div className="flex items-center border rounded">
               <button
-                onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
+                onClick={handleDecrement}
+                disabled={isUpdating}
                 className="h-6 w-6 flex items-center justify-center hover:bg-gray-100 disabled:opacity-50 rounded-l"
               >
                 <Minus className="h-3 w-3" />
               </button>
-              <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
+              <span className="w-8 text-center text-sm font-medium">
+                {item.quantity}
+              </span>
               <button
-                onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-                className="h-6 w-6 flex items-center justify-center hover:bg-gray-100 rounded-r"
+                onClick={handleIncrement}
+                disabled={
+                  isUpdating ||
+                  (item.max_available !== undefined &&
+                    item.quantity >= item.max_available)
+                }
+                className="h-6 w-6 flex items-center justify-center hover:bg-gray-100 disabled:opacity-50 rounded-r"
               >
                 <Plus className="h-3 w-3" />
               </button>
             </div>
-            
+
             <button
               onClick={() => onRemove(item.id)}
-              className="text-gray-400 hover:text-red-600 p-1 transition-colors"
+              disabled={isUpdating}
+              className="text-gray-400 hover:text-red-600 p-1 transition-colors disabled:opacity-50"
               title="Remove item"
             >
               <Trash2 className="h-4 w-4" />
             </button>
           </div>
         </div>
+
+        {item.max_available !== undefined && item.quantity >= item.max_available && (
+          <p className="text-xs text-orange-500 mt-1">Max available quantity</p>
+        )}
       </div>
     </div>
   );
 };
 
 // Shop Section Component
-const ShopSection = ({ 
-  shopName, 
+const ShopSection = ({
+  shopName,
   items,
   onUpdateQuantity,
   onRemove,
   onSelectItem,
-  onSelectShop
+  onSelectShop,
 }: {
   shopName: string;
   items: CartItemType[];
@@ -322,11 +389,17 @@ const ShopSection = ({
   onSelectShop: (shopName: string, checked: boolean) => void;
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
-  
-  const shopTotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const allSelected = items.every(item => item.selected);
-  const selectedItems = items.filter(item => item.selected);
-  const selectedTotal = selectedItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+  const shopTotal = items.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
+  const allSelected = items.every((item) => item.selected);
+  const selectedItems = items.filter((item) => item.selected);
+  const selectedTotal = selectedItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
 
   return (
     <div className="border rounded-lg mb-4 overflow-hidden bg-white shadow-sm">
@@ -339,7 +412,7 @@ const ShopSection = ({
         isExpanded={isExpanded}
         onToggleExpand={() => setIsExpanded(!isExpanded)}
       />
-      
+
       {isExpanded && (
         <>
           <div className="divide-y">
@@ -353,7 +426,7 @@ const ShopSection = ({
               />
             ))}
           </div>
-          
+
           {/* Shop Summary */}
           <div className="px-3 py-2 bg-gray-50 border-t">
             <div className="flex items-center justify-between text-sm">
@@ -370,13 +443,22 @@ const ShopSection = ({
 };
 
 // Simple Coupon Section
-const SimpleCouponSection = ({ onApplyCoupon }: { onApplyCoupon: (code: string) => void }) => {
+const SimpleCouponSection = ({
+  onApplyCoupon,
+}: {
+  onApplyCoupon: (code: string) => void;
+}) => {
   const [couponCode, setCouponCode] = useState("");
+  const [isApplying, setIsApplying] = useState(false);
 
-  const handleApply = () => {
-    if (couponCode.trim()) {
-      onApplyCoupon(couponCode.trim());
+  const handleApply = async () => {
+    if (!couponCode.trim()) return;
+    setIsApplying(true);
+    try {
+      await onApplyCoupon(couponCode.trim());
       setCouponCode("");
+    } finally {
+      setIsApplying(false);
     }
   };
 
@@ -386,7 +468,7 @@ const SimpleCouponSection = ({ onApplyCoupon }: { onApplyCoupon: (code: string) 
         <Tag className="h-4 w-4 text-blue-600" />
         <span className="text-sm font-medium">Have a coupon?</span>
       </div>
-      
+
       <div className="flex gap-2">
         <input
           type="text"
@@ -394,15 +476,16 @@ const SimpleCouponSection = ({ onApplyCoupon }: { onApplyCoupon: (code: string) 
           value={couponCode}
           onChange={(e) => setCouponCode(e.target.value)}
           className="flex-1 text-sm border rounded px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-          onKeyPress={(e) => e.key === 'Enter' && handleApply()}
+          onKeyPress={(e) => e.key === "Enter" && handleApply()}
+          disabled={isApplying}
         />
         <Button
           onClick={handleApply}
-          disabled={!couponCode.trim()}
+          disabled={!couponCode.trim() || isApplying}
           size="sm"
           className="bg-blue-600 hover:bg-blue-700 whitespace-nowrap"
         >
-          Apply
+          {isApplying ? "Applying..." : "Apply"}
         </Button>
       </div>
     </div>
@@ -416,7 +499,7 @@ const SimpleOrderSummary = ({
   delivery,
   onProceedToCheckout,
   itemCount,
-  shopCount
+  shopCount,
 }: {
   subtotal: number;
   discount: number;
@@ -430,44 +513,43 @@ const SimpleOrderSummary = ({
   return (
     <div className="border rounded-lg p-4 bg-white">
       <h3 className="font-semibold text-gray-900 mb-4">Order Summary</h3>
-      
+
       <div className="space-y-2 text-sm mb-4">
         <div className="flex justify-between">
           <span className="text-gray-600">Items ({itemCount})</span>
           <span>₱{subtotal.toFixed(2)}</span>
         </div>
-        
+
         <div className="flex justify-between items-center">
           <span className="text-gray-600">Shops ({shopCount})</span>
           <Badge variant="outline" className="text-xs">
             Separate deliveries
           </Badge>
         </div>
-        
+
         {discount > 0 && (
           <div className="flex justify-between">
             <span className="text-gray-600">Discount</span>
             <span className="text-green-600">-₱{discount.toFixed(2)}</span>
           </div>
         )}
-        
+
         <div className="flex justify-between">
           <span className="text-gray-600">Delivery (estimated)</span>
           <span>₱{delivery.toFixed(2)}</span>
         </div>
-        
       </div>
-      
+
       <div className="border-t pt-4 mb-4">
         <div className="flex justify-between font-semibold text-base">
           <span>Total</span>
           <span>₱{total.toFixed(2)}</span>
         </div>
         <div className="text-xs text-gray-500 mt-1">
-          From {shopCount} {shopCount === 1 ? 'shop' : 'shops'}
+          From {shopCount} {shopCount === 1 ? "shop" : "shops"}
         </div>
       </div>
-      
+
       <Button
         onClick={onProceedToCheckout}
         disabled={itemCount === 0}
@@ -480,64 +562,32 @@ const SimpleOrderSummary = ({
   );
 };
 
-// ------------------ TRANSFORM API DATA ------------------
-const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
-  return apiItems.map((item) => {
-    // Get product details with proper fallbacks
-    const productDetails = item.product_details;
-    const productName = productDetails?.name || item.item_name || "Product";
-    // Prefer SKU price when available, then product price, then cart item price
-    const productPrice = productDetails?.sku?.price ?? productDetails?.price ?? item.item_price ?? "0";
-    const shopName = productDetails?.shop_name || "Store";
-    const shopId = productDetails?.shop_id;
-    const price = parseFloat(String(productPrice)) || 0;
-    
-    // Try multiple image sources
-    let image: string | null = null;
-    
-    // 1. Try item_image field
-    if (item.item_image) {
-      image = formatImageUrl(item.item_image);
-    }
-    
-    // 2. Try media_files from product_details
-    if (!image && productDetails?.media_files && productDetails.media_files.length > 0) {
-      const firstMedia = productDetails.media_files[0];
-      if (firstMedia?.file_url) {
-        image = formatImageUrl(firstMedia.file_url);
-      } else if (firstMedia?.file_data) {
-        image = formatImageUrl(firstMedia.file_data);
-      }
-    }
-    
-    // 3. If still no image, we'll use default image (but return null to trigger fallback)
-    // The UI component will handle the fallback
-    
-    return {
-      id: item.id,
-      product_id: item.product || productDetails?.id || item.id,
-      name: productName,
-      price: price,
-      quantity: item.quantity || 1,
-      image: image, // Could be null - UI will handle fallback
-      shop_name: shopName,
-      shop_id: shopId,
-      selected: true,
-      added_at: item.added_at,
-      subtotal: item.subtotal || (price * item.quantity),
-    };
-  });
-};
-
 // ------------------ MAIN COMPONENT ------------------
 export default function Cart({ loaderData }: Route.ComponentProps) {
   const user = loaderData?.user;
   const userId = user?.id;
-  
+
   const [cartItems, setCartItems] = useState<CartItemType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [cartCount, setCartCount] = useState<number>(0);
   const navigate = useNavigate();
+
+  // Fetch cart count
+  const fetchCartCount = async () => {
+    if (!userId) return;
+    try {
+      const response = await AxiosInstance.get<CartCountResponse>("/cart/count/", {
+        params: { user_id: userId },
+      });
+      if (response.data.success) {
+        setCartCount(response.data.count);
+      }
+    } catch (err) {
+      console.error("Error fetching cart count:", err);
+    }
+  };
 
   // Fetch cart items
   useEffect(() => {
@@ -551,18 +601,28 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
       try {
         setLoading(true);
         const response = await AxiosInstance.get<CartApiResponse>("/view-cart/", {
-          params: { user_id: userId }
+          params: { user_id: userId },
         });
-        
+
         if (response.data.success && response.data.cart_items) {
           const transformedItems = transformApiData(response.data.cart_items);
           setCartItems(transformedItems);
+          setCartCount(transformedItems.length);
         } else {
           setCartItems([]);
+          setCartCount(0);
         }
       } catch (err: any) {
         console.error("Cart fetch error:", err);
-        setError(err.response?.status === 401 ? "Please login to view your cart" : "Failed to load cart");
+        if (err.response?.status === 404) {
+          setError("Cart endpoint not found");
+        } else {
+          setError(
+            err.response?.status === 401
+              ? "Please login to view your cart"
+              : "Failed to load cart"
+          );
+        }
       } finally {
         setLoading(false);
       }
@@ -571,126 +631,155 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     fetchCart();
   }, [userId]);
 
-  // Item handlers
-  const updateQuantity = async (id: string, quantity: number) => {
-    // If quantity becomes 0 or less, remove the item
-    if (quantity < 1) {
+  // Update quantity
+  const updateQuantity = async (id: string, newQuantity: number) => {
+    if (newQuantity < 1) {
       removeItem(id);
       return;
     }
 
+    setUpdatingId(id);
     try {
-      await AxiosInstance.put(`/view-cart/update/${id}/`, { 
+      await AxiosInstance.put(`/view-cart/update/${id}/`, {
         user_id: userId,
-        quantity 
+        quantity: newQuantity,
       });
-      
-      setCartItems((items) => 
-        items.map((item) => {
-          if (item.id === id) {
-            return { 
-              ...item, 
-              quantity,
-              subtotal: item.price * quantity
-            };
-          }
-          return item;
-        })
+
+      setCartItems((items) =>
+        items.map((item) =>
+          item.id === id
+            ? { ...item, quantity: newQuantity, subtotal: item.price * newQuantity }
+            : item
+        )
       );
-    } catch (err) {
+
+      fetchCartCount();
+    } catch (err: any) {
       console.error("Error updating quantity:", err);
+      if (err.response?.data?.error) {
+        alert(err.response.data.error);
+      }
+    } finally {
+      setUpdatingId(null);
     }
   };
 
+  // Remove item
   const removeItem = async (id: string) => {
-  try {
+    setUpdatingId(id);
+    try {
       await AxiosInstance.delete(`/view-cart/delete/${id}/`, {
-        data: { user_id: userId }  // Send in request body for DELETE
+        data: { user_id: userId },
       });
-      setCartItems((items) => items.filter((item) => item.id !== id));
+
+      setCartItems((items) => {
+        const newItems = items.filter((item) => item.id !== id);
+        setCartCount(newItems.length);
+        return newItems;
+      });
     } catch (err) {
       console.error("Error removing item:", err);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  // Remove selected items
+  const removeSelectedItems = async () => {
+    const selectedIds = selectedItems.map((item) => item.id);
+    if (selectedIds.length === 0) return;
+
+    if (confirm(`Remove ${selectedIds.length} item(s) from cart?`)) {
+      await Promise.all(selectedIds.map((id) => removeItem(id)));
     }
   };
 
   const handleSelectItem = (id: string, checked: boolean) => {
-    setCartItems((items) => 
-      items.map((item) => 
-        item.id === id ? { ...item, selected: checked } : item
-      )
+    setCartItems((items) =>
+      items.map((item) => (item.id === id ? { ...item, selected: checked } : item))
     );
   };
 
   const handleSelectShop = (shopName: string, checked: boolean) => {
-    setCartItems((items) => 
-      items.map((item) => 
+    setCartItems((items) =>
+      items.map((item) =>
         item.shop_name === shopName ? { ...item, selected: checked } : item
       )
     );
   };
 
   const handleSelectAll = (checked: boolean) => {
-    setCartItems((items) => 
-      items.map((item) => ({ ...item, selected: checked }))
-    );
+    setCartItems((items) => items.map((item) => ({ ...item, selected: checked })));
   };
 
   // Group items by shop
-  const groupedItems = cartItems.reduce<Record<string, CartItemType[]>>((acc, item) => {
-    if (!acc[item.shop_name]) {
-      acc[item.shop_name] = [];
-    }
-    acc[item.shop_name].push(item);
-    return acc;
-  }, {});
+  const groupedItems = cartItems.reduce<Record<string, CartItemType[]>>(
+    (acc, item) => {
+      if (!acc[item.shop_name]) acc[item.shop_name] = [];
+      acc[item.shop_name].push(item);
+      return acc;
+    },
+    {}
+  );
 
   const shopCount = Object.keys(groupedItems).length;
 
   // Calculations
   const selectedItems = cartItems.filter((item) => item.selected);
-  const selectedShops = new Set(selectedItems.map(item => item.shop_name)).size;
-  const subtotal = selectedItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const selectedShops = new Set(selectedItems.map((item) => item.shop_name)).size;
+  const subtotal = selectedItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
   const discount = 0;
-  const delivery = selectedItems.length > 0 ? 50.00 : 0; // Base delivery
+  const delivery = selectedItems.length > 0 ? DELIVERY_FEE : 0;
 
-// Navigation - UPDATED TO NAVIGATE TO ORDERS.TSX
   const handleCheckout = () => {
     if (selectedItems.length === 0) {
       alert("Please select items to checkout");
       return;
     }
-    
-    // Create a comma-separated string of selected item IDs
-    const selectedIds = selectedItems.map(item => item.id).join(',');
-    
-    // Store checkout data if needed in orders page
+
+    const selectedIds = selectedItems.map((item) => item.id).join(",");
+
     try {
-      localStorage.setItem('selectedCartItems', JSON.stringify(selectedItems));
-      localStorage.setItem('checkoutSummary', JSON.stringify({
-        subtotal,
-        discount,
-        delivery,
-        total: subtotal - discount + delivery,
-        itemCount: selectedItems.length,
-        shopCount: selectedShops
-      }));
+      localStorage.setItem("selectedCartItems", JSON.stringify(selectedItems));
+      localStorage.setItem(
+        "checkoutSummary",
+        JSON.stringify({
+          subtotal,
+          discount,
+          delivery,
+          total: subtotal - discount + delivery,
+          itemCount: selectedItems.length,
+          shopCount: selectedShops,
+        })
+      );
     } catch (err) {
       console.error("Failed to store checkout data:", err);
     }
-    
-    // Navigate to orders page with selected IDs as query parameter
+
     navigate(`/orders?selected=${selectedIds}`);
   };
-  
-  const handleApplyCoupon = (code: string) => {
+
+  const handleApplyCoupon = async (code: string) => {
     console.log("Applying coupon:", code);
-    // Implement coupon validation
+    alert(`Coupon "${code}" applied successfully!`);
   };
 
   // Loading state
   if (loading) {
     return (
-      <UserProvider user={user || { id: 'loading', isCustomer: true, username: 'loading', email: 'loading@example.com' }}>
+      <UserProvider
+        user={
+          user || {
+            id: "loading",
+            isCustomer: true,
+            username: "loading",
+            email: "loading@example.com",
+          }
+        }
+      >
         <SidebarLayout>
           <div className="w-full p-4 lg:p-6">
             <Skeleton className="h-8 w-48 mb-6" />
@@ -719,7 +808,16 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   // Error state
   if (error) {
     return (
-      <UserProvider user={user || { id: 'guest', isCustomer: false, username: 'guest', email: 'guest@example.com' }}>
+      <UserProvider
+        user={
+          user || {
+            id: "guest",
+            isCustomer: false,
+            username: "guest",
+            email: "guest@example.com",
+          }
+        }
+      >
         <SidebarLayout>
           <div className="w-full min-h-[60vh] flex items-center justify-center p-4">
             <div className="max-w-md w-full text-center">
@@ -728,15 +826,15 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
               <div className="space-y-2">
                 {error.includes("login") ? (
                   <>
-                    <Button 
-                      onClick={() => navigate("/login")} 
+                    <Button
+                      onClick={() => navigate("/login")}
                       className="w-full bg-blue-600 hover:bg-blue-700"
                     >
                       Go to Login
                     </Button>
-                    <Button 
-                      onClick={() => navigate("/")} 
-                      variant="outline" 
+                    <Button
+                      onClick={() => navigate("/")}
+                      variant="outline"
                       className="w-full"
                     >
                       Continue Shopping
@@ -744,15 +842,15 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   </>
                 ) : (
                   <>
-                    <Button 
-                      onClick={() => window.location.reload()} 
+                    <Button
+                      onClick={() => window.location.reload()}
                       className="w-full bg-blue-600 hover:bg-blue-700"
                     >
                       Try Again
                     </Button>
-                    <Button 
-                      onClick={() => navigate("/")} 
-                      variant="outline" 
+                    <Button
+                      onClick={() => navigate("/")}
+                      variant="outline"
                       className="w-full"
                     >
                       Continue Shopping
@@ -768,13 +866,13 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   }
 
   const safeUser = user || {
-    id: 'guest',
+    id: "guest",
     isAdmin: false,
     isRider: false,
     isModerator: false,
     isCustomer: false,
-    username: 'guest',
-    email: 'guest@example.com'
+    username: "guest",
+    email: "guest@example.com",
   };
 
   return (
@@ -782,7 +880,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
       <SidebarLayout>
         <div className="w-full min-h-screen bg-gray-50">
           <div className="w-full p-4 lg:p-6">
-            {/* Header - Full Width */}
+            {/* Header */}
             <div className="mb-6 w-full">
               <div className="flex items-center justify-between w-full">
                 <div>
@@ -791,7 +889,8 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                     Shopping Cart ({cartItems.length})
                   </h1>
                   <p className="text-sm text-gray-500 mt-1">
-                    {selectedItems.length} items selected • ₱{subtotal.toFixed(2)} • {shopCount} shops
+                    {selectedItems.length} items selected • ₱{subtotal.toFixed(2)}{" "}
+                    • {shopCount} shops
                   </p>
                 </div>
                 {cartItems.length > 0 && (
@@ -813,55 +912,57 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                 <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gray-100 flex items-center justify-center">
                   <ShoppingCart className="h-10 w-10 text-gray-400" />
                 </div>
-                <h3 className="text-lg lg:text-xl font-medium mb-2">Your cart is empty</h3>
+                <h3 className="text-lg lg:text-xl font-medium mb-2">
+                  Your cart is empty
+                </h3>
                 <p className="text-gray-500 mb-6 max-w-md mx-auto">
                   Add items from your favorite shops to get started
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                  <Button 
+                  <Button
                     onClick={() => navigate("/")}
                     className="bg-blue-600 hover:bg-blue-700 px-6"
                   >
                     Start Shopping
                   </Button>
-                  <Button 
-                    onClick={() => navigate(-1)} 
-                    variant="outline"
-                  >
+                  <Button onClick={() => navigate(-1)} variant="outline">
                     Go Back
                   </Button>
                 </div>
               </div>
             ) : (
               <div className="flex flex-col lg:flex-row gap-6 w-full">
-                {/* Left Column - Cart Items - Takes 2/3 width */}
+                {/* Left Column - Cart Items */}
                 <div className="lg:w-2/3">
-                  {/* Selection Bar - Full Width */}
+                  {/* Selection Bar */}
                   <div className="bg-white rounded-lg p-3 mb-4 flex items-center justify-between border shadow-sm">
                     <div className="flex items-center gap-2">
                       <Checkbox
-                        checked={cartItems.length > 0 && cartItems.every((item) => item.selected)}
+                        checked={
+                          cartItems.length > 0 &&
+                          cartItems.every((item) => item.selected)
+                        }
                         onCheckedChange={handleSelectAll}
                         className="h-4 w-4"
                       />
-                      <span className="text-sm font-medium">Select All Items ({cartItems.length})</span>
+                      <span className="text-sm font-medium">
+                        Select All Items ({cartItems.length})
+                      </span>
                     </div>
-                    
+
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-500">
-                        {shopCount} {shopCount === 1 ? 'shop' : 'shops'}
+                        {shopCount} {shopCount === 1 ? "shop" : "shops"}
                       </span>
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          selectedItems.forEach(item => removeItem(item.id));
-                        }}
+                        onClick={removeSelectedItems}
                         disabled={selectedItems.length === 0}
                         className="text-sm text-red-600 hover:text-red-700 hover:bg-red-50"
                       >
                         <X className="h-4 w-4 mr-1" />
-                        Remove Selected
+                        Remove Selected ({selectedItems.length})
                       </Button>
                     </div>
                   </div>
@@ -878,7 +979,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                       onSelectShop={handleSelectShop}
                     />
                   ))}
-                  
+
                   {/* Mobile Continue Button */}
                   {cartItems.length > 0 && (
                     <Button
@@ -892,7 +993,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   )}
                 </div>
 
-                {/* Right Column - Order Summary - Takes 1/3 width */}
+                {/* Right Column - Order Summary */}
                 <div className="lg:w-1/3">
                   <div className="sticky top-6 space-y-4">
                     <SimpleCouponSection onApplyCoupon={handleApplyCoupon} />
@@ -904,7 +1005,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                       itemCount={selectedItems.length}
                       shopCount={selectedShops}
                     />
-                    
+
                     {/* Additional Info */}
                     <div className="border rounded-lg p-4 bg-white">
                       <div className="flex items-center gap-2 mb-2">
@@ -912,7 +1013,8 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                         <h4 className="text-sm font-medium">Multi-Shop Order</h4>
                       </div>
                       <p className="text-xs text-gray-600 mb-3">
-                        Items from different shops will be delivered separately. Each shop may have different delivery times.
+                        Items from different shops will be delivered separately.
+                        Each shop may have different delivery times.
                       </p>
                       <div className="space-y-1 text-xs">
                         <div className="flex justify-between">

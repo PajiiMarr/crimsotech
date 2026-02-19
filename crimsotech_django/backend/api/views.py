@@ -16770,29 +16770,24 @@ class CartListView(APIView):
             return Response({"error": "User not found"}, status=404)
 
         try:
-            # Optimized query with prefetch for media files and related sku
             cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
-                .select_related("product", "product__shop", 'sku')\
+                .select_related("product", "product__shop", "variant")\
                 .prefetch_related('product__productmedia_set')\
                 .order_by('-added_at')
 
-            # Pass request in context so serializers can build absolute URIs safely
             serializer = CartItemSerializer(cart_items, many=True, context={"request": request})
-            # Debug output: log count and first item for inspection
-            try:
-                print(f"CartListView.get: user={user_id} cart_count={len(serializer.data)}")
-                if len(serializer.data) > 0:
-                    print("CartListView.get: first_item=", serializer.data[0])
-            except Exception:
-                pass
             return Response({"success": True, "cart_items": serializer.data})
         except Exception as e:
             import traceback
             print("Error in CartListView.get:", str(e))
             print(traceback.format_exc())
-            return Response({"success": False, "error": "Failed to fetch cart items", "details": str(e)}, status=500)    
+            return Response({"success": False, "error": "Failed to fetch cart items", "details": str(e)}, status=500)
 
     def put(self, request, item_id):
+        """
+        Update quantity of a specific cart item
+        URL: /view-cart/update/<item_id>/
+        """
         user_id = request.data.get("user_id")
         quantity_raw = request.data.get("quantity")
 
@@ -16801,77 +16796,656 @@ class CartListView(APIView):
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
 
-        # Coerce quantity to integer with validation
+        # Validate quantity
         try:
             quantity = int(quantity_raw)
         except (TypeError, ValueError):
             return Response({"error": "Quantity must be an integer"}, status=400)
 
         if quantity < 1:
-            return Response({"error": "Valid quantity is required"}, status=400)
+            return Response({"error": "Quantity must be at least 1"}, status=400)
 
         try:
-            cart_item = CartItem.objects.select_related("product").get(id=item_id, user_id=user_id)
+            # Get cart item with related product and variant
+            cart_item = CartItem.objects.select_related("product", "variant").get(
+                id=item_id, 
+                user_id=user_id,
+                is_ordered=False
+            )
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
 
+        # Check stock availability
         try:
-            # Determine available quantity.
             available_quantity = 0
-            product = cart_item.product
-            if product:
-                # If product has SKUs, prefer sum of active SKU quantities
-                try:
-                    sku_qs = product.skus.filter(is_active=True)
-                    if sku_qs.exists():
-                        total = sku_qs.aggregate(total=Coalesce(Sum('quantity'), 0))['total']
-                        available_quantity = int(total or 0)
-                    else:
-                        available_quantity = int(product.quantity or 0)
-                except Exception:
-                    # If any issue accessing SKUs, fallback to product.quantity
-                    available_quantity = int(product.quantity or 0)
+            
+            if cart_item.variant:
+                # If item has a variant, check that variant's stock
+                available_quantity = cart_item.variant.quantity
+                
+                # Check if variant is still active
+                if not cart_item.variant.is_active:
+                    return Response({
+                        "error": "This variant is no longer available",
+                        "can_remove": True
+                    }, status=400)
+                    
+            elif cart_item.product:
+                # If no variant, check total stock from all active variants
+                available_quantity = cart_item.product.total_stock
 
             if quantity > available_quantity:
                 return Response({
                     "error": f"Only {available_quantity} items available in stock",
-                    "available_quantity": available_quantity
+                    "available_quantity": available_quantity,
+                    "current_quantity": cart_item.quantity
                 }, status=400)
 
+            # Update quantity
             cart_item.quantity = quantity
             cart_item.save()
 
-            serializer = CartItemSerializer(cart_item)
+            # Return updated item with full details
+            serializer = CartItemSerializer(cart_item, context={"request": request})
             return Response({
                 "success": True,
-                "message": "Quantity updated",
+                "message": "Quantity updated successfully",
                 "cart_item": serializer.data
             })
+            
         except Exception as e:
             import traceback
             print("Error updating cart quantity:", str(e))
             print(traceback.format_exc())
-            return Response({"error": str(e)}, status=400)
+            return Response({
+                "success": False,
+                "error": "Failed to update quantity",
+                "details": str(e)
+            }, status=500)
 
     def delete(self, request, item_id):
+        """
+        Remove a specific item from cart
+        URL: /view-cart/delete/<item_id>/
+        """
+        user_id = request.data.get("user_id")
+        
+        print(f"CartListView.delete called: item_id={item_id}, user_id={user_id}")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        try:
+            # Get and delete the cart item
+            cart_item = CartItem.objects.get(
+                id=item_id, 
+                user_id=user_id,
+                is_ordered=False
+            )
+            
+            # Store item info for response
+            item_info = {
+                "id": str(cart_item.id),
+                "product_id": str(cart_item.product.id) if cart_item.product else None,
+                "variant_id": str(cart_item.variant.id) if cart_item.variant else None,
+                "name": cart_item.product.name if cart_item.product else "Unknown Product"
+            }
+            
+            cart_item.delete()
+            
+            return Response({
+                "success": True,
+                "message": "Item removed from cart",
+                "removed_item": item_info
+            })
+            
+        except CartItem.DoesNotExist:
+            return Response({"error": "Cart item not found"}, status=404)
+        except Exception as e:
+            import traceback
+            print("Error removing cart item:", str(e))
+            print(traceback.format_exc())
+            return Response({
+                "success": False,
+                "error": "Failed to remove item",
+                "details": str(e)
+            }, status=500)
+
+
+# Add this separate view for bulk operations if needed
+class CartBulkUpdateView(APIView):
+    """
+    Handle bulk updates to cart (update multiple quantities at once)
+    """
+    def post(self, request):
+        user_id = request.data.get("user_id")
+        updates = request.data.get("updates", [])  # List of {id: item_id, quantity: new_quantity}
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        if not updates:
+            return Response({"error": "No updates provided"}, status=400)
+        
+        results = {
+            "success": [],
+            "failed": []
+        }
+        
+        try:
+            user = User.objects.get(pk=user_id)
+            
+            for update in updates:
+                item_id = update.get("id")
+                new_quantity = update.get("quantity")
+                
+                try:
+                    cart_item = CartItem.objects.select_related("product", "variant").get(
+                        id=item_id,
+                        user=user,
+                        is_ordered=False
+                    )
+                    
+                    # Validate quantity
+                    try:
+                        quantity = int(new_quantity)
+                    except (TypeError, ValueError):
+                        results["failed"].append({
+                            "id": item_id,
+                            "error": "Invalid quantity"
+                        })
+                        continue
+                    
+                    if quantity < 1:
+                        # If quantity is 0 or negative, remove the item
+                        cart_item.delete()
+                        results["success"].append({
+                            "id": item_id,
+                            "action": "removed"
+                        })
+                        continue
+                    
+                    # Check stock
+                    available = cart_item.variant.quantity if cart_item.variant else cart_item.product.total_stock
+                    
+                    if quantity > available:
+                        results["failed"].append({
+                            "id": item_id,
+                            "error": f"Only {available} available",
+                            "available": available
+                        })
+                        continue
+                    
+                    # Update quantity
+                    cart_item.quantity = quantity
+                    cart_item.save()
+                    
+                    results["success"].append({
+                        "id": item_id,
+                        "action": "updated",
+                        "new_quantity": quantity
+                    })
+                    
+                except CartItem.DoesNotExist:
+                    results["failed"].append({
+                        "id": item_id,
+                        "error": "Item not found"
+                    })
+                    
+            return Response({
+                "success": True,
+                "results": results
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+
+class CartClearView(APIView):
+    """
+    Remove all items from user's cart
+    """
+    def delete(self, request):
         user_id = request.data.get("user_id")
         
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
         
         try:
-            cart_item = CartItem.objects.get(id=item_id, user_id=user_id)
-            cart_item.delete()
+            user = User.objects.get(pk=user_id)
+            deleted_count, _ = CartItem.objects.filter(
+                user=user, 
+                is_ordered=False
+            ).delete()
             
             return Response({
                 "success": True,
-                "message": "Item removed from cart"
+                "message": f"Cart cleared successfully",
+                "deleted_count": deleted_count
             })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+
+class CartItemDetailView(APIView):
+    """
+    Get details of a single cart item
+    """
+    def get(self, request, item_id):
+        user_id = request.GET.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        try:
+            cart_item = CartItem.objects.select_related(
+                "product", 
+                "variant", 
+                "product__shop"
+            ).prefetch_related(
+                'product__productmedia_set'
+            ).get(
+                id=item_id, 
+                user_id=user_id,
+                is_ordered=False
+            )
+            
+            serializer = CartItemSerializer(cart_item, context={"request": request})
+            return Response({
+                "success": True,
+                "cart_item": serializer.data
+            })
+            
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
-            return Response({"error": str(e)}, status=400)
+            return Response({"error": str(e)}, status=500)
 
+
+
+class CartCountView(APIView):
+    """
+    Returns the total number of items in the user's cart
+    URL: /api/cart/count/?user_id=xxx
+    """
+    def get(self, request):
+        user_id = request.GET.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        try:
+            user = User.objects.get(pk=user_id)
+            count = CartItem.objects.filter(
+                user=user, 
+                is_ordered=False
+            ).count()
+            
+            return Response({
+                "success": True,
+                "count": count
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+
+class CartItemDetailView(APIView):
+    """
+    Get details of a single cart item
+    """
+    def get(self, request, item_id):
+        user_id = request.GET.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        try:
+            cart_item = CartItem.objects.select_related(
+                "product", 
+                "variant", 
+                "product__shop"
+            ).prefetch_related(
+                'product__productmedia_set'
+            ).get(
+                id=item_id, 
+                user_id=user_id,
+                is_ordered=False
+            )
+            
+            serializer = CartItemSerializer(cart_item, context={"request": request})
+            return Response({
+                "success": True,
+                "cart_item": serializer.data
+            })
+            
+        except CartItem.DoesNotExist:
+            return Response({"error": "Cart item not found"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+
+class CartBulkUpdateView(APIView):
+    """
+    Handle bulk updates to cart (update multiple quantities at once)
+    """
+    def post(self, request):
+        user_id = request.data.get("user_id")
+        updates = request.data.get("updates", [])  # List of {id: item_id, quantity: new_quantity}
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        if not updates:
+            return Response({"error": "No updates provided"}, status=400)
+        
+        results = {
+            "success": [],
+            "failed": []
+        }
+        
+        try:
+            user = User.objects.get(pk=user_id)
+            
+            for update in updates:
+                item_id = update.get("id")
+                new_quantity = update.get("quantity")
+                
+                try:
+                    cart_item = CartItem.objects.select_related("product", "variant").get(
+                        id=item_id,
+                        user=user,
+                        is_ordered=False
+                    )
+                    
+                    # Validate quantity
+                    try:
+                        quantity = int(new_quantity)
+                    except (TypeError, ValueError):
+                        results["failed"].append({
+                            "id": item_id,
+                            "error": "Invalid quantity"
+                        })
+                        continue
+                    
+                    if quantity < 1:
+                        # If quantity is 0 or negative, remove the item
+                        cart_item.delete()
+                        results["success"].append({
+                            "id": item_id,
+                            "action": "removed"
+                        })
+                        continue
+                    
+                    # Check stock
+                    available = cart_item.variant.quantity if cart_item.variant else cart_item.product.total_stock
+                    
+                    if quantity > available:
+                        results["failed"].append({
+                            "id": item_id,
+                            "error": f"Only {available} available",
+                            "available": available
+                        })
+                        continue
+                    
+                    # Update quantity
+                    cart_item.quantity = quantity
+                    cart_item.save()
+                    
+                    results["success"].append({
+                        "id": item_id,
+                        "action": "updated",
+                        "new_quantity": quantity
+                    })
+                    
+                except CartItem.DoesNotExist:
+                    results["failed"].append({
+                        "id": item_id,
+                        "error": "Item not found"
+                    })
+                    
+            return Response({
+                "success": True,
+                "results": results
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+
+class CartClearView(APIView):
+    """
+    Remove all items from user's cart
+    """
+    def delete(self, request):
+        user_id = request.data.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        try:
+            user = User.objects.get(pk=user_id)
+            deleted_count, _ = CartItem.objects.filter(
+                user=user, 
+                is_ordered=False
+            ).delete()
+            
+            return Response({
+                "success": True,
+                "message": f"Cart cleared successfully",
+                "deleted_count": deleted_count
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+
+class CartSummaryView(APIView):
+    """
+    Returns a summary of the cart with total items, unique products, and total value
+    """
+    def get(self, request):
+        user_id = request.GET.get("user_id")
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        
+        try:
+            cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
+                .select_related("product", "variant")
+            
+            total_items = 0
+            total_value = 0
+            unique_products = set()
+            items_by_shop = {}
+            
+            for item in cart_items:
+                total_items += item.quantity
+                unique_products.add(item.product.id)
+                
+                # Calculate value based on variant price or use product min price as fallback
+                if item.variant and item.variant.price:
+                    item_value = item.variant.price * item.quantity
+                    total_value += item_value
+                elif item.product:
+                    # Use min price as estimate if no variant selected
+                    min_price = item.product.min_price or 0
+                    item_value = min_price * item.quantity
+                    total_value += item_value
+                
+                # Group by shop
+                if item.product and item.product.shop:
+                    shop_id = str(item.product.shop.id)
+                    if shop_id not in items_by_shop:
+                        items_by_shop[shop_id] = {
+                            'shop_name': item.product.shop.name,
+                            'item_count': 0,
+                            'total_value': 0
+                        }
+                    
+                    items_by_shop[shop_id]['item_count'] += item.quantity
+                    if item.variant and item.variant.price:
+                        items_by_shop[shop_id]['total_value'] += item.variant.price * item.quantity
+                    elif item.product.min_price:
+                        items_by_shop[shop_id]['total_value'] += item.product.min_price * item.quantity
+            
+            return Response({
+                "success": True,
+                "summary": {
+                    "total_items": total_items,
+                    "unique_products": len(unique_products),
+                    "total_value": str(total_value),
+                    "items_by_shop": items_by_shop
+                }
+            })
+            
+        except Exception as e:
+            import traceback
+            print("Error in CartSummaryView.get:", str(e))
+            print(traceback.format_exc())
+            return Response({
+                "success": False,
+                "error": "Failed to fetch cart summary",
+                "details": str(e)
+            }, status=500)
+
+
+class BulkCartAddView(APIView):
+    """
+    Add multiple items to cart at once
+    """
+    def post(self, request):
+        user_id = request.data.get("user_id")
+        items = request.data.get("items", [])
+        
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        
+        if not items or not isinstance(items, list):
+            return Response({"error": "Items array is required"}, status=400)
+        
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        
+        results = {
+            "success": [],
+            "failed": []
+        }
+        
+        for item_data in items:
+            try:
+                product_id = item_data.get("product_id")
+                variant_id = item_data.get("variant_id")
+                quantity = int(item_data.get("quantity", 1))
+                
+                if not product_id:
+                    results["failed"].append({
+                        "item": item_data,
+                        "error": "Product ID is required"
+                    })
+                    continue
+                
+                # Find product
+                try:
+                    product = Product.objects.get(id=product_id)
+                except Product.DoesNotExist:
+                    results["failed"].append({
+                        "item": item_data,
+                        "error": "Product not found"
+                    })
+                    continue
+                
+                # Handle variant if provided
+                variant = None
+                if variant_id:
+                    try:
+                        variant = Variants.objects.get(id=variant_id, product=product, is_active=True)
+                        if variant.quantity < quantity:
+                            results["failed"].append({
+                                "item": item_data,
+                                "error": f"Only {variant.quantity} units available",
+                                "available_quantity": variant.quantity
+                            })
+                            continue
+                    except Variants.DoesNotExist:
+                        results["failed"].append({
+                            "item": item_data,
+                            "error": "Variant not found or inactive"
+                        })
+                        continue
+                else:
+                    # Check if product has any active variants
+                    if not product.variants.filter(is_active=True).exists():
+                        results["failed"].append({
+                            "item": item_data,
+                            "error": "No active variants available for this product"
+                        })
+                        continue
+                
+                # Add to cart logic
+                cart_item, created = CartItem.objects.get_or_create(
+                    user=user,
+                    product=product,
+                    variant=variant,
+                    defaults={"quantity": 0}
+                )
+                
+                new_quantity = cart_item.quantity + quantity
+                
+                # Check availability
+                if variant:
+                    if new_quantity > variant.quantity:
+                        results["failed"].append({
+                            "item": item_data,
+                            "error": f"Only {variant.quantity} units available",
+                            "available_quantity": variant.quantity
+                        })
+                        continue
+                else:
+                    total_stock = product.total_stock
+                    if new_quantity > total_stock:
+                        results["failed"].append({
+                            "item": item_data,
+                            "error": f"Only {total_stock} units available across all variants",
+                            "available_quantity": total_stock
+                        })
+                        continue
+                
+                cart_item.quantity = new_quantity
+                cart_item.save()
+                
+                serializer = CartItemSerializer(cart_item, context={"request": request})
+                results["success"].append(serializer.data)
+                
+            except Exception as e:
+                results["failed"].append({
+                    "item": item_data,
+                    "error": str(e)
+                })
+        
+        return Response({
+            "success": True,
+            "results": results
+        })
+    
 class CheckoutView(viewsets.ViewSet):
     """
     Simplified Checkout ViewSet

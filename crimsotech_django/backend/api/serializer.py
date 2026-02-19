@@ -490,6 +490,18 @@ class CartItemSerializer(serializers.ModelSerializer):
         if not obj.product:
             return None
         
+        # Get main image with full URL
+        main_image = self.get_main_product_image(obj.product)
+        
+        # Get all media files if needed
+        media_files = []
+        for media in obj.product.productmedia_set.all()[:3]:  # Limit to 3 images
+            media_files.append({
+                'id': str(media.id),
+                'url': self.get_full_url(media.file_data.url) if media.file_data else None,
+                'file_type': media.file_type
+            })
+        
         return {
             'id': str(obj.product.id),
             'name': obj.product.name,
@@ -497,12 +509,18 @@ class CartItemSerializer(serializers.ModelSerializer):
             'condition': obj.product.condition,
             'shop_name': obj.product.shop.name if obj.product.shop else None,
             'shop_id': str(obj.product.shop.id) if obj.product.shop else None,
-            'main_image': self.get_main_product_image(obj.product)
+            'main_image': main_image,
+            'media_files': media_files,  # Additional images if needed
         }
 
     def get_variant_details(self, obj):
         if not obj.variant:
             return None
+        
+        # Get variant image with full URL
+        variant_image = None
+        if obj.variant.image:
+            variant_image = self.get_full_url(obj.variant.image.url)
         
         return {
             'id': str(obj.variant.id),
@@ -510,22 +528,42 @@ class CartItemSerializer(serializers.ModelSerializer):
             'sku_code': obj.variant.sku_code,
             'price': str(obj.variant.price) if obj.variant.price else None,
             'compare_price': str(obj.variant.compare_price) if obj.variant.compare_price else None,
-            'image': obj.variant.image.url if obj.variant.image else None,
+            'image': variant_image,
             'option_title': obj.variant.option_title,
-            'options': obj.variant.option_map  # This contains the variant options like color, size etc.
+            'options': obj.variant.option_map,
+            'quantity_available': obj.variant.quantity  # Add available stock
         }
 
     def get_total_price(self, obj):
         if obj.variant and obj.variant.price:
             return str(obj.variant.price * obj.quantity)
+        elif obj.product:
+            # Fallback to min price if no variant
+            min_price = obj.product.min_price
+            if min_price:
+                return str(min_price * obj.quantity)
         return None
 
     def get_main_product_image(self, product):
-        # Get first product media if available
+        """Get the first product media with full URL"""
         first_media = product.productmedia_set.first()
         if first_media and first_media.file_data:
-            return first_media.file_data.url
+            return self.get_full_url(first_media.file_data.url)
         return None
+
+    def get_full_url(self, url):
+        """Convert relative URL to absolute URL using request context"""
+        request = self.context.get('request')
+        if request and url:
+            try:
+                # If it's already a full URL, return as is
+                if url.startswith(('http://', 'https://')):
+                    return url
+                # Otherwise build absolute URL
+                return request.build_absolute_uri(url)
+            except Exception:
+                return url
+        return url
     
 class CheckoutDetailSerializer(serializers.ModelSerializer):
     voucher_id = VoucherSerializer(read_only=True)
