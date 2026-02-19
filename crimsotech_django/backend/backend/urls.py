@@ -5,7 +5,6 @@ from rest_framework.routers import DefaultRouter
 from django.conf.urls.static import static
 from django.conf import settings
 
-
 router = DefaultRouter()
 
 router.register(r'landing', Landing, basename='landing')
@@ -33,7 +32,6 @@ router.register(r'moderator-boosting', ModeratorBoosting, basename='moderator-bo
 router.register(r'moderator-orders', ModeratorOrders, basename='moderator-orders')
 router.register(r'moderator-riders', ModeratorRiders, basename='moderator-riders')
 
-
 router.register(r'rider-status', RiderStatus, basename='rider-status')
 router.register(r'seller-dashboard', SellerDashboard, basename='seller-dashboard')
 router.register(r'seller-products', SellerProducts, basename='seller-products')
@@ -52,7 +50,7 @@ router.register(r'return-address', ReturnAddressViewSet, basename='return-addres
 router.register(r'return-refund', RefundViewSet, basename='return-refund')
 router.register(r'disputes', DisputeViewSet, basename='disputes')
 
-router.register(r'order-sucessful', OrderSuccessfull, basename='order-successful')
+router.register(r'order-successful', OrderSuccessful, basename='order-successful')
 router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
 router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment')
 router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-orders-active')
@@ -61,14 +59,13 @@ router.register(r'customer-products-viewset', CustomerProductViewSet, basename='
 router.register(r'customer-product-list', CustomerProductsList, basename='customer-product-list')
 router.register(r'home-boosts', HomeBoosts, basename='home-boosts')
 
-
 router.register(r'seller-gift', SellerGifts, basename='seller-gift')
 router.register(r'customer-gift', CustomerGiftViewSet, basename='customer-gift')
 router.register(r'reviews', Reviews, basename='reviews')
 
 router.register(r'rider-dashboard', RiderDashboardViewSet, basename='rider-dashboard')
 router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-history')
-router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')  # ← ADD THIS LINE
+router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')
 router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')
 
 urlpatterns = [
@@ -82,15 +79,32 @@ urlpatterns = [
     path('api/shops/<uuid:shop_id>/', ViewShopAPIView.as_view(), name='view-shop'),
     path('api/profile/', ProfileView.as_view(), name='profile'),
 
-    # GET all items (no item_id in URL)
+    # ==================== CART ENDPOINTS ====================
+    
+    # GET all cart items (no item_id in URL)
     path('api/view-cart/', CartListView.as_view(), name='view-cart'),
     
-    # PUT for updates
+    # PUT for updating cart item quantity
     path('api/view-cart/update/<uuid:item_id>/', CartListView.as_view(), name='update-cart-item'),
     
-    # DELETE for removal
+    # DELETE for removing a specific cart item
     path('api/view-cart/delete/<uuid:item_id>/', CartListView.as_view(), name='delete-cart-item'),
     
+    # GET cart item count (fixes your 404 error)
+    path('api/cart/count/', CartCountView.as_view(), name='cart-count'),
+    
+    # GET a single cart item details
+    path('api/cart/item/<uuid:item_id>/', CartItemDetailView.as_view(), name='cart-item-detail'),
+    
+    # POST bulk update multiple cart items at once
+    path('api/cart/bulk-update/', CartBulkUpdateView.as_view(), name='cart-bulk-update'),
+    
+    # DELETE clear entire cart
+    path('api/cart/clear/', CartClearView.as_view(), name='cart-clear'),
+    
+    
+    # ========================================================
+
     path('api/register/', Register.as_view(), name='register'),
     path('api/login/', Login.as_view(), name='login'),
     path('api/profiling/', Profiling.as_view(), name='profiling'),

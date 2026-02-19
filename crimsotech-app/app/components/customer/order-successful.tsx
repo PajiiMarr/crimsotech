@@ -40,8 +40,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
     
     if (orderId && userId) {
         try {
-            // Fetch the actual order from backend
-            const response = await AxiosInstance.get(`/order-sucessful/${orderId}/get_order_successful/`, {
+            // Fix the URL: order-successful (correct spelling)
+            const response = await AxiosInstance.get(`/order-successful/${orderId}/get_order_successful/`, {
                 headers: {
                     'X-User-Id': userId,
                 }
@@ -52,6 +52,21 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
             }
         } catch (error: any) {
             console.error('Error fetching order data:', error);
+            
+            // Fallback to orders endpoint if the specific endpoint fails
+            try {
+                const fallbackResponse = await AxiosInstance.get(`/orders/${orderId}/`, {
+                    headers: {
+                        'X-User-Id': userId,
+                    }
+                });
+                
+                if (fallbackResponse.data) {
+                    orderData = fallbackResponse.data;
+                }
+            } catch (fallbackError) {
+                console.error('Fallback also failed:', fallbackError);
+            }
         }
     }
 
@@ -66,15 +81,16 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
 
 export default function OrderSuccessful({ loaderData}: { loaderData: LoaderData }){
     const { user, orderData } = loaderData
-    const { order_id } = useParams()
+    const { orderId } = useParams()  // Changed from order_id to orderId to match route param
     const [loading, setLoading] = useState(!orderData)
     const [order, setOrder] = useState(orderData)
 
     // Fetch order if not in loader data
     useEffect(() => {
-        if (!orderData && order_id && user.userId) {
+        if (!orderData && orderId && user?.userId) {
             setLoading(true)
-            AxiosInstance.get(`/orders/${order_id}/`, {
+            // Try the correct endpoint first
+            AxiosInstance.get(`/order-successful/${orderId}/get_order_successful/`, {
                 headers: {
                     'X-User-Id': user.userId,
                 }
@@ -83,12 +99,24 @@ export default function OrderSuccessful({ loaderData}: { loaderData: LoaderData 
                 setOrder(response.data)
                 setLoading(false)
             })
-            .catch(error => {
-                console.error('Error fetching order:', error)
-                setLoading(false)
+            .catch(() => {
+                // Fallback to orders endpoint
+                AxiosInstance.get(`/orders/${orderId}/`, {
+                    headers: {
+                        'X-User-Id': user.userId,
+                    }
+                })
+                .then(response => {
+                    setOrder(response.data)
+                    setLoading(false)
+                })
+                .catch(error => {
+                    console.error('Error fetching order:', error)
+                    setLoading(false)
+                })
             })
         }
-    }, [orderData, order_id, user.userId])
+    }, [orderData, orderId, user?.userId])
 
     if (loading) {
         return (
@@ -107,22 +135,22 @@ export default function OrderSuccessful({ loaderData}: { loaderData: LoaderData 
     if (!order) {
         return (
             <UserProvider user={user}>
-                    <div className="min-h-screen bg-white flex items-center justify-center">
-                        <div className="text-center max-w-md">
-                            <AlertCircle className="h-16 w-16 text-red-400 mx-auto mb-4" />
-                            <h2 className="text-xl font-semibold text-gray-900 mb-2">Order Not Found</h2>
-                            <p className="text-gray-600 mb-4">
-                                The order you're looking for doesn't exist or you don't have permission to view it.
-                            </p>
-                            <Link 
-                                to="/orders" 
-                                className="inline-flex items-center gap-2 py-2 px-4 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
-                            >
-                                <ShoppingBag className="h-4 w-4" />
-                                View All Orders
-                            </Link>
-                        </div>
+                <div className="min-h-screen bg-white flex items-center justify-center">
+                    <div className="text-center max-w-md">
+                        <AlertCircle className="h-16 w-16 text-red-400 mx-auto mb-4" />
+                        <h2 className="text-xl font-semibold text-gray-900 mb-2">Order Not Found</h2>
+                        <p className="text-gray-600 mb-4">
+                            The order you're looking for doesn't exist or you don't have permission to view it.
+                        </p>
+                        <Link 
+                            to="/orders" 
+                            className="inline-flex items-center gap-2 py-2 px-4 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
+                        >
+                            <ShoppingBag className="h-4 w-4" />
+                            View All Orders
+                        </Link>
                     </div>
+                </div>
             </UserProvider>
         )
     }
@@ -151,6 +179,18 @@ export default function OrderSuccessful({ loaderData}: { loaderData: LoaderData 
         return statusMap[status] || status
     }
 
+    const getStatusColor = (status: string) => {
+        const colorMap: Record<string, string> = {
+            'pending': 'text-orange-600',
+            'processing': 'text-blue-600',
+            'shipped': 'text-purple-600',
+            'delivered': 'text-green-600',
+            'cancelled': 'text-red-600',
+            'refunded': 'text-gray-600'
+        }
+        return colorMap[status] || 'text-gray-600'
+    }
+
     const getNextStatus = (currentStatus: string) => {
         const statusFlow = ['pending', 'processing', 'shipped', 'delivered']
         const currentIndex = statusFlow.indexOf(currentStatus)
@@ -175,7 +215,7 @@ export default function OrderSuccessful({ loaderData}: { loaderData: LoaderData 
                             Thank you for your purchase. Your order has been received.
                         </p>
                         <p className="text-sm text-gray-500 mt-2">
-                            Order ID: {order.order || order_id}
+                            Order ID: {order.order || orderId}
                         </p>
                     </div>
 
@@ -215,7 +255,7 @@ export default function OrderSuccessful({ loaderData}: { loaderData: LoaderData 
                                         <Clock className="h-4 w-4 text-orange-400" />
                                     </div>
                                     <div>
-                                        <p className="font-medium text-gray-900">
+                                        <p className={`font-medium ${getStatusColor(nextStatus)}`}>
                                             {getOrderStatusText(nextStatus)}
                                         </p>
                                         <p className="text-sm text-gray-500">
@@ -260,15 +300,37 @@ export default function OrderSuccessful({ loaderData}: { loaderData: LoaderData 
                                 <h3 className="font-medium text-gray-900 mb-3">Items Ordered</h3>
                                 <div className="space-y-3">
                                     {order.items.map((item: any, index: number) => (
-                                        <div key={index} className="flex items-center justify-between text-sm">
-                                            <span className="text-gray-600">
-                                                {item.quantity} x {item.name}
-                                            </span>
-                                            <span className="font-medium">
+                                        <div key={index} className="flex items-start justify-between text-sm">
+                                            <div className="flex-1">
+                                                <span className="text-gray-600">
+                                                    {item.quantity} x {item.name}
+                                                </span>
+                                                {item.variant && (
+                                                    <p className="text-xs text-gray-500 mt-1">
+                                                        Variant: {item.variant.title}
+                                                        {item.variant.sku_code && ` (SKU: ${item.variant.sku_code})`}
+                                                    </p>
+                                                )}
+                                            </div>
+                                            <span className="font-medium ml-4">
                                                 ₱{parseFloat(item.subtotal || 0).toFixed(2)}
                                             </span>
                                         </div>
                                     ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Payment Status */}
+                        {order.payment && (
+                            <div className="mt-4 pt-4 border-t">
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-600">Payment Status</span>
+                                    <span className={`font-medium ${
+                                        order.payment.status === 'success' ? 'text-green-600' : 'text-orange-600'
+                                    }`}>
+                                        {order.payment.status === 'success' ? 'Paid' : 'Pending'}
+                                    </span>
                                 </div>
                             </div>
                         )}
@@ -293,8 +355,6 @@ export default function OrderSuccessful({ loaderData}: { loaderData: LoaderData 
                             Continue Shopping
                         </Link>
                     </div>
-
-                    {/* Help Section */}
                 </div>
             </div>
         </UserProvider>

@@ -69,7 +69,14 @@ interface Product {
   id: string
   name: string
   description: string
-  price: number
+  price?: number
+  price_display?: string
+  price_range?: {
+    min: number
+    max: number
+    is_range: boolean
+  }
+  total_stock?: number
   media_files?: Array<{
     id: string
     file_data: string
@@ -91,7 +98,6 @@ interface Product {
   condition?: string
   created_at?: string
   updated_at?: string
-  quantity?: number
   used_for?: string
   status?: string
   upload_status?: string
@@ -187,6 +193,36 @@ const getProductImage = (product: Product): string => {
 }
 
 // ----------------------------
+// Get product price display
+// ----------------------------
+const getProductPrice = (product: Product): string => {
+  // If price_display is provided from backend, use it
+  if (product.price_display) {
+    return product.price_display;
+  }
+  
+  // Fallback to price_range if available
+  if (product.price_range) {
+    if (!product.price_range.is_range) {
+      return `₱${product.price_range.min.toFixed(2)}`;
+    } else {
+      return `₱${product.price_range.min.toFixed(2)} - ₱${product.price_range.max.toFixed(2)}`;
+    }
+  }
+  
+  // Legacy fallback
+  if (product.price === 0) {
+    return "FREE GIFT";
+  }
+  
+  if (product.price) {
+    return `₱${product.price.toFixed(2)}`;
+  }
+  
+  return "Price unavailable";
+}
+
+// ----------------------------
 // Compact Product Card
 // ----------------------------
 const CompactProductCard = ({ 
@@ -204,6 +240,7 @@ const CompactProductCard = ({
   const [isFavorite, setIsFavorite] = useState(favoriteIds.includes(product.id));
   const [loadingFav, setLoadingFav] = useState(false);
   const [imageUrl, setImageUrl] = useState<string>('/Crimsotech.png');
+  const [priceDisplay, setPriceDisplay] = useState<string>('');
 
   useEffect(() => {
     setIsFavorite(favoriteIds.includes(product.id));
@@ -213,6 +250,11 @@ const CompactProductCard = ({
   useEffect(() => {
     const url = getProductImage(product);
     setImageUrl(url);
+  }, [product]);
+
+  // Set price display
+  useEffect(() => {
+    setPriceDisplay(getProductPrice(product));
   }, [product]);
 
   const handleClick = () => {
@@ -252,12 +294,15 @@ const CompactProductCard = ({
     }
   };
 
+  // Check if product is a gift (price is 0 or it's a gift item)
+  const isGift = product.price === 0 || priceDisplay === "FREE GIFT";
+
   return (
     <div 
       onClick={handleClick}
       className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col relative"
     >
-      {product.price === 0 ? (
+      {isGift ? (
         <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-emerald-50 border border-emerald-100 rounded-full flex items-center gap-2">
           <Gift className="h-4 w-4 text-emerald-600" />
           <span className="text-xs text-emerald-700 font-medium">FREE GIFT</span>
@@ -315,11 +360,11 @@ const CompactProductCard = ({
         
         <div className="mt-auto pt-1">
           <div className="flex items-center justify-between">
-              {product.price === 0 ? (
-                <span className="text-sm font-bold text-emerald-600">FREE GIFT</span>
-              ) : (
-                <span className="text-sm font-bold text-gray-900">₱{product.price.toFixed(2)}</span>
-              )}
+            {isGift ? (
+              <span className="text-sm font-bold text-emerald-600">FREE GIFT</span>
+            ) : (
+              <span className="text-sm font-bold text-gray-900">{priceDisplay}</span>
+            )}
           </div>
         </div>
       </div>
@@ -367,14 +412,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           id: p.id,
           name: p.name,
           description: p.description,
-          price: parseFloat(p.price),
+          price: p.price ? parseFloat(p.price) : undefined,
+          price_display: p.price_display,
+          price_range: p.price_range,
+          total_stock: p.total_stock,
           media_files: p.media_files,
           primary_image: p.primary_image,
           shop: p.shop,
           condition: p.condition,
           created_at: p.created_at,
           updated_at: p.updated_at,
-          quantity: p.quantity,
           used_for: p.used_for,
           status: p.status,
           upload_status: p.upload_status,
@@ -391,14 +438,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           id: p.id,
           name: p.name,
           description: p.description,
-          price: parseFloat(p.price),
+          price: p.price ? parseFloat(p.price) : undefined,
+          price_display: p.price_display,
+          price_range: p.price_range,
+          total_stock: p.total_stock,
           media_files: p.media_files,
           primary_image: p.primary_image,
           shop: p.shop,
           condition: p.condition,
           created_at: p.created_at,
           updated_at: p.updated_at,
-          quantity: p.quantity,
           used_for: p.used_for,
           status: p.status,
           upload_status: p.upload_status,
@@ -605,12 +654,23 @@ export default function Home({ loaderData }: any) {
       product.name.toLowerCase().includes(q) || 
       product.description.toLowerCase().includes(q);
 
-    const p = Number(product.price || 0);
+    // Handle price filtering with price_range
+    let productMinPrice = 0;
+    let productMaxPrice = Infinity;
+    
+    if (product.price_range) {
+      productMinPrice = product.price_range.min;
+      productMaxPrice = product.price_range.max;
+    } else if (product.price !== undefined) {
+      productMinPrice = product.price;
+      productMaxPrice = product.price;
+    }
+
     const min = minPrice === '' ? null : Number(minPrice);
     const max = maxPrice === '' ? null : Number(maxPrice);
 
-    const matchesMin = min === null || (!isNaN(min) && p >= min);
-    const matchesMax = max === null || (!isNaN(max) && p <= max);
+    const matchesMin = min === null || productMaxPrice >= min;
+    const matchesMax = max === null || productMinPrice <= max;
 
     const matchesCondition = selectedCondition === '' || 
       (product.condition && product.condition === selectedCondition);
@@ -627,7 +687,7 @@ export default function Home({ loaderData }: any) {
     const matchesCategory = selectedCategory === '' || 
       (prodCatId && prodCatId === selectedCategory);
 
-    const isGift = Number(product.price || 0) === 0;
+    const isGift = product.price === 0 || getProductPrice(product) === "FREE GIFT";
     const appliedSet = appliedGiftIds.map(String);
     if (isGift && appliedSet.includes(String(product.id))) return false;
 
