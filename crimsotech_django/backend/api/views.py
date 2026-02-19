@@ -16327,7 +16327,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user_id = self.request.headers.get('X-User-Id')
         
-        # Start with base queryset - REMOVED the order exclusion to debug
+        # Start with base queryset - show only published, non-removed products
         queryset = Product.objects.filter(
             upload_status='published',
             is_removed=False
@@ -16359,13 +16359,12 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 Q(shop__customer__customer__id=user_id)
             )
 
-        # Log for debugging
         print(f"PublicProducts: Returning {queryset.count()} products for user {user_id}")
         
         return queryset.order_by('-created_at')
 
     def get_detail_queryset(self):
-        """Detail view should not exclude products just because they were ordered."""
+        """Detail view with all variants for single product page"""
         return Product.objects.filter(
             upload_status='published',
             is_removed=False
@@ -16391,154 +16390,44 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         )
     
     def list(self, request, *args, **kwargs):
-        """Override list to add debugging and ensure proper response format"""
+        """Return list of products with only basic info and price range"""
         queryset = self.get_queryset()
         
         # Debug logging
         print(f"PublicProducts.list: Found {queryset.count()} products")
         
-        # If no products found, try to diagnose why
-        if queryset.count() == 0:
-            # Check if there are any products at all
-            total_products = Product.objects.count()
-            published_products = Product.objects.filter(upload_status='published').count()
-            removed_products = Product.objects.filter(is_removed=False).count()
-            
-            print(f"PublicProducts Debug - Total products: {total_products}")
-            print(f"PublicProducts Debug - Published products: {published_products}")
-            print(f"PublicProducts Debug - Not removed products: {removed_products}")
-            
-            # Check a sample product if exists
-            sample = Product.objects.first()
-            if sample:
-                print(f"PublicProducts Debug - Sample product: {sample.id}, name: {sample.name}, status: {sample.upload_status}, removed: {sample.is_removed}")
-        
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
     def retrieve(self, request, pk=None):
-        """Return a single product with variant images mapped to variant options"""
+        """Return a single product with all variant details"""
         try:
             product = self.get_detail_queryset().get(pk=pk)
         except Product.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Get the serializer data
+        # Get the serializer data with full context
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
         
-        # Add price range to product data
-        if hasattr(product, 'min_variant_price') and product.min_variant_price:
-            if product.min_variant_price == product.max_variant_price:
-                data['price_display'] = f"₱{float(product.min_variant_price):.2f}"
-                data['price_range'] = {
-                    'min': float(product.min_variant_price),
-                    'max': float(product.max_variant_price),
-                    'is_range': False
-                }
-            else:
-                data['price_display'] = f"₱{float(product.min_variant_price):.2f} - ₱{float(product.max_variant_price):.2f}"
-                data['price_range'] = {
-                    'min': float(product.min_variant_price),
-                    'max': float(product.max_variant_price),
-                    'is_range': True
-                }
-        else:
-            # Handle case where product has no variants or prices
-            data['price_display'] = "Price unavailable"
-            data['price_range'] = None
-        
-        # Add total stock
-        if hasattr(product, 'total_variant_stock'):
-            data['total_stock'] = product.total_variant_stock or 0
-        
         # Convert media URLs to public format
         if data.get('primary_image'):
-            data['primary_image'] = convert_s3_to_public_url(data['primary_image'])
+            data['primary_image']['url'] = convert_s3_to_public_url(data['primary_image']['url'])
         
         if data.get('media_files'):
             for media in data['media_files']:
                 if media.get('file_data'):
                     media['file_data'] = convert_s3_to_public_url(media['file_data'])
         
-        # Manually enhance variant options with variant images and price info
-        if data.get('variants') and product.variants.exists():
-            # Build a map of option_id -> list of variants containing that option
-            option_variants_map = {}
-            for variant in product.variants.filter(is_active=True):
-                for option_id in (variant.option_ids or []):
-                    option_id_str = str(option_id)
-                    if option_id_str not in option_variants_map:
-                        option_variants_map[option_id_str] = []
-                    option_variants_map[option_id_str].append(variant)
-            
-            # Enhance each variant option with data from variants
-            for variant_group in data.get('variants', []):
-                for option in variant_group.get('options', []):
-                    option_id = option['id']
-                    
-                    # Find variants containing this option
-                    variants_for_option = option_variants_map.get(option_id, [])
-                    
-                    if variants_for_option:
-                        # Get price range
-                        prices = [float(variant.price) for variant in variants_for_option if variant.price]
-                        if prices:
-                            min_price = min(prices)
-                            max_price = max(prices)
-                            if min_price == max_price:
-                                option['price'] = f"₱{min_price:.2f}"
-                            else:
-                                option['price'] = f"₱{min_price:.2f} - ₱{max_price:.2f}"
-                        
-                        # Get total stock
-                        total_stock = sum([variant.quantity for variant in variants_for_option if variant.quantity])
-                        option['quantity'] = total_stock
-                        
-                        # Get first variant image for this option
-                        variant_with_image = None
-                        for variant in variants_for_option:
-                            if variant.image:
-                                variant_with_image = variant
-                                break
-                        
-                        if variant_with_image and variant_with_image.image:
-                            variant_image_url = request.build_absolute_uri(variant_with_image.image.url)
-                            option['image'] = convert_s3_to_public_url(variant_image_url)
-                        else:
-                            option['image'] = None
-                    else:
-                        option['price'] = None
-                        option['quantity'] = 0
-                        option['image'] = None
+        # Convert variant image URLs
+        if data.get('variants'):
+            for variant in data['variants']:
+                if variant.get('image'):
+                    variant['image'] = convert_s3_to_public_url(variant['image'])
+                if variant.get('image_url'):
+                    variant['image_url'] = convert_s3_to_public_url(variant['image_url'])
 
         return Response(data)
-
-    @action(detail=False, methods=['get'])
-    def debug_products(self, request):
-        """Debug endpoint to check product status"""
-        total = Product.objects.count()
-        published = Product.objects.filter(upload_status='published').count()
-        not_removed = Product.objects.filter(is_removed=False).count()
-        
-        sample = Product.objects.first()
-        sample_data = None
-        if sample:
-            sample_data = {
-                'id': str(sample.id),
-                'name': sample.name,
-                'upload_status': sample.upload_status,
-                'is_removed': sample.is_removed,
-                'has_variants': sample.variants.exists(),
-                'variant_count': sample.variants.count()
-            }
-        
-        return Response({
-            'total_products': total,
-            'published_products': published,
-            'not_removed_products': not_removed,
-            'sample_product': sample_data
-        })
 
     @action(detail=False, methods=['get'])
     def get_variant_for_options(self, request):
@@ -16554,45 +16443,16 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         except Product.DoesNotExist:
             return Response({"error": "Product not found"}, status=404)
         
-        # If no option_ids provided, return product-level info with price range
-        if not option_ids:
-            active_variants = product.variants.filter(is_active=True)
-            if active_variants.exists():
-                prices = [float(v.price) for v in active_variants if v.price]
-                if prices:
-                    min_price = min(prices)
-                    max_price = max(prices)
-                    total_stock = sum([v.quantity for v in active_variants if v.quantity])
-                    
-                    return Response({
-                        'price_range': {
-                            'min': min_price,
-                            'max': max_price,
-                            'display': f"₱{min_price:.2f} - ₱{max_price:.2f}" if min_price != max_price else f"₱{min_price:.2f}"
-                        },
-                        'total_stock': total_stock,
-                        'message': 'No options selected'
-                    })
-            
-            return Response({
-                'price_range': None,
-                'total_stock': 0,
-                'message': 'No active variants found'
-            })
-        
         # Find matching variant (require exact match of option_ids)
         matching_variant = None
         all_variants = product.variants.filter(is_active=True)
         
-        # Try to find exact match first
+        # Try to find exact match
         for variant in all_variants:
             variant_option_ids = [str(oid) for oid in (variant.option_ids or [])]
             if sorted(variant_option_ids) == sorted(option_ids):
                 matching_variant = variant
                 break
-
-        # Do not fallback to inclusive matching - only exact combinations are valid
-        # (Because Variants already maps all valid combinations).
         
         if matching_variant:
             # Build response with variant details
@@ -16621,32 +16481,15 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             }
             return Response(response_data)
         
-        # Return product-level price range if no matching variant found
-        active_variants = product.variants.filter(is_active=True)
-        if active_variants.exists():
-            prices = [float(v.price) for v in active_variants if v.price]
-            if prices:
-                min_price = min(prices)
-                max_price = max(prices)
-                return Response({
-                    'price_range': {
-                        'min': min_price,
-                        'max': max_price,
-                        'display': f"₱{min_price:.2f} - ₱{max_price:.2f}" if min_price != max_price else f"₱{min_price:.2f}"
-                    },
-                    'message': 'No matching variant found for selected options'
-                })
-        
         return Response({
-            'message': 'No matching variant found and no active variants available'
+            'message': 'No matching variant found'
         }, status=404)
 
     @action(detail=False, methods=['get'])
     def find_variant_id_for_options(self, request):
-        """Return the Variant id that matches the given option_ids exactly (or fall back to inclusive match with fallback=true)."""
+        """Return the Variant id that matches the given option_ids exactly"""
         product_id = request.query_params.get('product_id')
         option_ids = request.query_params.getlist('option_ids[]') or []
-        fallback = request.query_params.get('fallback', 'false').lower() == 'true'
 
         if not product_id:
             return Response({"error": "product_id is required"}, status=400)
@@ -16661,22 +16504,15 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
         all_variants = product.variants.filter(is_active=True)
 
-        # exact match first
+        # exact match
         for variant in all_variants:
             variant_option_ids = [str(oid) for oid in (variant.option_ids or [])]
             if sorted(variant_option_ids) == sorted(option_ids):
                 return Response({"variant_id": str(variant.id)})
 
-        if fallback:
-            # inclusive match: return first variant that contains all selected options
-            for variant in all_variants:
-                variant_option_ids = [str(oid) for oid in (variant.option_ids or [])]
-                if all(oid in variant_option_ids for oid in option_ids):
-                    return Response({"variant_id": str(variant.id), "fallback": True})
-
         return Response({"variant_id": None, "message": "No matching variant found"}, status=404)
-    
-    
+        
+            
 class AddToCartView(APIView):
 
     def post(self, request):

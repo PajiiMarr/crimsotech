@@ -143,18 +143,18 @@ class ProductMediaSerializer(serializers.ModelSerializer):
 # NEW: Simplified Variants Serializer (contains all fields from the refactored Variants model)
 class VariantsSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
-    accepted_categories = serializers.SerializerMethodField()
     
     class Meta:
         model = Variants
         fields = [
             'id', 'product', 'shop', 'title', 'option_title', 'option_created_at',
             'option_ids', 'option_map', 'sku_code', 'price', 'compare_price',
-            'quantity', 'weight', 'weight_unit',  # Removed length, width, height
-            'critical_trigger', 'is_active', 'is_refundable', 'refund_days',
-            'allow_swap', 'swap_type', 'minimum_additional_payment',
-            'maximum_additional_payment', 'swap_description', 'image', 'image_url',
-            'accepted_categories', 'created_at', 'updated_at'
+            'quantity', 'weight', 'weight_unit', 'critical_trigger', 'is_active', 
+            'is_refundable', 'refund_days', 'allow_swap', 'swap_type', 
+            'original_price', 'usage_period', 'usage_unit', 'depreciation_rate',
+            'minimum_additional_payment', 'maximum_additional_payment', 
+            'swap_description', 'image', 'image_url', 'critical_stock',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'option_created_at']
     
@@ -165,11 +165,104 @@ class VariantsSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.image.url)
             return obj.image.url
         return None
+
+class ProductSerializer(serializers.ModelSerializer):
+    shop = ShopSerializer(read_only=True)
+    category = CategorySerializer(read_only=True)
+    category_admin = CategorySerializer(read_only=True)
+    variants = serializers.SerializerMethodField()
+    media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
+    primary_image = serializers.SerializerMethodField()
+    price_display = serializers.SerializerMethodField()
+    price_range = serializers.SerializerMethodField()
+    total_stock = serializers.IntegerField(source='total_variant_stock', read_only=True)
+
+    class Meta:
+        model = Product
+        fields = [
+            'id', 'name', 'description', 'status', 'upload_status', 'condition',
+            'is_refundable', 'refund_days', 'created_at', 'updated_at',
+            'shop', 'category', 'category_admin', 'variants', 'media_files', 
+            'primary_image', 'price_display', 'price_range', 'total_stock',
+            'open_for_swap'
+        ]
     
-    def get_accepted_categories(self, obj):
-        # This method can be customized if you have a relationship for accepted categories
-        # For now, returning None or you can implement based on your model structure
+    def get_primary_image(self, obj):
+        """Get the first media file as primary image"""
+        media = obj.productmedia_set.first()
+        if media and media.file_data:
+            url = media.file_data.url
+            request = self.context.get('request')
+            if request:
+                try:
+                    url = request.build_absolute_uri(url)
+                except Exception:
+                    pass
+            return {
+                'id': str(media.id),
+                'url': url,
+                'file_type': media.file_type
+            }
         return None
+
+    def get_variants(self, obj):
+        """Return all variants for detail view, empty list for list view"""
+        request = self.context.get('request')
+        # Check if this is a detail view by looking at the URL or action
+        if request and request.parser_context.get('kwargs', {}).get('pk'):
+            # This is a detail view - return all variants
+            variants = obj.variants.filter(is_active=True)
+            context = self.context.copy()
+            return VariantsSerializer(variants, many=True, context=context).data
+        # This is a list view - return empty list to keep response light
+        return []
+    
+    def get_price_display(self, obj):
+        """Get formatted price display for the product"""
+        if hasattr(obj, 'min_variant_price') and obj.min_variant_price:
+            if obj.min_variant_price == obj.max_variant_price:
+                return f"₱{float(obj.min_variant_price):.2f}"
+            else:
+                return f"₱{float(obj.min_variant_price):.2f} - ₱{float(obj.max_variant_price):.2f}"
+        
+        # Fallback to checking variants directly
+        variants = obj.variants.filter(is_active=True)
+        if variants.exists():
+            prices = [v.price for v in variants if v.price]
+            if prices:
+                min_price = min(prices)
+                max_price = max(prices)
+                if min_price == max_price:
+                    return f"₱{float(min_price):.2f}"
+                else:
+                    return f"₱{float(min_price):.2f} - ₱{float(max_price):.2f}"
+        
+        return "Price unavailable"
+    
+    def get_price_range(self, obj):
+        """Get price range object for the product"""
+        if hasattr(obj, 'min_variant_price') and obj.min_variant_price:
+            return {
+                'min': float(obj.min_variant_price),
+                'max': float(obj.max_variant_price),
+                'is_range': obj.min_variant_price != obj.max_variant_price
+            }
+        
+        # Fallback to checking variants directly
+        variants = obj.variants.filter(is_active=True)
+        if variants.exists():
+            prices = [float(v.price) for v in variants if v.price]
+            if prices:
+                min_price = min(prices)
+                max_price = max(prices)
+                return {
+                    'min': min_price,
+                    'max': max_price,
+                    'is_range': min_price != max_price
+                }
+        
+        return None
+    
     
 class IssuesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -248,18 +341,18 @@ class ProductSerializer(serializers.ModelSerializer):
     media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
     primary_image = serializers.SerializerMethodField()
     # Add computed fields from variants
-    total_stock = serializers.SerializerMethodField()
-    starting_price = serializers.SerializerMethodField()
+    total_stock = serializers.IntegerField(source='total_variant_stock', read_only=True)
+    price_display = serializers.SerializerMethodField()
+    price_range = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
         fields = [
             'id', 'name', 'description', 
-            # REMOVED: 'quantity', 'price', 'original_price', 'usage_time', 'usage_unit'
             'status', 'upload_status', 'condition',
             'is_refundable', 'refund_days', 'created_at', 'updated_at',
             'shop', 'category', 'category_admin', 'variants', 'media_files', 
-            'primary_image', 'total_stock', 'starting_price'
+            'primary_image', 'total_stock', 'price_display', 'price_range'
         ]
     
     def to_internal_value(self, data):
@@ -298,17 +391,52 @@ class ProductSerializer(serializers.ModelSerializer):
         context = self.context.copy()
         return VariantsSerializer(variants, many=True, context=context).data
     
-    def get_total_stock(self, obj):
-        """Calculate total stock from all variants"""
-        return sum(variant.quantity for variant in obj.variants.all())
+    def get_price_display(self, obj):
+        """Get formatted price display for the product"""
+        # Check if we have annotated values
+        if hasattr(obj, 'min_variant_price') and obj.min_variant_price:
+            if obj.min_variant_price == obj.max_variant_price:
+                return f"₱{float(obj.min_variant_price):.2f}"
+            else:
+                return f"₱{float(obj.min_variant_price):.2f} - ₱{float(obj.max_variant_price):.2f}"
+        
+        # Fallback to checking variants directly
+        variants = obj.variants.filter(is_active=True)
+        if variants.exists():
+            prices = [v.price for v in variants if v.price]
+            if prices:
+                min_price = min(prices)
+                max_price = max(prices)
+                if min_price == max_price:
+                    return f"₱{float(min_price):.2f}"
+                else:
+                    return f"₱{float(min_price):.2f} - ₱{float(max_price):.2f}"
+        
+        return "Price unavailable"
     
-    def get_starting_price(self, obj):
-        """Get the minimum price from all variants"""
-        min_price_variant = obj.variants.filter(price__isnull=False).order_by('price').first()
-        if min_price_variant and min_price_variant.price:
-            return str(min_price_variant.price)
+    def get_price_range(self, obj):
+        """Get price range object for the product"""
+        if hasattr(obj, 'min_variant_price') and obj.min_variant_price:
+            return {
+                'min': float(obj.min_variant_price),
+                'max': float(obj.max_variant_price),
+                'is_range': obj.min_variant_price != obj.max_variant_price
+            }
+        
+        # Fallback to checking variants directly
+        variants = obj.variants.filter(is_active=True)
+        if variants.exists():
+            prices = [float(v.price) for v in variants if v.price]
+            if prices:
+                min_price = min(prices)
+                max_price = max(prices)
+                return {
+                    'min': min_price,
+                    'max': max_price,
+                    'is_range': min_price != max_price
+                }
+        
         return None
-     
         
 class ReviewDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)
