@@ -477,134 +477,56 @@ class CartProductSerializer(serializers.ModelSerializer):
 
 
 class CartItemSerializer(serializers.ModelSerializer):
-    """Serializer for cart items with product details"""
-    item_name = serializers.CharField(source='product.name', read_only=True)
-    item_price = serializers.SerializerMethodField()
-    item_image = serializers.SerializerMethodField()
-    subtotal = serializers.SerializerMethodField()
     product_details = serializers.SerializerMethodField()
-    shop_name = serializers.CharField(source='product.shop.name', read_only=True)
-    variant = serializers.SerializerMethodField()
-    
+    variant_details = serializers.SerializerMethodField()
+    total_price = serializers.SerializerMethodField()
+
     class Meta:
         model = CartItem
-        fields = [
-            'id', 
-            'product', 
-            'product_details',
-            'item_name',
-            'item_price',
-            'item_image',
-            'shop_name',
-            'variant',
-            'quantity', 
-            'added_at',
-            'subtotal'
-        ]
-        read_only_fields = ['id', 'added_at']
-    
-    def get_item_price(self, obj):
-        # Prefer variant price when present, otherwise product price
-        try:
-            if hasattr(obj, 'variant') and obj.variant and obj.variant.price is not None:
-                return float(obj.variant.price)
-        except Exception:
-            pass
-        if obj.product and obj.product.price is not None:
-            return float(obj.product.price)
-        return 0.0
-    
-    def get_subtotal(self, obj):
-        price = self.get_item_price(obj)
-        return float(price) * obj.quantity
-    
-    def get_item_image(self, obj):
-        # Get the first media file from product or variant image
-        # Prefer variant image if available
-        try:
-            if obj.variant and obj.variant.image and getattr(obj.variant.image, 'url', None):
-                request = self.context.get('request')
-                return request.build_absolute_uri(obj.variant.image.url) if request else obj.variant.image.url
-        except Exception:
-            pass
-
-        if obj.product:
-            # Access the related media files
-            media_files = obj.product.productmedia_set.all()
-            if media_files.exists():
-                first_media = media_files.first()
-                if first_media.file_data:
-                    request = self.context.get('request')
-                    if request:
-                        return request.build_absolute_uri(first_media.file_data.url)
-                    return first_media.file_data.url
-        return None
-
-    def get_variant(self, obj):
-        """Return variant details if this cart item has a variant"""
-        try:
-            variant = obj.variant
-            if not variant:
-                return None
-
-            request = self.context.get('request')
-            image_url = None
-            try:
-                if variant.image and getattr(variant.image, 'url', None):
-                    image_url = request.build_absolute_uri(variant.image.url) if request else variant.image.url
-            except Exception:
-                image_url = None
-
-            return {
-                'id': str(variant.id),
-                'title': variant.title,
-                'option_title': variant.option_title,
-                'sku_code': variant.sku_code,
-                'price': str(variant.price) if variant.price is not None else None,
-                'quantity': variant.quantity,
-                'image': image_url,
-                'option_ids': variant.option_ids,
-                'option_map': variant.option_map
-            }
-        except Exception:
-            return None
+        fields = ['id', 'product', 'variant', 'quantity', 'added_at', 
+                 'product_details', 'variant_details', 'total_price']
 
     def get_product_details(self, obj):
-        if obj.product:
-            media_files = []
-            for media in obj.product.productmedia_set.all():
-                if media.file_data:
-                    request = self.context.get('request')
-                    file_url = media.file_data.url
-                    if request:
-                        file_url = request.build_absolute_uri(file_url)
-                    
-                    media_files.append({
-                        'id': str(media.id),
-                        'file_url': file_url,
-                        'file_type': media.file_type
-                    })
-            product_data = {
-                'id': str(obj.product.id),
-                'name': obj.product.name,
-                'price': str(obj.product.price),
-                'shop_name': obj.product.shop.name if obj.product.shop else None,
-                'media_files': media_files if media_files else None
-            }
+        if not obj.product:
+            return None
+        
+        return {
+            'id': str(obj.product.id),
+            'name': obj.product.name,
+            'description': obj.product.description,
+            'condition': obj.product.condition,
+            'shop_name': obj.product.shop.name if obj.product.shop else None,
+            'shop_id': str(obj.product.shop.id) if obj.product.shop else None,
+            'main_image': self.get_main_product_image(obj.product)
+        }
 
-            # If cart item has a variant, include variant summary
-            if obj.variant:
-                product_data['variant'] = {
-                    'id': str(obj.variant.id),
-                    'title': obj.variant.title,
-                    'price': str(obj.variant.price) if obj.variant.price is not None else None,
-                    'quantity': obj.variant.quantity,
-                    'sku_code': obj.variant.sku_code
-                }
+    def get_variant_details(self, obj):
+        if not obj.variant:
+            return None
+        
+        return {
+            'id': str(obj.variant.id),
+            'title': obj.variant.title,
+            'sku_code': obj.variant.sku_code,
+            'price': str(obj.variant.price) if obj.variant.price else None,
+            'compare_price': str(obj.variant.compare_price) if obj.variant.compare_price else None,
+            'image': obj.variant.image.url if obj.variant.image else None,
+            'option_title': obj.variant.option_title,
+            'options': obj.variant.option_map  # This contains the variant options like color, size etc.
+        }
 
-            return product_data
+    def get_total_price(self, obj):
+        if obj.variant and obj.variant.price:
+            return str(obj.variant.price * obj.quantity)
         return None
 
+    def get_main_product_image(self, product):
+        # Get first product media if available
+        first_media = product.productmedia_set.first()
+        if first_media and first_media.file_data:
+            return first_media.file_data.url
+        return None
+    
 class CheckoutDetailSerializer(serializers.ModelSerializer):
     voucher_id = VoucherSerializer(read_only=True)
     cartitem_id = CartItemSerializer(read_only=True)

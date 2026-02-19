@@ -16327,10 +16327,11 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user_id = self.request.headers.get('X-User-Id')
         
-        # Start with base queryset - show only published, non-removed products
+        # Start with base queryset - show only published, non-removed products with active variants
         queryset = Product.objects.filter(
             upload_status='published',
-            is_removed=False
+            is_removed=False,
+            variants__is_active=True  # Only products with at least one active variant
         ).annotate(
             min_variant_price=Min('variants__price', filter=Q(variants__is_active=True)),
             max_variant_price=Max('variants__price', filter=Q(variants__is_active=True)),
@@ -16350,7 +16351,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'variants',
                 queryset=Variants.objects.filter(is_active=True)
             )
-        )
+        ).distinct()  # Add distinct to avoid duplicates from join
 
         if user_id:
             # Exclude user's own products and shops
@@ -16397,7 +16398,23 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         print(f"PublicProducts.list: Found {queryset.count()} products")
         
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        data = serializer.data
+        
+        # Transform data to show variant-based pricing
+        for item in data:
+            if item.get('min_variant_price') and item.get('max_variant_price'):
+                if item['min_variant_price'] == item['max_variant_price']:
+                    item['display_price'] = f"₱{item['min_variant_price']}"
+                else:
+                    item['display_price'] = f"₱{item['min_variant_price']} - ₱{item['max_variant_price']}"
+            
+            # Add total available stock from variants
+            item['total_stock'] = item.get('total_variant_stock', 0)
+            
+            # Remove variant details from list view to keep it light
+            item.pop('variants', None)
+        
+        return Response(data)
 
     def retrieve(self, request, pk=None):
         """Return a single product with all variant details"""
@@ -16409,6 +16426,18 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         # Get the serializer data with full context
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
+        
+        # Ensure variants are properly structured
+        if 'variants' in data and data['variants']:
+            # Sort variants by price if needed
+            data['variants'] = sorted(data['variants'], key=lambda x: float(x.get('price', 0) or 0))
+            
+            # Add variant count
+            data['variant_count'] = len(data['variants'])
+            
+            # Set default selected variant as the first one (lowest price)
+            if data['variants']:
+                data['default_variant'] = data['variants'][0]
         
         # Convert media URLs to public format
         if data.get('primary_image'):
@@ -16511,110 +16540,220 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 return Response({"variant_id": str(variant.id)})
 
         return Response({"variant_id": None, "message": "No matching variant found"}, status=404)
+
+    @action(detail=True, methods=['get'])
+    def variants(self, request, pk=None):
+        """Get all active variants for a product"""
+        try:
+            product = Product.objects.get(id=pk, is_removed=False, upload_status='published')
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=404)
         
+        variants = product.variants.filter(is_active=True)
+        
+        variant_data = []
+        for variant in variants:
+            image_url = None
+            if variant.image:
+                image_url = request.build_absolute_uri(variant.image.url)
+                image_url = convert_s3_to_public_url(image_url)
+            
+            variant_data.append({
+                'id': str(variant.id),
+                'title': variant.title,
+                'sku_code': variant.sku_code,
+                'price': float(variant.price) if variant.price else None,
+                'compare_price': float(variant.compare_price) if variant.compare_price else None,
+                'quantity': variant.quantity,
+                'image': image_url,
+                'option_ids': variant.option_ids,
+                'option_map': variant.option_map,
+                'weight': float(variant.weight) if variant.weight else None,
+                'weight_unit': variant.weight_unit,
+                'swap_type': variant.swap_type,
+                'minimum_additional_payment': float(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
+                'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
+            })
+        
+        return Response(variant_data)
+
+    @action(detail=True, methods=['get'])
+    def check_availability(self, request, pk=None):
+        """Check if a product has any available variants"""
+        try:
+            product = Product.objects.get(id=pk, is_removed=False, upload_status='published')
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=404)
+        
+        has_stock = product.variants.filter(is_active=True, quantity__gt=0).exists()
+        total_variants = product.variants.filter(is_active=True).count()
+        total_stock = product.variants.filter(is_active=True).aggregate(Sum('quantity'))['quantity__sum'] or 0
+        
+        return Response({
+            'product_id': str(pk),
+            'has_available_variants': has_stock,
+            'total_variants': total_variants,
+            'total_stock': total_stock,
+            'min_price': float(product.min_price) if product.min_price else None,
+            'max_price': float(product.max_price) if product.max_price else None,
+        })
             
 class AddToCartView(APIView):
 
     def post(self, request):
         user_id = request.data.get("user_id") 
         product_id = request.data.get("product_id")
-        variant_id = request.data.get("variant_id")  # Changed from sku_id to variant_id
+        variant_id = request.data.get("variant_id")
         quantity = int(request.data.get("quantity", 1))
        
-
         if not product_id:
             return Response({"success": False, "error": "Product ID is required."},
-                            status=status.HTTP_400_BAD_REQUEST)
+                          status=status.HTTP_400_BAD_REQUEST)
 
         if not user_id:
             return Response({"success": False, "error": "Customer ID is required."},
-                            status=status.HTTP_400_BAD_REQUEST)
+                          status=status.HTTP_400_BAD_REQUEST)
 
         # Find user
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"success": False, "error": "User not found."},
-                            status=status.HTTP_404_NOT_FOUND)
+                          status=status.HTTP_404_NOT_FOUND)
 
         # Find product
         try:
             product = Product.objects.get(id=product_id)
         except Product.DoesNotExist:
             return Response({"success": False, "error": "Product not found."},
-                            status=status.HTTP_404_NOT_FOUND)
+                          status=status.HTTP_404_NOT_FOUND)
+
+        # Check if product is active/available
+        if product.upload_status != 'published' or product.is_removed:
+            return Response({"success": False, "error": "Product is not available."},
+                          status=status.HTTP_400_BAD_REQUEST)
 
         # If variant_id provided, validate it belongs to product and check availability
         variant = None
         if variant_id:
             try:
-                variant = Variants.objects.get(id=variant_id, product=product)  # Changed from ProductSKU to Variants
-            except Variants.DoesNotExist:  # Changed exception
-                return Response({"success": False, "error": "Variant not found for this product."}, status=status.HTTP_404_NOT_FOUND)
+                variant = Variants.objects.get(id=variant_id, product=product)
+            except Variants.DoesNotExist:
+                return Response({"success": False, "error": "Variant not found for this product."}, 
+                              status=status.HTTP_404_NOT_FOUND)
 
-            if not variant.is_active:  # Changed from sku.is_active
-                return Response({"success": False, "error": "Selected variant is not available."}, status=status.HTTP_400_BAD_REQUEST)
+            if not variant.is_active:
+                return Response({"success": False, "error": "Selected variant is not available."}, 
+                              status=status.HTTP_400_BAD_REQUEST)
 
-            if variant.quantity < quantity:  # Changed from sku.quantity
-                return Response({"success": False, "error": f"Only {variant.quantity} units available for selected variant.", "available_quantity": variant.quantity}, status=status.HTTP_400_BAD_REQUEST)
+            if variant.quantity < quantity:
+                return Response({
+                    "success": False, 
+                    "error": f"Only {variant.quantity} units available for selected variant.",
+                    "available_quantity": variant.quantity
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # No variant specified - check if product has any active variants
+            active_variants = Variants.objects.filter(product=product, is_active=True)
+            if not active_variants.exists():
+                return Response({"success": False, "error": "No active variants available for this product."},
+                              status=status.HTTP_400_BAD_REQUEST)
+            
+            # Optional: If product has only one variant, auto-select it
+            if active_variants.count() == 1:
+                variant = active_variants.first()
+                variant_id = str(variant.id)
+                print(f"Auto-selected only available variant: {variant_id}")
 
-        # If variant provided, try to update/merge intelligently
+        # Handle cart operations based on variant presence
         if variant:
             print(f"AddToCart: user={user_id}, product={product_id}, variant={variant_id}, quantity={quantity}")
+            
             # 1) Try to find existing cart item with same variant
             try:
-                cart_item = CartItem.objects.get(user=user, product=product, variant=variant)  # Changed from sku to variant
+                cart_item = CartItem.objects.get(user=user, product=product, variant=variant)
                 new_qty = cart_item.quantity + quantity
                 print(f"Found existing variant cart item {cart_item.id} qty={cart_item.quantity}, new_qty={new_qty}")
-                if new_qty > variant.quantity:  # Changed from sku.quantity
+                
+                if new_qty > variant.quantity:
                     print(f"Cannot add: requested {new_qty} > variant.quantity {variant.quantity}")
-                    return Response({"success": False, "error": f"Only {variant.quantity} units available for selected variant.", "available_quantity": variant.quantity}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({
+                        "success": False, 
+                        "error": f"Only {variant.quantity} units available for selected variant.",
+                        "available_quantity": variant.quantity
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
                 cart_item.quantity = new_qty
                 cart_item.save()
-                serializer = CartItemSerializer(cart_item, context={"request": request})
-                print("Updated cart_item with variant", serializer.data)
-                return Response({"success": True, "cart_item": serializer.data})
+                
             except CartItem.DoesNotExist:
-                # 2) Try to find an existing cart item for this user/product without a variant (generic) and attach variant
+                # 2) Try to find an existing cart item for this user/product without a variant and attach variant
                 try:
-                    generic = CartItem.objects.get(user=user, product=product, variant__isnull=True)  # Changed from sku__isnull to variant__isnull
+                    generic = CartItem.objects.get(user=user, product=product, variant__isnull=True)
                     new_qty = generic.quantity + quantity
                     print(f"Found generic cart item {generic.id} qty={generic.quantity}, attaching variant -> new_qty={new_qty}")
-                    if new_qty > variant.quantity:  # Changed from sku.quantity
+                    
+                    if new_qty > variant.quantity:
                         print(f"Cannot attach: requested {new_qty} > variant.quantity {variant.quantity}")
-                        return Response({"success": False, "error": f"Only {variant.quantity} units available for selected variant.", "available_quantity": variant.quantity}, status=status.HTTP_400_BAD_REQUEST)
-                    generic.variant = variant  # Changed from sku to variant
+                        return Response({
+                            "success": False, 
+                            "error": f"Only {variant.quantity} units available for selected variant.",
+                            "available_quantity": variant.quantity
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    generic.variant = variant
                     generic.quantity = new_qty
                     generic.save()
-                    serializer = CartItemSerializer(generic, context={"request": request})
-                    print("Attached variant to generic cart item", serializer.data)
-                    return Response({"success": True, "cart_item": serializer.data})
+                    cart_item = generic
+                    
                 except CartItem.DoesNotExist:
                     # 3) Create new cart item with variant
                     print("No existing cart item found, creating new with variant")
-                    if quantity > variant.quantity:  # Changed from sku.quantity
+                    if quantity > variant.quantity:
                         print(f"Cannot create: requested {quantity} > variant.quantity {variant.quantity}")
-                        return Response({"success": False, "error": f"Only {variant.quantity} units available for selected variant.", "available_quantity": variant.quantity}, status=status.HTTP_400_BAD_REQUEST)
-                    cart_item = CartItem.objects.create(user=user, product=product, variant=variant, quantity=quantity)  # Changed from sku to variant
-                    serializer = CartItemSerializer(cart_item, context={"request": request})
-                    print("Created cart_item with variant", serializer.data)
-                    return Response({"success": True, "cart_item": serializer.data})
+                        return Response({
+                            "success": False, 
+                            "error": f"Only {variant.quantity} units available for selected variant.",
+                            "available_quantity": variant.quantity
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    cart_item = CartItem.objects.create(
+                        user=user, 
+                        product=product, 
+                        variant=variant, 
+                        quantity=quantity
+                    )
         else:
-            # No variant specified: use or create generic cart item
+            # No variant specified and no auto-selection - create/update generic cart item
+            print(f"AddToCart (no variant): user={user_id}, product={product_id}, quantity={quantity}")
+            
             cart_item, created = CartItem.objects.get_or_create(
                 user=user,
                 product=product,
-                variant=None,  # Changed from sku=None to variant=None
+                variant=None,
                 defaults={"quantity": quantity}
             )
 
             if not created:
-                cart_item.quantity += quantity
+                # Check total stock from all variants before updating
+                total_stock = product.total_stock
+                new_qty = cart_item.quantity + quantity
+                
+                if new_qty > total_stock:
+                    return Response({
+                        "success": False,
+                        "error": f"Only {total_stock} units available across all variants.",
+                        "available_quantity": total_stock
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                cart_item.quantity = new_qty
                 cart_item.save()
 
-            serializer = CartItemSerializer(cart_item, context={"request": request})
-            return Response({"success": True, "cart_item": serializer.data})
-        
+        # Serialize and return the response
+        serializer = CartItemSerializer(cart_item, context={"request": request})
+        print("Cart item operation successful", serializer.data)
+        return Response({"success": True, "cart_item": serializer.data})  
+
 class CartListView(APIView):
     """
     Returns all cart items for a given session user.

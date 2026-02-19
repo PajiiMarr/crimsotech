@@ -9,7 +9,7 @@ import {
   ShoppingBagIcon,
   MapPin,
   Store,
-  RefreshCw, // Add this import
+  RefreshCw,
   ShieldCheck,
   ShieldOff
 } from "lucide-react";
@@ -29,83 +29,112 @@ export function meta(): Route.MetaDescriptors {
   return [{ title: "Product Details" }];
 }
 
-interface VariantOption {
+interface Variant {
   id: string;
+  product: string;
+  shop: string;
   title: string;
-  image?: string | null;
-  price?: string;
-  quantity?: number;
-}
-
-interface VariantGroup {
-  id: string;
-  title: string;
-  options: VariantOption[];
-}
-
-interface SKU {
-  id: string;
+  option_title: string;
+  option_created_at: string;
   option_ids: string[];
   option_map: Record<string, string>;
-  sku_code?: string;
-  price: number;
-  compare_price?: number;
+  sku_code: string;
+  price: string;
+  compare_price: string | null;
   quantity: number;
-  image?: string | null;
-  length?: number | null;
-  width?: number | null;
-  height?: number | null;
-  weight?: number | null;
-  weight_unit?: string;
-  allow_swap?: boolean;
-  swap_type?: string;
-  minimum_additional_payment?: number;
-  maximum_additional_payment?: number;
-  swap_description?: string;
-  // SKU-level refundable flag
-  is_refundable?: boolean;
-  // SKU-level refund days (from DB)
-  refund_days?: number;
-  accepted_categories?: { id: string; name: string }[];
+  weight: string;
+  weight_unit: string;
+  critical_trigger: number;
+  is_active: boolean;
+  is_refundable: boolean;
+  refund_days: number;
+  allow_swap: boolean;
+  swap_type: string;
+  original_price: string;
+  usage_period: number;
+  usage_unit: string;
+  depreciation_rate: number;
+  minimum_additional_payment: string;
+  maximum_additional_payment: string;
+  swap_description: string;
+  image: string | null;
+  image_url: string | null;
+  critical_stock: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface MediaFile {
+  id: string;
+  file_data: string;
+  file_type: string;
+  file_url: string;
+}
+
+interface PrimaryImage {
+  id: string;
+  url: string;
+  file_type: string;
+}
+
+interface PriceRange {
+  min: number;
+  max: number;
+  is_range: boolean;
+}
+
+interface Shop {
+  id: string;
+  address: string;
+  avg_rating: number | null;
+  shop_picture: string | null;
+  description: string;
+  name: string;
+  province: string;
+  city: string;
+  barangay: string;
+  street: string;
+  contact_number: string;
+  verified: boolean;
+  status: string;
+  total_sales: string;
+  created_at: string;
+  updated_at: string;
+  is_suspended: boolean;
+  suspension_reason: string | null;
+  suspended_until: string | null;
+  customer: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  shop: string | null;
+  user: string;
 }
 
 interface Product {
   id: string;
   name: string;
   description: string;
-  quantity: number; // Product-level quantity
-  price: number; // Product-level price
-  compare_price?: number; // Product-level compare price
-  category?: { name: string };
-  shop?: {
-    id?: string;
-    shop_picture?: string;
-    name?: string;
-    address?: string;
-    avg_rating?: number;
-  };
-  media_files?: { file_url: string }[];
-  sold?: number;
-  reviews_count?: number;
-  rating?: number;
-  variants?: VariantGroup[]; // If exists, product has variants
-  skus?: SKU[]; // SKUs for variants
-  open_for_swap?: boolean;
-  swap_type?: string;
-  minimum_additional_payment?: number;
-  maximum_additional_payment?: number;
-  swap_description?: string;
-  accepted_categories?: { id: string; name: string }[];
-  // Product-level refundable flag
-  is_refundable?: boolean;
-  // Product-level refund days (from DB)
-  refund_days?: number;
-  length?: number | null; // Product-level dimensions
-  width?: number | null;
-  height?: number | null;
-  weight?: number | null;
-  weight_unit?: string | null;
-  applied_gift?: any;
+  status: string;
+  upload_status: string;
+  condition: string;
+  is_refundable: boolean;
+  refund_days: number;
+  created_at: string;
+  updated_at: string;
+  shop: Shop | null;
+  category: Category | null;
+  category_admin: Category | null;
+  variants: Variant[];
+  media_files: MediaFile[];
+  primary_image: PrimaryImage | null;
+  total_stock: number;
+  price_display: string;
+  price_range: PriceRange;
+  variant_count: number;
+  default_variant: Variant | null;
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -120,6 +149,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     try {
       const response = await AxiosInstance.get(`/public-products/${productId}/`);
       product = response.data;
+      console.log("Product loaded:", product);
     } catch (err) {
       console.error("Error fetching product in loader:", err);
     }
@@ -135,24 +165,19 @@ export async function loader({ request }: Route.LoaderArgs) {
 function resolveImageUrl(img: any): string | null {
   if (!img) return null;
   
-  // If it's a plain string (sometimes returned by serializer), treat as URL/path
   if (typeof img === 'string') {
     return img.startsWith('http') ? img : `${MEDIA_URL}${img}`;
   }
   
-  // If object, try common fields in order of likelihood
   if (img && typeof img === 'object') {
-    // Primary direct URL field used by ProductSerializer.primary_image
     if (img.url && typeof img.url === 'string') {
       return img.url.startsWith('http') ? img.url : `${MEDIA_URL}${img.url}`;
     }
 
-    // File URL returned by ProductMediaSerializer
     if (typeof img.file_url === 'string') {
       return img.file_url.startsWith('http') ? img.file_url : `${MEDIA_URL}${img.file_url}`;
     }
 
-    // Some payloads include file_data as a nested object or string
     if (typeof img.file_data === 'string') {
       return img.file_data.startsWith('http') ? img.file_data : `${MEDIA_URL}${img.file_data}`;
     }
@@ -160,7 +185,6 @@ function resolveImageUrl(img: any): string | null {
       return img.file_data.url.startsWith('http') ? img.file_data.url : `${MEDIA_URL}${img.file_data.url}`;
     }
 
-    // Some serializers use 'file' or 'thumbnail' keys
     if (typeof img.file === 'string') {
       return img.file.startsWith('http') ? img.file : `${MEDIA_URL}${img.file}`;
     }
@@ -179,25 +203,43 @@ function safeToNumber(value: any, defaultValue: number = 0): number {
 }
 
 function getAvailableOptionIdsForGroup(
-  skus: SKU[],
+  variants: Variant[],
   selectedOptions: Record<string, string>,
   groupId: string
 ): Set<string> {
+  if (!variants || variants.length === 0) return new Set<string>();
+  
   const otherSelected = Object.entries(selectedOptions)
     .filter(([g, optId]) => g !== groupId && !!optId)
     .map(([, optId]) => String(optId));
 
-  // If nothing else is selected, everything is possible for this group.
   if (otherSelected.length === 0) {
-    return new Set<string>(skus.flatMap((s) => (s.option_ids || []).map(String)));
+    return new Set<string>(variants.flatMap((v) => (v.option_ids || []).map(String)));
   }
 
-  const matchingSkus = skus.filter((sku) => {
-    const skuOptionIds = (sku.option_ids || []).map(String);
-    return otherSelected.every((id) => skuOptionIds.includes(id));
+  const matchingVariants = variants.filter((variant) => {
+    const variantOptionIds = (variant.option_ids || []).map(String);
+    return otherSelected.every((id) => variantOptionIds.includes(id));
   });
 
-  return new Set<string>(matchingSkus.flatMap((s) => (s.option_ids || []).map(String)));
+  return new Set<string>(matchingVariants.flatMap((v) => (v.option_ids || []).map(String)));
+}
+
+function extractVariantGroups(product: Product): { groups: any[], optionTitles: Record<string, Record<string, string>> } {
+  const groups: any[] = [];
+  const optionTitles: Record<string, Record<string, string>> = {};
+  
+  if (!product.variants || product.variants.length === 0) {
+    return { groups, optionTitles };
+  }
+
+  // For now, since option_ids are empty in this product, we'll create a simple structure
+  // If you have actual option data structure, you'd parse it here
+  
+  // Since this product has no option_ids, we'll treat it as a simple product with one variant
+  // You might want to enhance this based on your actual option structure
+  
+  return { groups, optionTitles };
 }
 
 export default function ViewProduct({ loaderData }: Route.ComponentProps) {
@@ -209,50 +251,65 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const [activeImage, setActiveImage] = useState(0);
   const [addingToCart, setAddingToCart] = useState(false);
   const [cartError, setCartError] = useState<string | null>(null);
-  const [currentSKU, setCurrentSKU] = useState<SKU | null>(null);
-  const [startingSwap, setStartingSwap] = useState(false); // Add this state
-  const [swapError, setSwapError] = useState<string | null>(null); // Add this state
+  const [currentVariant, setCurrentVariant] = useState<Variant | null>(null);
+  const [startingSwap, setStartingSwap] = useState(false);
+  const [swapError, setSwapError] = useState<string | null>(null);
+  const [variantGroups, setVariantGroups] = useState<any[]>([]);
+  const [optionTitles, setOptionTitles] = useState<Record<string, Record<string, string>>>({});
+  const [cartItemCount, setCartItemCount] = useState(0);
 
   const user = loaderData?.user;
 
-  // Refund policy from backend: prefer SKU-level setting when a SKU is selected
-  const isRefundable = !!(currentSKU?.is_refundable || product?.is_refundable || (product?.skus && product.skus.some((s) => s.is_refundable)));
-  const refundDays = currentSKU?.is_refundable ? (currentSKU.refund_days ?? product?.refund_days ?? 0) : (product?.is_refundable ? (product.refund_days ?? 0) : 0);
+  // Safely determine if product has variants
+  const hasVariants = !!(product?.variants && Array.isArray(product.variants) && product.variants.length > 0);
+
+  // Extract variant groups from variants data
+  useEffect(() => {
+    if (product) {
+      const { groups, optionTitles: titles } = extractVariantGroups(product);
+      setVariantGroups(groups);
+      setOptionTitles(titles);
+    }
+  }, [product]);
+
+  // Use default variant if available
+  useEffect(() => {
+    if (product?.default_variant && !currentVariant) {
+      setCurrentVariant(product.default_variant);
+    }
+  }, [product?.default_variant]);
+
+  // Fetch cart count
+  useEffect(() => {
+    const fetchCartCount = async () => {
+      if (user?.id) {
+        try {
+          const response = await AxiosInstance.get("/cart/count/");
+          if (response.data && typeof response.data.count === 'number') {
+            setCartItemCount(response.data.count);
+          }
+        } catch (err) {
+          console.error("Error fetching cart count:", err);
+        }
+      }
+    };
+
+    fetchCartCount();
+  }, [user]);
+
+  // Refund policy
+  const isRefundable = !!(currentVariant?.is_refundable || product?.is_refundable);
+  const refundDays = currentVariant?.is_refundable 
+    ? (currentVariant.refund_days ?? product?.refund_days ?? 0) 
+    : (product?.is_refundable ? (product.refund_days ?? 0) : 0);
   const refundText = `refundable (${refundDays} day${refundDays === 1 ? '' : 's'})`;
   const refundAriaLabel = refundDays ? `Refundable for ${refundDays} day${refundDays === 1 ? '' : 's'}` : 'Refundable';
 
-  // Explicit non-refundable indicator (product-level false or selected SKU explicitly false)
-  const isExplicitlyNonRefundable = (currentSKU?.is_refundable === false) || (product?.is_refundable === false);
+  const isExplicitlyNonRefundable = (currentVariant?.is_refundable === false) || (product?.is_refundable === false);
 
-  // Check if product has variants
-  const hasVariants = product?.variants && product.variants.length > 0;
-
-  // Check if product/SKU is available for swap
   const isAvailableForSwap = hasVariants
-    ? (currentSKU && currentSKU.allow_swap)
-    : (product?.open_for_swap || false);
-
-  // Find matching SKU when selections change (only if product has variants)
-  useEffect(() => {
-    if (!hasVariants || !product?.skus || Object.keys(selectedOptions).length === 0) {
-      setCurrentSKU(null);
-      return;
-    }
-
-    const selectedOptionIds = Object.values(selectedOptions);
-    
-    // Find SKU with exact match of selected option_ids
-    const matchingSKU = product.skus.find(sku => {
-      const skuOptionIds = (sku.option_ids || []).map(String);
-      const selectedIds = selectedOptionIds.map(String);
-      if (skuOptionIds.length !== selectedOptionIds.length) return false;
-      
-      // Check if all selected options match SKU options
-      return selectedIds.every(id => skuOptionIds.includes(id));
-    });
-
-    setCurrentSKU(matchingSKU || null);
-  }, [selectedOptions, product?.skus, hasVariants]);
+    ? (currentVariant && currentVariant.allow_swap)
+    : false; // No top-level swap flag in your response
 
   // Initialize product
   useEffect(() => {
@@ -262,101 +319,55 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
           const response = await AxiosInstance.get(`/public-products/${id}/`);
           setProduct(response.data);
           
-          // Set default selections only if product has variants
-          if (response.data.variants?.length) {
-            const initial: Record<string, string> = {};
-            response.data.variants.forEach((g: VariantGroup) => {
-              const firstOption = g.options && g.options[0];
-              if (firstOption) initial[g.id] = firstOption.id;
-            });
-            setSelectedOptions(initial);
+          // Set current variant to default if available
+          if (response.data.default_variant) {
+            setCurrentVariant(response.data.default_variant);
           }
         } catch (err) {
           console.error(err);
         } finally {
           setLoading(false);
         }
-      } else if (product && hasVariants && Object.keys(selectedOptions).length === 0) {
-        // If product was loaded from loader data and has variants
-        const initial: Record<string, string> = {};
-        product.variants!.forEach((g: VariantGroup) => {
-          const firstOption = g.options && g.options[0];
-          if (firstOption) initial[g.id] = firstOption.id;
-        });
-        setSelectedOptions(initial);
+      } else {
+        setLoading(false);
       }
     };
 
     initializeProduct();
-  }, [id, product, hasVariants]);
+  }, [id, product]);
 
   const increaseQuantity = () => setQuantity((q) => q + 1);
   const decreaseQuantity = () => setQuantity((q) => Math.max(1, q - 1));
 
-  // Handle option selection (only if product has variants)
   const handleSelectOption = (groupId: string, optionId: string) => {
-    const variants = product?.variants || [];
-    const groupIndex = variants.findIndex((g) => g.id === groupId);
-
-    const newSelectedOptions: Record<string, string> = { ...selectedOptions, [groupId]: optionId };
-
-    // If the user changes an earlier variant, clear later selections.
-    if (groupIndex >= 0) {
-      for (let i = groupIndex + 1; i < variants.length; i++) {
-        delete newSelectedOptions[variants[i].id];
-      }
-    }
-
-    setSelectedOptions(newSelectedOptions);
+    // This function would be used if you have actual variant groups
+    // For now, just update selected options
+    setSelectedOptions({ ...selectedOptions, [groupId]: optionId });
   };
 
-  // Calculate display price and stock based on whether product has variants
-  const displayPrice = hasVariants 
-    ? safeToNumber(currentSKU?.price ?? product?.price, 0)
-    : safeToNumber(product?.price, 0);
+  // Get display values from current variant or product defaults
+  const displayPrice = currentVariant
+    ? safeToNumber(currentVariant.price, 0)
+    : (product?.price_range?.min || 0);
   
-  const displayComparePrice = hasVariants
-    ? (currentSKU?.compare_price !== undefined 
-        ? safeToNumber(currentSKU.compare_price) 
-        : (product?.compare_price !== undefined ? safeToNumber(product.compare_price) : undefined))
-    : (product?.compare_price !== undefined ? safeToNumber(product.compare_price) : undefined);
+  const displayComparePrice = currentVariant?.compare_price 
+    ? safeToNumber(currentVariant.compare_price) 
+    : undefined;
 
-  const totalSkuStock = safeToNumber(
-    product?.skus?.reduce((sum, sku) => sum + safeToNumber(sku.quantity, 0), 0),
-    0
-  );
+  const displayStock = currentVariant
+    ? safeToNumber(currentVariant.quantity, 0)
+    : safeToNumber(product?.total_stock || 0, 0);
 
-  // Stock is always based on ProductSKU.quantity for variant products.
-  // If a specific SKU is selected, show that SKU's quantity, else show total across SKUs.
-  const displayStock = hasVariants
-    ? (currentSKU ? safeToNumber(currentSKU.quantity, 0) : totalSkuStock)
-    : safeToNumber(product?.quantity, 0);
+  const maxQuantity = displayStock;
 
-  // Calculate max quantity based on stock
-  const maxQuantity = hasVariants
-    ? (currentSKU ? currentSKU.quantity : totalSkuStock)
-    : (product ? product.quantity : 0);
-
-  const selectedChoicesText = hasVariants && product?.variants
-    ? product.variants
-        .map((group) => {
-          const selectedId = selectedOptions[group.id];
-          if (!selectedId) return null;
-          const opt = group.options.find((o) => o.id === selectedId);
-          return opt ? opt.title : null;
-        })
-        .filter(Boolean)
-        .join(' x ')
-    : '';
-
-  // Build thumbnail list
-  const thumbnailUrls: { url: string; type: 'product' | 'variant' | 'sku'; id?: string }[] = [];
+  // Build thumbnail list with safety checks
+  const thumbnailUrls: { url: string; type: 'product' | 'variant'; id?: string }[] = [];
   const seen = new Set<string>();
 
   // Add product images first
-  if (product?.media_files) {
+  if (product?.media_files && Array.isArray(product.media_files)) {
     product.media_files.forEach((img) => {
-      const full = resolveImageUrl(img.file_url);
+      const full = resolveImageUrl(img.file_data || img.file_url);
       if (full && !seen.has(full)) {
         thumbnailUrls.push({ url: full, type: 'product' });
         seen.add(full);
@@ -364,37 +375,37 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
     });
   }
 
-  // Add SKU images (for variant products)
-  if (product?.skus) {
-    product.skus.forEach((sku) => {
-      if (sku.image) {
-        const full = resolveImageUrl(sku.image);
+  // Add variant images
+  if (product?.variants && Array.isArray(product.variants)) {
+    product.variants.forEach((variant) => {
+      if (variant.image || variant.image_url) {
+        const full = resolveImageUrl(variant.image || variant.image_url);
         if (full && !seen.has(full)) {
-          thumbnailUrls.push({ url: full, type: 'sku', id: sku.id });
+          thumbnailUrls.push({ url: full, type: 'variant', id: variant.id });
           seen.add(full);
         }
       }
     });
   }
 
-  // Add variant option images (from SKUs via backend)
-  if (product?.variants) {
-    product.variants.forEach((group) => {
-      group.options.forEach((option) => {
-        if (option.image) {
-          const full = resolveImageUrl(option.image);
-          if (full && !seen.has(full)) {
-            thumbnailUrls.push({ url: full, type: 'variant', id: option.id });
-            seen.add(full);
-          }
-        }
-      });
-    });
+  // Add primary image if not already added
+  if (product?.primary_image?.url) {
+    const full = resolveImageUrl(product.primary_image.url);
+    if (full && !seen.has(full)) {
+      thumbnailUrls.unshift({ url: full, type: 'product' }); // Add to front
+      seen.add(full);
+    }
   }
 
-  // Determine main display image
-  const mainImageFromSKU = currentSKU?.image ? resolveImageUrl(currentSKU.image) : null;
-  const displayImageUrl = (mainImageFromSKU ?? thumbnailUrls[activeImage]?.url) ?? '/Crimsotech.png';
+  // Ensure activeImage is within bounds
+  useEffect(() => {
+    if (activeImage >= thumbnailUrls.length) {
+      setActiveImage(0);
+    }
+  }, [thumbnailUrls.length, activeImage]);
+
+  const mainImageFromVariant = currentVariant?.image || currentVariant?.image_url ? resolveImageUrl(currentVariant.image || currentVariant.image_url) : null;
+  const displayImageUrl = (mainImageFromVariant ?? (thumbnailUrls.length > 0 ? thumbnailUrls[activeImage]?.url : null)) ?? '/Crimsotech.png';
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
@@ -402,16 +413,10 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
       return;
     }
 
-    // For variant products, validate all options are selected
-    if (hasVariants) {
-      const allSelected = product.variants!.every(g => selectedOptions[g.id]);
+    if (hasVariants && variantGroups.length > 0) {
+      const allSelected = variantGroups.every(g => selectedOptions[g.id]);
       if (!allSelected) {
         setCartError("Please select all variant options");
-        return;
-      }
-
-      if (!currentSKU) {
-        setCartError("Please select valid variant options");
         return;
       }
     }
@@ -426,20 +431,23 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         quantity,
       };
 
-      // Include SKU ID if product has variants
-      if (hasVariants && currentSKU) {
-        payload.sku_id = currentSKU.id;
-      }
-
-      // Include variant selections if product has variants
-      if (hasVariants && Object.keys(selectedOptions).length > 0) {
-        payload.variant_selection = selectedOptions;
+      if (currentVariant) {
+        payload.variant_id = currentVariant.id;
       }
 
       const response = await AxiosInstance.post("/cart/add/", payload);
 
       if (response.data.success) {
         alert("Product added to cart!");
+        // Update cart count after adding
+        try {
+          const countResponse = await AxiosInstance.get("/cart/count/");
+          if (countResponse.data && typeof countResponse.data.count === 'number') {
+            setCartItemCount(countResponse.data.count);
+          }
+        } catch (err) {
+          console.error("Error fetching cart count:", err);
+        }
       } else {
         setCartError(response.data.error || "Failed to add to cart");
       }
@@ -451,37 +459,15 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
     }
   };
 
-  // Add this function to handle swap initiation
   const handleStartSwap = async () => {
     if (!product || !user?.id) {
       setSwapError("Please login to start a swap");
       return;
     }
 
-    // For variant products, validate all options are selected
-    if (hasVariants) {
-      const allSelected = product.variants!.every(g => selectedOptions[g.id]);
-      if (!allSelected) {
-        setSwapError("Please select all variant options to swap");
-        return;
-      }
-
-      if (!currentSKU) {
-        setSwapError("Please select valid variant options to swap");
-        return;
-      }
-
-      // Check if selected SKU allows swap
-      if (!currentSKU.allow_swap) {
-        setSwapError("This variant is not available for swap");
-        return;
-      }
-    } else {
-      // For non-variant products, check product-level swap
-      if (!product.open_for_swap) {
-        setSwapError("This product is not available for swap");
-        return;
-      }
+    if (!currentVariant || !currentVariant.allow_swap) {
+      setSwapError("This variant is not available for swap");
+      return;
     }
 
     setStartingSwap(true);
@@ -491,45 +477,13 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
       const payload: any = {
         user_id: user.id,
         product_id: product.id,
+        variant_id: currentVariant.id,
         quantity,
+        swap_type: currentVariant.swap_type,
+        minimum_additional_payment: currentVariant.minimum_additional_payment,
+        maximum_additional_payment: currentVariant.maximum_additional_payment,
       };
 
-      // Include SKU ID if product has variants
-      if (hasVariants && currentSKU) {
-        payload.sku_id = currentSKU.id;
-      }
-
-      // Include variant selections if product has variants
-      if (hasVariants && Object.keys(selectedOptions).length > 0) {
-        payload.variant_selection = selectedOptions;
-      }
-
-      // Include swap details
-      if (hasVariants && currentSKU) {
-        payload.swap_type = currentSKU.swap_type;
-        payload.minimum_additional_payment = currentSKU.minimum_additional_payment;
-        payload.maximum_additional_payment = currentSKU.maximum_additional_payment;
-        payload.accepted_categories = currentSKU.accepted_categories || [];
-      } else if (product) {
-        payload.swap_type = product.swap_type;
-        payload.minimum_additional_payment = product.minimum_additional_payment;
-        payload.maximum_additional_payment = product.maximum_additional_payment;
-        payload.accepted_categories = product.accepted_categories || [];
-      }
-
-      // Note: You'll need to create this endpoint in your backend
-      // For now, we'll just show a message
-      // const response = await AxiosInstance.post("/swap/initiate/", payload);
-
-      // if (response.data.success) {
-      //   alert("Swap initiated! You'll be redirected to the swap interface.");
-      //   // Navigate to swap interface or show swap modal
-      //   // navigate(`/swap/${response.data.swap_id}`);
-      // } else {
-      //   setSwapError(response.data.error || "Failed to initiate swap");
-      // }
-
-      // For now, show a success message
       alert("Swap functionality coming soon! You would be redirected to select items to trade with this product.");
 
     } catch (err: any) {
@@ -552,31 +506,23 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
     `${MEDIA_URL}${product.shop.shop_picture}` : 
     '/appliances.jpg';
 
-  // Get dimensions and weight (use SKU if available, otherwise product level)
-  const displayLength = hasVariants
-    ? (currentSKU?.length ?? product.length)
-    : product.length;
-  
-  const displayWidth = hasVariants
-    ? (currentSKU?.width ?? product.width)
-    : product.width;
-  
-  const displayHeight = hasVariants
-    ? (currentSKU?.height ?? product.height)
-    : product.height;
-  
-  const displayWeight = hasVariants
-    ? (currentSKU?.weight ?? product.weight)
-    : product.weight;
-  
-  const displayWeightUnit = hasVariants
-    ? (currentSKU?.weight_unit ?? product.weight_unit)
-    : product.weight_unit;
-
   return (
     <div className="max-w-7xl mx-auto p-3 md:p-4">
-      <div className="mb-3 text-xs text-gray-500">
-        <Breadcrumbs />
+      {/* Fixed Header with Cart Icon */}
+      <div className="sticky top-0 z-10 bg-white border-b mb-4 -mt-3 -mx-3 md:-mt-4 md:-mx-4 px-3 md:px-4 py-2 flex justify-between items-center">
+        <div className="text-xs text-gray-500">
+          <Breadcrumbs />
+        </div>
+        <Link to="/cart" className="relative">
+          <Button variant="ghost" size="icon" className="relative">
+            <ShoppingBagIcon className="h-5 w-5" />
+            {cartItemCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-orange-600 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
+                {cartItemCount}
+              </span>
+            )}
+          </Button>
+        </Link>
       </div>
 
       <div className="grid gap-4 md:gap-6 lg:grid-cols-2">
@@ -649,48 +595,21 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               </div>
             </div>
 
-            {/* Show applied gift (if any) */}
-            {product?.applied_gift?.gift_product && (
-              <div className="p-3 border-2 border-emerald-100 bg-emerald-50 rounded-md flex items-center gap-3">
-                <img
-                  src={resolveImageUrl(product.applied_gift.gift_product.primary_image?.url || product.applied_gift.gift_product.media_files?.[0]?.file_data) ?? '/phon.jpg'}
-                  alt={product.applied_gift.gift_product.name}
-                  className="w-16 h-16 object-cover rounded"
-                />
-                <div className="flex-1">
-                  <div className="text-xs text-emerald-800 font-semibold">
-                    {product.applied_gift.status === 'upcoming' ? 'Free gift (Starts soon)' : product.applied_gift.status === 'expired' ? 'Gift expired' : 'Free gift available'}
-                  </div>
-                  <div className="text-sm font-medium">{product.applied_gift.gift_product.name}</div>
-
-                  {product.applied_gift.status === 'upcoming' && product.applied_gift.start_time && (
-                    <div className="text-xs text-gray-600">Starts: {new Date(product.applied_gift.start_time).toLocaleString()}</div>
-                  )}
-                </div>
-                <div className="text-xs text-emerald-700 font-medium">FREE</div>
-              </div>
-            )}
-
             <div className="flex items-center gap-2 flex-wrap text-sm">
               <div className="flex items-center">
                 {Array.from({ length: 5 }).map((_, idx) => (
                   <Star
                     key={idx}
                     className={`h-3.5 w-3.5 ${
-                      idx < (product.rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-300"
+                      idx < (product.shop?.avg_rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-300"
                     }`}
                   />
                 ))}
-                <span className="ml-1 font-medium">{product.rating?.toFixed(1) || 0}</span>
+                <span className="ml-1 font-medium">{product.shop?.avg_rating?.toFixed(1) || 0}</span>
               </div>
               <span className="text-gray-300">•</span>
-              <Link to="#" className="text-blue-600 hover:underline text-sm">
-                {product.reviews_count || 0} reviews
-              </Link>
-              <span className="text-gray-300">•</span>
-              <span className="text-gray-600">{product.sold || 0} sold</span>
+              <span className="text-gray-600">{product.condition}</span>
 
-              {/* Refundable or Non-Refundable Badge */}
               {isRefundable ? (
                 <>
                   <span className="text-gray-300">•</span>
@@ -722,7 +641,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
             <div className="flex items-center gap-3">
               <div className="text-2xl font-bold text-orange-600">
-                ₱{displayPrice.toFixed(2)}
+                {product.price_display}
               </div>
               {displayComparePrice && displayComparePrice > displayPrice && (
                 <div className="text-lg text-gray-500 line-through">
@@ -733,9 +652,12 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
             <div className="flex items-center justify-between text-sm text-gray-600">
               <div>Stock: {displayStock} {displayStock <= 0 ? "(Out of Stock)" : ""}</div>
-              {selectedChoicesText ? (
-                <div className="text-sm text-gray-700 ml-4 truncate text-right"><span className="font-medium">Selected variant: </span>{selectedChoicesText}</div>
-              ) : null}
+              {product.price_range.is_range && (
+                <div className="text-sm text-gray-700 ml-4">
+                  <span className="font-medium">Price range: </span>
+                  ₱{product.price_range.min.toFixed(2)} - ₱{product.price_range.max.toFixed(2)}
+                </div>
+              )}
             </div>
 
             <div className="mt-3 text-sm text-gray-700 leading-relaxed whitespace-pre-line">
@@ -743,54 +665,14 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
             </div>
           </div>
 
-          {/* Variants Section (only show if product has variants) */}
-          {hasVariants && product.variants && (
-            <div className="space-y-4">
-              {product.variants.map((group, groupIndex) => (
-                <div key={group.id} className="space-y-2">
-                  <Label className="text-sm font-semibold">{group.title}</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {group.options.map((opt) => {
-                      const isSelected = selectedOptions[group.id] === opt.id;
-
-                      // Require previous variants selected (Variant 2 depends on Variant 1, etc.)
-                      const previousSelected = product.variants!
-                        .slice(0, groupIndex)
-                        .every((g) => !!selectedOptions[g.id]);
-
-                      const availableSet = product.skus
-                        ? getAvailableOptionIdsForGroup(product.skus, selectedOptions, group.id)
-                        : new Set<string>();
-
-                      const isAvailable = previousSelected && availableSet.has(String(opt.id));
-                      
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => handleSelectOption(group.id, opt.id)}
-                          disabled={!isAvailable}
-                          className={`flex items-center gap-2 p-3 border rounded-md ${
-                            isSelected 
-                              ? 'border-orange-500 bg-orange-50' 
-                              : isAvailable
-                                ? 'border-gray-200 hover:bg-gray-50'
-                                : 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
-                          }`}
-                        >
-                          <div className="text-left">
-                            <div className="font-medium">{opt.title}</div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
+          {/* Show variant info if multiple variants exist */}
+          {product.variant_count > 1 && (
+            <div className="p-3 bg-blue-50 rounded-md">
+              <p className="text-sm text-blue-800">
+                This product has {product.variant_count} variants available. Please select your preferred variant.
+              </p>
             </div>
           )}
-
-
 
           {/* Quantity */}
           <div className="space-y-1.5">
@@ -842,7 +724,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               {addingToCart ? "Adding..." : displayStock <= 0 ? "Out of Stock" : "Add to Cart"}
             </Button>
 
-            {/* Swap Button - Only show if available for swap */}
             {isAvailableForSwap && (
               <Button
                 variant="outline"
@@ -892,7 +773,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                     <p className="text-xs text-gray-500 truncate">{product.shop.address}</p>
                   </div>
                 )}
-                {product.shop.avg_rating !== undefined && (
+                {product.shop.avg_rating !== undefined && product.shop.avg_rating !== null && (
                   <div className="flex items-center gap-1 mt-0.5">
                     <div className="flex">
                       {Array.from({ length: 5 }).map((_, idx) => (
@@ -918,134 +799,91 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         </div>
       )}
 
-      {/* Product/SKU Details */}
-      <div className="mt-6 border-t pt-4">
-        <h2 className="text-lg font-semibold mb-3">Product Details</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <div className="font-medium">SKU Code:</div>
-              <div className="text-sm text-gray-600">
-                {hasVariants 
-                  ? (currentSKU?.sku_code || "No SKU Code") 
-                  : "Standard Product (No SKU)"}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="font-medium">Price:</div>
-              <div className="text-lg font-semibold text-orange-600">₱{displayPrice.toFixed(2)}</div>
-            </div>
-            {displayComparePrice && (
+      {/* Variant Details */}
+      {currentVariant && (
+        <div className="mt-6 border-t pt-4">
+          <h2 className="text-lg font-semibold mb-3">Product Details</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <div className="font-medium">Compare Price:</div>
-                <div className="text-sm text-gray-500 line-through">₱{displayComparePrice.toFixed(2)}</div>
+                <div className="font-medium">SKU Code:</div>
+                <div className="text-sm text-gray-600">
+                  {currentVariant.sku_code || "No SKU Code"}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="font-medium">Price:</div>
+                <div className="text-lg font-semibold text-orange-600">₱{safeToNumber(currentVariant.price).toFixed(2)}</div>
+              </div>
+              {currentVariant.compare_price && (
+                <div className="flex items-center gap-2">
+                  <div className="font-medium">Compare Price:</div>
+                  <div className="text-sm text-gray-500 line-through">₱{safeToNumber(currentVariant.compare_price).toFixed(2)}</div>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <div className="font-medium">Stock:</div>
+                <div className="text-sm text-gray-600">{currentVariant.quantity} units</div>
+              </div>
+              {currentVariant.original_price && (
+                <div className="flex items-center gap-2">
+                  <div className="font-medium">Original Price:</div>
+                  <div className="text-sm text-gray-600">₱{safeToNumber(currentVariant.original_price).toFixed(2)}</div>
+                </div>
+              )}
+            </div>
+            
+            {(currentVariant.usage_period || currentVariant.depreciation_rate || currentVariant.weight) && (
+              <div className="space-y-2">
+                <div className="font-medium mb-2">Item Details:</div>
+                {currentVariant.usage_period && currentVariant.usage_unit && (
+                  <div className="text-sm text-gray-600">
+                    Usage: {currentVariant.usage_period} {currentVariant.usage_unit}
+                  </div>
+                )}
+                {currentVariant.depreciation_rate && (
+                  <div className="text-sm text-gray-600">
+                    Depreciation Rate: {currentVariant.depreciation_rate}%
+                  </div>
+                )}
+                {currentVariant.weight && (
+                  <div className="text-sm text-gray-600">
+                    Weight: {currentVariant.weight} {currentVariant.weight_unit || 'g'}
+                  </div>
+                )}
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <div className="font-medium">Stock:</div>
-              <div className="text-sm text-gray-600">{displayStock} units</div>
-            </div>
           </div>
-          
-          {/* Physical Dimensions */}
-          {(displayLength || displayWidth || displayHeight || displayWeight) && (
-            <div className="space-y-2">
-              <div className="font-medium mb-2">Physical Properties:</div>
-              {displayLength && displayWidth && displayHeight && (
-                <div className="text-sm text-gray-600">
-                  Dimensions: {displayLength} × {displayWidth} × {displayHeight} cm
-                </div>
-              )}
-              {displayWeight && (
-                <div className="text-sm text-gray-600">
-                  Weight: {displayWeight} {displayWeightUnit || 'kg'}
-                </div>
-              )}
-            </div>
-          )}
         </div>
-      </div>
+      )}
 
-      {/* Swap Options - Show detailed swap info */}
-      {(hasVariants 
-        ? (currentSKU && currentSKU.allow_swap)
-        : (product.open_for_swap)
-      ) && (
+      {/* Swap Options */}
+      {currentVariant && currentVariant.allow_swap && (
         <div className="mt-6 border-t pt-4">
           <h2 className="text-lg font-semibold mb-3">Swap Options</h2>
           <div className="text-sm text-gray-700 space-y-2">
             <div>
               <span className="font-medium">Type:</span>{" "}
               <span className="capitalize">
-                {hasVariants 
-                  ? currentSKU?.swap_type?.replace('_', ' ') 
-                  : product.swap_type?.replace('_', ' ')}
+                {currentVariant.swap_type?.replace('_', ' ') || 'direct swap'}
               </span>
             </div>
-            {hasVariants ? (
-              <>
-                {currentSKU?.minimum_additional_payment && currentSKU.minimum_additional_payment > 0 && (
-                  <div>
-                    <span className="font-medium">Minimum Additional Payment:</span>{" "}
-                    ₱{safeToNumber(currentSKU.minimum_additional_payment).toFixed(2)}
-                  </div>
-                )}
-                {currentSKU?.maximum_additional_payment && currentSKU.maximum_additional_payment > 0 && (
-                  <div>
-                    <span className="font-medium">Maximum Additional Payment:</span>{" "}
-                    ₱{safeToNumber(currentSKU.maximum_additional_payment).toFixed(2)}
-                  </div>
-                )}
-                {currentSKU?.swap_description && (
-                  <div className="mt-2 p-3 bg-gray-50 rounded">
-                    {currentSKU.swap_description}
-                  </div>
-                )}
-                {currentSKU?.accepted_categories && currentSKU.accepted_categories.length > 0 && (
-                  <div>
-                    <span className="font-medium">Accepted Categories:</span>{" "}
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {currentSKU.accepted_categories.map((cat) => (
-                        <span key={cat.id} className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
-                          {cat.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                {product.minimum_additional_payment && product.minimum_additional_payment > 0 && (
-                  <div>
-                    <span className="font-medium">Minimum Additional Payment:</span>{" "}
-                    ₱{safeToNumber(product.minimum_additional_payment).toFixed(2)}
-                  </div>
-                )}
-                {product.maximum_additional_payment && product.maximum_additional_payment > 0 && (
-                  <div>
-                    <span className="font-medium">Maximum Additional Payment:</span>{" "}
-                    ₱{safeToNumber(product.maximum_additional_payment).toFixed(2)}
-                  </div>
-                )}
-                {product.swap_description && (
-                  <div className="mt-2 p-3 bg-gray-50 rounded">
-                    {product.swap_description}
-                  </div>
-                )}
-                {product.accepted_categories && product.accepted_categories.length > 0 && (
-                  <div>
-                    <span className="font-medium">Accepted Categories:</span>{" "}
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {product.accepted_categories.map((cat) => (
-                        <span key={cat.id} className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
-                          {cat.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
+            {currentVariant.minimum_additional_payment && safeToNumber(currentVariant.minimum_additional_payment) > 0 && (
+              <div>
+                <span className="font-medium">Minimum Additional Payment:</span>{" "}
+                ₱{safeToNumber(currentVariant.minimum_additional_payment).toFixed(2)}
+              </div>
+            )}
+            {currentVariant.maximum_additional_payment && safeToNumber(currentVariant.maximum_additional_payment) > 0 && (
+              <div>
+                <span className="font-medium">Maximum Additional Payment:</span>{" "}
+                ₱{safeToNumber(currentVariant.maximum_additional_payment).toFixed(2)}
+              </div>
+            )}
+            {currentVariant.swap_description && (
+              <div className="mt-2 p-3 bg-gray-50 rounded">
+                {currentVariant.swap_description}
+              </div>
             )}
           </div>
         </div>
