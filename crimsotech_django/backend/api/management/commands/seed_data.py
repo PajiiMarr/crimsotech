@@ -63,7 +63,7 @@ class Command(BaseCommand):
                 # # Create checkout analytics data
                 # self.create_order_analytics_data()
                 # # Create rider data
-                # self.create_rider_data(products, customers, shops, admin_user)
+                self.create_rider_data(customers, shops, admin_user)
                 
                 # # CREATE REFUND DATA
                 # # self.create_refund_data(products, customers, shops, admin_user)
@@ -3730,7 +3730,7 @@ class Command(BaseCommand):
         
         self.stdout.write(self.style.SUCCESS(f"✅ Created {checkout_count} checkouts with order associations"))
 
-    def create_rider_data(self, products, customers, shops, admin_user):
+    def create_rider_data(self, customers, shops, admin_user):
         """Create comprehensive rider data with all related entities"""
         self.stdout.write("🏍️ Creating rider data...")
         

@@ -21878,7 +21878,7 @@ class ArrangeShipment(viewsets.ViewSet):
             delivery = Delivery.objects.create(
                 order=order,
                 rider=rider,
-                status='pending_offer',  # Changed from 'pending' to be more specific
+                status='pending',  # Changed from 'pending' to be more specific
                 delivery_fee=offer_amount,
                 notes=delivery_notes,
                 created_at=timezone.now(),
@@ -21886,8 +21886,8 @@ class ArrangeShipment(viewsets.ViewSet):
             )
 
             # Update order status if needed
-            if order.status not in ['arrange_shipment', 'to_ship']:
-                order.status = 'arrange_shipment'
+            if order.status not in ['processing', 'pending']:
+                order.status = 'processing'
                 order.save()
 
             # Create notification for rider (you'll need to implement this)
@@ -21910,7 +21910,7 @@ class ArrangeShipment(viewsets.ViewSet):
                     "offer_amount": offer_amount,
                     "offer_type": offer_type,
                     "delivery_notes": delivery_notes,
-                    "status": "pending_offer",
+                    "status": "pending",
                     "submitted_at": timezone.now().isoformat()
                 }
             }, status=status.HTTP_200_OK)

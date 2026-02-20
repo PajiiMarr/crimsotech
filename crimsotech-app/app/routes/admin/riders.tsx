@@ -1,4 +1,5 @@
 // app/routes/admin/riders.tsx
+import { toast } from 'sonner';
 import type { Route } from './+types/riders';
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -13,20 +14,22 @@ import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
 import { Skeleton } from '~/components/ui/skeleton';
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-  CartesianGrid,
-  LineChart,
-  Line,
-} from 'recharts';
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog"
+import { Input } from "~/components/ui/input"
+import { Label } from "~/components/ui/label"
 import { 
   Users,
   TrendingUp,
@@ -39,17 +42,15 @@ import {
   Calendar,
   Star,
   Package,
-  MapPin,
   Phone,
   Mail,
   Car,
   FileText,
   Shield,
-  Download,
   Eye,
-  Edit,
-  Filter,
-  Search,
+  RefreshCw,
+  Ban,
+  Circle,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
@@ -156,7 +157,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const validStart = !isNaN(startDate.getTime()) ? startDate : defaultStart;
   const validEnd = !isNaN(endDate.getTime()) ? endDate : defaultEnd;
 
-  // Initialize empty data structures - NO FALLBACK DATA
+  // Initialize empty data structures
   let riderMetrics = {
     total_riders: 0,
     pending_riders: 0,
@@ -189,7 +190,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     }
   } catch (error) {
     console.log('API fetch failed - no data available');
-    // NO FALLBACK DATA - everything remains empty
   }
 
   return { 
@@ -204,25 +204,78 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   };
 }
 
-const COLORS = ['#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6'];
-const VEHICLE_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b'];
+// Status Badge Component for riders
+function StatusBadge({ status }: { status: string }) {
+  const getStatusConfig = (status: string) => {
+    switch(status?.toLowerCase()) {
+      case 'approved':
+        return {
+          className: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',
+          icon: CheckCircle,
+          iconClassName: 'text-green-600'
+        };
+      case 'pending':
+        return {
+          className: 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100',
+          icon: Clock,
+          iconClassName: 'text-yellow-600'
+        };
+      case 'rejected':
+        return {
+          className: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',
+          icon: XCircle,
+          iconClassName: 'text-red-600'
+        };
+      case 'suspended':
+        return {
+          className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+          icon: Ban,
+          iconClassName: 'text-gray-600'
+        };
+      default:
+        return {
+          className: 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100',
+          icon: Circle,
+          iconClassName: 'text-gray-600'
+        };
+    }
+  };
 
-// Empty state components
-const EmptyChart = ({ message }: { message: string }) => (
-  <div className="flex items-center justify-center h-64">
-    <div className="text-center text-muted-foreground">
-      <p>{message}</p>
-    </div>
-  </div>
-);
+  const config = getStatusConfig(status);
+  const Icon = config.icon;
 
-const EmptyTable = () => (
-  <div className="flex items-center justify-center h-32">
-    <div className="text-center text-muted-foreground">
-      <p>No riders found</p>
-    </div>
-  </div>
-);
+  return (
+    <Badge 
+      variant="secondary" 
+      className={`flex items-center gap-1.5 ${config.className}`}
+    >
+      <Icon className={`w-3 h-3 ${config.iconClassName}`} />
+      {status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown'}
+    </Badge>
+  );
+}
+
+// Helper function to compute rider status based on model fields
+const getRiderStatus = (rider: Rider): 'pending' | 'approved' | 'rejected' | 'suspended' => {
+  if (rider.verified && rider.approval_date) {
+    return 'approved';
+  } else if (!rider.verified && !rider.approval_date) {
+    return 'pending';
+  } else if (!rider.verified && rider.approval_date) {
+    return 'rejected';
+  }
+  return 'pending';
+};
+
+// Helper function to format date
+const formatDate = (dateString: string) => {
+  if (!dateString) return 'N/A';
+  return new Date(dateString).toLocaleDateString('en-US', { 
+    month: 'short', 
+    day: 'numeric', 
+    year: 'numeric' 
+  });
+};
 
 // MetricCardSkeleton for loading state
 const MetricCardSkeleton = () => (
@@ -240,17 +293,117 @@ const MetricCardSkeleton = () => (
   </Card>
 );
 
-// Helper function to compute rider status based on model fields
-const getRiderStatus = (rider: Rider): 'pending' | 'approved' | 'rejected' | 'suspended' => {
-  if (rider.verified && rider.approval_date) {
-    return 'approved';
-  } else if (!rider.verified && !rider.approval_date) {
-    return 'pending';
-  } else if (!rider.verified && rider.approval_date) {
-    return 'rejected';
-  }
-  return 'pending';
-};
+// Empty table component
+const EmptyTable = () => (
+  <div className="flex items-center justify-center h-32">
+    <div className="text-center text-muted-foreground">
+      <p>No riders found</p>
+    </div>
+  </div>
+);
+
+// Action Dialog Component
+function ActionDialog({ 
+  open, 
+  onOpenChange, 
+  onConfirm, 
+  title, 
+  description,
+  actionType,
+  riderName
+}: { 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void; 
+  onConfirm: (reason?: string, days?: number) => Promise<void>;
+  title: string;
+  description: string;
+  actionType: string;
+  riderName: string;
+}) {
+  const [reason, setReason] = useState('');
+  const [days, setDays] = useState('7');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleConfirm = async () => {
+    setIsLoading(true);
+    try {
+      if (actionType === 'suspend') {
+        await onConfirm(reason, parseInt(days) || 7);
+      } else if (actionType === 'reject') {
+        await onConfirm(reason);
+      } else {
+        await onConfirm();
+      }
+      onOpenChange(false);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        
+        <div className="space-y-4 py-4">
+          <div className="text-sm">
+            <span className="font-medium">Rider: </span>
+            {riderName}
+          </div>
+          
+          {(actionType === 'suspend' || actionType === 'reject') && (
+            <div className="space-y-2">
+              <Label htmlFor="reason">Reason</Label>
+              <Input
+                id="reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder={`Enter reason for ${actionType}`}
+                required={actionType === 'reject'}
+              />
+            </div>
+          )}
+          
+          {actionType === 'suspend' && (
+            <div className="space-y-2">
+              <Label htmlFor="days">Suspension Duration (days)</Label>
+              <Input
+                id="days"
+                type="number"
+                min="1"
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+              />
+            </div>
+          )}
+        </div>
+        
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleConfirm} 
+            disabled={isLoading || (actionType === 'reject' && !reason.trim())}
+            variant={actionType === 'suspend' || actionType === 'reject' ? 'destructive' : 'default'}
+          >
+            {isLoading ? (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              'Confirm'
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export default function Riders() {
   const loaderData = useLoaderData<typeof loader>();
@@ -266,6 +419,17 @@ export default function Riders() {
   });
 
   const [isLoading, setIsLoading] = useState(false);
+  const [actionDialog, setActionDialog] = useState<{
+    open: boolean;
+    riderId: string;
+    riderName: string;
+    actionType: string;
+  }>({
+    open: false,
+    riderId: '',
+    riderName: '',
+    actionType: ''
+  });
 
   // Handle date range change - update URL search params
   const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
@@ -287,6 +451,40 @@ export default function Riders() {
     });
   };
 
+  // Handle rider actions
+  const handleRiderAction = async (riderId: string, actionType: string, reason?: string, days?: number) => {
+    setIsLoading(true);
+    try {
+      const payload: any = {
+        rider_id: riderId,
+        action: actionType,
+        user_id: user?.id
+      };
+
+      if (reason) payload.reason = reason;
+      if (days) payload.suspension_days = days;
+
+      const response = await AxiosInstance.post('/admin-riders/update_rider_status/', payload, {
+        headers: {
+          "X-User-Id": user?.id
+        }
+      });
+
+      if (response.data.success) {
+        toast.success(response.data.message || `Rider ${actionType}ed successfully`);
+        // Refresh the page to show updated data
+        window.location.reload();
+      } else {
+        toast.error(response.data.error || `Failed to ${actionType} rider`);
+      }
+    } catch (error: any) {
+      console.error(`Error ${actionType}ing rider:`, error);
+      toast.error(error.response?.data?.error || `Failed to ${actionType} rider`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Reset loading state when loader data changes
   useEffect(() => {
     setIsLoading(false);
@@ -300,7 +498,7 @@ export default function Riders() {
     );
   }
 
-  // Use only the fetched data - no fallbacks
+  // Use only the fetched data
   const safeRiders = riders || [];
   const safeMetrics = riderMetrics || {
     total_riders: 0,
@@ -320,22 +518,17 @@ export default function Riders() {
   const ridersWithComputedStatus = safeRiders.map(rider => ({
     ...rider,
     rider_status: getRiderStatus(rider),
-    // Add a computed field for full name for search
-    riderName: `${rider.rider.first_name} ${rider.rider.last_name}`.trim()
+    riderName: `${rider.rider.first_name} ${rider.rider.last_name}`.trim() || rider.rider.username
   }));
 
   const riderFilterConfig = {
     rider_status: {
-      options: [...new Set(ridersWithComputedStatus.map(rider => rider.rider_status))],
+      options: [...new Set(ridersWithComputedStatus.map(rider => rider.rider_status))].filter(Boolean),
       placeholder: 'Status'
     },
     vehicle_type: {
       options: [...new Set(ridersWithComputedStatus.map(rider => rider.vehicle_type))].filter(Boolean),
       placeholder: 'Vehicle Type'
-    },
-    verified: {
-      options: ['Verified', 'Not Verified'],
-      placeholder: 'Verification'
     }
   };
 
@@ -356,7 +549,7 @@ export default function Riders() {
             isLoading={isLoading}
           />
 
-          {/* Key Metrics - Will show zeros if no data */}
+          {/* Key Metrics */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {isLoading ? (
               <>
@@ -430,7 +623,7 @@ export default function Riders() {
             )}
           </div>
 
-          {/* Status Overview Cards - Will show zeros if no data */}
+          {/* Status Overview Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {isLoading ? (
               <>
@@ -505,7 +698,7 @@ export default function Riders() {
             )}
           </div>
 
-          {/* Riders Table - Will show empty state if no data */}
+          {/* Riders Table */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg sm:text-xl">All Riders</CardTitle>
@@ -524,7 +717,10 @@ export default function Riders() {
               ) : hasRiders ? (
                 <div className="rounded-md">
                   <DataTable 
-                    columns={columns} 
+                    columns={columns({
+                      onAction: (riderId, riderName, actionType) => 
+                        setActionDialog({ open: true, riderId, riderName, actionType })
+                    })} 
                     data={ridersWithComputedStatus}
                     filterConfig={riderFilterConfig}
                     searchConfig={{
@@ -540,12 +736,29 @@ export default function Riders() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Action Dialog */}
+        <ActionDialog
+          open={actionDialog.open}
+          onOpenChange={(open) => setActionDialog(prev => ({ ...prev, open }))}
+          onConfirm={(reason, days) => handleRiderAction(
+            actionDialog.riderId, 
+            actionDialog.actionType, 
+            reason, 
+            days
+          )}
+          title={`${actionDialog.actionType?.charAt(0).toUpperCase() + actionDialog.actionType?.slice(1)} Rider`}
+          description={`Are you sure you want to ${actionDialog.actionType} this rider?`}
+          actionType={actionDialog.actionType}
+          riderName={actionDialog.riderName}
+        />
       </SidebarLayout>
     </UserProvider>
   );
 }
 
-const columns: ColumnDef<any>[] = [
+// Columns factory function to pass onAction callback
+const columns = ({ onAction }: { onAction: (riderId: string, riderName: string, actionType: string) => void }): ColumnDef<any>[] => [
   {
     accessorKey: "riderName",
     header: ({ column }) => {
@@ -573,11 +786,7 @@ const columns: ColumnDef<any>[] = [
             <div className="font-medium">{rider.first_name} {rider.last_name}</div>
             <div className="text-xs text-muted-foreground">@{rider.username}</div>
             <div className="text-xs text-muted-foreground">
-              Joined: {new Date(rider.created_at).toLocaleDateString('en-US', { 
-                month: 'short', 
-                day: 'numeric', 
-                year: 'numeric' 
-              })}
+              Joined: {formatDate(rider.created_at)}
             </div>
           </div>
         </div>
@@ -658,8 +867,8 @@ const columns: ColumnDef<any>[] = [
           variant="secondary"
           className={`text-xs capitalize flex items-center gap-1 ${
             verified 
-              ? 'bg-green-100 text-green-800' 
-              : 'bg-yellow-100 text-yellow-800'
+              ? 'bg-green-100 text-green-800 border-green-200' 
+              : 'bg-yellow-100 text-yellow-800 border-yellow-200'
           }`}
         >
           <Shield className="w-3 h-3" />
@@ -684,37 +893,7 @@ const columns: ColumnDef<any>[] = [
     },
     cell: ({ row }: { row: any}) => {
       const status = row.getValue("rider_status") as string;
-      const getColor = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'approved': return '#10b981';
-          case 'pending': return '#f59e0b';
-          case 'rejected': return '#ef4444';
-          case 'suspended': return '#6b7280';
-          default: return '#6b7280';
-        }
-      };
-      const getIcon = (status: string) => {
-        switch(status?.toLowerCase()) {
-          case 'approved': return <CheckCircle className="w-3 h-3" />;
-          case 'pending': return <Clock className="w-3 h-3" />;
-          case 'rejected': return <XCircle className="w-3 h-3" />;
-          case 'suspended': return <AlertCircle className="w-3 h-3" />;
-          default: return <AlertCircle className="w-3 h-3" />;
-        }
-      };
-      const color = getColor(status);
-      const icon = getIcon(status);
-      
-      return (
-        <Badge 
-          variant="secondary"
-          className="text-xs capitalize flex items-center gap-1"
-          style={{ backgroundColor: `${color}20`, color: color }}
-        >
-          {icon}
-          {status || 'Unknown'}
-        </Badge>
-      );
+      return <StatusBadge status={status} />;
     },
   },
   {
@@ -735,16 +914,10 @@ const columns: ColumnDef<any>[] = [
       const date = row.original.approval_date;
       if (!date) return <div className="text-muted-foreground">N/A</div>;
       
-      const formattedDate = new Date(date).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
-      
       return (
         <div className="flex items-center gap-1 text-xs sm:text-sm">
           <Calendar className="w-3 h-3 text-muted-foreground" />
-          {formattedDate}
+          {formatDate(date)}
         </div>
       );
     },
@@ -754,25 +927,63 @@ const columns: ColumnDef<any>[] = [
     header: "Actions",
     cell: ({ row }: { row: any}) => {
       const rider = row.original;
-      const isPending = rider.rider_status === 'pending';
+      const riderId = rider.rider?.id;
+      const riderName = rider.riderName;
+      const status = rider.rider_status;
       
+      const getAvailableActions = () => {
+        const actions = [];
+        
+        if (status === 'pending') {
+          actions.push(
+            { label: 'Approve', action: 'approve', variant: 'default' as const },
+            { label: 'Reject', action: 'reject', variant: 'destructive' as const }
+          );
+        } else if (status === 'approved') {
+          actions.push(
+            { label: 'Suspend', action: 'suspend', variant: 'destructive' as const },
+            { label: 'Reject', action: 'reject', variant: 'destructive' as const }
+          );
+        } else if (status === 'suspended') {
+          actions.push(
+            { label: 'Unsuspend', action: 'unsuspend', variant: 'default' as const },
+            { label: 'Reject', action: 'reject', variant: 'destructive' as const }
+          );
+        } else if (status === 'rejected') {
+          actions.push(
+            { label: 'Approve', action: 'approve', variant: 'default' as const }
+          );
+        }
+        
+        return actions;
+      };
+
+      const actions = getAvailableActions();
+
       return (
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-8 w-8 p-0"
+            onClick={() => navigate(`/admin/riders/${riderId}`)}
+          >
             <Eye className="w-4 h-4" />
           </Button>
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-            <Edit className="w-4 h-4" />
-          </Button>
-          {isPending && (
-            <>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-green-600">
-                <CheckCircle className="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-600">
-                <XCircle className="w-4 h-4" />
-              </Button>
-            </>
+          
+          {actions.length > 0 && (
+            <Select onValueChange={(value) => onAction(riderId, riderName, value)}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="Actions" />
+              </SelectTrigger>
+              <SelectContent>
+                {actions.map((action) => (
+                  <SelectItem key={action.action} value={action.action}>
+                    {action.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </div>
       );
