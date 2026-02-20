@@ -50,9 +50,17 @@ export async function registrationMiddleware(args: LoaderFunctionArgs | ActionFu
 
         // Registration stage redirection
         if (response.data.is_rider) {
-          if (response.data.registration_stage == 1) return redirect('/signup');
-          if (response.data.registration_stage == 2) return redirect('/profiling'); 
-          if (response.data.registration_stage == 3) return redirect('/number');
+          const currentPath = new URL(request.url).pathname;
+          
+          if (response.data.registration_stage == 1 && currentPath !== '/signup') {
+            return redirect('/signup');
+          }
+          if (response.data.registration_stage == 2 && currentPath !== '/profiling') {
+            return redirect('/profiling');
+          }
+          if (response.data.registration_stage == 3 && currentPath !== '/number') {
+            return redirect('/number');
+          }
           if (response.data.registration_stage == 4) return null;
         } else if (response.data.is_customer) {
           if (response.data.registration_stage == 1) return redirect('/profiling');

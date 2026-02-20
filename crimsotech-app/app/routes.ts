@@ -1,5 +1,5 @@
 // app/routes.ts
-import { type RouteConfig, index, route, prefix } from "@react-router/dev/routes";
+import { type RouteConfig, index, route, prefix, layout } from "@react-router/dev/routes";
 
 export default [
     index('routes/client/landing.tsx'),
@@ -131,14 +131,16 @@ export default [
         route('riders', 'routes/moderator/riders.tsx'),
         route('vouchers', 'routes/moderator/vouchers.tsx'),
     ]),
-    ...prefix("rider", [
-        index("routes/rider/home.tsx"),
-        route('pendings', 'routes/rider/pendings.tsx'),
-        route('orders/active', 'routes/rider/active-orders.tsx'),
-        route('delivery/:deliveryId/add-delivery-media', 'routes/rider/add-delivery-media.tsx'),
-        route('orders/active/:orderId', 'routes/rider/active-orders/active-orders-details.tsx'),
-        route('orders/history', 'routes/rider/history.tsx'),
-        route('schedule', 'routes/rider/schedule.tsx'),
-        route('earnings', 'routes/rider/earnings.tsx'),
+    layout("routes/rider/layout.tsx", [
+        ...prefix("rider", [
+            index("routes/rider/home.tsx"),
+            route('pendings', 'routes/rider/pendings.tsx'),
+            route('orders/active', 'routes/rider/active-orders.tsx'),
+            route('delivery/:deliveryId/add-delivery-media', 'routes/rider/add-delivery-media.tsx'),
+            route('orders/active/:orderId', 'routes/rider/active-orders/active-orders-details.tsx'),
+            route('orders/history', 'routes/rider/history.tsx'),
+            route('schedule', 'routes/rider/schedule.tsx'),
+            route('earnings', 'routes/rider/earnings.tsx'),
+        ]),
     ]),
 ] satisfies RouteConfig;

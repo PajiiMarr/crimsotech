@@ -33,6 +33,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   }
 
   const userId = session.get("userId");
+  const currentPath = new URL(request.url).pathname;
 
   if (session.has("userId")) {
     let response;
@@ -55,7 +56,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       } else if (response.data.is_rider === true) {
         if (response.data.registration_stage < 4) {
           // Throw an error to jump to the catch block and try registration endpoint
-          throw new Error('Customer registration not complete');
+          throw new Error('Rider registration not complete');
         }
         return redirect("/rider");
       } else if (response.data.is_moderator === true) {
@@ -76,16 +77,40 @@ export async function loader({ request }: Route.LoaderArgs) {
           headers: { "X-User-Id": userId },
         });
 
-        // Registration stage redirection
+        // Registration stage redirection - with current path check to prevent loops
         if(response.data.is_rider == true) {
-          if(response.data.registration_stage == 1) return redirect('/signup')
-          if(response.data.registration_stage == 2) return redirect('/profiling')
-          if(response.data.registration_stage == 3) return data({ userId, profilingData: userProfiling.data });
-          if(response.data.registration_stage == 4) return redirect('/rider')
+          if(response.data.registration_stage == 1 && currentPath !== '/signup') {
+            return redirect('/signup');
           }
-        if(response.data.registration_stage == 1) return redirect('/profiling')
-        if(response.data.registration_stage == 2) return data({ userId, profilingData: userProfiling.data });
-        if(response.data.registration_stage == 4) return redirect('/home')
+          if(response.data.registration_stage == 2 && currentPath !== '/profiling') {
+            return redirect('/profiling');
+          }
+          if(response.data.registration_stage == 3 && currentPath !== '/number') {
+            return redirect('/number');
+          }
+          if(response.data.registration_stage == 4 && currentPath !== '/rider') {
+            return redirect('/rider');
+          }
+          // If we're on the correct page for this stage, return the data
+          if(response.data.registration_stage == 3 && currentPath === '/number') {
+            return data({ userId, profilingData: userProfiling.data });
+          }
+        } else {
+          // Customer flow
+          if(response.data.registration_stage == 1 && currentPath !== '/profiling') {
+            return redirect('/profiling');
+          }
+          if(response.data.registration_stage == 2 && currentPath !== '/number') {
+            return redirect('/number');
+          }
+          if(response.data.registration_stage == 4 && currentPath !== '/home') {
+            return redirect('/home');
+          }
+          // If we're on the correct page for this stage, return the data
+          if(response.data.registration_stage == 2 && currentPath === '/number') {
+            return data({ userId, profilingData: userProfiling.data });
+          }
+        }
       } catch (regError) {
         // If both endpoints fail, continue without redirection
         console.log("Could not fetch user data for redirection");
@@ -93,34 +118,21 @@ export async function loader({ request }: Route.LoaderArgs) {
     }
   }
 
-  // if (session.has("userId")) {
-  //   const response = await AxiosInstance.get('/register/', {
-  //   headers: {
-  //       "X-User-Id": userId
-  //     }
-  //   });
-
-  //   const userProfiling = await AxiosInstance.get("/verify/user/", {
-  //     headers: { "X-User-Id": userId },
-  //   });
-
-  //   if(response.data.is_rider == true) {
-  //     if(response.data.registration_stage == 1) return redirect('/signup')
-  //     if(response.data.registration_stage == 2) return redirect('/profiling')
-  //     if(response.data.registration_stage == 3) return data({ userId, profilingData: userProfiling.data });
-  //     if(response.data.registration_stage == 4) return redirect('/rider')
-  //     }
-  //   if(response.data.registration_stage == 1) return redirect('/profiling')
-  //   if(response.data.registration_stage == 2) return data({ userId, profilingData: userProfiling.data });
-  //   if(response.data.registration_stage == 4) return redirect('/home')
-  // }
+  // Default return - show the number verification page
+  try {
+    const userProfiling = await AxiosInstance.get("/verify/user/", {
+      headers: { "X-User-Id": userId },
+    });
+    return data({ userId, profilingData: userProfiling.data });
+  } catch (error) {
+    return data({ userId, profilingData: null });
+  }
 }
 
 export async function action({ request }: Route.ActionArgs) {
   const { getSession, commitSession } = await import("~/sessions.server");
   const session = await getSession(request.headers.get("Cookie"));
   const userId = session.get("userId");
-
 
   const formData = await request.formData();
   const actionType = formData.get("action_type");
@@ -150,7 +162,6 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ errors }, { status: 400 });
   }
 
-  
   if (!userId) {
     return data({ errors: { number: "Unauthorized" } }, { status: 401 });
   }
@@ -173,18 +184,10 @@ export async function action({ request }: Route.ActionArgs) {
       }
     );
 
-    // const isRider = session.has("riderId");
-    // session.set("registration_stage", isRider ? 3 : 2);
-    //     return redirect("/dashboard", {
-    //   headers: {
-    //     "Set-Cookie": await commitSession(session),
-    //   },
-    // });
-
-
     if (actionType === "send_otp" && response.data.message?.includes("OTP sent successfully")) {
       return data({ success: true, message: response.data.message });
     } else if (actionType === "verify_otp" && response.data.message?.includes("verified successfully")) {
+      // Update registration stage
       await AxiosInstance.put('/profiling/', 
         {
           registration_stage: 4
@@ -194,9 +197,24 @@ export async function action({ request }: Route.ActionArgs) {
             "X-User-Id": session.get("userId")
           }
         }
-      )
+      );
 
-      return redirect('/home')
+      session.set("registration_stage", 4);
+
+      // Check if user is rider to determine redirect destination
+      const userResponse = await AxiosInstance.get('/get-registration/', {
+        headers: {
+          "X-User-Id": userId
+        }
+      });
+
+      const isRider = userResponse.data.is_rider === true;
+      
+      return redirect(isRider ? "/rider" : "/home", {
+        headers: {
+          "Set-Cookie": await commitSession(session),
+        },
+      });
     } else {
       return data(
         { errors: { general: response.data.message || "Operation failed" } },
@@ -248,12 +266,6 @@ export default function NumberVerification({
       setCooldown(60);
     }
   }, [successData, showOtp]);
-
-  useEffect(() => {
-    if (successData?.success && successData.registration_stage === 3) {
-      redirect('/home')
-    }
-  }, [successData]);
 
   const handleNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value;
