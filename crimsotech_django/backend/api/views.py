@@ -21589,7 +21589,7 @@ class ArrangeShipment(viewsets.ViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             # Import models
-            from .models import Order, User, ShippingAddress, Checkout, CartItem, Product, Shop
+            from .models import Order, User, ShippingAddress, Checkout, CartItem, Product, Shop, Variants
             
             # Get order with shop verification - O(1)
             try:
@@ -21621,12 +21621,13 @@ class ArrangeShipment(viewsets.ViewSet):
                     "message": "Shop not found"
                 }, status=status.HTTP_404_NOT_FOUND)
 
-            # Optimized query for order items from this shop - O(n) where n = items
+            # Optimized query for order items from this shop - include variant information
             shop_checkouts = Checkout.objects.filter(
                 order=order,
                 cart_item__product__shop=shop
             ).select_related(
-                'cart_item__product__shop'
+                'cart_item__product__shop',
+                'cart_item__variant'  # CRITICAL: Include variant information
             ).prefetch_related('cart_item__product')
 
             # Prepare response data
@@ -21639,16 +21640,31 @@ class ArrangeShipment(viewsets.ViewSet):
                     continue
 
                 product = cart_item.product
+                variant = cart_item.variant  # Get the associated variant
+                
+                # Get price from variant - THIS IS THE KEY FIX
+                price = 0
+                if variant and variant.price is not None:
+                    price = float(variant.price)
+                
+                # Get weight from variant if available, otherwise use None
+                weight = None
+                if variant and variant.weight is not None:
+                    weight = float(variant.weight)
+                
+                # Get variant title for display
+                variant_title = variant.title if variant else "Default"
                 
                 order_items.append({
                     "id": str(checkout.id),
                     "product": {
                         "id": str(product.id),
                         "name": product.name,
-                        "price": float(product.price),
-                        "weight": float(product.weight) if product.weight else None,
-                        "dimensions": f"{product.length or 0} x {product.width or 0} x {product.height or 0}" 
-                            if product.length and product.width and product.height else None,
+                        "price": price,  # Now using variant price
+                        "variant_title": variant_title,  # Add variant info
+                        "variant_id": str(variant.id) if variant else None,
+                        "weight": weight,  # Using variant weight
+                        "dimensions": None,  # Dimensions not available in current model
                         "shop": {
                             "id": str(shop.id),
                             "name": shop.name,
@@ -21846,21 +21862,42 @@ class ArrangeShipment(viewsets.ViewSet):
                     "message": "Rider not found or not verified"
                 }, status=status.HTTP_404_NOT_FOUND)
 
+            # Check if there's already a pending offer for this order
+            existing_delivery = Delivery.objects.filter(
+                order=order,
+                status='pending'
+            ).first()
+            
+            if existing_delivery:
+                return Response({
+                    "success": False,
+                    "message": "There is already a pending offer for this order"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # Create delivery record with offer - O(1)
             delivery = Delivery.objects.create(
                 order=order,
                 rider=rider,
-                status='pending',
+                status='pending_offer',  # Changed from 'pending' to be more specific
                 delivery_fee=offer_amount,
                 notes=delivery_notes,
                 created_at=timezone.now(),
                 updated_at=timezone.now()
             )
 
-            # In a real implementation, you would:
-            # 1. Create an Offer model to track offer details
-            # 2. Send notification to rider
-            # 3. Update order status
+            # Update order status if needed
+            if order.status not in ['arrange_shipment', 'to_ship']:
+                order.status = 'arrange_shipment'
+                order.save()
+
+            # Create notification for rider (you'll need to implement this)
+            # Notification.objects.create(
+            #     user=rider.rider,
+            #     title='New Shipment Offer',
+            #     type='shipment_offer',
+            #     message=f'You have a new shipment offer for order {order.order}',
+            #     is_read=False
+            # )
 
             return Response({
                 "success": True,
@@ -21869,10 +21906,11 @@ class ArrangeShipment(viewsets.ViewSet):
                     "order_id": str(order.order),
                     "delivery_id": str(delivery.id),
                     "rider_name": f"{rider.rider.first_name} {rider.rider.last_name}",
+                    "rider_id": str(rider.rider.id),
                     "offer_amount": offer_amount,
                     "offer_type": offer_type,
                     "delivery_notes": delivery_notes,
-                    "status": "pending",
+                    "status": "pending_offer",
                     "submitted_at": timezone.now().isoformat()
                 }
             }, status=status.HTTP_200_OK)
@@ -21882,7 +21920,6 @@ class ArrangeShipment(viewsets.ViewSet):
                 "success": False,
                 "message": f"Error submitting offer: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
         
 class RiderOrdersActive(viewsets.ViewSet):

@@ -3,7 +3,26 @@ import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider'
 import { useState, useEffect } from "react"
-import { Search, X, Heart, Handshake, Gift, Flame, ShoppingBasket, Zap, Package } from 'lucide-react'
+import { 
+  Search, 
+  X, 
+  Heart, 
+  Handshake, 
+  Gift, 
+  Flame, 
+  ShoppingBasket, 
+  Zap, 
+  Package,
+  ChevronLeft,
+  ChevronRight,
+  Sparkles,
+  ShoppingBag,
+  Tag,
+  Star,
+  Award,
+  Clock,
+  TrendingUp
+} from 'lucide-react'
 import { Input } from '~/components/ui/input'
 import { useNavigate } from 'react-router'
 import AxiosInstance from '~/components/axios/Axios'
@@ -368,6 +387,232 @@ const CompactProductCard = ({
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ----------------------------
+// Enhanced Categories Section Component
+// ----------------------------
+const CategoriesSection = ({ 
+  categories, 
+  selectedCategory, 
+  setSelectedCategory,
+  productCount
+}: { 
+  categories: Category[]
+  selectedCategory: string
+  setSelectedCategory: (id: string) => void
+  productCount: number
+}) => {
+  const [showAllCategories, setShowAllCategories] = useState(false);
+  const [scrollPosition, setScrollPosition] = useState(0);
+  const containerRef = useState<HTMLDivElement | null>(null);
+
+  // Category colors for visual variety
+  const categoryColors = [
+    { bg: 'from-blue-500 to-blue-600', text: 'text-blue-700', light: 'bg-blue-50' },
+    { bg: 'from-purple-500 to-purple-600', text: 'text-purple-700', light: 'bg-purple-50' },
+    { bg: 'from-pink-500 to-pink-600', text: 'text-pink-700', light: 'bg-pink-50' },
+    { bg: 'from-orange-500 to-orange-600', text: 'text-orange-700', light: 'bg-orange-50' },
+    { bg: 'from-green-500 to-green-600', text: 'text-green-700', light: 'bg-green-50' },
+    { bg: 'from-red-500 to-red-600', text: 'text-red-700', light: 'bg-red-50' },
+    { bg: 'from-indigo-500 to-indigo-600', text: 'text-indigo-700', light: 'bg-indigo-50' },
+    { bg: 'from-yellow-500 to-yellow-600', text: 'text-yellow-700', light: 'bg-yellow-50' },
+    { bg: 'from-teal-500 to-teal-600', text: 'text-teal-700', light: 'bg-teal-50' },
+    { bg: 'from-cyan-500 to-cyan-600', text: 'text-cyan-700', light: 'bg-cyan-50' },
+  ];
+
+  const getCategoryColor = (index: number) => {
+    return categoryColors[index % categoryColors.length];
+  };
+
+  const handleScroll = (direction: 'left' | 'right') => {
+    if (containerRef.current) {
+      const container = containerRef.current;
+      const scrollAmount = 200;
+      const newPosition = direction === 'left' 
+        ? scrollPosition - scrollAmount 
+        : scrollPosition + scrollAmount;
+      
+      container.scrollTo({
+        left: newPosition,
+        behavior: 'smooth'
+      });
+      setScrollPosition(newPosition);
+    }
+  };
+
+  // Display categories (either first 8 or all)
+  const displayCategories = showAllCategories ? categories : categories.slice(0, 8);
+
+  return (
+    <div className="mb-6">
+      {/* Header with title and actions */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg shadow-sm">
+            <Tag className="h-4 w-4 text-white" />
+          </div>
+          <h2 className="text-sm font-semibold text-gray-800">Browse Categories</h2>
+          <Badge variant="outline" className="ml-1 text-xs bg-gray-50">
+            {categories.length} categories
+          </Badge>
+        </div>
+        
+        {categories.length > 8 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAllCategories(!showAllCategories)}
+            className="text-xs text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50"
+          >
+            {showAllCategories ? 'Show Less' : 'See All'}
+            <ChevronRight className={`h-3 w-3 ml-1 transition-transform ${showAllCategories ? 'rotate-90' : ''}`} />
+          </Button>
+        )}
+      </div>
+
+      {/* Categories carousel */}
+      <div className="relative group">
+        {/* Scroll buttons (only show if not showing all) */}
+        {!showAllCategories && categories.length > 8 && (
+          <>
+            <button
+              onClick={() => handleScroll('left')}
+              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-gray-200 hover:bg-gray-50 -ml-3"
+              aria-label="Scroll left"
+            >
+              <ChevronLeft className="h-4 w-4 text-gray-600" />
+            </button>
+            <button
+              onClick={() => handleScroll('right')}
+              className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-gray-200 hover:bg-gray-50 -mr-3"
+              aria-label="Scroll right"
+            >
+              <ChevronRight className="h-4 w-4 text-gray-600" />
+            </button>
+          </>
+        )}
+
+        {/* Categories container */}
+        <div 
+          ref={containerRef}
+          className={`flex gap-3 overflow-x-auto scrollbar-hide pb-2 ${!showAllCategories ? 'snap-x' : 'flex-wrap'}`}
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        >
+          {/* "All Categories" option */}
+          <div
+            onClick={() => setSelectedCategory('')}
+            className={`flex-shrink-0 w-auto min-w-[70px] text-center cursor-pointer transition-all duration-200 ${
+              !showAllCategories ? 'snap-start' : ''
+            }`}
+          >
+            <div className={`
+              relative w-16 h-16 mx-auto rounded-2xl mb-1.5 flex items-center justify-center
+              transition-all duration-300 transform hover:scale-105 hover:shadow-md
+              ${selectedCategory === '' 
+                ? 'bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-lg' 
+                : 'bg-gradient-to-br from-gray-100 to-gray-200 text-gray-700 hover:from-gray-200 hover:to-gray-300'
+              }
+            `}>
+              <ShoppingBag className="h-6 w-6" />
+              {selectedCategory === '' && (
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
+              )}
+            </div>
+            <span className={`
+              text-xs font-medium block whitespace-normal break-words max-w-[70px] leading-tight
+              ${selectedCategory === '' ? 'text-indigo-700' : 'text-gray-600'}
+            `}>
+              All
+            </span>
+            <span className="text-[10px] text-gray-400 mt-0.5 block">
+              {productCount} items
+            </span>
+          </div>
+
+          {/* Category items */}
+          {displayCategories.map((cat: Category, index: number) => {
+            const active = selectedCategory === cat.id;
+            const colors = getCategoryColor(index);
+            
+            // Count products in this category (you can add actual count if available)
+            const catProductCount = 0;
+
+            return (
+              <div 
+                key={cat.id}
+                onClick={() => setSelectedCategory(active ? '' : cat.id)}
+                className={`flex-shrink-0 w-auto min-w-[70px] text-center cursor-pointer transition-all duration-200 ${
+                  !showAllCategories ? 'snap-start' : ''
+                }`}
+              >
+                <div className={`
+                  relative w-16 h-16 mx-auto rounded-2xl mb-1.5 flex items-center justify-center
+                  transition-all duration-300 transform hover:scale-105 hover:shadow-md
+                  ${active 
+                    ? `bg-gradient-to-br ${colors.bg} text-white shadow-lg` 
+                    : `${colors.light} text-gray-700 hover:bg-opacity-80`
+                  }
+                `}>
+                  <span className="text-xl font-bold">
+                    {cat.name.charAt(0).toUpperCase()}
+                  </span>
+                  {active && (
+                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
+                  )}
+                </div>
+                <span className={`
+                  text-xs font-medium block whitespace-normal break-words max-w-[70px] leading-tight
+                  ${active ? colors.text : 'text-gray-600'}
+                `}>
+                  {cat.name}
+                </span>
+                {catProductCount > 0 && (
+                  <span className="text-[10px] text-gray-400 mt-0.5 block">
+                    {catProductCount} items
+                  </span>
+                )}
+              </div>
+            )
+          })}
+
+          {/* Show more indicator when not showing all */}
+          {!showAllCategories && categories.length > 8 && (
+            <div className="flex-shrink-0 w-16 flex items-center justify-center">
+              <div className="text-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAllCategories(true)}
+                  className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 p-0"
+                >
+                  <span className="text-lg font-bold text-gray-600">+</span>
+                </Button>
+                <span className="text-[10px] text-gray-500 mt-1 block">
+                  {categories.length - 8} more
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Active category indicator */}
+      {selectedCategory && (
+        <div className="mt-3 flex items-center gap-2">
+          <Badge className="bg-indigo-100 text-indigo-800 hover:bg-indigo-200 border-0">
+            Active filter: {categories.find(c => c.id === selectedCategory)?.name}
+          </Badge>
+          <button
+            onClick={() => setSelectedCategory('')}
+            className="text-xs text-gray-500 hover:text-gray-700 underline"
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -807,39 +1052,13 @@ export default function Home({ loaderData }: any) {
             </div>
           </div>
 
-          <h2 className="mb-2 text-sm font-semibold text-gray-700">Categories</h2>
-          <div className="flex gap-2 overflow-x-auto py-1 mb-4">
-            <div
-              key="all"
-              onClick={() => setSelectedCategory('')}
-              className={`flex-shrink-0 w-16 text-center cursor-pointer`}
-            >
-              <div className={`w-12 h-12 mx-auto rounded-full flex items-center justify-center mb-1 ${selectedCategory === '' ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-700'}`}>
-                <span className="text-xs font-medium">All</span>
-              </div>
-              <span className={`text-xs truncate block ${selectedCategory === '' ? 'text-indigo-700' : 'text-gray-600'}`}>All</span>
-            </div>
-
-            {categories.map((cat: Category) => {
-              const active = selectedCategory === cat.id;
-              return (
-                <div 
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(active ? '' : cat.id)}
-                  className="flex-shrink-0 w-16 text-center cursor-pointer"
-                >
-                  <div className={`w-12 h-12 mx-auto rounded-full flex items-center justify-center mb-1 ${active ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-700'}`}>
-                    <span className="text-xs font-medium">
-                      {cat.name.charAt(0)}
-                    </span>
-                  </div>
-                  <span className={`text-xs truncate block ${active ? 'text-indigo-700' : 'text-gray-600'}`}>
-                    {cat.name}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
+          {/* Enhanced Categories Section with NO ellipsis */}
+          <CategoriesSection 
+            categories={categories}
+            selectedCategory={selectedCategory}
+            setSelectedCategory={setSelectedCategory}
+            productCount={filteredProducts.length}
+          />
 
           <h2 className="mb-2 text-sm font-semibold text-gray-700">
             {searchTerm ? `Results for "${searchTerm}"` : "Suggested For You"}
