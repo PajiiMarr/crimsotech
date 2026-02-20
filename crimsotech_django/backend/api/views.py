@@ -18070,7 +18070,10 @@ class SellerOrderList(viewsets.ViewSet):
         shop_checkouts = Checkout.objects.filter(
             order=order,
             cart_item__product__shop=shop
-        ).select_related('cart_item__product__shop')
+        ).select_related(
+            'cart_item__product__shop',
+            'cart_item__variant'  # Added to get variant information
+        )
         
         # Prepare order items
         order_items = []
@@ -18082,6 +18085,17 @@ class SellerOrderList(viewsets.ViewSet):
                 continue
             
             product = cart_item.product
+            variant = cart_item.variant  # Get the variant
+            
+            # Get price from variant if available, otherwise use a default or skip
+            price = 0
+            if variant and variant.price:
+                price = float(variant.price)
+            elif hasattr(product, 'price'):  # Fallback if product had price field
+                price = float(product.price)
+            
+            # Get variant title/condition for display
+            variant_title = variant.title if variant else product.condition
             
             # Get tracking info
             tracking_number = None
@@ -18100,14 +18114,15 @@ class SellerOrderList(viewsets.ViewSet):
                     "product": {
                         "id": str(product.id),
                         "name": product.name,
-                        "price": float(product.price),
-                        "variant": product.condition,
+                        "price": price,  # Now using price from variant
+                        "variant": variant_title,  # Using variant title or condition
                         "shop": {
                             "id": str(shop.id),
                             "name": shop.name
                         }
                     },
-                    "quantity": cart_item.quantity
+                    "quantity": cart_item.quantity,
+                    "variant_id": str(variant.id) if variant else None  # Added variant ID for reference
                 },
                 "quantity": checkout.quantity,
                 "total_amount": float(checkout.total_amount),
@@ -18202,7 +18217,8 @@ class SellerOrderList(viewsets.ViewSet):
                     queryset=Checkout.objects.filter(
                         cart_item__product__shop=shop
                     ).select_related(
-                        'cart_item__product__shop'
+                        'cart_item__product__shop',
+                        'cart_item__variant'  # Added to prefetch variant
                     )
                 )
             ).distinct().order_by('-created_at')
@@ -18754,7 +18770,10 @@ class SellerOrderList(viewsets.ViewSet):
             checkouts = Checkout.objects.filter(
                 order=order,
                 cart_item__product__shop=shop
-            ).select_related('cart_item__product')
+            ).select_related(
+                'cart_item__product',
+                'cart_item__variant'  # Added to get variant
+            )
             
             if not checkouts.exists():
                 return Response({
@@ -18786,7 +18805,14 @@ class SellerOrderList(viewsets.ViewSet):
                 if not cart_item or not cart_item.product:
                     continue
                 
-                item_total = float(cart_item.product.price * checkout.quantity)
+                product = cart_item.product
+                variant = cart_item.variant
+                
+                # Get price from variant
+                price = float(variant.price) if variant and variant.price else 0
+                variant_title = variant.title if variant else product.condition
+                
+                item_total = price * checkout.quantity
                 total_amount += item_total
                 
                 items.append({
@@ -18794,12 +18820,13 @@ class SellerOrderList(viewsets.ViewSet):
                     'cart_item': {
                         'id': str(cart_item.id),
                         'product': {
-                            'id': str(cart_item.product.id),
-                            'name': cart_item.product.name,
-                            'price': float(cart_item.product.price),
-                            'variant': cart_item.product.condition,
+                            'id': str(product.id),
+                            'name': product.name,
+                            'price': price,
+                            'variant': variant_title,
                         },
-                        'quantity': cart_item.quantity
+                        'quantity': cart_item.quantity,
+                        'variant_id': str(variant.id) if variant else None
                     },
                     'quantity': checkout.quantity,
                     'total_amount': item_total,
@@ -18855,7 +18882,6 @@ class SellerOrderList(viewsets.ViewSet):
                 'success': False,
                 'message': f'Error retrieving order: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 from django.shortcuts import get_object_or_404
 
