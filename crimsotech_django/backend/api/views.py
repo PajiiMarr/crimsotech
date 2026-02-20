@@ -18070,7 +18070,10 @@ class SellerOrderList(viewsets.ViewSet):
         shop_checkouts = Checkout.objects.filter(
             order=order,
             cart_item__product__shop=shop
-        ).select_related('cart_item__product__shop')
+        ).select_related(
+            'cart_item__product__shop',
+            'cart_item__variant'  # Added to get variant information
+        )
         
         # Prepare order items
         order_items = []
@@ -18082,6 +18085,17 @@ class SellerOrderList(viewsets.ViewSet):
                 continue
             
             product = cart_item.product
+            variant = cart_item.variant  # Get the variant
+            
+            # Get price from variant if available, otherwise use a default or skip
+            price = 0
+            if variant and variant.price:
+                price = float(variant.price)
+            elif hasattr(product, 'price'):  # Fallback if product had price field
+                price = float(product.price)
+            
+            # Get variant title/condition for display
+            variant_title = variant.title if variant else product.condition
             
             # Get tracking info
             tracking_number = None
@@ -18100,14 +18114,15 @@ class SellerOrderList(viewsets.ViewSet):
                     "product": {
                         "id": str(product.id),
                         "name": product.name,
-                        "price": float(product.price),
-                        "variant": product.condition,
+                        "price": price,  # Now using price from variant
+                        "variant": variant_title,  # Using variant title or condition
                         "shop": {
                             "id": str(shop.id),
                             "name": shop.name
                         }
                     },
-                    "quantity": cart_item.quantity
+                    "quantity": cart_item.quantity,
+                    "variant_id": str(variant.id) if variant else None  # Added variant ID for reference
                 },
                 "quantity": checkout.quantity,
                 "total_amount": float(checkout.total_amount),
@@ -18202,7 +18217,8 @@ class SellerOrderList(viewsets.ViewSet):
                     queryset=Checkout.objects.filter(
                         cart_item__product__shop=shop
                     ).select_related(
-                        'cart_item__product__shop'
+                        'cart_item__product__shop',
+                        'cart_item__variant'  # Added to prefetch variant
                     )
                 )
             ).distinct().order_by('-created_at')
@@ -18754,7 +18770,10 @@ class SellerOrderList(viewsets.ViewSet):
             checkouts = Checkout.objects.filter(
                 order=order,
                 cart_item__product__shop=shop
-            ).select_related('cart_item__product')
+            ).select_related(
+                'cart_item__product',
+                'cart_item__variant'  # Added to get variant
+            )
             
             if not checkouts.exists():
                 return Response({
@@ -18786,7 +18805,14 @@ class SellerOrderList(viewsets.ViewSet):
                 if not cart_item or not cart_item.product:
                     continue
                 
-                item_total = float(cart_item.product.price * checkout.quantity)
+                product = cart_item.product
+                variant = cart_item.variant
+                
+                # Get price from variant
+                price = float(variant.price) if variant and variant.price else 0
+                variant_title = variant.title if variant else product.condition
+                
+                item_total = price * checkout.quantity
                 total_amount += item_total
                 
                 items.append({
@@ -18794,12 +18820,13 @@ class SellerOrderList(viewsets.ViewSet):
                     'cart_item': {
                         'id': str(cart_item.id),
                         'product': {
-                            'id': str(cart_item.product.id),
-                            'name': cart_item.product.name,
-                            'price': float(cart_item.product.price),
-                            'variant': cart_item.product.condition,
+                            'id': str(product.id),
+                            'name': product.name,
+                            'price': price,
+                            'variant': variant_title,
                         },
-                        'quantity': cart_item.quantity
+                        'quantity': cart_item.quantity,
+                        'variant_id': str(variant.id) if variant else None
                     },
                     'quantity': checkout.quantity,
                     'total_amount': item_total,
@@ -18855,7 +18882,6 @@ class SellerOrderList(viewsets.ViewSet):
                 'success': False,
                 'message': f'Error retrieving order: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 from django.shortcuts import get_object_or_404
 
@@ -21563,7 +21589,7 @@ class ArrangeShipment(viewsets.ViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             # Import models
-            from .models import Order, User, ShippingAddress, Checkout, CartItem, Product, Shop
+            from .models import Order, User, ShippingAddress, Checkout, CartItem, Product, Shop, Variants
             
             # Get order with shop verification - O(1)
             try:
@@ -21595,12 +21621,13 @@ class ArrangeShipment(viewsets.ViewSet):
                     "message": "Shop not found"
                 }, status=status.HTTP_404_NOT_FOUND)
 
-            # Optimized query for order items from this shop - O(n) where n = items
+            # Optimized query for order items from this shop - include variant information
             shop_checkouts = Checkout.objects.filter(
                 order=order,
                 cart_item__product__shop=shop
             ).select_related(
-                'cart_item__product__shop'
+                'cart_item__product__shop',
+                'cart_item__variant'  # CRITICAL: Include variant information
             ).prefetch_related('cart_item__product')
 
             # Prepare response data
@@ -21613,16 +21640,31 @@ class ArrangeShipment(viewsets.ViewSet):
                     continue
 
                 product = cart_item.product
+                variant = cart_item.variant  # Get the associated variant
+                
+                # Get price from variant - THIS IS THE KEY FIX
+                price = 0
+                if variant and variant.price is not None:
+                    price = float(variant.price)
+                
+                # Get weight from variant if available, otherwise use None
+                weight = None
+                if variant and variant.weight is not None:
+                    weight = float(variant.weight)
+                
+                # Get variant title for display
+                variant_title = variant.title if variant else "Default"
                 
                 order_items.append({
                     "id": str(checkout.id),
                     "product": {
                         "id": str(product.id),
                         "name": product.name,
-                        "price": float(product.price),
-                        "weight": float(product.weight) if product.weight else None,
-                        "dimensions": f"{product.length or 0} x {product.width or 0} x {product.height or 0}" 
-                            if product.length and product.width and product.height else None,
+                        "price": price,  # Now using variant price
+                        "variant_title": variant_title,  # Add variant info
+                        "variant_id": str(variant.id) if variant else None,
+                        "weight": weight,  # Using variant weight
+                        "dimensions": None,  # Dimensions not available in current model
                         "shop": {
                             "id": str(shop.id),
                             "name": shop.name,
@@ -21820,21 +21862,42 @@ class ArrangeShipment(viewsets.ViewSet):
                     "message": "Rider not found or not verified"
                 }, status=status.HTTP_404_NOT_FOUND)
 
+            # Check if there's already a pending offer for this order
+            existing_delivery = Delivery.objects.filter(
+                order=order,
+                status='pending'
+            ).first()
+            
+            if existing_delivery:
+                return Response({
+                    "success": False,
+                    "message": "There is already a pending offer for this order"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # Create delivery record with offer - O(1)
             delivery = Delivery.objects.create(
                 order=order,
                 rider=rider,
-                status='pending',
+                status='pending_offer',  # Changed from 'pending' to be more specific
                 delivery_fee=offer_amount,
                 notes=delivery_notes,
                 created_at=timezone.now(),
                 updated_at=timezone.now()
             )
 
-            # In a real implementation, you would:
-            # 1. Create an Offer model to track offer details
-            # 2. Send notification to rider
-            # 3. Update order status
+            # Update order status if needed
+            if order.status not in ['arrange_shipment', 'to_ship']:
+                order.status = 'arrange_shipment'
+                order.save()
+
+            # Create notification for rider (you'll need to implement this)
+            # Notification.objects.create(
+            #     user=rider.rider,
+            #     title='New Shipment Offer',
+            #     type='shipment_offer',
+            #     message=f'You have a new shipment offer for order {order.order}',
+            #     is_read=False
+            # )
 
             return Response({
                 "success": True,
@@ -21843,10 +21906,11 @@ class ArrangeShipment(viewsets.ViewSet):
                     "order_id": str(order.order),
                     "delivery_id": str(delivery.id),
                     "rider_name": f"{rider.rider.first_name} {rider.rider.last_name}",
+                    "rider_id": str(rider.rider.id),
                     "offer_amount": offer_amount,
                     "offer_type": offer_type,
                     "delivery_notes": delivery_notes,
-                    "status": "pending",
+                    "status": "pending_offer",
                     "submitted_at": timezone.now().isoformat()
                 }
             }, status=status.HTTP_200_OK)
@@ -21856,7 +21920,6 @@ class ArrangeShipment(viewsets.ViewSet):
                 "success": False,
                 "message": f"Error submitting offer: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
         
 class RiderOrdersActive(viewsets.ViewSet):
