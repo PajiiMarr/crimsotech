@@ -2306,7 +2306,6 @@ function RejectModal({
   const MAX_FILES = 9;
   const REASONS = [
     { id: 'invalid_request', label: 'Invalid request' },
-    { id: 'not_eligible', label: 'Refund not eligible' },
     { id: 'insufficient_evidence', label: 'Insufficient evidence' },
     { id: 'buyer_fault', label: 'Buyer at fault' },
     { id: 'good_condition_handed', label: 'Item was in good condition when handed to rider' },
@@ -3993,6 +3992,53 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
     }
   };
 
+  const handleFileDispute = async () => {
+    const idToUse = effectiveRefundId || refundId || loaderRefundId;
+    if (!idToUse) {
+      toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' });
+      return;
+    }
+
+    const existingDispute = (refund as any)?.dispute || (refund as any)?.dispute_request;
+    if (existingDispute) {
+      toast({ title: 'Info', description: 'A dispute has already been filed for this refund.' });
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      const response = await fetch(apiUrlFor(`/return-refund/${encodeURIComponent(String(idToUse))}/file_dispute/`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id),
+          'X-Shop-Id': String(shopId),
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          dispute_reason: 'seller_dispute_rejected_refund',
+          description: `Seller filed a dispute for rejected refund ${refund.request_number || refund.refund || refund.id || ''}.`,
+        }),
+      });
+
+      if (response.ok || response.status === 201) {
+        await fetchLatestRefund();
+        toast({ title: 'Success', description: 'Dispute filed. This case is now under admin review.' });
+      } else {
+        const text = await response.text().catch(() => 'Failed to file dispute');
+        throw new Error(text || 'Failed to file dispute');
+      }
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to file dispute',
+        variant: 'destructive',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
 
 
   const renderStatusActions = useMemo(() => {
@@ -4007,6 +4053,8 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
     const isToVerify = effectiveStatus === 'to_verify' || effectiveStatus === 'to-verify' || effectiveStatus.includes('to_verify') || effectiveStatus.includes('to-verify') || refund?.return_request?.status === 'inspected';
     const isToProcess = effectiveStatus === 'to_process' || effectiveStatus.includes('to_process') || effectiveStatus.includes('to-process');
     const isDispute = effectiveStatus === 'dispute' || effectiveStatus.includes('dispute');
+    const existingDispute = (refund as any)?.dispute || (refund as any)?.dispute_request;
+    const hasDisputeRecord = Boolean(existingDispute);
 
     // Determine if the refund is ready to process (used to show action in the Actions panel)
     const rtype = String(refund.refund_type || '').toLowerCase();
@@ -4183,6 +4231,19 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
               Reject Return
             </Button>
           </div>
+        )}
+
+        {effectiveStatus === 'rejected' && (
+          <Button
+            variant="outline"
+            onClick={handleFileDispute}
+            disabled={actionLoading || hasDisputeRecord}
+            className="w-full text-amber-700 hover:text-amber-800"
+            size="sm"
+          >
+            <ShieldAlert className="h-4 w-4 mr-2" />
+            {hasDisputeRecord ? 'Dispute Already Filed' : (actionLoading ? 'Filing Dispute...' : 'File Dispute')}
+          </Button>
         )}
 
 
