@@ -339,9 +339,9 @@ export default function ViewOrder({ loaderData }: any) {
             date: backendData.order?.delivery_date || null,
           },
           // delivery_evidence is an array of image/file URLs for quick UI use
-          delivery_evidence: backendData.order?.delivery_evidence || [],
-          // delivery_proofs contains detailed metadata if needed
-          delivery_proofs: backendData.delivery_proofs || [],
+          // delivery_evidence: backendData.order?.delivery_evidence || [],
+          // // delivery_proofs contains detailed metadata if needed
+          // delivery_proofs: backendData.delivery_proofs || [],
           timeline: backendData.timeline || [],
           can_request_refund: backendData.actions?.can_return || false,
           can_cancel: backendData.actions?.can_cancel || false,

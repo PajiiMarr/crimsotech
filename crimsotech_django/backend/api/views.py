@@ -20225,11 +20225,16 @@ class PurchasesBuyer(viewsets.ViewSet):
                 payment = payment_dict.get(str(order.order))
                 delivery = delivery_dict.get(str(order.order))
 
-                # If order is delivered, set completed_at (use delivery.delivery_date if available)
+                # If order is delivered, set completed_at using delivery timestamps when available
                 if order.status == 'delivered' and not getattr(order, 'completed_at', None):
                     try:
-                        if delivery and getattr(delivery, 'delivery_date', None):
-                            order.completed_at = delivery.delivery_date
+                        delivery_completed_at = (
+                            getattr(delivery, 'delivery_date', None)
+                            or getattr(delivery, 'delivered_at', None)
+                            or getattr(delivery, 'updated_at', None)
+                        ) if delivery else None
+                        if delivery_completed_at:
+                            order.completed_at = delivery_completed_at
                         else:
                             order.completed_at = timezone.now()
                         # Save only the completed_at field to avoid unintended updates
@@ -20268,7 +20273,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                         # Get variant information if available
                         variant = checkout.cart_item.variant
                         variant_title = variant.title if variant else None
-                        variant_price = str(variant.price) if variant and variant.price else str(product.price)
+                        product_price = getattr(product, 'price', 0)
+                        variant_price_value = variant.price if variant and variant.price is not None else product_price
+                        variant_price = str(variant_price_value)
                         variant_sku = variant.sku_code if variant else None
                         
                         # Get product media (images)
@@ -20489,7 +20496,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                 # Get variant information if available
                 variant = checkout.cart_item.variant
                 variant_title = variant.title if variant else None
-                variant_price = str(variant.price) if variant and variant.price else str(product.price)
+                product_price = getattr(product, 'price', 0)
+                variant_price_value = variant.price if variant and variant.price is not None else product_price
+                variant_price = str(variant_price_value)
                 variant_sku = variant.sku_code if variant else None
                 
                 # Get product media (images)
@@ -20614,6 +20623,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # ensure user exists and is valid
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
@@ -20621,6 +20631,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                 {'error': 'User not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+        except Exception as exc:
+            logger.exception('view_order_detail user lookup failed: %s', exc)
+            return Response({'error': 'Invalid user ID'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             order = Order.objects.get(order=pk, user=user)
@@ -20629,86 +20642,100 @@ class PurchasesBuyer(viewsets.ViewSet):
                 {'error': 'Order not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+        except Exception as exc:
+            logger.exception('view_order_detail order lookup failed: %s', exc)
+            return Response({'error': 'Invalid order identifier'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Get payment and delivery details
-        payment = Payment.objects.filter(order_id=order.order).first()
-        delivery = Delivery.objects.filter(order_id=order.order).first()
-        
-        # Get shipping/delivery address
-        delivery_address = None
-        if order.shipping_address:
-            delivery_address = order.shipping_address.get_full_address()
-        elif order.delivery_address_text:
-            delivery_address = order.delivery_address_text
-        
-        # Prefer a full_name field if available, else compose from first/last name, else fallback to username
-        full_name = None
-        if hasattr(user, 'full_name') and user.full_name:
-            full_name = user.full_name
-        else:
-            first = getattr(user, 'first_name', '') or ''
-            last = getattr(user, 'last_name', '') or ''
-            full_name = (f"{first} {last}".strip() if (first or last) else getattr(user, 'username', None))
-
-        # Prepare shipping information
-        shipping_info = {
-            'logistics_carrier': order.delivery_method if order.delivery_method else 'Standard Delivery',
-            # Order.order is a UUID — convert to string before slicing to avoid TypeError
-            'tracking_number': f"PH{order.created_at.strftime('%y%m%d')}{str(order.order)[:6].upper()}" if order.order else None,
-            'delivery_method': order.delivery_method,
-            'estimated_delivery': (order.created_at + timedelta(days=3)).strftime('%m/%d/%Y') if order.created_at else None,
-        }
-        
-        # Prepare delivery address details
-        delivery_address_info = {
-            'recipient_name': full_name or getattr(user, 'username', ''),
-            'phone_number': user.phone_number if hasattr(user, 'phone_number') else '(+63) 912 345 6789',
-            'address': delivery_address,
-            'address_details': {
-                'street': order.shipping_address.street if order.shipping_address and hasattr(order.shipping_address, 'street') else '',
-                'barangay': order.shipping_address.barangay if order.shipping_address and hasattr(order.shipping_address, 'barangay') else '',
-                'city': order.shipping_address.city if order.shipping_address and hasattr(order.shipping_address, 'city') else '',
-                'province': order.shipping_address.province if order.shipping_address and hasattr(order.shipping_address, 'province') else '',
-                'postal_code': order.shipping_address.postal_code if order.shipping_address and hasattr(order.shipping_address, 'postal_code') else '',
+        # wrap the remainder of the logic so errors log properly instead of bubbling
+        try:
+            # Get payment and delivery details
+            payment = Payment.objects.filter(order_id=order.order).first()
+            delivery = Delivery.objects.filter(order_id=order.order).first()
+            
+            # Get shipping/delivery address
+            delivery_address = None
+            if order.shipping_address:
+                delivery_address = order.shipping_address.get_full_address()
+            elif order.delivery_address_text:
+                delivery_address = order.delivery_address_text
+            
+            # Prefer a full_name field if available, else compose from first/last name, else fallback to username
+            full_name = None
+            if hasattr(user, 'full_name') and user.full_name:
+                full_name = user.full_name
+            else:
+                first = getattr(user, 'first_name', '') or ''
+                last = getattr(user, 'last_name', '') or ''
+                full_name = (f"{first} {last}".strip() if (first or last) else getattr(user, 'username', None))
+            
+            # Prepare shipping information
+            shipping_info = {
+                'logistics_carrier': order.delivery_method if order.delivery_method else 'Standard Delivery',
+                # Order.order is a UUID — convert to string before slicing to avoid TypeError
+                'tracking_number': f"PH{order.created_at.strftime('%y%m%d')}{str(order.order)[:6].upper()}" if order.order else None,
+                'delivery_method': order.delivery_method,
+                'estimated_delivery': (order.created_at + timedelta(days=3)).strftime('%m/%d/%Y') if order.created_at else None,
             }
-        }
-        
-        # Get all items in this order
-        items_data = []
-        total_items = 0
-        subtotal = 0
-        
-        for checkout in order.checkout_set.all():
-            if checkout.cart_item and checkout.cart_item.product:
-                product = checkout.cart_item.product
-                total_items += checkout.quantity
-                
-                # Get variant information
-                variant = checkout.cart_item.variant
-                variant_title = variant.title if variant else 'Default'
-                variant_price = str(variant.price) if variant and variant.price else str(product.price)
-                variant_original_price = str(variant.compare_price) if variant and variant.compare_price else str(float(product.price) * 1.1)
-                variant_is_refundable = variant.is_refundable if variant else product.is_refundable
-                
-                subtotal += float(checkout.total_amount)
-                
-                # Get product media (images)
-                product_images = []
-                for media in product.productmedia_set.all():
-                    if media.file_data:
+            
+            # Prepare delivery address details
+            delivery_address_info = {
+                'recipient_name': full_name or getattr(user, 'username', ''),
+                'phone_number': user.phone_number if hasattr(user, 'phone_number') else '(+63) 912 345 6789',
+                'address': delivery_address,
+                'address_details': {
+                    'street': order.shipping_address.street if order.shipping_address and hasattr(order.shipping_address, 'street') else '',
+                    'barangay': order.shipping_address.barangay if order.shipping_address and hasattr(order.shipping_address, 'barangay') else '',
+                    'city': order.shipping_address.city if order.shipping_address and hasattr(order.shipping_address, 'city') else '',
+                    'province': order.shipping_address.province if order.shipping_address and hasattr(order.shipping_address, 'province') else '',
+                    'postal_code': order.shipping_address.postal_code if order.shipping_address and hasattr(order.shipping_address, 'postal_code') else '',
+                }
+            }
+            
+            # Get all items in this order
+            items_data = []
+            total_items = 0
+            subtotal = 0
+            
+            for checkout in order.checkout_set.all():
+                if checkout.cart_item and checkout.cart_item.product:
+                    product = checkout.cart_item.product
+                    total_items += checkout.quantity
+                    
+                    # Get variant information
+                    variant = checkout.cart_item.variant
+                    variant_title = variant.title if variant else 'Default'
+                    product_price = getattr(product, 'price', 0)
+                    variant_price_value = variant.price if variant and variant.price is not None else product_price
+                    variant_price = str(variant_price_value)
+                    if variant and variant.compare_price is not None:
+                        variant_original_price = str(variant.compare_price)
+                    else:
                         try:
-                            url = media.file_data.url
-                            if request:
-                                url = request.build_absolute_uri(url)
-                            product_images.append({
-                                'id': str(media.id),
-                                'url': url,
-                                'file_type': media.file_type
-                            })
-                        except ValueError:
-                            continue
-                
-                primary_image = product_images[0] if product_images else None
+                            variant_original_price = str(float(variant_price_value) * 1.1)
+                        except (TypeError, ValueError):
+                            variant_original_price = '0.0'
+                    variant_is_refundable = variant.is_refundable if variant else getattr(product, 'is_refundable', False)
+                    
+                    # guard against null total_amount
+                    subtotal += float(checkout.total_amount or 0)
+                    
+                    # Get product media (images)
+                    product_images = []
+                    for media in product.productmedia_set.all():
+                        if media.file_data:
+                            try:
+                                url = media.file_data.url
+                                if request:
+                                    url = request.build_absolute_uri(url)
+                                product_images.append({
+                                    'id': str(media.id),
+                                    'url': url,
+                                    'file_type': media.file_type
+                                })
+                            except ValueError:
+                                continue
+                    
+                    primary_image = product_images[0] if product_images else None
                 
                 # Get shop information
                 shop_info = {}
@@ -20747,7 +20774,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'quantity': checkout.quantity,
                     'price': variant_price,
                     'original_price': variant_original_price,
-                    'subtotal': str(checkout.total_amount),
+                    'subtotal': str(checkout.total_amount or '0.00'),
                     'status': order.status,
                     'purchased_at': checkout.created_at.isoformat(),
                     'product_images': product_images,
@@ -20760,52 +20787,65 @@ class PurchasesBuyer(viewsets.ViewSet):
                 }
                 items_data.append(item_data)
         
-        # Calculate order summary
-        order_summary = {
-            'subtotal': str(subtotal),
-            'shipping_fee': '0.00',  # You should add shipping_fee field to Order model
-            'tax': str(float(subtotal) * 0.12),  # 12% VAT - adjust as needed
-            'discount': '0.00',  # You should add discount field to Order model
-            'total': str(order.total_amount),
-            'payment_fee': '0.00',  # Add payment fee if applicable
-        }
-        
-        # Prepare response
-        response_data = {
-            'order': {
-                'id': str(order.order),
-                'status': order.status,
-                'status_display': self._get_status_display(order.status),
-                'status_color': self._get_status_color(order.status),
-                'created_at': order.created_at.isoformat(),
-                'updated_at': order.updated_at.isoformat() if order.updated_at else None,
-                'payment_method': order.payment_method,
-                'payment_status': payment.status if payment else None,
-                'delivery_status': delivery.status if delivery else None,
-                'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
-                'delivery_notes': delivery.notes if delivery else None,
-                'delivery_date': delivery.delivery_date.isoformat() if delivery and delivery.delivery_date else None,
-            },
-            'shipping_info': shipping_info,
-            'delivery_address': delivery_address_info,
-            'items': items_data,
-            'order_summary': order_summary,
-            'summary_counts': {
-                'total_items': total_items,
-                'total_unique_items': len(items_data),
-            },
-            'timeline': self._get_order_timeline(order, delivery, payment),
-            'actions': {
-                'can_cancel': order.status in ['pending', 'processing'],
-                'can_track': order.status in ['shipped', 'delivered', 'completed'],
-                'can_review': order.status == 'delivered' and any(item['can_review'] for item in items_data),
-                'can_return': order.status == 'delivered' and any(item['can_return'] for item in items_data),
-                'can_contact_seller': True,
-                'can_buy_again': True,
+            # Calculate order summary
+            order_summary = {
+                'subtotal': str(subtotal),
+                'shipping_fee': '0.00',  # You should add shipping_fee field to Order model
+                'tax': str(float(subtotal) * 0.12),  # 12% VAT - adjust as needed
+                'discount': '0.00',  # You should add discount field to Order model
+                'total': str(order.total_amount),
+                'payment_fee': '0.00',  # Add payment fee if applicable
             }
-        }
+            
+            # Prepare response
+            response_data = {
+                'order': {
+                    'id': str(order.order),
+                    'status': order.status,
+                    'status_display': self._get_status_display(order.status),
+                    'status_color': self._get_status_color(order.status),
+                    'created_at': order.created_at.isoformat(),
+                    'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                    'payment_method': order.payment_method,
+                    'payment_status': payment.status if payment else None,
+                    'delivery_status': delivery.status if delivery else None,
+                    'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+                    'delivery_notes': delivery.notes if delivery else None,
+                    'delivery_date': (
+                        (getattr(delivery, 'delivery_date', None)
+                         or getattr(delivery, 'delivered_at', None)
+                         or getattr(delivery, 'updated_at', None)).isoformat()
+                        if delivery and (getattr(delivery, 'delivery_date', None)
+                                         or getattr(delivery, 'delivered_at', None)
+                                         or getattr(delivery, 'updated_at', None))
+                        else None
+                    ),
+                },
+                'shipping_info': shipping_info,
+                'delivery_address': delivery_address_info,
+                'items': items_data,
+                'order_summary': order_summary,
+                'summary_counts': {
+                    'total_items': total_items,
+                    'total_unique_items': len(items_data),
+                },
+                'timeline': self._get_order_timeline(order, delivery, payment),
+                'actions': {
+                    'can_cancel': order.status in ['pending', 'processing'],
+                    'can_track': order.status in ['shipped', 'delivered', 'completed'],
+                    'can_review': order.status == 'delivered' and any(item['can_review'] for item in items_data),
+                    'can_return': order.status == 'delivered' and any(item['can_return'] for item in items_data),
+                    'can_contact_seller': True,
+                    'can_buy_again': True,
+                }
+            }
+            
+            return Response(response_data)
         
-        return Response(response_data)
+        # catch any unexpected errors during assembly
+        except Exception as exc:
+            logger.exception('Unhandled exception in view_order_detail for order %s user %s: %s', pk, user_id, exc)
+            return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_status_display(self, status):
         status_map = {
@@ -20881,7 +20921,12 @@ class PurchasesBuyer(viewsets.ViewSet):
         
         # Delivered
         if order.status in ['delivered', 'completed']:
-            delivered_date = delivery.delivery_date if delivery and delivery.delivery_date else order.updated_at
+            delivered_date = (
+                (getattr(delivery, 'delivery_date', None)
+                 or getattr(delivery, 'delivered_at', None)
+                 or getattr(delivery, 'updated_at', None))
+                if delivery else order.updated_at
+            )
             timeline.append({
                 'event': 'Delivered',
                 'date': delivered_date.isoformat() if delivered_date else None,
@@ -21062,7 +21107,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                 
                 # Get variant price if available
                 variant = checkout.cart_item.variant
-                price = float(variant.price) if variant and variant.price else float(prod.price)
+                product_price = getattr(prod, 'price', 0)
+                price = float(variant.price) if variant and variant.price is not None else float(product_price or 0)
                 
                 val = price * qty
                 package_items.append({
@@ -22533,7 +22579,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 delivery = Delivery.objects.filter(
                     id=delivery_uuid,
                     rider=rider,
-                    status__in=['pending', 'pending_offer', 'accepted']
+                    status__in=['pending', 'accepted']
                 ).first()
             except Exception:
                 delivery = None
@@ -26639,10 +26685,22 @@ class RefundViewSet(viewsets.ViewSet):
                 product = cart_item.product
                 # Get product image if available
                 product_image = None
-                if hasattr(product, 'productimage_set') and product.productimage_set.exists():
+                if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
+                    first_media = product.productmedia_set.first()
+                    media_file = getattr(first_media, 'file_data', None)
+                    if first_media and media_file:
+                        try:
+                            product_image = request.build_absolute_uri(media_file.url)
+                        except Exception:
+                            product_image = None
+                elif hasattr(product, 'productimage_set') and product.productimage_set.exists():
                     first_image = product.productimage_set.first()
-                    if first_image and first_image.image:
-                        product_image = request.build_absolute_uri(first_image.image.url)
+                    image_file = getattr(first_image, 'image', None)
+                    if first_image and image_file:
+                        try:
+                            product_image = request.build_absolute_uri(image_file.url)
+                        except Exception:
+                            product_image = None
                 
                 # Get variant information
                 variant = cart_item.variant
@@ -26654,8 +26712,8 @@ class RefundViewSet(viewsets.ViewSet):
                         'sku_code': variant.sku_code,
                         'price': float(variant.price) if variant.price is not None else None,
                         'image': request.build_absolute_uri(variant.image.url) if getattr(variant, 'image', None) else None,
-                        'option_ids': variant.option_ids or None,
-                        'option_map': variant.option_map or {},
+                        'option_ids': getattr(variant, 'option_ids', None) or None,
+                        'option_map': getattr(variant, 'option_map', None) or {},
                     }
 
                 # Build variants payload (include option titles) for frontend label resolution
@@ -26676,18 +26734,31 @@ class RefundViewSet(viewsets.ViewSet):
                 # Provide a nested product object that includes a cover image (product_image) for frontend convenience
                 # Build media files list for product
                 media_files = []
-                if hasattr(product, 'productimage_set') and product.productimage_set.exists():
-                    media_files = [
-                        { 'file_url': request.build_absolute_uri(img.image.url) }
-                        for img in product.productimage_set.all()
-                    ]
+                if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
+                    for media in product.productmedia_set.all():
+                        media_file = getattr(media, 'file_data', None)
+                        if media_file:
+                            try:
+                                media_files.append({'file_url': request.build_absolute_uri(media_file.url)})
+                            except Exception:
+                                pass
+                elif hasattr(product, 'productimage_set') and product.productimage_set.exists():
+                    for img in product.productimage_set.all():
+                        image_file = getattr(img, 'image', None)
+                        if image_file:
+                            try:
+                                media_files.append({'file_url': request.build_absolute_uri(image_file.url)})
+                            except Exception:
+                                pass
+
+                product_price = getattr(product, 'price', None)
 
                 product_obj = {
                     'id': str(product.id),
                     'name': product.name,
                     'description': product.description if hasattr(product, 'description') else None,
                     'image': product_image,
-                    'price': float(product.price) if product.price else None,
+                    'price': float(product_price) if product_price is not None else None,
                     'condition': getattr(product, 'condition', None),
                     'category_name': product.category.name if getattr(product, 'category', None) else None,
                     'shop_name': product.shop.name if getattr(product, 'shop', None) else None,
@@ -26699,7 +26770,7 @@ class RefundViewSet(viewsets.ViewSet):
                     "product_id": str(product.id),
                     "product_name": product.name,
                     "quantity": checkout.quantity,
-                    "price": float(variant.price) if variant and variant.price else (float(product.price) if product.price else None),
+                    "price": float(variant.price) if variant and variant.price is not None else (float(product_price) if product_price is not None else None),
                     "total": float(checkout.total_amount) if checkout.total_amount else None,
                     "product_image": product_image,
                     # selected variant exposed explicitly for frontend
