@@ -418,6 +418,9 @@ export default function Riders() {
     rangeType: dateRange.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
   });
 
+  console.log('User from loader:', user);
+  console.log('User ID from loader:', user?.id);
+
   const [isLoading, setIsLoading] = useState(false);
   const [actionDialog, setActionDialog] = useState<{
     open: boolean;
@@ -458,15 +461,22 @@ export default function Riders() {
       const payload: any = {
         rider_id: riderId,
         action: actionType,
-        user_id: user?.id
       };
 
       if (reason) payload.reason = reason;
       if (days) payload.suspension_days = days;
 
+      // Log the user object and user_id to verify
+      console.log('User object:', user);
+      console.log('User ID being sent:', user?.user_id);  // Changed from user?.id
+      console.log('Payload being sent:', payload);
+      console.log('Headers being sent:', {
+        "X-User-Id": user?.user_id  // Changed from user?.id
+      });
+
       const response = await AxiosInstance.post('/admin-riders/update_rider_status/', payload, {
         headers: {
-          "X-User-Id": user?.id
+          "X-User-Id": user?.user_id  // Changed from user?.id
         }
       });
 
@@ -479,6 +489,7 @@ export default function Riders() {
       }
     } catch (error: any) {
       console.error(`Error ${actionType}ing rider:`, error);
+      console.log('Error response:', error.response);
       toast.error(error.response?.data?.error || `Failed to ${actionType} rider`);
     } finally {
       setIsLoading(false);

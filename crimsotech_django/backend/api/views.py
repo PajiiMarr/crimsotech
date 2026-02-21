@@ -6988,6 +6988,7 @@ class AdminRiders(viewsets.ViewSet):
         """Approve or reject rider"""
         rider_id = request.data.get('rider_id')
         action_type = request.data.get('action')  # 'approve' or 'reject'
+        user_id = request.headers.get('X-User-Id')  # Get user ID from headers
         
         if not rider_id or not action_type:
             return Response({
@@ -6995,18 +6996,33 @@ class AdminRiders(viewsets.ViewSet):
                 'error': 'Rider ID and action are required'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        if not user_id:
+            return Response({
+                'success': False,
+                'error': 'User authentication required'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         try:
+            # Get the admin user who is performing the action
+            try:
+                admin_user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Admin user not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
             rider = Rider.objects.get(rider_id=rider_id)
             
             if action_type == 'approve':
                 rider.verified = True
                 rider.approval_date = timezone.now()
-                rider.approved_by = request.user
+                rider.approved_by = admin_user  # Use the fetched user, not request.user
                 message = 'Rider approved successfully'
             elif action_type == 'reject':
                 rider.verified = False
                 rider.approval_date = timezone.now()
-                rider.approved_by = request.user
+                rider.approved_by = admin_user  # Use the fetched user, not request.user
                 message = 'Rider rejected successfully'
             else:
                 return Response({
@@ -7031,7 +7047,7 @@ class AdminRiders(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
     @action(detail=False, methods=['get'])
     def get_rider_stats(self, request):
         """Get additional rider statistics with date range support"""
@@ -7116,6 +7132,31 @@ class AdminRiders(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
              
+    @action(detail=False, methods=['get'], url_path='check-verification')
+    def check_verification(self, request):
+        """Check if a rider is verified"""
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return Response({
+                'success': False,
+                'error': 'User ID required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            rider = Rider.objects.get(rider_id=user_id)
+            
+            return Response({
+                'success': True,
+                'verified': rider.verified,
+                'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
+                'rider_status': 'approved' if rider.verified else 'pending'
+            })
+        except Rider.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Rider not found'
+            }, status=status.HTTP_404_NOT_FOUND)
 
 class AdminVouchers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
