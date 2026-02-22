@@ -1138,35 +1138,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
             </Card>
           </div>
 
-          {/* Status Legend */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Tag className="w-5 h-5" />
-                Status Legend
-              </CardTitle>
-              <CardDescription>
-                Color-coded status indicators for quick product identification
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-3">
-                <StatusBadge status="Active" />
-                <StatusBadge status="Delivered" />
-                <StatusBadge status="Published" type="upload" />
-                <StatusBadge status="Draft" />
-                <StatusBadge status="Draft" type="upload" />
-                <StatusBadge status="Pending" />
-                <StatusBadge status="Suspended" />
-                <StatusBadge status="Archived" />
-                <StatusBadge status="Archived" type="upload" />
-                <StatusBadge status="Removed" />
-                <StatusBadge status="Removed" type="removed" />
-                <StatusBadge status="Out of Stock" />
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Categories Section */}
           <Card>
             <CardHeader>

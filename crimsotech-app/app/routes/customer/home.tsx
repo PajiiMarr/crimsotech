@@ -2,7 +2,7 @@
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider'
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { 
   Search, 
   X, 
@@ -407,7 +407,7 @@ const CategoriesSection = ({
 }) => {
   const [showAllCategories, setShowAllCategories] = useState(false);
   const [scrollPosition, setScrollPosition] = useState(0);
-  const containerRef = useState<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Category colors for visual variety
   const categoryColors = [

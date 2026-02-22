@@ -80,6 +80,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "~/components/ui/tooltip";
+import { Link } from "react-router";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -979,9 +980,9 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                 <span className="hidden xs:inline">Admin</span>
               </a>
               <span>&gt;</span>
-              <a href="/admin/products" className="hover:text-primary hover:underline">
+              <Link to="/admin/products" className="hover:text-primary hover:underline">
                 Products
-              </a>
+              </Link>
               <span>&gt;</span>
               <span className="text-foreground font-medium truncate max-w-[120px] xs:max-w-[180px] sm:max-w-[250px]">
                 {product.name}

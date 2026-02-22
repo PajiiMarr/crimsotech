@@ -8,7 +8,7 @@ from django.shortcuts import render
 from django.db.models import Prefetch, DecimalField, IntegerField
 from django.db.models.functions import TruncMonth, Coalesce
 from django.db import transaction
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework import viewsets
@@ -28518,6 +28518,57 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['get'], url_path='active-applied-gift-product-ids')
+    def active_applied_gift_product_ids(self, request):
+        """
+        Get IDs of gift products that are currently applied to promotions
+        These should be hidden from regular product listings
+        """
+        try:
+            from django.utils import timezone
+            
+            # Get all active AppliedGift records
+            active_gifts = AppliedGift.objects.filter(
+                is_active=True,
+                start_time__lte=timezone.now(),
+                end_time__gte=timezone.now()
+            ).select_related('gift_product_id')
+            
+            # Extract unique gift product IDs
+            gift_product_ids = []
+            gift_details = {}
+            
+            for gift in active_gifts:
+                if gift.gift_product_id and str(gift.gift_product_id.id) not in gift_product_ids:
+                    product_id = str(gift.gift_product_id.id)
+                    gift_product_ids.append(product_id)
+                    gift_details[product_id] = {
+                        'id': product_id,
+                        'name': gift.gift_product_id.name,
+                        'applied_gift_id': str(gift.id),
+                        'shop_id': str(gift.shop_id.id) if gift.shop_id else None,
+                        'start_time': gift.start_time.isoformat() if gift.start_time else None,
+                        'end_time': gift.end_time.isoformat() if gift.end_time else None
+                    }
+            
+            return Response({
+                "success": True,
+                "gift_product_ids": gift_product_ids,
+                "gift_details": gift_details,
+                "count": len(gift_product_ids),
+                "message": "Active applied gift product IDs retrieved successfully"
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error fetching active applied gift product IDs: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                "success": False,
+                "error": "Failed to fetch active applied gift product IDs",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=False, methods=['post'])
     def create_gift(self, request):
         """
@@ -28699,8 +28750,6 @@ class CustomerGiftViewSet(viewsets.ViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _create_variants(self, product, variants_data, files):
-        from decimal import Decimal, InvalidOperation
-
         """Helper method to create variants for customer gifts (no swap features)"""
         
         print(f"Creating variants for gift {product.id}")
@@ -29056,7 +29105,7 @@ class CustomerGiftViewSet(viewsets.ViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
 class RiderDashboardViewSet(viewsets.ViewSet):
     """
     Rider Dashboard API endpoints with optimized queries and data integrity

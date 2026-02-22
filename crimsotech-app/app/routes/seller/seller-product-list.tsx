@@ -5,16 +5,14 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
-import { Input } from "~/components/ui/input";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "~/components/ui/dropdown-menu";
-import { Search, Plus, Edit, Trash2, Eye, Store, Tag, MoreHorizontal, Package, AlertCircle, Loader2 } from "lucide-react";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
+import { Plus, Eye, Store, Tag, Package, AlertCircle, Loader2, MoreHorizontal } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import { type ColumnDef } from "@tanstack/react-table";
 import AxiosInstance from '~/components/axios/Axios';
@@ -348,7 +346,6 @@ export default function SellerProductList() {
     },
     {
       id: "actions",
-      header: "Actions",
       cell: ({ row }) => {
         const product = row.original;
         const isRemoved = product.is_removed;
@@ -366,39 +363,50 @@ export default function SellerProductList() {
             </Button>
           );
         }
-        
+
+        const handleAction = (value: string) => {
+          switch (value) {
+            case 'view':
+              handleViewProduct(product.id);
+              break;
+            case 'edit':
+              handleEditProduct(product.id);
+              break;
+            case 'toggle-status':
+              handleToggleStatus(product.id, product.status);
+              break;
+            case 'delete':
+              handleDeleteProduct(product.id);
+              break;
+          }
+        };
+
         return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => handleViewProduct(product.id)}>
-                <Eye className="h-4 w-4 mr-2" />
-                View Product
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleEditProduct(product.id)}>
-                <Edit className="h-4 w-4 mr-2" />
-                Edit Product
-              </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={() => handleToggleStatus(product.id, product.status)}
-              >
-                {product.status.toLowerCase() === 'active' ? 'Deactivate' : 'Activate'}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem 
-                onClick={() => handleDeleteProduct(product.id)}
-                className="text-red-600 focus:text-red-600"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Delete Product
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex items-center gap-2">
+            <Link 
+              to={`/seller/seller-product/${product.id}`}
+              className="text-primary hover:underline"
+              title="View Details"
+            >
+              <Eye className="w-4 h-4" />
+            </Link>
+            
+            <Select onValueChange={handleAction}>
+              <SelectTrigger className="w-[130px]">
+                <SelectValue placeholder="Actions" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="view">View Product</SelectItem>
+                <SelectItem value="edit">Edit Product</SelectItem>
+                <SelectItem value="toggle-status">
+                  {product.status.toLowerCase() === 'active' ? 'Deactivate' : 'Activate'}
+                </SelectItem>
+                <SelectItem value="delete" className="text-red-600 focus:text-red-600">
+                  Delete Product
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         );
       },
     },
