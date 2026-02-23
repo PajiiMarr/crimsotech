@@ -863,6 +863,8 @@ class RiderRegistration(viewsets.ViewSet):
             vehicle_brand = request.data.get('vehicle_brand', '').strip()
             vehicle_model = request.data.get('vehicle_model', '').strip()
             license_number = request.data.get('license_number', '').strip()
+            
+            # Get files from request
             vehicle_image = request.FILES.get('vehicle_image')
             license_image = request.FILES.get('license_image')
             
@@ -919,37 +921,54 @@ class RiderRegistration(viewsets.ViewSet):
                 user.delete()
                 return Response({"errors": errors}, status=400)
             
-            # Create rider data
-            rider_data = {
-                'rider': user.id,  # Changed from rider_id to user
-                'vehicle_type': vehicle_type,
-                'plate_number': plate_number,
-                'vehicle_brand': vehicle_brand,
-                'vehicle_model': vehicle_model,
-                'license_number': license_number,
-                'verified': False,
-                'vehicle_image': vehicle_image,
-                'license_image': license_image
-            }
+            # Create rider instance
+            rider = Rider(
+                rider=user,
+                vehicle_type=vehicle_type,
+                plate_number=plate_number,
+                vehicle_brand=vehicle_brand,
+                vehicle_model=vehicle_model,
+                license_number=license_number,
+                verified=False
+            )
             
-            rider_serializer = RiderSerializer(data=rider_data)
-            if rider_serializer.is_valid():
-                rider = rider_serializer.save()
-                
-                return Response({
-                    "message": "Rider registration completed successfully",
-                    "user_id": str(user.id),  # Changed from user.user_id to user.id
-                    "rider_id": str(rider.rider),  # Changed from rider.rider_id to rider.user.id
-                    "registration_stage": user.registration_stage,
-                    "status": "pending_verification"
-                })
-            else:
-                # Delete the created user if rider creation fails
-                user.delete()
-                return Response({"errors": rider_serializer.errors}, status=400)
+            # Handle file uploads - this will use the S3 storage configured in settings
+            if vehicle_image:
+                # Reset file pointer to beginning
+                vehicle_image.seek(0)
+                # Save directly to the model field - this triggers the S3 upload
+                rider.vehicle_image.save(
+                    vehicle_image.name,
+                    vehicle_image,
+                    save=False  # Don't save yet, we'll save after both files are set
+                )
+            
+            if license_image:
+                # Reset file pointer to beginning
+                license_image.seek(0)
+                # Save directly to the model field - this triggers the S3 upload
+                rider.license_image.save(
+                    license_image.name,
+                    license_image,
+                    save=False  # Don't save yet
+                )
+            
+            # Save the rider instance with all fields including the image fields
+            rider.save()
+            
+            return Response({
+                "message": "Rider registration completed successfully",
+                "user_id": str(user.id),
+                "rider_id": str(rider.rider_id),  # This is the user.id since it's OneToOne
+                "registration_stage": user.registration_stage,
+                "status": "pending_verification",
+                "vehicle_image_url": rider.vehicle_image.url if rider.vehicle_image else None,
+                "license_image_url": rider.license_image.url if rider.license_image else None
+            }, status=status.HTTP_201_CREATED)
                 
         except Exception as e:
             # Clean up: delete user if any error occurs
+            logger.error(f"Rider registration failed: {str(e)}", exc_info=True)
             if 'user' in locals():
                 user.delete()
             return Response({"error": f"Registration failed: {str(e)}"}, status=500)
@@ -958,8 +977,12 @@ class RiderRegistration(viewsets.ViewSet):
         """Helper method to hash image files for verification"""
         if not image_file:
             return None
-        return hashlib.sha256(image_file.read()).hexdigest()
-    
+        # Reset file pointer before reading
+        image_file.seek(0)
+        file_hash = hashlib.sha256(image_file.read()).hexdigest()
+        # Reset file pointer after reading so it can be used again
+        image_file.seek(0)
+        return file_hash
 
 
 class AdminDashboard(viewsets.ViewSet):
@@ -8232,11 +8255,6 @@ class AdminTeam(viewsets.ViewSet):
             
             inactive_team_members = total_team_members - active_team_members
             
-            # Average registration stage
-            avg_registration_stage = team_queryset.aggregate(
-                avg_stage=Avg('registration_stage')
-            )['avg_stage'] or 0
-            
             # Pending moderator approvals
             pending_moderator_approvals = Moderator.objects.filter(
                 approval_status='pending'
@@ -8249,140 +8267,15 @@ class AdminTeam(viewsets.ViewSet):
                 'new_team_members_today': new_team_members_today,
                 'active_team_members': active_team_members,
                 'inactive_team_members': inactive_team_members,
-                'avg_registration_stage': round(float(avg_registration_stage), 1),
                 'pending_moderator_approvals': pending_moderator_approvals,
             }
             
             return Response(metrics, status=status.HTTP_200_OK)
             
         except Exception as e:
-            print(f"Error calculating team metrics: {str(e)}")
+            logger.error(f"Error calculating team metrics: {str(e)}")
             return Response(
                 {'error': f'Error calculating team metrics: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @action(detail=False, methods=['get'])
-    def get_team_analytics(self, request):
-        """Get analytics data for team charts"""
-        try:
-            # Team role distribution
-            total_team_members = User.objects.filter(Q(is_admin=True) | Q(is_moderator=True)).count()
-            
-            role_distribution = []
-            if total_team_members > 0:
-                admin_count = User.objects.filter(is_admin=True).count()
-                moderator_count = User.objects.filter(is_moderator=True).count()
-                
-                role_distribution = [
-                    {
-                        'role': 'Admins',
-                        'count': admin_count,
-                        'percentage': round((admin_count / total_team_members) * 100, 1)
-                    },
-                    {
-                        'role': 'Moderators',
-                        'count': moderator_count,
-                        'percentage': round((moderator_count / total_team_members) * 100, 1)
-                    }
-                ]
-            
-            # Registration trend (last 12 months for team members)
-            twelve_months_ago = timezone.now() - timedelta(days=365)
-            
-            registration_trend = User.objects.filter(
-                Q(is_admin=True) | Q(is_moderator=True),
-                created_at__gte=twelve_months_ago
-            ).annotate(
-                month=TruncMonth('created_at')
-            ).values('month').annotate(
-                new_members=Count('id')
-            ).order_by('month')
-            
-            monthly_trend = []
-            for item in registration_trend:
-                monthly_trend.append({
-                    'month': item['month'].strftime('%b %Y'),
-                    'new_members': item['new_members'],
-                    'full_month': item['month'].strftime('%B %Y')
-                })
-            
-            # Approval status distribution for moderators
-            approval_status_distribution = Moderator.objects.values('approval_status').annotate(
-                count=Count('moderator')
-            ).order_by('approval_status')
-            
-            approval_data = []
-            for item in approval_status_distribution:
-                # Safely get the approval_status with a default value
-                approval_status = item.get('approval_status', 'unknown')
-                status_label = approval_status.capitalize() if approval_status != 'unknown' else 'Unknown'
-                
-                # Calculate percentage safely
-                total_moderators = Moderator.objects.count()
-                percentage = (item['count'] / total_moderators * 100) if total_moderators > 0 else 0
-                
-                approval_data.append({
-                    'status': status_label,
-                    'count': item['count'],
-                    'percentage': round(percentage, 1)
-                })
-            
-            # If no moderator records exist, provide default approval data
-            if not approval_data:
-                approval_data = [
-                    {
-                        'status': 'Pending',
-                        'count': 0,
-                        'percentage': 0.0
-                    },
-                    {
-                        'status': 'Approved', 
-                        'count': 0,
-                        'percentage': 0.0
-                    },
-                    {
-                        'status': 'Rejected',
-                        'count': 0,
-                        'percentage': 0.0
-                    }
-                ]
-            
-            # Activity distribution
-            active_members = User.objects.filter(
-                Q(is_admin=True) | Q(is_moderator=True),
-                registration_stage__gte=3,
-                updated_at__gte=timezone.now() - timedelta(days=30)
-            ).count()
-            
-            inactive_members = total_team_members - active_members
-            
-            activity_data = [
-                {
-                    'status': 'Active',
-                    'count': active_members,
-                    'percentage': round((active_members / total_team_members * 100), 1) if total_team_members > 0 else 0
-                },
-                {
-                    'status': 'Inactive',
-                    'count': inactive_members,
-                    'percentage': round((inactive_members / total_team_members * 100), 1) if total_team_members > 0 else 0
-                }
-            ]
-            
-            analytics_data = {
-                'role_distribution': role_distribution,
-                'registration_trend': monthly_trend,
-                'approval_status_distribution': approval_data,
-                'activity_distribution': activity_data
-            }
-            
-            return Response(analytics_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            print(f"Error generating team analytics: {str(e)}")
-            return Response(
-                {'error': f'Error generating team analytics: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -8425,11 +8318,10 @@ class AdminTeam(viewsets.ViewSet):
                         Q(updated_at__lt=timezone.now() - timedelta(days=30))
                     )
             
-            if approval_filter:
-                if approval_filter.lower() in ['pending', 'approved', 'rejected']:
-                    team_queryset = team_queryset.filter(
-                        moderator__approval_status=approval_filter.lower()
-                    )
+            if approval_filter and approval_filter.lower() in ['pending', 'approved', 'rejected']:
+                team_queryset = team_queryset.filter(
+                    moderator__approval_status=approval_filter.lower()
+                )
             
             if search:
                 team_queryset = team_queryset.filter(
@@ -8450,48 +8342,29 @@ class AdminTeam(viewsets.ViewSet):
             team_data = []
             for user in team_page:
                 user_data = {
-                    # Core User model fields
+                    # Core User model fields needed for UI
                     'id': str(user.id),
                     'username': user.username,
                     'email': user.email,
-                    'password': user.password,
                     'first_name': user.first_name,
                     'last_name': user.last_name,
                     'middle_name': user.middle_name,
                     'contact_number': user.contact_number,
-                    'date_of_birth': user.date_of_birth.isoformat() if user.date_of_birth else None,
-                    'age': user.age,
-                    'sex': user.sex,
-                    'street': user.street,
-                    'barangay': user.barangay,
                     'city': user.city,
-                    'province': user.province,
-                    'state': user.state,
-                    'zip_code': user.zip_code,
-                    'country': user.country,
                     'is_admin': user.is_admin,
-                    'is_customer': user.is_customer,
                     'is_moderator': user.is_moderator,
-                    'is_rider': user.is_rider,
                     'registration_stage': user.registration_stage,
                     'created_at': user.created_at.isoformat(),
                     'updated_at': user.updated_at.isoformat(),
                     
                     # Related model data
                     'moderator_data': None,
-                    'admin_data': None,
                 }
                 
                 # Add moderator data if exists
-                if hasattr(user, 'moderator'):
+                if hasattr(user, 'moderator') and user.moderator:
                     user_data['moderator_data'] = {
                         'approval_status': user.moderator.approval_status
-                    }
-                
-                # Add admin data if exists
-                if hasattr(user, 'admin'):
-                    user_data['admin_data'] = {
-                        # Add admin specific fields if needed
                     }
                 
                 team_data.append(user_data)
@@ -8511,7 +8384,7 @@ class AdminTeam(viewsets.ViewSet):
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
-            print(f"Error fetching team list: {str(e)}")
+            logger.error(f"Error fetching team list: {str(e)}")
             return Response(
                 {'error': f'Error fetching team list: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -8526,9 +8399,6 @@ class AdminReports(viewsets.ViewSet):
             total_reports = Report.objects.count()
             pending_reports = Report.objects.filter(status='pending').count()
             under_review_reports = Report.objects.filter(status='under_review').count()
-            resolved_reports = Report.objects.filter(status='resolved').count()
-            dismissed_reports = Report.objects.filter(status='dismissed').count()
-            action_taken_reports = Report.objects.filter(status='action_taken').count()
             
             # Calculate reports by type
             accounts_reported = Report.objects.filter(report_type='account').count()
@@ -8572,101 +8442,14 @@ class AdminReports(viewsets.ViewSet):
                 'accounts_reported': accounts_reported,
                 'products_reported': products_reported,
                 'shops_reported': shops_reported,
-                'detailed_status': {
-                    'pending': pending_reports,
-                    'under_review': under_review_reports,
-                    'resolved': resolved_reports,
-                    'dismissed': dismissed_reports,
-                    'action_taken': action_taken_reports,
-                }
             }
             
             return Response(metrics, status=status.HTTP_200_OK)
             
         except Exception as e:
-            print(f"Error calculating report metrics: {str(e)}")
+            logger.error(f"Error calculating report metrics: {str(e)}")
             return Response(
                 {'error': f'Error calculating report metrics: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @action(detail=False, methods=['get'])        
-    def get_analytics(self, request):
-        """Get analytics data for charts and graphs"""
-        try:
-            # Reports by type for pie chart
-            reports_by_type = Report.objects.values('report_type').annotate(
-                count=Count('id')
-            ).order_by('-count')
-            
-            total_reports = Report.objects.count()
-            reports_type_data = []
-            for item in reports_by_type:
-                percentage = round((item['count'] / total_reports) * 100) if total_reports > 0 else 0
-                reports_type_data.append({
-                    'type': item['report_type'].title(),
-                    'count': item['count'],
-                    'percentage': percentage
-                })
-
-            # Reports trend over time (last 6 months)
-            six_months_ago = timezone.now() - timedelta(days=180)
-            monthly_reports = Report.objects.filter(
-                created_at__gte=six_months_ago
-            ).extra({
-                'month': "EXTRACT(month FROM created_at)",
-                'year': "EXTRACT(year FROM created_at)"
-            }).values('month', 'year').annotate(
-                new_reports=Count('id'),
-                resolved=Count('id', filter=Q(status__in=['resolved', 'action_taken'])),
-                pending=Count('id', filter=Q(status__in=['pending', 'under_review']))
-            ).order_by('year', 'month')
-            
-            month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-            reports_trend_data = []
-            for item in monthly_reports:
-                month_name = month_names[int(item['month']) - 1]
-                full_month = f"{month_name} {int(item['year'])}"
-                reports_trend_data.append({
-                    'date': month_name,
-                    'full_month': full_month,
-                    'new_reports': item['new_reports'],
-                    'resolved': item['resolved'],
-                    'pending': item['pending']
-                })
-
-            # Top reporting reasons
-            top_reasons = Report.objects.values('reason').annotate(
-                count=Count('id')
-            ).order_by('-count')[:10]
-            
-            top_reasons_data = []
-            for item in top_reasons:
-                # Get the most common type for this reason
-                common_type = Report.objects.filter(reason=item['reason']).values(
-                    'report_type'
-                ).annotate(
-                    type_count=Count('id')
-                ).order_by('-type_count').first()
-                
-                top_reasons_data.append({
-                    'reason': item['reason'].replace('_', ' ').title(),
-                    'count': item['count'],
-                    'type': common_type['report_type'].title() if common_type else 'All'
-                })
-
-            analytics = {
-                'reports_by_type': reports_type_data,
-                'reports_trend': reports_trend_data,
-                'top_reasons': top_reasons_data,
-            }
-            
-            return Response(analytics, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            print(f"Error generating analytics: {str(e)}")
-            return Response(
-                {'error': f'Error generating analytics: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -8688,7 +8471,7 @@ class AdminReports(viewsets.ViewSet):
                 'reported_product',
                 'reported_shop',
                 'assigned_moderator'
-            ).prefetch_related('media', 'action', 'comments').all()
+            ).all()
             
             # Apply filters
             if report_type and report_type != 'all':
@@ -8724,55 +8507,47 @@ class AdminReports(viewsets.ViewSet):
                     'reason': report.reason,
                     'description': report.description,
                     'status': report.status,
-                    'reporter_username': report.reporter.username if report.reporter else 'Unknown',
+                    'reporter_username': report.reporter.username if report.reporter else 'Anonymous',
                     'created_at': report.created_at.isoformat(),
                     'updated_at': report.updated_at.isoformat(),
-                    'resolved_at': report.resolved_at.isoformat() if report.resolved_at else None,
                     'assigned_moderator': report.assigned_moderator.username if report.assigned_moderator else None,
                 }
                 
                 # Add type-specific data
                 if report.report_type == 'account' and report.reported_account:
-                    report_data.update({
-                        'reported_object': {
-                            'id': str(report.reported_account.id),
-                            'username': report.reported_account.username,
-                            'email': report.reported_account.email,
-                            'user_type': self._get_user_type(report.reported_account),
-                            'is_suspended': report.reported_account.is_suspended,
-                            'warning_count': report.reported_account.warning_count,
-                        }
-                    })
+                    report_data['reported_object'] = {
+                        'id': str(report.reported_account.id),
+                        'username': report.reported_account.username,
+                        'email': report.reported_account.email,
+                        'user_type': self._get_user_type(report.reported_account),
+                        'is_suspended': report.reported_account.is_suspended,
+                        'warning_count': report.reported_account.warning_count,
+                        'first_name': report.reported_account.first_name,
+                        'last_name': report.reported_account.last_name,
+                        'active_report_count': self._get_active_report_count(report.reported_account),
+                    }
                 elif report.report_type == 'product' and report.reported_product:
-                    report_data.update({
-                        'reported_object': {
-                            'id': str(report.reported_product.id),
-                            'name': report.reported_product.name,
-                            'price': float(report.reported_product.price),
-                            'shop_name': report.reported_product.shop.name if report.reported_product.shop else 'No Shop',
-                            'is_removed': report.reported_product.is_removed,
-                            'category': report.reported_product.category.name if report.reported_product.category else 'Uncategorized',
-                        }
-                    })
+                    report_data['reported_object'] = {
+                        'id': str(report.reported_product.id),
+                        'name': report.reported_product.name,
+                        'price': float(report.reported_product.price) if report.reported_product.price else 0,
+                        'shop_name': report.reported_product.shop.name if report.reported_product.shop else 'No Shop',
+                        'is_removed': report.reported_product.is_removed,
+                        'removal_reason': report.reported_product.removal_reason,
+                        'category': report.reported_product.category.name if report.reported_product.category else 'Uncategorized',
+                        'description': report.reported_product.description,
+                        'active_report_count': self._get_active_report_count(report.reported_product),
+                    }
                 elif report.report_type == 'shop' and report.reported_shop:
-                    report_data.update({
-                        'reported_object': {
-                            'id': str(report.reported_shop.id),
-                            'name': report.reported_shop.name,
-                            'owner': report.reported_shop.customer.customer.username if report.reported_shop.customer else 'Unknown',
-                            'is_suspended': report.reported_shop.is_suspended,
-                            'total_products': report.reported_shop.products.count(),
-                            'verified': report.reported_shop.verified,
-                        }
-                    })
-                
-                # Add action data if exists
-                if hasattr(report, 'action'):
-                    report_data['action'] = {
-                        'action_type': report.action.action_type,
-                        'description': report.action.description,
-                        'taken_by': report.action.taken_by.username if report.action.taken_by else None,
-                        'taken_at': report.action.taken_at.isoformat(),
+                    report_data['reported_object'] = {
+                        'id': str(report.reported_shop.id),
+                        'name': report.reported_shop.name,
+                        'owner': report.reported_shop.customer.customer.username if report.reported_shop.customer else 'Unknown',
+                        'is_suspended': report.reported_shop.is_suspended,
+                        'suspension_reason': report.reported_shop.suspension_reason,
+                        'total_products': report.reported_shop.products.count(),
+                        'verified': report.reported_shop.verified,
+                        'active_report_count': self._get_active_report_count(report.reported_shop),
                     }
                 
                 reports_data.append(report_data)
@@ -8797,7 +8572,7 @@ class AdminReports(viewsets.ViewSet):
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
-            print(f"Error fetching reports list: {str(e)}")
+            logger.error(f"Error fetching reports list: {str(e)}")
             return Response(
                 {'error': f'Error fetching reports list: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -8814,6 +8589,18 @@ class AdminReports(viewsets.ViewSet):
         elif user.is_customer:
             return 'customer'
         return 'unknown'
+    
+    def _get_active_report_count(self, obj):
+        """Helper method to get active report count for any reported object"""
+        try:
+            if hasattr(obj, 'active_report_count'):
+                return obj.active_report_count
+            if hasattr(obj, 'reports_against'):
+                return obj.reports_against.filter(status__in=['pending', 'under_review']).count()
+        except:
+            pass
+        return 0
+
 
 class ModeratorDashboard(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

@@ -20,21 +20,6 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-  LineChart,
-  Line,
-  CartesianGrid,
-} from 'recharts';
-import {
   AlertTriangle,
   Users,
   Package,
@@ -122,24 +107,6 @@ interface LoaderData {
     resolution_rate: number;
     avg_resolution_time: number;
   };
-  analytics: {
-    reports_by_type: Array<{
-      type: string;
-      count: number;
-      percentage: number;
-    }>;
-    reports_trend: Array<{
-      date: string;
-      new_reports: number;
-      resolved: number;
-      pending: number;
-    }>;
-    top_reasons: Array<{
-      reason: string;
-      count: number;
-      type: string;
-    }>;
-  };
   reportedAccounts: ReportedAccount[];
   reportedProducts: ReportedProduct[];
   reportedShops: ReportedShop[];
@@ -206,7 +173,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const session = await getSession(request.headers.get("Cookie"));
 
   let reportMetrics = null;
-  let analyticsData = null;
   let reportedAccounts: ReportedAccount[] = [];
   let reportedProducts: ReportedProduct[] = [];
   let reportedShops: ReportedShop[] = [];
@@ -229,21 +195,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
         shops_reported: metricsResponse.data.shops_reported || 0,
         resolution_rate: metricsResponse.data.resolution_rate || 0,
         avg_resolution_time: metricsResponse.data.avg_resolution_time || 0,
-      };
-    }
-
-    // Fetch analytics data for charts
-    const analyticsResponse = await AxiosInstance.get('/admin-reports/get_analytics/', {
-      headers: {
-        "X-User-Id": session.get("userId")
-      }
-    });
-
-    if (analyticsResponse.data) {
-      analyticsData = {
-        reports_by_type: analyticsResponse.data.reports_by_type || [],
-        reports_trend: analyticsResponse.data.reports_trend || [],
-        top_reasons: analyticsResponse.data.top_reasons || [],
       };
     }
 
@@ -358,12 +309,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       avg_resolution_time: 0,
     };
     
-    analyticsData = {
-      reports_by_type: [],
-      reports_trend: [],
-      top_reasons: [],
-    };
-    
     reportedAccounts = [];
     reportedProducts = [];
     reportedShops = [];
@@ -372,20 +317,17 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   return {
     user,
     reportMetrics: reportMetrics!,
-    analytics: analyticsData!,
     reportedAccounts,
     reportedProducts,
     reportedShops,
   };
 }
 
-const COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'];
-
 export default function Reports({ loaderData }: { loaderData: LoaderData }) {
-  const { user, reportMetrics, analytics, reportedAccounts, reportedProducts, reportedShops } = loaderData;
+  const { user, reportMetrics, reportedAccounts, reportedProducts, reportedShops } = loaderData;
 
   // Show loading/error state if no data
-  if (!reportMetrics || !analytics) {
+  if (!reportMetrics) {
     return (
       <UserProvider user={user}>
         <SidebarLayout>
@@ -499,117 +441,6 @@ export default function Reports({ loaderData }: { loaderData: LoaderData }) {
               </CardContent>
             </Card>
           </div>
-
-          {/* Analytics Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Reports by Type */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Reports by Type</CardTitle>
-                <CardDescription>Distribution of reports across different categories</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={analytics.reports_by_type}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }) => {
-                        const total = analytics.reports_by_type.reduce((sum, item) => sum + item.count, 0);
-                        const percentage = Math.round((value / total) * 100);
-                        return `${name} (${percentage}%)`;
-                      }}
-                      outerRadius={100}
-                      fill="#8884d8"
-                      dataKey="count"
-                    >
-                      {analytics.reports_by_type.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Reports Trend */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Reports Trend</CardTitle>
-                <CardDescription>Monthly report activity and resolution</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={analytics.reports_trend}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line 
-                      type="monotone" 
-                      dataKey="new_reports" 
-                      stroke="#ef4444" 
-                      strokeWidth={2}
-                      name="New Reports"
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="resolved" 
-                      stroke="#10b981" 
-                      strokeWidth={2}
-                      name="Resolved"
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="pending" 
-                      stroke="#f59e0b" 
-                      strokeWidth={2}
-                      name="Pending"
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Top Reasons */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Top Reporting Reasons</CardTitle>
-              <CardDescription>Most common reasons for reports</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart 
-                  data={analytics.top_reasons} 
-                  layout="vertical"
-                  margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" />
-                  <YAxis 
-                    dataKey="reason" 
-                    type="category" 
-                    width={90}
-                    tick={{ fontSize: 12 }}
-                  />
-                  <Tooltip />
-                  <Legend />
-                  <Bar 
-                    dataKey="count" 
-                    name="Report Count"
-                    fill="#3b82f6" 
-                    radius={[0, 4, 4, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
 
           {/* Reported Instances Tabs */}
           <Card>
@@ -735,7 +566,7 @@ const accountColumns: ColumnDef<ReportedAccount>[] = [
       
       return (
         <Badge className={`capitalize ${statusColors[status as keyof typeof statusColors]}`}>
-          {status}
+          {status.replace('_', ' ')}
         </Badge>
       );
     },
@@ -817,7 +648,7 @@ const productColumns: ColumnDef<ReportedProduct>[] = [
       
       return (
         <Badge className={`capitalize ${statusColors[status as keyof typeof statusColors]}`}>
-          {status}
+          {status.replace('_', ' ')}
         </Badge>
       );
     },

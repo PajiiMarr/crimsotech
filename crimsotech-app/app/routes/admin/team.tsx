@@ -10,21 +10,6 @@ import {
 } from '~/components/ui/card';
 import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-  LineChart,
-  Line,
-  CartesianGrid,
-} from 'recharts';
 import { 
   Users as UsersIcon,
   UserPlus,
@@ -39,9 +24,6 @@ import {
   Shield,
   Settings,
   AlertCircle,
-  TrendingUp,
-  Clock,
-  Zap,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
@@ -61,7 +43,6 @@ interface TeamUserData {
   id: string;
   username: string | null;
   email: string | null;
-  password: string | null;
   first_name: string;
   last_name: string;
   middle_name: string;
@@ -102,34 +83,10 @@ interface TeamMetrics {
   pending_moderator_approvals: number;
 }
 
-interface TeamAnalytics {
-  role_distribution: Array<{
-    role: string;
-    count: number;
-    percentage: number;
-  }>;
-  registration_trend: Array<{
-    month: string;
-    new_members: number;
-    full_month: string;
-  }>;
-  approval_status_distribution: Array<{
-    status: string;
-    count: number;
-    percentage: number;
-  }>;
-  activity_distribution: Array<{
-    status: string;
-    count: number;
-    percentage: number;
-  }>;
-}
-
 interface LoaderData {
     user: any;
     teamMetrics: TeamMetrics | null;
     teamMembers: TeamUserData[];
-    analytics: TeamAnalytics | null;
 }
 
 // Helper functions for team members
@@ -191,26 +148,17 @@ export async function loader({ request, context}: Route.LoaderArgs): Promise<Loa
 
     let teamMetrics = null;
     let teamMembers: TeamUserData[] = [];
-    let analyticsData = null;
 
     try {
         // Fetch team data from backend endpoints
-        const [metricsResponse, analyticsResponse, teamResponse] = await Promise.all([
-            AxiosInstance.get('/admin-team/get_team_metrics/', {
-            }),
-            AxiosInstance.get('/admin-team/get_team_analytics/', {
-            }),
-            AxiosInstance.get('/admin-team/team_list/', {
-            }),
+        const [metricsResponse, teamResponse] = await Promise.all([
+            AxiosInstance.get('/admin-team/get_team_metrics/', {}),
+            AxiosInstance.get('/admin-team/team_list/', {}),
         ]);
 
         // Use actual data from API responses
         if (metricsResponse?.data) {
             teamMetrics = metricsResponse.data;
-        }
-
-        if (analyticsResponse?.data) {
-            analyticsData = analyticsResponse.data;
         }
 
         // Use actual team members data if available
@@ -222,7 +170,6 @@ export async function loader({ request, context}: Route.LoaderArgs): Promise<Loa
         console.error('Error fetching team data:', error);
         // Return empty data when API fails
         teamMetrics = null;
-        analyticsData = null;
         teamMembers = [];
     }
 
@@ -230,11 +177,8 @@ export async function loader({ request, context}: Route.LoaderArgs): Promise<Loa
         user, 
         teamMetrics,
         teamMembers,
-        analytics: analyticsData
     };
 }
-
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 // Empty state components
 const EmptyMetricsCard = ({ title, description }: { title: string; description: string }) => (
@@ -249,22 +193,6 @@ const EmptyMetricsCard = ({ title, description }: { title: string; description: 
         <div className="p-2 sm:p-3 bg-gray-100 rounded-full">
           <AlertCircle className="w-4 h-4 sm:w-6 sm:h-6 text-gray-400" />
         </div>
-      </div>
-    </CardContent>
-  </Card>
-);
-
-const EmptyChart = ({ title, description }: { title: string; description: string }) => (
-  <Card>
-    <CardHeader className="pb-3">
-      <CardTitle className="text-lg sm:text-xl">{title}</CardTitle>
-      <CardDescription>{description}</CardDescription>
-    </CardHeader>
-    <CardContent>
-      <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-        <AlertCircle className="w-12 h-12 mb-4 text-gray-300" />
-        <p className="text-center">No data available</p>
-        <p className="text-sm text-center mt-1">Data will appear when API returns results</p>
       </div>
     </CardContent>
   </Card>
@@ -308,11 +236,10 @@ const getFilterOptions = (teamMembers: TeamUserData[]) => {
 };
 
 export default function Team({ loaderData}: { loaderData: LoaderData }){
-    const { user, teamMetrics, teamMembers, analytics } = loaderData;
+    const { user, teamMetrics, teamMembers } = loaderData;
 
     const safeTeamMembers = teamMembers || [];
     const hasMetrics = teamMetrics !== null;
-    const hasAnalytics = analytics !== null;
 
     // Use safe filter configuration
     const teamFilterConfig = getFilterOptions(safeTeamMembers);
@@ -404,194 +331,6 @@ export default function Team({ loaderData}: { loaderData: LoaderData }){
                         )}
                     </div>
 
-                    {/* Role Breakdown */}
-                    {hasAnalytics && analytics.role_distribution.length > 0 ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {analytics.role_distribution.map((item) => (
-                                <Card key={item.role} className="text-center">
-                                    <CardContent className="p-3">
-                                        <p className="text-lg font-bold">{item.count}</p>
-                                        <p className="text-xs text-muted-foreground">{item.role}</p>
-                                    </CardContent>
-                                </Card>
-                            ))}
-                        </div>
-                    ) : (
-                        <Card>
-                            <CardContent className="p-6">
-                                <div className="flex flex-col items-center justify-center text-muted-foreground">
-                                    <AlertCircle className="w-8 h-8 mb-2 text-gray-300" />
-                                    <p className="text-center">No role distribution data available</p>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    )}
-
-                    {/* Analytics Charts */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                        {/* Role Distribution */}
-                        {hasAnalytics && analytics.role_distribution.length > 0 ? (
-                            <Card>
-                                <CardHeader className="pb-3">
-                                    <CardTitle className="text-lg sm:text-xl">Team Role Distribution</CardTitle>
-                                    <CardDescription>Breakdown of team members by role</CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <ResponsiveContainer width="100%" height={250}>
-                                        <PieChart>
-                                            <Pie
-                                                data={analytics.role_distribution.filter(item => item.count > 0)}
-                                                cx="50%"
-                                                cy="50%"
-                                                labelLine={false}
-                                                label={({ role, percentage }: any) => `${role} (${Math.round(percentage)}%)`}
-                                                outerRadius={80}
-                                                fill="#8884d8"
-                                                dataKey="count"
-                                            >
-                                                {analytics.role_distribution.filter(item => item.count > 0).map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                                ))}
-                                            </Pie>
-                                            <Tooltip />
-                                            <Legend />
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                </CardContent>
-                            </Card>
-                        ) : (
-                            <EmptyChart 
-                                title="Role Distribution"
-                                description="Breakdown of team members by role"
-                            />
-                        )}
-
-                        {/* Registration Trend */}
-                        {hasAnalytics && analytics.registration_trend.length > 0 ? (
-                            <Card>
-                                <CardHeader className="pb-3">
-                                    <CardTitle className="text-lg sm:text-xl">Team Growth</CardTitle>
-                                    <CardDescription>Monthly team member registration</CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <ResponsiveContainer width="100%" height={250}>
-                                        <LineChart
-                                            data={analytics.registration_trend}
-                                            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                                        >
-                                            <CartesianGrid strokeDasharray="3 3" />
-                                            <XAxis 
-                                                dataKey="month" 
-                                                fontSize={12}
-                                                tick={{ fontSize: 11 }}
-                                            />
-                                            <YAxis fontSize={12} />
-                                            <Tooltip 
-                                                labelFormatter={(label, payload) => {
-                                                    if (payload && payload[0]) {
-                                                        return payload[0].payload.full_month || label;
-                                                    }
-                                                    return label;
-                                                }}
-                                            />
-                                            <Legend />
-                                            <Line 
-                                                type="monotone" 
-                                                dataKey="new_members" 
-                                                stroke="#3b82f6" 
-                                                strokeWidth={2}
-                                                name="New Members"
-                                                dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
-                                            />
-                                        </LineChart>
-                                    </ResponsiveContainer>
-                                </CardContent>
-                            </Card>
-                        ) : (
-                            <EmptyChart 
-                                title="Team Growth"
-                                description="Monthly team member registration"
-                            />
-                        )}
-                    </div>
-
-                    {/* Additional Charts */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                        {/* Approval Status Distribution */}
-                        {hasAnalytics && analytics.approval_status_distribution.length > 0 ? (
-                            <Card>
-                                <CardHeader className="pb-3">
-                                    <CardTitle className="text-lg sm:text-xl">Approval Status</CardTitle>
-                                    <CardDescription>Moderator approval status distribution</CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <ResponsiveContainer width="100%" height={250}>
-                                        <BarChart 
-                                            data={analytics.approval_status_distribution} 
-                                            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                                        >
-                                            <CartesianGrid strokeDasharray="3 3" />
-                                            <XAxis 
-                                                dataKey="status" 
-                                                fontSize={12}
-                                            />
-                                            <YAxis fontSize={12} />
-                                            <Tooltip />
-                                            <Bar 
-                                                dataKey="count" 
-                                                name="Moderators"
-                                                fill="#8b5cf6" 
-                                                radius={[4, 4, 0, 0]}
-                                            />
-                                        </BarChart>
-                                    </ResponsiveContainer>
-                                </CardContent>
-                            </Card>
-                        ) : (
-                            <EmptyChart 
-                                title="Approval Status"
-                                description="Moderator approval status distribution"
-                            />
-                        )}
-
-                        {/* Activity Distribution */}
-                        {hasAnalytics && analytics.activity_distribution.length > 0 ? (
-                            <Card>
-                                <CardHeader className="pb-3">
-                                    <CardTitle className="text-lg sm:text-xl">Team Activity</CardTitle>
-                                    <CardDescription>Active vs inactive team members</CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <ResponsiveContainer width="100%" height={250}>
-                                        <BarChart 
-                                            data={analytics.activity_distribution} 
-                                            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                                        >
-                                            <CartesianGrid strokeDasharray="3 3" />
-                                            <XAxis 
-                                                dataKey="status" 
-                                                fontSize={12}
-                                            />
-                                            <YAxis fontSize={12} />
-                                            <Tooltip />
-                                            <Bar 
-                                                dataKey="count" 
-                                                name="Members"
-                                                fill="#f59e0b" 
-                                                radius={[4, 4, 0, 0]}
-                                            />
-                                        </BarChart>
-                                    </ResponsiveContainer>
-                                </CardContent>
-                            </Card>
-                        ) : (
-                            <EmptyChart 
-                                title="Team Activity"
-                                description="Active vs inactive team members"
-                            />
-                        )}
-                    </div>
-
                     {/* Team Members Table */}
                     <Card>
                         <CardHeader className="pb-3">
@@ -643,7 +382,7 @@ const columns: ColumnDef<TeamUserData>[] = [
         </Button>
       )
     },
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="flex items-center gap-2">
         <User className="w-4 h-4 text-muted-foreground" />
         <div className="font-medium text-xs sm:text-sm">
@@ -657,7 +396,7 @@ const columns: ColumnDef<TeamUserData>[] = [
   {
     id: "full_name",
     header: "Full Name",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="text-xs sm:text-sm">
         {getFullName(row.original) || (
           <span className="text-muted-foreground italic">No name</span>
@@ -668,7 +407,7 @@ const columns: ColumnDef<TeamUserData>[] = [
   {
     accessorKey: "email",
     header: "Email",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
         <Mail className="w-3 h-3 text-muted-foreground" />
         {row.original.email || (
@@ -679,8 +418,9 @@ const columns: ColumnDef<TeamUserData>[] = [
   },
   {
     id: "role",
+    accessorFn: (row) => getTeamMemberRole(row),
     header: "Role",
-    cell: ({ row }: { row: any}) => {
+    cell: ({ row }) => {
       const role = getTeamMemberRole(row.original);
       const getRoleConfig = (role: string) => {
         const configs = {
@@ -706,10 +446,11 @@ const columns: ColumnDef<TeamUserData>[] = [
       );
     },
   },
-    {
+  {
     id: "approval_status",
+    accessorFn: (row) => getApprovalStatus(row),
     header: "Approval Status",
-    cell: ({ row }: { row: any}) => {
+    cell: ({ row }) => {
         const user = row.original;
         // Only show approval status for moderators
         if (user.is_moderator) {
@@ -721,11 +462,12 @@ const columns: ColumnDef<TeamUserData>[] = [
         <span className="text-xs text-muted-foreground italic">N/A</span>
         );
     },
-    },
+  },
   {
     id: "status",
+    accessorFn: (row) => getTeamMemberStatus(row),
     header: "Status",
-    cell: ({ row }: { row: any}) => {
+    cell: ({ row }) => {
       const status = getTeamMemberStatus(row.original);
       return (
         <Badge 
@@ -745,7 +487,7 @@ const columns: ColumnDef<TeamUserData>[] = [
   {
     accessorKey: "city",
     header: "Location",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
         <MapPin className="w-3 h-3 text-muted-foreground" />
         {row.original.city || (
@@ -757,7 +499,7 @@ const columns: ColumnDef<TeamUserData>[] = [
   {
     accessorKey: "contact_number",
     header: "Contact",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
         <Phone className="w-3 h-3 text-muted-foreground" />
         {row.original.contact_number || (
@@ -780,7 +522,7 @@ const columns: ColumnDef<TeamUserData>[] = [
         </Button>
       )
     },
-    cell: ({ row }: { row: any}) => {
+    cell: ({ row }) => {
       const date = new Date(row.getValue("created_at"));
       const formattedDate = date.toLocaleDateString('en-US', {
         year: 'numeric',

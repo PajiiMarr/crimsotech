@@ -1,15 +1,24 @@
 name: Docker Image CI
+
 on:
-  [workflow_dispatch]
+  push:
+    paths:
+      - 'crimsotech_django/**'
+  workflow_dispatch:
+
 jobs:
   publish_images:
     runs-on: ubuntu-latest
+
     steps:
-      - name: checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-      - name: build image
-        run: docker build ./crimsotech_django/ -t pajiimarr/crimsotech_django:latest
-      - name: push to docker hub
-        run: |
-          docker login -u pajiimarr -p ${{ secrets.DOCKER_HUB_TOKEN }}
-          docker push pajiimarr/crimsotech_django:latest
+
+      - name: Build Docker image
+        run: docker build ./crimsotech_django -t pajiimarr/crimsotech_django:latest
+
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKER_HUB_TOKEN }}" | docker login -u pajiimarr --password-stdin
+
+      - name: Push Docker image
+        run: docker push pajiimarr/crimsotech_django:latest

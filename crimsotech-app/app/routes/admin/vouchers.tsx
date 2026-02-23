@@ -665,18 +665,21 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
 
   return (
     <Drawer open={open} onOpenChange={handleOpenChange}>
-      <DrawerContent className="h-[95vh] flex flex-col">
+      {/* ✅ FIX: Use a fixed height instead of h-[95vh] with flex,
+          so the DrawerFooter is never pushed off-screen by ScrollArea */}
+      <DrawerContent className="flex flex-col max-h-[95vh]">
         <DrawerHeader className="text-left border-b px-4 py-3 flex-shrink-0">
           <DrawerTitle className="text-xl">Create New Voucher</DrawerTitle>
           <DrawerDescription>
             Create a new voucher code for your customers. Fill in the details below.
           </DrawerDescription>
         </DrawerHeader>
-        
-        <ScrollArea className="flex-1 px-4 py-2">
+
+        {/* ✅ FIX: overflow-y-auto with a calculated height instead of flex-1 ScrollArea */}
+        <div className="overflow-y-auto flex-1 px-4 py-2">
           {formContent}
-        </ScrollArea>
-        
+        </div>
+
         <DrawerFooter className="border-t pt-3 pb-4 px-4 flex-shrink-0">
           <div className="flex flex-col gap-2">
             <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 w-full">
