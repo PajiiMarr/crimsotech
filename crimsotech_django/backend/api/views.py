@@ -7997,7 +7997,7 @@ class AdminUsers(viewsets.ViewSet):
                 Q(city__isnull=True) | Q(city='')
             ).values('city').annotate(
                 count=Count('id')
-            ).order_by('-count')[:6]  # Top 6 cities
+            ).order_by('-count')[:6]
             
             total_with_location = sum(item['count'] for item in location_distribution)
             
@@ -8046,7 +8046,6 @@ class AdminUsers(viewsets.ViewSet):
     def users_list(self, request):
         """Get paginated list of users with related data"""
         try:
-            
             # Get query parameters
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
@@ -8108,7 +8107,6 @@ class AdminUsers(viewsets.ViewSet):
                     'id': str(user.id),
                     'username': user.username,
                     'email': user.email,
-                    'password': user.password,  # Included but should be handled securely in production
                     'first_name': user.first_name,
                     'last_name': user.last_name,
                     'middle_name': user.middle_name,
@@ -8139,14 +8137,14 @@ class AdminUsers(viewsets.ViewSet):
                 }
                 
                 # Add customer data if exists
-                if hasattr(user, 'customer'):
+                if hasattr(user, 'customer') and user.customer:
                     user_data['customer_data'] = {
                         'product_limit': user.customer.product_limit,
                         'current_product_count': user.customer.current_product_count
                     }
                 
                 # Add rider data if exists
-                if hasattr(user, 'rider'):
+                if hasattr(user, 'rider') and user.rider:
                     user_data['rider_data'] = {
                         'vehicle_type': user.rider.vehicle_type,
                         'plate_number': user.rider.plate_number,
@@ -8154,18 +8152,6 @@ class AdminUsers(viewsets.ViewSet):
                         'vehicle_model': user.rider.vehicle_model,
                         'license_number': user.rider.license_number,
                         'verified': user.rider.verified
-                    }
-                
-                # Add moderator data if exists
-                if hasattr(user, 'moderator'):
-                    user_data['moderator_data'] = {
-                        # Add moderator specific fields if needed
-                    }
-                
-                # Add admin data if exists
-                if hasattr(user, 'admin'):
-                    user_data['admin_data'] = {
-                        # Add admin specific fields if needed
                     }
                 
                 users_data.append(user_data)
@@ -8203,7 +8189,8 @@ class AdminUsers(viewsets.ViewSet):
             5: 'Complete'
         }
         return stages.get(stage, f'Stage {stage}')
-
+    
+    
 class AdminTeam(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_team_metrics(self, request):
