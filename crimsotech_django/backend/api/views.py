@@ -32267,3 +32267,202 @@ class HomeBoosts(viewsets.ViewSet):
                 'success': False,
                 'message': str(e)
             }, status=500)
+
+
+
+
+class RiderProofViewSet(viewsets.ViewSet):
+    """
+    ViewSet for riders to upload proof of delivery
+    """
+    
+    def _get_rider(self, request):
+        """Get rider instance from user ID in headers"""
+        try:
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return None
+            
+            # Try to find the rider by user ID
+            return Rider.objects.get(rider_id=user_id)
+        except (Rider.DoesNotExist, ValueError):
+            return None
+    
+    @action(detail=False, methods=['get'], url_path='delivery/(?P<delivery_id>[^/.]+)/proofs')
+    def get_delivery_proofs(self, request, delivery_id=None):
+        """
+        Get all proofs for a specific delivery
+        
+        Parameters:
+        - delivery_id: UUID of the delivery (in URL)
+        
+        Returns:
+        - List of proofs for the delivery
+        """
+        # Get the authenticated rider
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found or unauthorized"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Validate delivery_id
+        try:
+            delivery_uuid = uuid.UUID(delivery_id)
+        except (ValueError, AttributeError):
+            return Response(
+                {"success": False, "error": "Invalid delivery ID format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the delivery and verify it belongs to this rider
+        delivery = get_object_or_404(
+            Delivery,
+            id=delivery_uuid,
+            rider=rider
+        )
+        
+        # Get all proofs for this delivery, ordered by upload time (newest first)
+        proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+        
+        # Prepare response (make URLs absolute if needed)
+        proofs_data = []
+        for proof in proofs:
+            file_url = None
+            if proof.file_data:
+                file_url = proof.file_data.url
+                # if url is relative (doesn't start with http), convert to absolute
+                if file_url and not file_url.lower().startswith('http'):
+                    # ensure it begins with '/'
+                    if not file_url.startswith('/'):
+                        file_url = '/' + file_url
+                    file_url = request.build_absolute_uri(file_url)
+            proofs_data.append({
+                "id": str(proof.id),
+                "delivery_id": str(proof.delivery.id),
+                "order_id": str(proof.delivery.order.order) if proof.delivery.order else None,
+                "proof_type": proof.proof_type,
+                "proof_type_display": proof.get_proof_type_display(),
+                "file_url": file_url,
+                "file_type": proof.file_type,
+                "uploaded_at": proof.uploaded_at,
+                "file_name": os.path.basename(proof.file_data.name) if proof.file_data else None,
+                "file_size": proof.file_data.size if proof.file_data else 0
+            })
+        
+        return Response({
+            "success": True,
+            "delivery_id": str(delivery.id),
+            "total_proofs": len(proofs_data),
+            "proofs": proofs_data
+        }, status=status.HTTP_200_OK)
+
+
+    @action(detail=False, methods=['post'], url_path='upload/(?P<delivery_id>[^/.]+)')
+    def upload_proof(self, request, delivery_id=None):
+        """
+        Upload proof of delivery for a specific delivery
+        
+        Parameters:
+        - delivery_id: UUID of the delivery (in URL)
+        - proof_type: Type of proof ('delivery', 'seller', 'pickup') (in form data)
+        - file: The proof file to upload (in form data)
+        
+        Returns:
+        - Proof details including file URL
+        """
+        # Get the authenticated rider
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found or unauthorized"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Validate delivery_id
+        try:
+            delivery_uuid = uuid.UUID(delivery_id)
+        except (ValueError, AttributeError):
+            return Response(
+                {"success": False, "error": "Invalid delivery ID format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the delivery and verify it belongs to this rider
+        delivery = get_object_or_404(
+            Delivery.objects.select_related('order'),
+            id=delivery_uuid,
+            rider=rider  # Ensure the delivery is assigned to this rider
+        )
+        
+        # Validate proof_type
+        proof_type = request.data.get('proof_type')
+        if not proof_type:
+            return Response(
+                {"success": False, "error": "proof_type is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if proof_type not in dict(Proof.PROOF_TYPE_CHOICES):
+            valid_types = ', '.join(dict(Proof.PROOF_TYPE_CHOICES).keys())
+            return Response(
+                {"success": False, "error": f"Invalid proof_type. Must be one of: {valid_types}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate file
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response(
+                {"success": False, "error": "file is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Optional: Validate file size (e.g., max 10MB)
+        max_size = 10 * 1024 * 1024  # 10MB
+        if file_obj.size > max_size:
+            return Response(
+                {"success": False, "error": "File size too large. Maximum size is 10MB."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Optional: Validate file type
+        allowed_extensions = ['.jpg', '.jpeg', '.png', '.pdf', '.heic', '.heif']
+        file_extension = os.path.splitext(file_obj.name)[1].lower()
+        if file_extension not in allowed_extensions:
+            return Response(
+                {"success": False, "error": f"Invalid file type. Allowed types: {', '.join(allowed_extensions)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get file type from extension
+        file_type = file_extension[1:] if file_extension else 'unknown'
+        
+        # Create proof record
+        proof = Proof.objects.create(
+            delivery=delivery,
+            proof_type=proof_type,
+            file_data=file_obj,
+            file_type=file_type
+        )
+        
+        # Prepare response with proof details
+        proof_data = {
+            "success": True,
+            "message": "Proof of delivery uploaded successfully",
+            "proof": {
+                "id": str(proof.id),
+                "delivery_id": str(delivery.id),
+                "order_id": str(delivery.order.order) if delivery.order else None,
+                "proof_type": proof.proof_type,
+                "proof_type_display": proof.get_proof_type_display(),
+                "file_url": proof.file_data.url if proof.file_data else None,
+                "file_type": proof.file_type,
+                "uploaded_at": proof.uploaded_at,
+                "file_name": os.path.basename(proof.file_data.name) if proof.file_data else None,
+                "file_size": proof.file_data.size if proof.file_data else 0
+            }
+        }
+        
+        return Response(proof_data, status=status.HTTP_201_CREATED)

@@ -67,6 +67,7 @@ router.register(r'rider-dashboard', RiderDashboardViewSet, basename='rider-dashb
 router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-history')
 router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')
 router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')
+router.register(r'rider-proof', RiderProofViewSet, basename='rider-proof')
 
 urlpatterns = [
     path('admin/', admin.site.urls),

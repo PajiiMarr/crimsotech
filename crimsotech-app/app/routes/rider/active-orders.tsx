@@ -8,7 +8,7 @@ import {
 import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
 import { Skeleton } from '~/components/ui/skeleton';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { 
   Package,
   Clock,
@@ -344,6 +344,10 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
         setSelectedDelivery(null);
         setActionType(null);
         alert(`Order ${actionType === 'pickup' ? 'picked up' : 'delivered'} successfully!`);
+        // if delivery just marked, redirect to history page
+        if (actionType === 'deliver') {
+          navigate('/rider/orders/history');
+        }
       } else {
         // Show server-provided message when available
         alert(response.data.error || `Failed to ${actionType} order`);
@@ -356,6 +360,8 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
       setIsActionLoading(false);
     }
   };
+
+  const navigate = useNavigate();
 
   // Handle pickup action
   const handlePickupClick = (delivery: Delivery) => {
