@@ -863,6 +863,8 @@ class RiderRegistration(viewsets.ViewSet):
             vehicle_brand = request.data.get('vehicle_brand', '').strip()
             vehicle_model = request.data.get('vehicle_model', '').strip()
             license_number = request.data.get('license_number', '').strip()
+            
+            # Get files from request
             vehicle_image = request.FILES.get('vehicle_image')
             license_image = request.FILES.get('license_image')
             
@@ -919,37 +921,54 @@ class RiderRegistration(viewsets.ViewSet):
                 user.delete()
                 return Response({"errors": errors}, status=400)
             
-            # Create rider data
-            rider_data = {
-                'rider': user.id,  # Changed from rider_id to user
-                'vehicle_type': vehicle_type,
-                'plate_number': plate_number,
-                'vehicle_brand': vehicle_brand,
-                'vehicle_model': vehicle_model,
-                'license_number': license_number,
-                'verified': False,
-                'vehicle_image': vehicle_image,
-                'license_image': license_image
-            }
+            # Create rider instance
+            rider = Rider(
+                rider=user,
+                vehicle_type=vehicle_type,
+                plate_number=plate_number,
+                vehicle_brand=vehicle_brand,
+                vehicle_model=vehicle_model,
+                license_number=license_number,
+                verified=False
+            )
             
-            rider_serializer = RiderSerializer(data=rider_data)
-            if rider_serializer.is_valid():
-                rider = rider_serializer.save()
-                
-                return Response({
-                    "message": "Rider registration completed successfully",
-                    "user_id": str(user.id),  # Changed from user.user_id to user.id
-                    "rider_id": str(rider.rider),  # Changed from rider.rider_id to rider.user.id
-                    "registration_stage": user.registration_stage,
-                    "status": "pending_verification"
-                })
-            else:
-                # Delete the created user if rider creation fails
-                user.delete()
-                return Response({"errors": rider_serializer.errors}, status=400)
+            # Handle file uploads - this will use the S3 storage configured in settings
+            if vehicle_image:
+                # Reset file pointer to beginning
+                vehicle_image.seek(0)
+                # Save directly to the model field - this triggers the S3 upload
+                rider.vehicle_image.save(
+                    vehicle_image.name,
+                    vehicle_image,
+                    save=False  # Don't save yet, we'll save after both files are set
+                )
+            
+            if license_image:
+                # Reset file pointer to beginning
+                license_image.seek(0)
+                # Save directly to the model field - this triggers the S3 upload
+                rider.license_image.save(
+                    license_image.name,
+                    license_image,
+                    save=False  # Don't save yet
+                )
+            
+            # Save the rider instance with all fields including the image fields
+            rider.save()
+            
+            return Response({
+                "message": "Rider registration completed successfully",
+                "user_id": str(user.id),
+                "rider_id": str(rider.rider_id),  # This is the user.id since it's OneToOne
+                "registration_stage": user.registration_stage,
+                "status": "pending_verification",
+                "vehicle_image_url": rider.vehicle_image.url if rider.vehicle_image else None,
+                "license_image_url": rider.license_image.url if rider.license_image else None
+            }, status=status.HTTP_201_CREATED)
                 
         except Exception as e:
             # Clean up: delete user if any error occurs
+            logger.error(f"Rider registration failed: {str(e)}", exc_info=True)
             if 'user' in locals():
                 user.delete()
             return Response({"error": f"Registration failed: {str(e)}"}, status=500)
@@ -958,8 +977,12 @@ class RiderRegistration(viewsets.ViewSet):
         """Helper method to hash image files for verification"""
         if not image_file:
             return None
-        return hashlib.sha256(image_file.read()).hexdigest()
-    
+        # Reset file pointer before reading
+        image_file.seek(0)
+        file_hash = hashlib.sha256(image_file.read()).hexdigest()
+        # Reset file pointer after reading so it can be used again
+        image_file.seek(0)
+        return file_hash
 
 
 class AdminDashboard(viewsets.ViewSet):
