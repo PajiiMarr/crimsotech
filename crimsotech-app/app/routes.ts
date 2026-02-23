@@ -137,6 +137,7 @@ export default [
             route('pendings', 'routes/rider/pendings.tsx'),
             route('orders/active', 'routes/rider/active-orders.tsx'),
             route('delivery/:deliveryId/add-delivery-media', 'routes/rider/add-delivery-media.tsx'),
+            route('delivery/:deliveryId/add-proof', 'routes/rider/add-proof.tsx'),
             route('orders/active/:orderId', 'routes/rider/active-orders/active-orders-details.tsx'),
             route('orders/history', 'routes/rider/history.tsx'),
             route('schedule', 'routes/rider/schedule.tsx'),
