@@ -10,21 +10,6 @@ import {
 } from '~/components/ui/card';
 import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-  LineChart,
-  Line,
-  CartesianGrid,
-} from 'recharts';
 import { 
   Users as UsersIcon,
   UserPlus,
@@ -60,7 +45,6 @@ interface UserData {
   id: string;
   username: string | null;
   email: string | null;
-  password: string | null;
   first_name: string;
   last_name: string;
   middle_name: string;
@@ -115,28 +99,6 @@ interface LoaderData {
     most_common_city: string;
   } | null;
   users: UserData[];
-  analytics: {
-    role_distribution: Array<{
-      role: string;
-      count: number;
-      percentage: number;
-    }>;
-    registration_trend: Array<{
-      month: string;
-      new_users: number;
-      full_month: string;
-    }>;
-    location_distribution: Array<{
-      city: string;
-      count: number;
-      percentage: number;
-    }>;
-    registration_stage_distribution: Array<{
-      stage: string;
-      count: number;
-      percentage: number;
-    }>;
-  } | null;
 }
 
 // Helper functions for computed fields (not stored in database)
@@ -215,26 +177,6 @@ const getRegistrationStageLabel = (user: UserData): string => {
   }
 };
 
-// Helper to get registration stage for analytics (simplified view)
-const getSimplifiedRegistrationStage = (user: UserData): string => {
-  const stage = user.registration_stage;
-  
-  if (user.is_rider || user.is_customer) {
-    // For riders and customers, map to simplified stages
-    if (stage === 4) return 'Completed';
-    if (stage === 3 && user.is_rider) return 'OTP';
-    if (stage === 2) return 'Profiling';
-    if (stage === 1 || stage === null) return 'Signing Up';
-    return 'In Progress';
-  }
-  
-  // For other users
-  if (stage === 5) return 'Completed';
-  if (stage && stage >= 3) return 'Verification';
-  if (stage && stage >= 2) return 'Basic Info';
-  return 'Not Started';
-};
-
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
   await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
@@ -254,15 +196,11 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
   let userMetrics = null;
   let usersList: UserData[] = [];
-  let analyticsData = null;
 
   try {
     // Fetch from backend endpoints
-    const [metricsResponse, analyticsResponse, usersResponse] = await Promise.all([
+    const [metricsResponse, usersResponse] = await Promise.all([
       AxiosInstance.get('/admin-users/get_metrics/', {
-        headers: { "X-User-Id": session.get("userId") }
-      }),
-      AxiosInstance.get('/admin-users/get_analytics/', {
         headers: { "X-User-Id": session.get("userId") }
       }),
       AxiosInstance.get('/admin-users/users_list/', {
@@ -275,10 +213,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       userMetrics = metricsResponse.data;
     }
 
-    if (analyticsResponse?.data) {
-      analyticsData = analyticsResponse.data;
-    }
-
     // Use actual users data if available
     if (usersResponse?.data && usersResponse.data.results && Array.isArray(usersResponse.data.results)) {
       usersList = usersResponse.data.results;
@@ -288,7 +222,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     console.error('Error fetching user data:', error);
     // Return empty data when API fails
     userMetrics = null;
-    analyticsData = null;
     usersList = [];
   }
 
@@ -296,11 +229,8 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user, 
     userMetrics,
     users: usersList,
-    analytics: analyticsData
   };
 }
-
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 // Empty state components
 const EmptyMetricsCard = ({ title, description }: { title: string; description: string }) => (
@@ -320,36 +250,23 @@ const EmptyMetricsCard = ({ title, description }: { title: string; description: 
   </Card>
 );
 
-const EmptyChart = ({ title, description }: { title: string; description: string }) => (
-  <Card>
-    <CardHeader className="pb-3">
-      <CardTitle className="text-lg sm:text-xl">{title}</CardTitle>
-      <CardDescription>{description}</CardDescription>
-    </CardHeader>
-    <CardContent>
-      <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-        <AlertCircle className="w-12 h-12 mb-4 text-gray-300" />
-        <p className="text-center">No data available</p>
-        <p className="text-sm text-center mt-1">Data will appear when API returns results</p>
-      </div>
-    </CardContent>
-  </Card>
-);
-
-// Safe filter options generator - returns string arrays for DataTable compatibility
-const getFilterOptions = (users: UserData[]) => {
+// Filter options generator - returns the correct shape for DataTable
+const getFilterConfig = (users: UserData[]) => {
+  // Get unique user types
   const userTypeOptions = Array.from(new Set(users.map(user => getUserPrimaryType(user))))
     .filter(type => type && type.trim() !== '')
     .map(type => type);
 
+  // Get unique statuses
   const statusOptions = Array.from(new Set(users.map(user => getUserStatus(user))))
     .filter(status => status && status.trim() !== '')
     .map(status => status.charAt(0).toUpperCase() + status.slice(1));
 
+  // Get unique cities
   const cityOptions = Array.from(new Set(users.map(user => user.city).filter((v): v is string => !!v && v.trim() !== '')))
     .map(city => city);
 
-  // Registration stage options based on actual stages in data
+  // Get unique registration stages
   const stageOptions = Array.from(new Set(users.map(user => getRegistrationStageLabel(user))))
     .filter(stage => stage && stage.trim() !== '')
     .map(stage => stage);
@@ -375,7 +292,7 @@ const getFilterOptions = (users: UserData[]) => {
 };
 
 export default function Users({ loaderData }: { loaderData: LoaderData }) {
-  const { user, userMetrics, users, analytics } = loaderData;
+  const { user, userMetrics, users } = loaderData;
 
   if (!loaderData) {
     return (
@@ -387,10 +304,9 @@ export default function Users({ loaderData }: { loaderData: LoaderData }) {
 
   const safeUsers = users || [];
   const hasMetrics = userMetrics !== null;
-  const hasAnalytics = analytics !== null;
 
-  // Use safe filter configuration that prevents empty string values
-  const userFilterConfig = getFilterOptions(safeUsers);
+  // Get filter configuration
+  const filterConfig = getFilterConfig(safeUsers);
 
   return (
     <UserProvider user={user}>
@@ -495,197 +411,6 @@ export default function Users({ loaderData }: { loaderData: LoaderData }) {
             )}
           </div>
 
-          {/* Role Breakdown */}
-          {hasAnalytics && analytics.role_distribution.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-              {analytics.role_distribution.map((item) => (
-                <Card key={item.role} className="text-center">
-                  <CardContent className="p-3">
-                    <p className="text-lg font-bold">{item.count}</p>
-                    <p className="text-xs text-muted-foreground">{item.role}</p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex flex-col items-center justify-center text-muted-foreground">
-                  <AlertCircle className="w-8 h-8 mb-2 text-gray-300" />
-                  <p className="text-center">No role distribution data available</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Analytics Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            {/* Role Distribution */}
-            {hasAnalytics && analytics.role_distribution.length > 0 ? (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg sm:text-xl">Role Distribution</CardTitle>
-                  <CardDescription>Breakdown of users by role and type</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <PieChart>
-                      <Pie
-                        data={analytics.role_distribution.filter(item => item.count > 0)}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={({ role, percentage }: any) => `${role} (${Math.round(percentage)}%)`}
-                        outerRadius={80}
-                        fill="#8884d8"
-                        dataKey="count"
-                      >
-                        {analytics.role_distribution.filter(item => item.count > 0).map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            ) : (
-              <EmptyChart 
-                title="Role Distribution"
-                description="Breakdown of users by role and type"
-              />
-            )}
-
-            {/* Registration Trend */}
-            {hasAnalytics && analytics.registration_trend.length > 0 ? (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg sm:text-xl">Registration Trend</CardTitle>
-                  <CardDescription>Monthly user registration growth</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <LineChart
-                      data={analytics.registration_trend}
-                      margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis 
-                        dataKey="month" 
-                        fontSize={12}
-                        tick={{ fontSize: 11 }}
-                      />
-                      <YAxis fontSize={12} />
-                      <Tooltip 
-                        labelFormatter={(label, payload) => {
-                          if (payload && payload[0]) {
-                            return payload[0].payload.full_month || label;
-                          }
-                          return label;
-                        }}
-                      />
-                      <Legend />
-                      <Line 
-                        type="monotone" 
-                        dataKey="new_users" 
-                        stroke="#3b82f6" 
-                        strokeWidth={2}
-                        name="New Users"
-                        dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            ) : (
-              <EmptyChart 
-                title="Registration Trend"
-                description="Monthly user registration growth"
-              />
-            )}
-          </div>
-
-          {/* Additional Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            {/* Location Distribution */}
-            {hasAnalytics && analytics.location_distribution.length > 0 ? (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg sm:text-xl">Location Distribution</CardTitle>
-                  <CardDescription>User distribution across major cities</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart 
-                      data={analytics.location_distribution.slice(0, 6)} 
-                      margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis 
-                        dataKey="city" 
-                        fontSize={12}
-                        angle={-45}
-                        textAnchor="end"
-                        height={80}
-                      />
-                      <YAxis fontSize={12} />
-                      <Tooltip />
-                      <Bar 
-                        dataKey="count" 
-                        name="Users"
-                        fill="#8b5cf6" 
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            ) : (
-              <EmptyChart 
-                title="Location Distribution"
-                description="User distribution across major cities"
-              />
-            )}
-
-            {/* Registration Stage Distribution */}
-            {hasAnalytics && analytics.registration_stage_distribution.length > 0 ? (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg sm:text-xl">Registration Progress</CardTitle>
-                  <CardDescription>User distribution by registration stage</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart 
-                      data={analytics.registration_stage_distribution} 
-                      margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis 
-                        dataKey="stage" 
-                        fontSize={12}
-                      />
-                      <YAxis fontSize={12} />
-                      <Tooltip />
-                      <Bar 
-                        dataKey="count" 
-                        name="Users"
-                        fill="#f59e0b" 
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            ) : (
-              <EmptyChart 
-                title="Registration Progress"
-                description="User distribution by registration stage"
-              />
-            )}
-          </div>
-
           {/* Users Table */}
           <Card>
             <CardHeader className="pb-3">
@@ -698,7 +423,7 @@ export default function Users({ loaderData }: { loaderData: LoaderData }) {
                   <DataTable 
                     columns={columns} 
                     data={safeUsers}
-                    filterConfig={userFilterConfig}
+                    filterConfig={filterConfig}
                     searchConfig={{
                       column: "username",
                       placeholder: "Search by username, email, or name..."
@@ -737,7 +462,7 @@ const columns: ColumnDef<UserData>[] = [
         </Button>
       )
     },
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="flex items-center gap-2">
         <User className="w-4 h-4 text-muted-foreground" />
         <div className="font-medium text-xs sm:text-sm">
@@ -751,7 +476,7 @@ const columns: ColumnDef<UserData>[] = [
   {
     id: "full_name",
     header: "Full Name",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="text-xs sm:text-sm">
         {getFullName(row.original) || (
           <span className="text-muted-foreground italic">No name</span>
@@ -762,7 +487,7 @@ const columns: ColumnDef<UserData>[] = [
   {
     accessorKey: "email",
     header: "Email",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
         <Mail className="w-3 h-3 text-muted-foreground" />
         {row.original.email || (
@@ -773,8 +498,9 @@ const columns: ColumnDef<UserData>[] = [
   },
   {
     id: "user_type",
+    accessorFn: (row) => getUserPrimaryType(row),
     header: "Primary Role",
-    cell: ({ row }: { row: any}) => {
+    cell: ({ row }) => {
       const userType = getUserPrimaryType(row.original);
       const getTypeConfig = (type: string) => {
         const configs = {
@@ -804,8 +530,9 @@ const columns: ColumnDef<UserData>[] = [
   },
   {
     id: "status",
+    accessorFn: (row) => getUserStatus(row),
     header: "Status",
-    cell: ({ row }: { row: any}) => {
+    cell: ({ row }) => {
       const status = getUserStatus(row.original);
       return (
         <Badge 
@@ -824,8 +551,9 @@ const columns: ColumnDef<UserData>[] = [
   },
   {
     id: "registration_stage",
+    accessorFn: (row) => getRegistrationStageLabel(row),
     header: "Reg Stage",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="text-xs sm:text-sm text-center">
         <Badge variant="outline" className="text-xs">
           {getRegistrationStageLabel(row.original)}
@@ -836,7 +564,7 @@ const columns: ColumnDef<UserData>[] = [
   {
     accessorKey: "city",
     header: "Location",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
         <MapPin className="w-3 h-3 text-muted-foreground" />
         {row.original.city || (
@@ -848,7 +576,7 @@ const columns: ColumnDef<UserData>[] = [
   {
     accessorKey: "contact_number",
     header: "Contact",
-    cell: ({ row }: { row: any}) => (
+    cell: ({ row }) => (
       <div className="flex items-center gap-1 text-xs sm:text-sm">
         <Phone className="w-3 h-3 text-muted-foreground" />
         {row.original.contact_number || (
@@ -871,7 +599,7 @@ const columns: ColumnDef<UserData>[] = [
         </Button>
       )
     },
-    cell: ({ row }: { row: any}) => {
+    cell: ({ row }) => {
       const date = new Date(row.getValue("created_at"));
       const formattedDate = date.toLocaleDateString('en-US', {
         year: 'numeric',
