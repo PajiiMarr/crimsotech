@@ -8389,6 +8389,7 @@ class AdminTeam(viewsets.ViewSet):
                 {'error': f'Error fetching team list: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 class AdminReports(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
@@ -8398,9 +8399,6 @@ class AdminReports(viewsets.ViewSet):
             total_reports = Report.objects.count()
             pending_reports = Report.objects.filter(status='pending').count()
             under_review_reports = Report.objects.filter(status='under_review').count()
-            resolved_reports = Report.objects.filter(status='resolved').count()
-            dismissed_reports = Report.objects.filter(status='dismissed').count()
-            action_taken_reports = Report.objects.filter(status='action_taken').count()
             
             # Calculate reports by type
             accounts_reported = Report.objects.filter(report_type='account').count()
@@ -8444,101 +8442,14 @@ class AdminReports(viewsets.ViewSet):
                 'accounts_reported': accounts_reported,
                 'products_reported': products_reported,
                 'shops_reported': shops_reported,
-                'detailed_status': {
-                    'pending': pending_reports,
-                    'under_review': under_review_reports,
-                    'resolved': resolved_reports,
-                    'dismissed': dismissed_reports,
-                    'action_taken': action_taken_reports,
-                }
             }
             
             return Response(metrics, status=status.HTTP_200_OK)
             
         except Exception as e:
-            print(f"Error calculating report metrics: {str(e)}")
+            logger.error(f"Error calculating report metrics: {str(e)}")
             return Response(
                 {'error': f'Error calculating report metrics: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @action(detail=False, methods=['get'])        
-    def get_analytics(self, request):
-        """Get analytics data for charts and graphs"""
-        try:
-            # Reports by type for pie chart
-            reports_by_type = Report.objects.values('report_type').annotate(
-                count=Count('id')
-            ).order_by('-count')
-            
-            total_reports = Report.objects.count()
-            reports_type_data = []
-            for item in reports_by_type:
-                percentage = round((item['count'] / total_reports) * 100) if total_reports > 0 else 0
-                reports_type_data.append({
-                    'type': item['report_type'].title(),
-                    'count': item['count'],
-                    'percentage': percentage
-                })
-
-            # Reports trend over time (last 6 months)
-            six_months_ago = timezone.now() - timedelta(days=180)
-            monthly_reports = Report.objects.filter(
-                created_at__gte=six_months_ago
-            ).extra({
-                'month': "EXTRACT(month FROM created_at)",
-                'year': "EXTRACT(year FROM created_at)"
-            }).values('month', 'year').annotate(
-                new_reports=Count('id'),
-                resolved=Count('id', filter=Q(status__in=['resolved', 'action_taken'])),
-                pending=Count('id', filter=Q(status__in=['pending', 'under_review']))
-            ).order_by('year', 'month')
-            
-            month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-            reports_trend_data = []
-            for item in monthly_reports:
-                month_name = month_names[int(item['month']) - 1]
-                full_month = f"{month_name} {int(item['year'])}"
-                reports_trend_data.append({
-                    'date': month_name,
-                    'full_month': full_month,
-                    'new_reports': item['new_reports'],
-                    'resolved': item['resolved'],
-                    'pending': item['pending']
-                })
-
-            # Top reporting reasons
-            top_reasons = Report.objects.values('reason').annotate(
-                count=Count('id')
-            ).order_by('-count')[:10]
-            
-            top_reasons_data = []
-            for item in top_reasons:
-                # Get the most common type for this reason
-                common_type = Report.objects.filter(reason=item['reason']).values(
-                    'report_type'
-                ).annotate(
-                    type_count=Count('id')
-                ).order_by('-type_count').first()
-                
-                top_reasons_data.append({
-                    'reason': item['reason'].replace('_', ' ').title(),
-                    'count': item['count'],
-                    'type': common_type['report_type'].title() if common_type else 'All'
-                })
-
-            analytics = {
-                'reports_by_type': reports_type_data,
-                'reports_trend': reports_trend_data,
-                'top_reasons': top_reasons_data,
-            }
-            
-            return Response(analytics, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            print(f"Error generating analytics: {str(e)}")
-            return Response(
-                {'error': f'Error generating analytics: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -8560,7 +8471,7 @@ class AdminReports(viewsets.ViewSet):
                 'reported_product',
                 'reported_shop',
                 'assigned_moderator'
-            ).prefetch_related('media', 'action', 'comments').all()
+            ).all()
             
             # Apply filters
             if report_type and report_type != 'all':
@@ -8596,55 +8507,47 @@ class AdminReports(viewsets.ViewSet):
                     'reason': report.reason,
                     'description': report.description,
                     'status': report.status,
-                    'reporter_username': report.reporter.username if report.reporter else 'Unknown',
+                    'reporter_username': report.reporter.username if report.reporter else 'Anonymous',
                     'created_at': report.created_at.isoformat(),
                     'updated_at': report.updated_at.isoformat(),
-                    'resolved_at': report.resolved_at.isoformat() if report.resolved_at else None,
                     'assigned_moderator': report.assigned_moderator.username if report.assigned_moderator else None,
                 }
                 
                 # Add type-specific data
                 if report.report_type == 'account' and report.reported_account:
-                    report_data.update({
-                        'reported_object': {
-                            'id': str(report.reported_account.id),
-                            'username': report.reported_account.username,
-                            'email': report.reported_account.email,
-                            'user_type': self._get_user_type(report.reported_account),
-                            'is_suspended': report.reported_account.is_suspended,
-                            'warning_count': report.reported_account.warning_count,
-                        }
-                    })
+                    report_data['reported_object'] = {
+                        'id': str(report.reported_account.id),
+                        'username': report.reported_account.username,
+                        'email': report.reported_account.email,
+                        'user_type': self._get_user_type(report.reported_account),
+                        'is_suspended': report.reported_account.is_suspended,
+                        'warning_count': report.reported_account.warning_count,
+                        'first_name': report.reported_account.first_name,
+                        'last_name': report.reported_account.last_name,
+                        'active_report_count': self._get_active_report_count(report.reported_account),
+                    }
                 elif report.report_type == 'product' and report.reported_product:
-                    report_data.update({
-                        'reported_object': {
-                            'id': str(report.reported_product.id),
-                            'name': report.reported_product.name,
-                            'price': float(report.reported_product.price),
-                            'shop_name': report.reported_product.shop.name if report.reported_product.shop else 'No Shop',
-                            'is_removed': report.reported_product.is_removed,
-                            'category': report.reported_product.category.name if report.reported_product.category else 'Uncategorized',
-                        }
-                    })
+                    report_data['reported_object'] = {
+                        'id': str(report.reported_product.id),
+                        'name': report.reported_product.name,
+                        'price': float(report.reported_product.price) if report.reported_product.price else 0,
+                        'shop_name': report.reported_product.shop.name if report.reported_product.shop else 'No Shop',
+                        'is_removed': report.reported_product.is_removed,
+                        'removal_reason': report.reported_product.removal_reason,
+                        'category': report.reported_product.category.name if report.reported_product.category else 'Uncategorized',
+                        'description': report.reported_product.description,
+                        'active_report_count': self._get_active_report_count(report.reported_product),
+                    }
                 elif report.report_type == 'shop' and report.reported_shop:
-                    report_data.update({
-                        'reported_object': {
-                            'id': str(report.reported_shop.id),
-                            'name': report.reported_shop.name,
-                            'owner': report.reported_shop.customer.customer.username if report.reported_shop.customer else 'Unknown',
-                            'is_suspended': report.reported_shop.is_suspended,
-                            'total_products': report.reported_shop.products.count(),
-                            'verified': report.reported_shop.verified,
-                        }
-                    })
-                
-                # Add action data if exists
-                if hasattr(report, 'action'):
-                    report_data['action'] = {
-                        'action_type': report.action.action_type,
-                        'description': report.action.description,
-                        'taken_by': report.action.taken_by.username if report.action.taken_by else None,
-                        'taken_at': report.action.taken_at.isoformat(),
+                    report_data['reported_object'] = {
+                        'id': str(report.reported_shop.id),
+                        'name': report.reported_shop.name,
+                        'owner': report.reported_shop.customer.customer.username if report.reported_shop.customer else 'Unknown',
+                        'is_suspended': report.reported_shop.is_suspended,
+                        'suspension_reason': report.reported_shop.suspension_reason,
+                        'total_products': report.reported_shop.products.count(),
+                        'verified': report.reported_shop.verified,
+                        'active_report_count': self._get_active_report_count(report.reported_shop),
                     }
                 
                 reports_data.append(report_data)
@@ -8669,7 +8572,7 @@ class AdminReports(viewsets.ViewSet):
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
-            print(f"Error fetching reports list: {str(e)}")
+            logger.error(f"Error fetching reports list: {str(e)}")
             return Response(
                 {'error': f'Error fetching reports list: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -8686,6 +8589,18 @@ class AdminReports(viewsets.ViewSet):
         elif user.is_customer:
             return 'customer'
         return 'unknown'
+    
+    def _get_active_report_count(self, obj):
+        """Helper method to get active report count for any reported object"""
+        try:
+            if hasattr(obj, 'active_report_count'):
+                return obj.active_report_count
+            if hasattr(obj, 'reports_against'):
+                return obj.reports_against.filter(status__in=['pending', 'under_review']).count()
+        except:
+            pass
+        return 0
+
 
 class ModeratorDashboard(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
