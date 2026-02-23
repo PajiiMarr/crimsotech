@@ -115,6 +115,7 @@ export default [
         route('users', 'routes/admin/users.tsx'),
         route('team', 'routes/admin/team.tsx'), 
         route('reports', 'routes/admin/reports.tsx'),
+        route('activity-log', 'routes/admin/logs.tsx'),
         route('dispute', 'routes/admin/dispute.tsx'),
         route('dispute/:disputeId', 'routes/admin/view-details.tsx'),
         
