@@ -138,6 +138,7 @@ export default function OrdersPage() {
   const statuses = [
     { id: "all", label: "All Orders" },
     { id: "pending", label: "Pending" },
+    { id: "accepted", label: "Accepted" },
     { id: "picked_up", label: "Picked Up" },
     { id: "in_progress", label: "In Progress" },
     { id: "delivered", label: "Delivered" },
@@ -178,6 +179,7 @@ export default function OrdersPage() {
           picked_at: delivery.picked_at,
           delivered_at: delivery.delivered_at,
           created_at: delivery.created_at,
+          proofs_count: delivery.proofs_count || 0,
           raw: delivery
         }));
         setOrders(formattedOrders);
@@ -212,8 +214,11 @@ export default function OrdersPage() {
 
   const handleOrderPress = (order: any) => {
     router.push({
-      pathname: "/rider/delivery-status",
-      params: { order: encodeURIComponent(JSON.stringify(order)) },
+      pathname: "/rider/delivery-details",
+      params: {
+        orderId: String(order.order_id || ""),
+        deliveryId: String(order.id || ""),
+      },
     });
   };
 
@@ -228,10 +233,21 @@ export default function OrdersPage() {
         return COLORS.info;
       case "pending":
         return COLORS.warning;
+      case "accepted":
+        return COLORS.info;
       case "picked_up":
         return COLORS.info;
       default:
         return COLORS.muted;
+    }
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    try {
+      return new Date(dateString).toLocaleString();
+    } catch {
+      return dateString;
     }
   };
 
@@ -300,6 +316,22 @@ export default function OrdersPage() {
               size={22}
               color={COLORS.muted}
             />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.navCard}
+            onPress={() => router.push("/rider/history")}
+          >
+            <View style={styles.navIconWrap}>
+              <MaterialIcons name="history" size={22} color={COLORS.primary} />
+            </View>
+            <View style={styles.navTextWrap}>
+              <Text style={styles.navTitle}>Order History</Text>
+              <Text style={styles.navSubtitle}>Completed deliveries</Text>
+            </View>
+            <MaterialIcons name="chevron-right" size={22} color={COLORS.muted} />
           </TouchableOpacity>
         </View>
 
@@ -374,8 +406,39 @@ export default function OrdersPage() {
                 {/* Card Bottom: Price and Date */}
                 <View style={styles.cardFooter}>
                   <Text style={styles.orderPrice}>{item.price}</Text>
-                  <Text style={styles.dateText}>Today, 2:30 PM</Text>
+                  <Text style={styles.dateText}>{formatDate(item.created_at)}</Text>
                 </View>
+
+                {item.status === "delivered" && (
+                  <View style={styles.proofActions}>
+                    <TouchableOpacity
+                      style={styles.proofButton}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/rider/add-delivery-media",
+                          params: { deliveryId: String(item.id) },
+                        })
+                      }
+                    >
+                      <MaterialIcons name="photo-library" size={16} color={COLORS.info} />
+                      <Text style={styles.proofButtonText}>
+                        {item.proofs_count > 0 ? "View Proofs" : "Add Proof"}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.proofButton}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/rider/add-proof",
+                          params: { deliveryId: String(item.id) },
+                        })
+                      }
+                    >
+                      <MaterialIcons name="add-a-photo" size={16} color={COLORS.info} />
+                      <Text style={styles.proofButtonText}>Add Proof (Single)</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </TouchableOpacity>
             ))
           ) : (
@@ -620,6 +683,26 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+  proofActions: {
+    marginTop: 8,
+    gap: 6,
+  },
+  proofButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: "#F8FAFC",
+  },
+  proofButtonText: {
+    fontSize: 11,
+    color: COLORS.info,
+    fontWeight: "600",
   },
   orderPrice: {
     fontSize: 13,

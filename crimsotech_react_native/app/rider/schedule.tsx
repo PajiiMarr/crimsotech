@@ -495,34 +495,11 @@ export default function SchedulePage() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
 
-      {/* Header with Online Toggle */}
+      {/* Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>My Schedule</Text>
           <Text style={styles.headerSubtitle}>Manage your availability</Text>
-        </View>
-        <View style={styles.statusContainer}>
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: online ? '#D1FAE5' : '#F3F4F6' }
-            ]}
-          >
-            <Text
-              style={[
-                styles.statusBadgeText,
-                { color: online ? '#065F46' : COLORS.muted }
-              ]}
-            >
-              {online ? 'Online' : 'Offline'}
-            </Text>
-          </View>
-          <Switch
-            value={online}
-            onValueChange={handleOnlineToggle}
-            trackColor={{ false: '#D1D5DB', true: '#86EFAC' }}
-            thumbColor={online ? '#22C55E' : '#9CA3AF'}
-          />
         </View>
       </View>
 
@@ -593,50 +570,6 @@ export default function SchedulePage() {
           />
         </View>
 
-        {/* Availability Status Section */}
-        <TouchableOpacity
-          style={styles.availabilityCard}
-          onPress={() => setShowAvailabilityModal(true)}
-        >
-          <View style={styles.availabilityHeader}>
-            <View>
-              <Text style={styles.availabilityLabel}>Current Status</Text>
-              <Text style={styles.availabilityValue}>
-                {availabilityForm.availability_status.charAt(0).toUpperCase() +
-                  availabilityForm.availability_status.slice(1)}
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.statusIndicator,
-                {
-                  backgroundColor: getStatusColors(
-                    availabilityForm.availability_status
-                  ).bg
-                }
-              ]}
-            >
-              <Text
-                style={[
-                  styles.statusIndicatorText,
-                  {
-                    color: getStatusColors(
-                      availabilityForm.availability_status
-                    ).text
-                  }
-                ]}
-              >
-                {availabilityForm.availability_status === 'available'
-                  ? '✓'
-                  : '○'}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.availabilityDesc}>
-            Accepting deliveries:{' '}
-            {availabilityForm.is_accepting_deliveries ? 'Yes' : 'No'}
-          </Text>
-        </TouchableOpacity>
       </ScrollView>
 
       {/* Availability Modal */}
