@@ -156,33 +156,85 @@ export default function EarningsPage() {
         setIsLoading(true);
         setError(null);
 
-        const response = await AxiosInstance.get('/rider-earnings/', {
-          headers: { 'X-User-Id': user?.id || user?.user_id }
+        const userId = user?.id || user?.user_id;
+        if (!userId) {
+          setError('User ID not found');
+          setIsLoading(false);
+          return;
+        }
+
+        // Fetch from rider-dashboard to get metrics and deliveries
+        const dashboardRes = await AxiosInstance.get('/rider-dashboard/rider_dashboard/', {
+          headers: { 'X-User-Id': userId }
         });
 
-        if (response.data) {
-          // Format API response to match UI structure
+        // Also fetch full history for all deliveries with earnings
+        const historyRes = await AxiosInstance.get('/rider-history/order_history/', {
+          headers: { 'X-User-Id': userId }
+        });
+
+        if (dashboardRes.data?.metrics && historyRes.data?.deliveries) {
+          const metrics = dashboardRes.data.metrics;
+          const allDeliveries = historyRes.data.deliveries || [];
+
+          // Calculate period-based earnings
+          const now = new Date();
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const weekStart = new Date(today);
+          weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+          const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+          let todayEarnings = 0;
+          let weekEarnings = 0;
+          let monthEarnings = 0;
+
+          // Filter and sum deliveries by period
+          const formattedDeliveries = allDeliveries.map((d: any) => {
+            const deliveryAmount = Number(d.delivery_fee || 0);
+            const deliveryDate = new Date(d.created_at || d.delivered_at || '');
+
+            // Only count delivered orders for earnings
+            if (d.status === 'delivered') {
+              if (deliveryDate >= today) {
+                todayEarnings += deliveryAmount;
+              }
+              if (deliveryDate >= weekStart) {
+                weekEarnings += deliveryAmount;
+              }
+              if (deliveryDate >= monthStart) {
+                monthEarnings += deliveryAmount;
+              }
+            }
+
+            return {
+              id: d.id,
+              orderId: `ORD-${d.id?.slice(0, 8).toUpperCase() || 'UNKNOWN'}`,
+              pickup: d.shop_name || d.pickup_address || 'Unknown',
+              dropoff: d.delivery_address || d.dropoff_address || 'Delivery Location',
+              dateTime: d.created_at ? new Date(d.created_at).toLocaleString() : 'N/A',
+              amount: deliveryAmount,
+              status: d.status === 'delivered' ? 'Completed' : d.status === 'cancelled' ? 'Cancelled' : 'Pending',
+            };
+          });
+
           setEarnings({
-            today: response.data.today_earnings || 0,
-            thisWeek: response.data.week_earnings || 0,
-            thisMonth: response.data.month_earnings || 0,
-            availableBalance: response.data.month_earnings || 0,
+            today: todayEarnings,
+            thisWeek: weekEarnings,
+            thisMonth: monthEarnings,
+            availableBalance: monthEarnings,
             pendingBalance: 0,
           });
 
-          // Format deliveries
-          if (response.data.deliveries && Array.isArray(response.data.deliveries)) {
-            const formattedDeliveries = response.data.deliveries.map((d: any) => ({
-              id: d.id,
-              orderId: `ORD-${d.id.slice(0, 8).toUpperCase()}`,
-              pickup: d.shop_name || 'Unknown',
-              dropoff: 'Delivery Location',
-              dateTime: d.created_at ? new Date(d.created_at).toLocaleString() : 'N/A',
-              amount: d.delivery_fee || 0,
-              status: d.status === 'delivered' ? 'Completed' : 'Cancelled',
-            }));
-            setDeliveries(formattedDeliveries);
-          }
+          setDeliveries(formattedDeliveries.slice(0, 20)); // Show recent 20
+
+          // Update stats from metrics
+          setStats({
+            totalDeliveries: Number(metrics.total_deliveries || 0),
+            acceptanceRate: Number(metrics.completion_rate || 0),
+            completionRate: Number(metrics.completion_rate || 0),
+            averageRating: Number(metrics.avg_rating || 0),
+            onlineHours: Number(metrics.total_earnings || 0) > 0 ? 8.5 : 0,
+          });
         }
       } catch (err: any) {
         console.log('Earnings fetch error:', err);

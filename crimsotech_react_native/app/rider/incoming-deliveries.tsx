@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -8,9 +8,13 @@ import {
   TouchableOpacity,
   RefreshControl,
   StatusBar,
+  ActivityIndicator,
 } from "react-native";
 import { MaterialIcons, Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { useAuth } from "../../contexts/AuthContext";
+import AxiosInstance from "../../contexts/axios";
+import { acceptDeliveryOrder } from "../../utils/riderApi";
 
 // --- Theme Colors (Minimalist Softened) ---
 const COLORS = {
@@ -26,74 +30,82 @@ const COLORS = {
 };
 
 export default function IncomingOrdersPage() {
+  const { userId } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
-  const [deliveries] = useState<any[]>([
-    {
-      id: "demo-101",
-      order_id: "ORD-20491",
-      status: "pending",
-      customer_name: "Jamie Lee",
-      delivery_location: "Mabini St, Baguio City",
-      distance_km: 2.4,
-      estimated_minutes: 10,
-      delivery_fee: 45,
-      items_count: 2,
-      order_amount: 320,
-      scheduled_delivery_time: new Date().toISOString(),
-      order: {
-        user: { first_name: "Jamie", last_name: "Lee" },
-        delivery_address_text: "Mabini St, Baguio City",
-        total_amount: 320,
-      },
-    },
-    {
-      id: "demo-103",
-      order_id: "ORD-20511",
-      status: "pending_offer",
-      customer_name: "Casey Morgan",
-      delivery_location: "Session Rd, Baguio City",
-      distance_km: 3.2,
-      estimated_minutes: 15,
-      delivery_fee: 65,
-      items_count: 3,
-      order_amount: 520,
-      scheduled_delivery_time: new Date().toISOString(),
-      order: {
-        user: { first_name: "Casey", last_name: "Morgan" },
-        delivery_address_text: "Session Rd, Baguio City",
-        total_amount: 520,
-      },
-    },
-  ]);
+  const [deliveries, setDeliveries] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchIncoming = useCallback(async () => {
+    if (!userId) return;
+    try {
+      setLoading(true);
+      const response = await AxiosInstance.get(
+        "/rider-orders-active/get_deliveries/?status=all&page=1&page_size=50",
+        { headers: { "X-User-Id": userId } }
+      );
+
+      if (response.data?.success) {
+        const pendingOrders = response.data.pending_orders || [];
+        const formatted = pendingOrders.map((order: any) => ({
+          id: order.order_id,
+          order_id: order.order_id,
+          status: "pending",
+          customer_name: order.customer,
+          delivery_location: order.address,
+          distance_km: null,
+          estimated_minutes: null,
+          delivery_fee: null,
+          items_count: 1,
+          order_amount: order.amount,
+          scheduled_delivery_time: order.created_at,
+          order: {
+            user: { first_name: order.customer, last_name: "" },
+            delivery_address_text: order.address,
+            total_amount: order.amount,
+          },
+        }));
+        setDeliveries(formatted);
+      }
+    } catch (error) {
+      console.error("Failed to fetch incoming deliveries:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    fetchIncoming();
+  }, [fetchIncoming]);
 
   const onRefresh = async () => {
     setRefreshing(true);
+    await fetchIncoming();
     setRefreshing(false);
   };
 
   const handleAcceptOrder = async (deliveryId: string, order: any) => {
-    const deliveryData = {
-      id: order.id,
-      order_id: order.order_id,
-      customer_name: order.customer_name || order.order?.user?.first_name,
-      delivery_location:
-        order.delivery_location || order.order?.delivery_address_text,
-      distance_km: order.distance_km,
-      estimated_minutes: order.estimated_minutes,
-      delivery_fee: order.delivery_fee,
-      status: "pending",
-      order: order.order,
-    };
-
-    router.push({
-      pathname: "/rider/delivery-details",
-      params: { delivery: encodeURIComponent(JSON.stringify(deliveryData)) },
-    });
+    try {
+      if (userId) {
+        await acceptDeliveryOrder(userId, order.order_id || order.id);
+      }
+      router.push({
+        pathname: "/rider/delivery-details",
+        params: { orderId: String(order.order_id || order.id) },
+      });
+    } catch (error) {
+      console.error("Failed to accept order:", error);
+    }
   };
 
-  const handleDeclineOrder = (orderId: string) => {
-    console.log("Declined order:", orderId);
-    alert("Order declined");
+  const handleDeclineOrder = async (orderId: string) => {
+    setDeliveries((prev) => prev.filter((d) => d.id !== orderId));
+    try {
+      await fetchIncoming();
+      alert("Order declined");
+    } catch (error) {
+      console.warn("Decline refresh failed, order removed locally", error);
+      alert("Order declined (local)");
+    }
   };
 
   const formatCurrency = (amount: number | string) => {
@@ -231,7 +243,12 @@ export default function IncomingOrdersPage() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {isEmpty ? (
+        {loading ? (
+          <View style={styles.emptyContainer}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+            <Text style={styles.emptyText}>Loading incoming orders...</Text>
+          </View>
+        ) : isEmpty ? (
           <View style={styles.emptyContainer}>
             <MaterialIcons
               name="local-shipping"

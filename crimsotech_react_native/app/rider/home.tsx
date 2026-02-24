@@ -14,7 +14,7 @@ import {
 import { MaterialIcons, Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
-import { getRiderDashboard } from "../../utils/riderApi";
+import { getRiderDashboard, updateRiderAvailability } from "../../utils/riderApi";
 
 // --- Theme Colors (Minimalist Softened) ---
 const COLORS = {
@@ -48,6 +48,9 @@ export default function Home() {
       setLoading(true);
       const data = await getRiderDashboard(user?.id || "");
       setDashboardData(data);
+      if (typeof data?.rider?.is_accepting_deliveries === "boolean") {
+        setAcceptingDeliveries(data.rider.is_accepting_deliveries);
+      }
     } catch (error) {
       console.error("Failed to fetch dashboard:", error);
     } finally {
@@ -81,6 +84,14 @@ export default function Home() {
   const toggleAcceptingDeliveries = async () => {
     const newStatus = !acceptingDeliveries;
     setAcceptingDeliveries(newStatus);
+    try {
+      if (user?.id) {
+        await updateRiderAvailability(user.id, newStatus, newStatus ? "available" : "offline");
+      }
+    } catch (error) {
+      console.error("Failed to update rider availability:", error);
+      setAcceptingDeliveries(!newStatus);
+    }
   };
 
   const formatCurrency = (amount: number) => {
