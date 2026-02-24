@@ -3,10 +3,11 @@ import React from "react";
 import axios from "axios";
 import { Label } from "~/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "~/components/ui/select";
+import { Input } from "~/components/ui/input";
 
-// Helper function to ensure unique keys
-const getUniqueKey = (item: any, index: number) => {
-  return `${item.code}-${index}`;
+// Helper function to ensure unique keys using code instead of index
+const getUniqueKey = (item: any) => {
+  return item.code || `${item.name}-${Math.random()}`;
 };
 
 // Define the props interface
@@ -19,104 +20,78 @@ interface AddressDropdownsProps {
 }
 
 export default function AddressDropdowns({ errors }: AddressDropdownsProps) {
-  const [provinces, setProvinces] = React.useState<any[]>([]);
-  const [cities, setCities] = React.useState<any[]>([]);
   const [barangays, setBarangays] = React.useState<any[]>([]);
-  const [selectedProvince, setSelectedProvince] = React.useState<string>("");
-  const [selectedCity, setSelectedCity] = React.useState<string>("");
   const [selectedBarangay, setSelectedBarangay] = React.useState<string>("");
-  const [isInitialLoad, setIsInitialLoad] = React.useState(true);
+  const [isLoading, setIsLoading] = React.useState(true);
 
   React.useEffect(() => {
-    const initializeDefaults = async () => {
+    const fetchBarangays = async () => {
       try {
-        const provincesRes = await axios.get("https://psgc.gitlab.io/api/provinces/");
-        const sortedProvinces = provincesRes.data.sort((a: any, b: any) =>
-          a.name.localeCompare(b.name)
-        );
-        setProvinces(sortedProvinces);
+        setIsLoading(true);
         
-        // Ensure no province is selected initially
-        setSelectedProvince("");
+        // Try to find Zamboanga City in cities-municipalities endpoint
+        const citiesMunicipalitiesRes = await axios.get("https://psgc.gitlab.io/api/cities-municipalities.json");
+        
+        // Look for Zamboanga City
+        const zamboangaCity = citiesMunicipalitiesRes.data.find(
+          (city: any) => city.name === "Zamboanga City" || city.name === "Zamboanga"
+        );
+        
+        if (zamboangaCity) {
+          // Fetch barangays using the city code
+          const barangaysRes = await axios.get(
+            `https://psgc.gitlab.io/api/cities-municipalities/${zamboangaCity.code}/barangays.json`
+          );
+          
+          // Remove duplicates by name and sort alphabetically
+          const uniqueBarangays = Array.from(
+            new Map(barangaysRes.data.map((item: any) => [item.name, item])).values()
+          );
+          
+          const sortedBarangays = uniqueBarangays.sort((a: any, b: any) =>
+            a.name.localeCompare(b.name)
+          );
+          setBarangays(sortedBarangays);
+        } else {
+          console.error("Zamboanga City not found in cities-municipalities");
+          
+          // Fallback: Try to find it in the cities endpoint
+          const citiesRes = await axios.get("https://psgc.gitlab.io/api/cities.json");
+          const zamboangaCityAlt = citiesRes.data.find(
+            (city: any) => city.name.includes("Zamboanga")
+          );
+          
+          if (zamboangaCityAlt) {
+            const barangaysRes = await axios.get(
+              `https://psgc.gitlab.io/api/cities/${zamboangaCityAlt.code}/barangays.json`
+            );
+            
+            // Remove duplicates by name
+            const uniqueBarangays = Array.from(
+              new Map(barangaysRes.data.map((item: any) => [item.name, item])).values()
+            );
+            
+            const sortedBarangays = uniqueBarangays.sort((a: any, b: any) =>
+              a.name.localeCompare(b.name)
+            );
+            setBarangays(sortedBarangays);
+          } else {
+            console.error("Zamboanga City not found in any endpoint");
+          }
+        }
       } catch (err) {
-        console.error("❌ Error initializing defaults:", err);
+        console.error("❌ Error fetching barangays:", err);
       } finally {
-        setIsInitialLoad(false);
+        setIsLoading(false);
       }
     };
 
-    initializeDefaults();
+    fetchBarangays();
   }, []);
-
-  const removeDuplicates = (array: any[], key: string) => {
-    const seen = new Set();
-    return array.filter(item => {
-      const value = item[key];
-      if (seen.has(value)) {
-        return false;
-      }
-      seen.add(value);
-      return true;
-    });
-  };
-
-  const handleProvinceChange = async (value: string) => {
-    setSelectedProvince(value);
-    
-    const province = provinces.find(p => p.name === value);
-    if (province) {
-      try {
-        const citiesRes = await axios.get(
-          `https://psgc.gitlab.io/api/provinces/${province.code}/cities-municipalities/`
-        );
-        const uniqueCities = removeDuplicates(citiesRes.data, 'name');
-        const sortedCities = uniqueCities.sort((a: any, b: any) =>
-          a.name.localeCompare(b.name)
-        );
-        setCities(sortedCities);
-        setSelectedCity("");
-        setBarangays([]);
-        setSelectedBarangay("");
-      } catch (err) {
-        console.error("Error fetching cities:", err);
-      }
-    } else {
-      // Clear cities and barangays if no province selected
-      setCities([]);
-      setSelectedCity("");
-      setBarangays([]);
-      setSelectedBarangay("");
-    }
-  };
-
-  const handleCityChange = async (value: string) => {
-    setSelectedCity(value);
-    
-    const city = cities.find(c => c.name === value);
-    if (city) {
-      try {
-        const barangaysRes = await axios.get(
-          `https://psgc.gitlab.io/api/cities-municipalities/${city.code}/barangays/`
-        );
-        const uniqueBarangays = removeDuplicates(barangaysRes.data, 'name');
-        const sortedBarangays = uniqueBarangays.sort((a: any, b: any) =>
-          a.name.localeCompare(b.name)
-        );
-        setBarangays(sortedBarangays);
-        setSelectedBarangay("");
-      } catch (err) {
-        console.error("Error fetching barangays:", err);
-      }
-    } else {
-      // Clear barangays if no city selected
-      setBarangays([]);
-      setSelectedBarangay("");
-    }
-  };
 
   return (
     <div className="grid grid-cols-1 my-2 gap-4 md:grid-cols-3">
-      {/* Province */}
+      {/* Province - Default value */}
       <div className="grid gap-3">
         <div className="flex items-center">
           <Label htmlFor="province">Province</Label>
@@ -126,28 +101,16 @@ export default function AddressDropdowns({ errors }: AddressDropdownsProps) {
             </p>
           )}
         </div>
-        <Select 
-          value={selectedProvince} 
-          onValueChange={handleProvinceChange} 
+        <Input
+          id="province"
           name="province"
-        >
-          <SelectTrigger id="province" className="w-full">
-            <SelectValue placeholder="Select province" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">
-              ...
-            </SelectItem>
-            {provinces.map((province, index) => (
-              <SelectItem key={getUniqueKey(province, index)} value={province.name}>
-                {province.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          value="Zamboanga Del Sur"
+          readOnly
+          className="bg-gray-100 cursor-not-allowed"
+        />
       </div>
 
-      {/* City / Municipality */}
+      {/* City / Municipality - Default value */}
       <div className="grid gap-3">
         <div className="flex items-center">
           <Label htmlFor="city">City / Municipality</Label>
@@ -157,29 +120,16 @@ export default function AddressDropdowns({ errors }: AddressDropdownsProps) {
             </p>
           )}
         </div>
-        <Select
-          value={selectedCity}
-          onValueChange={handleCityChange}
-          disabled={!selectedProvince}
+        <Input
+          id="city"
           name="city"
-        >
-          <SelectTrigger id="city" className="w-full">
-            <SelectValue placeholder="Select city / municipality" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">
-              ...
-            </SelectItem>
-            {cities.map((city, index) => (
-              <SelectItem key={getUniqueKey(city, index)} value={city.name}>
-                {city.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          value="Zamboanga City"
+          readOnly
+          className="bg-gray-100 cursor-not-allowed"
+        />
       </div>
 
-      {/* Barangay */}
+      {/* Barangay - Dropdown */}
       <div className="grid gap-3">
         <div className="flex items-center">
           <Label htmlFor="barangay">Barangay</Label>
@@ -192,21 +142,24 @@ export default function AddressDropdowns({ errors }: AddressDropdownsProps) {
         <Select
           value={selectedBarangay}
           onValueChange={setSelectedBarangay}
-          disabled={!selectedCity}
           name="barangay"
         >
           <SelectTrigger id="barangay" className="w-full">
-            <SelectValue placeholder="Select barangay" />
+            <SelectValue placeholder={isLoading ? "Loading barangays..." : "Select barangay"} />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="none">
               ...
             </SelectItem>
-            {barangays.map((barangay, index) => (
-              <SelectItem key={getUniqueKey(barangay, index)} value={barangay.name}>
-                {barangay.name}
-              </SelectItem>
-            ))}
+            {barangays.length > 0 ? (
+              barangays.map((barangay) => (
+                <SelectItem key={getUniqueKey(barangay)} value={barangay.name}>
+                  {barangay.name}
+                </SelectItem>
+              ))
+            ) : (
+              !isLoading && <SelectItem value="no-data" disabled>No barangays found</SelectItem>
+            )}
           </SelectContent>
         </Select>
       </div>

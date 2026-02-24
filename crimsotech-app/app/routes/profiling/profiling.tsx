@@ -230,8 +230,8 @@ export async function action ({ request }: Route.ActionArgs) {
     
     if (!profilingData.age || profilingData.age.trim() === "") {
         errors.age = "Age is required";
-    } else if (parseInt(profilingData.age) < 15) {
-        errors.age = "You must be at least 15 years old!"
+    } else if (parseInt(profilingData.age) < 18) {
+        errors.age = "You must be at least 18 years old!"
     }
     
     if (!profilingData.province || profilingData.province.trim() === "") {
