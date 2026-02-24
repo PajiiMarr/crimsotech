@@ -95,6 +95,8 @@ interface RefundDetails {
   refund_payment_status?: string | null;
   seller_response?: string | null;
   customer_note?: string | null;
+  reject_reason_code?: string | null;
+  reject_reason_details?: string | null;
   tracking_number?: string | null;
   logistic_service?: string | null;
   refund_category?: 'return_item' | 'keep_item' | null;
@@ -873,7 +875,12 @@ function SellerRejectedStatusUI({ refund }: { refund: RefundDetails }) {
         <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
         <div>
           <p className="font-medium text-red-800">Request Rejected</p>
-          <p className="text-sm text-red-700 mt-1">{refund.seller_response || 'Refund request was rejected'}</p>
+          <p className="text-sm text-red-700 mt-1">
+            {refund.reject_reason_details || refund.seller_response || 'Refund request was rejected'}
+          </p>
+          {refund.reject_reason_code && (
+            <p className="text-xs text-red-600 mt-1">Code: {refund.reject_reason_code}</p>
+          )}
         </div>
       </div>
     </div>
@@ -1974,12 +1981,14 @@ function ProofsUploadSection({
 
 // Read-only proofs display (used on Completed tab)
 function ProofsDisplaySection({ refund }: { refund: RefundDetails }) {
-  if (!(refund as any).proofs || (refund as any).proofs.length === 0) return null;
+  const standardProofs: any[] = (refund as any).proofs || [];
+  const sellerProofs: any[] = (refund as any).seller_delivery_proofs || [];
+  if (standardProofs.length === 0 && sellerProofs.length === 0) return null;
   return (
     <div className="border rounded-lg p-4 bg-white">
       <h3 className="font-medium mb-3">Uploaded Proofs</h3>
       <div className="grid grid-cols-4 gap-2">
-        {(refund as any).proofs.map((p: any) => (
+        {standardProofs.map((p: any) => (
           <div key={p.id} className="relative">
             {p.file_url && p.file_url.toLowerCase().match(/\.(jpeg|jpg|png|gif)$/) ? (
               <img src={p.file_url} className="h-24 w-24 object-cover rounded" alt={`proof-${p.id}`} />
@@ -1987,6 +1996,16 @@ function ProofsDisplaySection({ refund }: { refund: RefundDetails }) {
               <div className="h-24 w-24 flex items-center justify-center border rounded text-xs px-2">File</div>
             )}
             <div className="text-xs mt-1">{p.notes || ''}</div>
+          </div>
+        ))}
+        {sellerProofs.map((p: any) => (
+          <div key={p.id} className="relative">
+            {p.file_url && p.file_url.toLowerCase().match(/\.(jpeg|jpg|png|gif)$/) ? (
+              <img src={p.file_url} className="h-24 w-24 object-cover rounded" alt={`seller-proof-${p.id}`} />
+            ) : (
+              <div className="h-24 w-24 flex items-center justify-center border rounded text-xs px-2">File</div>
+            )}
+            <div className="text-xs mt-1">Seller proof</div>
           </div>
         ))}
       </div>
@@ -2076,7 +2095,12 @@ function RequestDetailsSection({ refund }: { refund: RefundDetails }) {
             <div>
               <h3 className="text-sm font-medium text-gray-700 mb-2">Your Response</h3>
               <div className="bg-green-50 p-3 rounded-lg border border-green-100">
-                <p className="text-sm">{refund.seller_response}</p>
+                <p className="text-sm">
+                  {refund.reject_reason_details || refund.seller_response}
+                </p>
+                {refund.reject_reason_code && (
+                  <p className="text-xs text-gray-500 mt-1">Code: {refund.reject_reason_code}</p>
+                )}
               </div>
             </div>
           )}
@@ -2301,7 +2325,7 @@ function RejectModal({
   rejectReasonCode: string;
   setRejectReasonCode: (code: string) => void;
   isProcessing: boolean;
-  handleRejectSubmit: () => Promise<void>;
+  handleRejectSubmit: (files?: File[]) => Promise<boolean>;
 }) {
   const MAX_FILES = 9;
   const REASONS = [
@@ -2460,7 +2484,15 @@ function RejectModal({
           </Button>
           <Button
             variant="destructive"
-            onClick={handleRejectSubmit}
+            onClick={async () => {
+              const ok = await handleRejectSubmit(selectedFiles);
+              if (ok) {
+                // clear the modal state on success
+                setSelectedFiles([]);
+                setPreviews([]);
+                setFileError(null);
+              }
+            }}
             disabled={!rejectReasonCode || !rejectReason.trim() || isProcessing}
           >
             {isProcessing ? 'Rejecting...' : 'Reject Request'}
@@ -3044,6 +3076,8 @@ export default function ViewRefundDetails() {
   const hasProofs = existingProofCount > 0;
   const maxProofsAllowed = 4;
   const remainingProofSlots = Math.max(0, maxProofsAllowed - existingProofCount);
+  const existingSellerProofCount = (refund && (refund as any).seller_delivery_proofs ? (refund as any).seller_delivery_proofs.length : 0);
+  const hasAnyProofs = hasProofs || existingSellerProofCount > 0;
 
   // Inline proof uploader state
   const [selectedProofFiles, setSelectedProofFiles] = useState<File[]>([]);
@@ -3445,14 +3479,14 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
     }
   };
 
-  const handleRejectSubmit = async () => {
+  const handleRejectSubmit = async (files?: File[]) => {
     if (!rejectReasonCode) {
       toast({
         title: 'Validation Error',
         description: 'Please select a reason for rejection',
         variant: 'destructive'
       });
-      return;
+      return false;
     }
 
     if (!rejectReason.trim()) {
@@ -3461,24 +3495,40 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
         description: 'Please provide a detailed reason for rejection',
         variant: 'destructive'
       });
-      return;
+      return false;
     }
 
     try {
       setIsProcessing(true);
-      const response = await fetch(apiUrlFor(`/return-refund/${refundId}/seller_respond_to_refund/`), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Id': String(user.id),
-          'X-Shop-Id': String(shopId),
-        },
-        credentials: 'include',
-        body: JSON.stringify({
+      const idToUse = refundId || effectiveRefundId || refund?.refund || refund?.id;
+      const url = apiUrlFor(`/return-refund/${encodeURIComponent(String(idToUse))}/seller_respond_to_refund/`);
+      let body: any;
+      const headers: any = {
+        'X-User-Id': String(user.id),
+        'X-Shop-Id': String(shopId),
+      };
+
+      if (files && files.length > 0) {
+        body = new FormData();
+        body.append('action', 'reject');
+        body.append('reason_code', rejectReasonCode);
+        body.append('notes', rejectReason);
+        files.forEach((f) => body.append('file_data', f));
+        // let browser set Content-Type for multipart
+      } else {
+        headers['Content-Type'] = 'application/json';
+        body = JSON.stringify({
           action: 'reject',
           reason_code: rejectReasonCode,
           notes: rejectReason,
-        }),
+        });
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body,
       });
 
       if (response.ok) {
@@ -3519,10 +3569,11 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
               console.warn('Fallback navigation failed', err);
             }
           }, 300);
-          return;
+          return true;
         } catch (e) {
           // ignore navigation errors
         }
+        return true;
       } else {
         throw new Error('Failed to reject refund');
       }
@@ -3532,6 +3583,7 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
         description: error instanceof Error ? error.message : 'Failed to reject refund',
         variant: 'destructive',
       });
+      return false;
     } finally {
       setIsProcessing(false);
     }
@@ -4482,9 +4534,12 @@ const isReturnAcceptedWaitingModerationTop = (refund?.refund_category === 'retur
                 removeSelectedFile={removeSelectedFile}
                 toast={toast}
               />
-            ) : (effectiveStatus === 'completed' ? (
-              <ProofsDisplaySection refund={refund} />
-            ) : null)} 
+            ) : (
+              // display proofs section whenever there are any proofs (including seller delivery proofs)
+              ((refund as any)?.proofs?.length || (refund as any)?.seller_delivery_proofs?.length) ? (
+                <ProofsDisplaySection refund={refund} />
+              ) : null
+            )} 
 
             {/* Collapsible Sections */}
             {!isProcessingCompactView && (

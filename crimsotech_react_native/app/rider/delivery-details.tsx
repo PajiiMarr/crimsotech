@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -15,6 +15,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { MaterialIcons, Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "../../contexts/AuthContext";
+import AxiosInstance from "../../contexts/axios";
+import {
+  getOrderDetails,
+  updateDeliveryStatus,
+} from "../../utils/riderApi";
 
 const COLORS = {
   primary: "#1F2937", // Charcoal
@@ -34,6 +39,8 @@ export default function DeliveryDetailsScreen() {
   const router = useRouter();
   const { userId } = useAuth();
   const params = useLocalSearchParams();
+  const orderIdParam = params.orderId ? String(params.orderId) : null;
+  const deliveryIdParam = params.deliveryId ? String(params.deliveryId) : null;
 
   let initialDeliveryData = null;
   try {
@@ -45,14 +52,56 @@ export default function DeliveryDetailsScreen() {
   }
 
   const [deliveryData, setDeliveryData] = useState(initialDeliveryData);
+  const [isFetching, setIsFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [deliveryProof, setDeliveryProof] = useState<string | null>(null);
+  const deliveryId = deliveryData?.id || deliveryIdParam;
+
+  useEffect(() => {
+    const fetchDetails = async () => {
+      if (!userId || !orderIdParam) return;
+      try {
+        setIsFetching(true);
+        setFetchError(null);
+        const data = await getOrderDetails(userId, orderIdParam);
+        if (data) {
+          const mapped = {
+            id: data.delivery?.id || deliveryIdParam || data.order_id || orderIdParam,
+            order_id: data.order_id || orderIdParam,
+            status: data.delivery?.status || data.order_status || "pending",
+            customer_name: data.customer?.name || "Customer",
+            delivery_location:
+              data.shipping_address?.full_address || "No address",
+            delivery_fee: null,
+            order: {
+              user: {
+                first_name: data.customer?.name || "",
+                last_name: "",
+              },
+              delivery_address_text: data.shipping_address?.full_address || "",
+              total_amount: Number(data.total_amount || 0),
+            },
+          };
+          setDeliveryData((prev: any) => ({ ...prev, ...mapped }));
+        }
+      } catch (error: any) {
+        setFetchError(error?.message || "Failed to load delivery details");
+      } finally {
+        setIsFetching(false);
+      }
+    };
+
+    fetchDetails();
+  }, [userId, orderIdParam, deliveryIdParam]);
 
   if (!deliveryData) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.center}>
-          <Text style={styles.errorText}>Delivery information not found</Text>
+          <Text style={styles.errorText}>
+            {fetchError || "Delivery information not found"}
+          </Text>
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => router.back()}
@@ -68,6 +117,8 @@ export default function DeliveryDetailsScreen() {
     switch (status) {
       case "pending":
         return COLORS.warning;
+      case "accepted":
+        return COLORS.info;
       case "picked_up":
         return COLORS.info;
       case "in_progress":
@@ -86,6 +137,8 @@ export default function DeliveryDetailsScreen() {
       case "pending":
       case "pending_offer":
         return "Pending Pickup";
+      case "accepted":
+        return "Accepted";
       case "picked_up":
         return "Picked Up";
       case "in_progress":
@@ -101,6 +154,7 @@ export default function DeliveryDetailsScreen() {
     const statuses = [
       "pending",
       "pending_offer",
+      "accepted",
       "picked_up",
       "in_progress",
       "delivered",
@@ -138,22 +192,19 @@ export default function DeliveryDetailsScreen() {
 
   const handleMarkPickup = async () => {
     try {
+      if (!deliveryId) {
+        Alert.alert("Error", "Delivery ID is missing");
+        return;
+      }
       setLoading(true);
 
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_API_URL}/rider-delivery-actions/${deliveryData.id}/mark-pickup/`,
-        {
-          method: "POST",
-          headers: {
-            "X-User-Id": userId || "",
-            "Content-Type": "application/json",
-          },
-        },
+      const data = await updateDeliveryStatus(
+        userId || "",
+        String(deliveryId),
+        "picked_up",
       );
 
-      const data = await response.json();
-
-      if (data.success) {
+      if (data?.success) {
         // Update local delivery data with new status
         setDeliveryData((prev: any) => ({
           ...prev,
@@ -193,66 +244,127 @@ export default function DeliveryDetailsScreen() {
     }
   };
 
-  const handleMarkDelivered = async () => {
-    if (!deliveryProof) {
-      Alert.alert("Photo Required", "Please take a delivery proof photo");
+  const handleMarkFailed = async () => {
+    if (!deliveryId) {
+      Alert.alert("Error", "Delivery ID is missing");
+      return;
+    }
+
+    Alert.alert(
+      "Mark Failed",
+      "This will cancel the delivery and unassign you. Continue?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setLoading(true);
+              const data = await updateDeliveryStatus(
+                userId || "",
+                String(deliveryId),
+                "cancelled",
+              );
+              if (data?.success) {
+                setDeliveryData((prev: any) => ({
+                  ...prev,
+                  status: "cancelled",
+                }));
+                Alert.alert("Delivery Cancelled", "Delivery marked as failed.");
+              } else {
+                Alert.alert("Error", data?.error || "Failed to cancel delivery");
+              }
+            } catch (error: any) {
+              Alert.alert("Error", error?.message || "Failed to cancel delivery");
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const performMarkDelivered = async () => {
+    if (!deliveryId) {
+      Alert.alert("Error", "Delivery ID is missing");
       return;
     }
 
     try {
       setLoading(true);
-      const formData = new FormData();
-      const photo = {
-        uri: deliveryProof,
-        type: "image/jpeg",
-        name: `delivery_proof_${deliveryData.id}.jpg`,
-      };
-      formData.append("delivery_proof", photo as any);
-
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_API_URL}/rider-delivery-actions/${deliveryData.id}/mark-delivered/`,
-        {
-          method: "POST",
-          headers: {
-            "X-User-Id": userId || "",
-          },
-          body: formData,
-        },
+      const data = await updateDeliveryStatus(
+        userId || "",
+        String(deliveryId),
+        "delivered",
       );
 
-      const data = await response.json();
+      if (data?.success) {
+        setDeliveryData((prev: any) => ({
+          ...prev,
+          status: "delivered",
+          delivered_at: new Date().toISOString(),
+        }));
 
-      if (data.success) {
+        if (deliveryProof) {
+          try {
+            const formData = new FormData();
+            formData.append("delivery_id", String(deliveryId));
+            formData.append("proof_type", "delivery");
+            formData.append("proofs", {
+              uri: deliveryProof,
+              type: "image/jpeg",
+              name: `delivery_proof_${deliveryId}.jpg`,
+            } as any);
+
+            await AxiosInstance.post(
+              "/proof-management/upload_proofs/",
+              formData,
+              {
+                headers: {
+                  "X-User-Id": userId || "",
+                  "Content-Type": "multipart/form-data",
+                },
+              }
+            );
+          } catch (uploadError: any) {
+            Alert.alert(
+              "Proof Upload Failed",
+              uploadError?.message || "Delivery completed, but proof failed to upload.",
+            );
+          }
+        }
+
         Alert.alert(
-          "Success",
-          `✓ Delivery completed!\nYou earned ₱${data.data.delivery_fee.toFixed(2)}`,
-          [
-            {
-              text: "OK",
-              onPress: () => router.back(),
-            },
-          ],
+          "Delivery Completed",
+          "The order has been successfully delivered.",
+          [{ text: "OK" }],
         );
       } else {
-        // Check if already delivered - sync local state
-        if (
-          data.error?.toLowerCase().includes("delivered") ||
-          data.error?.toLowerCase().includes("deliver")
-        ) {
-          Alert.alert(
-            "Already Delivered",
-            "This delivery is already marked as delivered.",
-            [{ text: "OK", onPress: () => router.back() }],
-          );
-        } else {
-          Alert.alert("Error", data.error || "Failed to mark delivery");
-        }
+        Alert.alert("Error", data?.error || "Failed to complete delivery");
       }
     } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to mark delivery");
+      Alert.alert("Error", error?.message || "Failed to complete delivery");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleMarkDelivered = async () => {
+    if (!deliveryProof) {
+      Alert.alert(
+        "No Proof Photo",
+        "Complete delivery without a proof photo? You can upload proofs later.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Continue", onPress: performMarkDelivered },
+        ],
+      );
+      return;
+    }
+
+    await performMarkDelivered();
   };
 
   const formatCurrency = (amount: number) => {
@@ -264,7 +376,6 @@ export default function DeliveryDetailsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Feather name="arrow-left" size={24} color={COLORS.secondary} />
@@ -273,23 +384,14 @@ export default function DeliveryDetailsScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-        nestedScrollEnabled
-      >
-        {/* Status Bar */}
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.statusBar}>
           <View>
+            <Text style={styles.cardLabel}>Order ID</Text>
             <Text style={styles.orderId}>
-              Order #
-              {(deliveryData.order_id || deliveryData.id || "")
-                .toString()
-                .substring(0, 12)}
+              {deliveryData.order_id || deliveryData.id}
             </Text>
-            <Text style={styles.statusLabel}>
-              {getStatusText(deliveryData.status)}
-            </Text>
+            <Text style={styles.statusLabel}>Status</Text>
           </View>
           <View
             style={[
@@ -308,7 +410,6 @@ export default function DeliveryDetailsScreen() {
           </View>
         </View>
 
-        {/* Minimal Info Section */}
         <View style={styles.infoSection}>
           <View style={styles.infoRow}>
             <Text style={styles.label}>Customer</Text>
@@ -349,14 +450,15 @@ export default function DeliveryDetailsScreen() {
           )}
         </View>
 
-        {/* Action Container */}
         {(deliveryData.status === "pending" ||
           deliveryData.status === "pending_offer" ||
+          deliveryData.status === "accepted" ||
           deliveryData.status === "picked_up" ||
           deliveryData.status === "in_progress") && (
           <View style={styles.actionContainer}>
             {(deliveryData.status === "pending" ||
-              deliveryData.status === "pending_offer") && (
+              deliveryData.status === "pending_offer" ||
+              deliveryData.status === "accepted") && (
               <View style={styles.stepSection}>
                 <View style={styles.stepBadge}>
                   <Text style={styles.stepBadgeText}>📦 PICKUP</Text>
@@ -387,12 +489,26 @@ export default function DeliveryDetailsScreen() {
                     </>
                   )}
                 </TouchableOpacity>
+
+                {deliveryData.status === "accepted" && (
+                  <TouchableOpacity
+                    style={[
+                      styles.submitButton,
+                      styles.submitButtonDanger,
+                      loading && { opacity: 0.6 },
+                    ]}
+                    onPress={handleMarkFailed}
+                    disabled={loading}
+                  >
+                    <MaterialIcons name="cancel" size={22} color="#FFFFFF" />
+                    <Text style={styles.submitButtonText}>Mark Failed</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
             {deliveryData.status === "picked_up" && (
               <View style={{ gap: 16 }}>
-                {/* Step 1: Camera */}
                 <View style={styles.stepSection}>
                   <View style={styles.stepBadge}>
                     <Text style={styles.stepBadgeText}>📸 STEP 1</Text>
@@ -428,7 +544,6 @@ export default function DeliveryDetailsScreen() {
                   </TouchableOpacity>
                 </View>
 
-                {/* Photo Preview */}
                 {deliveryProof && (
                   <View>
                     <Text style={styles.previewLabel}>📷 Photo Preview:</Text>
@@ -439,45 +554,43 @@ export default function DeliveryDetailsScreen() {
                   </View>
                 )}
 
-                {/* Step 2: Confirm */}
-                {deliveryProof && (
-                  <View style={styles.stepSection}>
-                    <View style={styles.stepBadge}>
-                      <Text style={styles.stepBadgeText}>✓ STEP 2</Text>
-                    </View>
-                    <Text style={styles.stepTitle}>Complete & Submit</Text>
-                    <Text style={styles.stepDescription}>
-                      Submit the delivery photo to complete the order
-                    </Text>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.submitButton,
-                        styles.submitButtonSuccess,
-                        loading && { opacity: 0.6 },
-                      ]}
-                      onPress={handleMarkDelivered}
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <MaterialIcons
-                            name="check-circle"
-                            size={24}
-                            color="#FFFFFF"
-                          />
-                          <Text style={styles.submitButtonText}>
-                            Complete Delivery
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
+                <View style={styles.stepSection}>
+                  <View style={styles.stepBadge}>
+                    <Text style={styles.stepBadgeText}>✓ STEP 2</Text>
                   </View>
-                )}
+                  <Text style={styles.stepTitle}>Complete & Submit</Text>
+                  <Text style={styles.stepDescription}>
+                    {deliveryProof
+                      ? "Submit the delivery photo to complete the order"
+                      : "Complete the order now. You can add proof photos later."}
+                  </Text>
 
-                {/* Waiting for Photo Message */}
+                  <TouchableOpacity
+                    style={[
+                      styles.submitButton,
+                      styles.submitButtonSuccess,
+                      loading && { opacity: 0.6 },
+                    ]}
+                    onPress={handleMarkDelivered}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <MaterialIcons
+                          name="check-circle"
+                          size={24}
+                          color="#FFFFFF"
+                        />
+                        <Text style={styles.submitButtonText}>
+                          Complete Delivery
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
                 {!deliveryProof && (
                   <View style={styles.waitingBox}>
                     <MaterialIcons
@@ -495,7 +608,6 @@ export default function DeliveryDetailsScreen() {
 
             {deliveryData.status === "in_progress" && (
               <View style={{ gap: 16 }}>
-                {/* Step 1: Camera */}
                 <View style={styles.stepSection}>
                   <View style={styles.stepBadge}>
                     <Text style={styles.stepBadgeText}>📸 STEP 1</Text>
@@ -531,7 +643,6 @@ export default function DeliveryDetailsScreen() {
                   </TouchableOpacity>
                 </View>
 
-                {/* Photo Preview */}
                 {deliveryProof && (
                   <View>
                     <Text style={styles.previewLabel}>📷 Photo Preview:</Text>
@@ -542,45 +653,43 @@ export default function DeliveryDetailsScreen() {
                   </View>
                 )}
 
-                {/* Step 2: Confirm */}
-                {deliveryProof && (
-                  <View style={styles.stepSection}>
-                    <View style={styles.stepBadge}>
-                      <Text style={styles.stepBadgeText}>✓ STEP 2</Text>
-                    </View>
-                    <Text style={styles.stepTitle}>Complete & Submit</Text>
-                    <Text style={styles.stepDescription}>
-                      Submit the delivery photo to complete the order
-                    </Text>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.submitButton,
-                        styles.submitButtonSuccess,
-                        loading && { opacity: 0.6 },
-                      ]}
-                      onPress={handleMarkDelivered}
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <MaterialIcons
-                            name="check-circle"
-                            size={24}
-                            color="#FFFFFF"
-                          />
-                          <Text style={styles.submitButtonText}>
-                            Complete Delivery
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
+                <View style={styles.stepSection}>
+                  <View style={styles.stepBadge}>
+                    <Text style={styles.stepBadgeText}>✓ STEP 2</Text>
                   </View>
-                )}
+                  <Text style={styles.stepTitle}>Complete & Submit</Text>
+                  <Text style={styles.stepDescription}>
+                    {deliveryProof
+                      ? "Submit the delivery photo to complete the order"
+                      : "Complete the order now. You can add proof photos later."}
+                  </Text>
 
-                {/* Waiting for Photo Message */}
+                  <TouchableOpacity
+                    style={[
+                      styles.submitButton,
+                      styles.submitButtonSuccess,
+                      loading && { opacity: 0.6 },
+                    ]}
+                    onPress={handleMarkDelivered}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <MaterialIcons
+                          name="check-circle"
+                          size={24}
+                          color="#FFFFFF"
+                        />
+                        <Text style={styles.submitButtonText}>
+                          Complete Delivery
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
                 {!deliveryProof && (
                   <View style={styles.waitingBox}>
                     <MaterialIcons
@@ -598,7 +707,6 @@ export default function DeliveryDetailsScreen() {
           </View>
         )}
 
-        {/* Delivered Section */}
         {deliveryData.status === "delivered" && (
           <View style={styles.completedCard}>
             <MaterialIcons
@@ -616,10 +724,33 @@ export default function DeliveryDetailsScreen() {
                 {formatCurrency(Number(deliveryData.delivery_fee || 0))}
               </Text>
             </View>
+            <TouchableOpacity
+              style={styles.proofManageButton}
+              onPress={() =>
+                router.push({
+                  pathname: "/rider/add-delivery-media",
+                  params: { deliveryId: String(deliveryId || "") },
+                })
+              }
+            >
+              <MaterialIcons name="photo-library" size={20} color={COLORS.info} />
+              <Text style={styles.proofManageText}>View / Upload Proofs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.proofManageButton}
+              onPress={() =>
+                router.push({
+                  pathname: "/rider/add-proof",
+                  params: { deliveryId: String(deliveryId || "") },
+                })
+              }
+            >
+              <MaterialIcons name="add-a-photo" size={20} color={COLORS.info} />
+              <Text style={styles.proofManageText}>Add Proof (Single)</Text>
+            </TouchableOpacity>
           </View>
         )}
 
-        {/* Error Section */}
         {deliveryData.status !== "pending" &&
           deliveryData.status !== "pending_offer" &&
           deliveryData.status !== "picked_up" &&
@@ -1098,6 +1229,9 @@ const styles = StyleSheet.create({
   submitButtonSuccess: {
     backgroundColor: COLORS.success,
   },
+  submitButtonDanger: {
+    backgroundColor: COLORS.danger,
+  },
   submitButtonText: {
     color: "#FFFFFF",
     fontSize: 14,
@@ -1198,6 +1332,22 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     marginTop: 3,
     marginBottom: 12,
+  },
+  proofManageButton: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: "#F8FAFC",
+  },
+  proofManageText: {
+    color: COLORS.info,
+    fontWeight: "600",
   },
   completedEarnings: {
     backgroundColor: "#FFFFFF",

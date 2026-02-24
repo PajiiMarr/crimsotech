@@ -69,6 +69,15 @@ interface OrderHistoryData {
   actual_minutes?: number;
   delivery_rating?: number;
   notes?: string;
+  proofs_count?: number; // number of proof records attached
+  
+  // refund/dispute metadata (added for rider notifications)
+  refund_status?: string;
+  refund_reason?: string;
+  refund_reject_code?: string;
+  refund_reject_details?: string;
+  dispute_reason?: string;
+  dispute_status?: string;
   
   // Order financials
   order_amount: number;
@@ -261,6 +270,13 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
         is_late: delivery.is_late,
         time_elapsed: delivery.time_elapsed,
         shop_name: delivery.shop_name,
+        proofs_count: delivery.proofs_count,
+        refund_status: (delivery as any).refund_status,
+        refund_reason: (delivery as any).refund_reason,
+        refund_reject_code: (delivery as any).refund_reject_code,
+        refund_reject_details: (delivery as any).refund_reject_details,
+        dispute_reason: (delivery as any).dispute_reason,
+        dispute_status: (delivery as any).dispute_status,
         // Keep original for actions
         original: delivery
       }));
@@ -509,6 +525,16 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                                         <div className="text-xs text-muted-foreground">{new Date(d.order_created_at).toLocaleDateString()}</div>
                                       </div>
                                       <div className="text-sm text-muted-foreground truncate mt-1">{d.recipient_name} • {d.delivery_location}</div>
+                                      {/* show dispute notice when delivery refund relates to delivery issue */}
+                                      {((d.refund_status === 'dispute') || d.refund_reject_code === 'good_condition_handed') && (
+                                        <div className="text-xs text-red-600 mt-1">
+                                          This order is in dispute.
+                                          {d.refund_reason && (<><br/>Reason: {d.refund_reason}</>)}
+                                          {d.refund_reject_code && (
+                                            <><br/>Seller rejected: {d.refund_reject_code}{d.refund_reject_details ? ` – ${d.refund_reject_details}` : ''}</>
+                                          )}
+                                        </div>
+                                      )}
                                       <div className="text-xs text-muted-foreground mt-2 truncate">{d.items_summary || `${d.items_count || 0} items`} • {d.payment_method || 'N/A'}</div>
                                     </div>
 
@@ -522,9 +548,15 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                                             <Eye className="w-3 h-3 mr-1" />View
                                           </Link>
                                         </Button>
-                                        <Button size="sm" variant="outline" className="text-xs" asChild>
-                                          <Link to={`/rider/orders/${d.order_id}`}>
-                                            <Navigation className="w-3 h-3 mr-1" />Details
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="text-xs"
+                                          asChild
+                                        >
+                                          <Link to={`/rider/delivery/${d.id}/add-proof`}>
+                                            <Download className="w-3 h-3 mr-1" />
+                                            {(d.original.proofs_count || 0) > 0 ? 'View Proofs' : 'Add Proof'}
                                           </Link>
                                         </Button>
                                       </div>

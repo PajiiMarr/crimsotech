@@ -831,6 +831,8 @@ class DisputeRequestCreateSerializer(serializers.ModelSerializer):
     # Accept an optional 'description' in the creation payload (write-only). It's not a model field,
     # so pop it during create to avoid trying to assign it to the model.
     description = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # reason should be optional/blank when dispute is filed simply via confirmation
+    reason = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = DisputeRequest

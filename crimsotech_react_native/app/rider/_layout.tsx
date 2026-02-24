@@ -1,10 +1,87 @@
 // app/rider/_layout.tsx
-import { Tabs } from "expo-router";
+import { Tabs, router, usePathname } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useEffect, useState } from "react";
 import RoleGuard from "../guards/RoleGuard";
 import RiderBottomTab from "./includes/bottomTab";
+import { useAuth } from "../../contexts/AuthContext";
+import AxiosInstance from "../../contexts/axios";
 
 export default function RiderLayout() {
+  const { userId, userRole, registrationStage, loading } = useAuth();
+  const pathname = usePathname();
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const routeForStage = (stage?: number | null) => {
+      if (stage === 1) return "/(auth)/signup";
+      if (stage === 2) return "/(auth)/setup-account";
+      if (stage === 3) return "/(auth)/verify-phone";
+      return null;
+    };
+
+    const checkRiderVerification = async () => {
+      if (loading) return;
+      if (!userId || userRole !== "rider") {
+        if (!cancelled) setChecking(false);
+        return;
+      }
+
+      try {
+        // Prefer locally stored registration stage when available
+        const localStage = registrationStage ?? null;
+        if (localStage && localStage < 4) {
+          const target = routeForStage(localStage);
+          if (target) router.replace(target as any);
+          if (!cancelled) setChecking(false);
+          return;
+        }
+
+        const regResponse = await AxiosInstance.get("/get-registration/", {
+          headers: { "X-User-Id": userId },
+        });
+
+        const remoteStage = regResponse.data?.registration_stage;
+        if (typeof remoteStage === "number" && remoteStage < 4) {
+          const target = routeForStage(remoteStage);
+          if (target) router.replace(target as any);
+          if (!cancelled) setChecking(false);
+          return;
+        }
+
+        const riderResponse = await AxiosInstance.get(
+          "/admin-riders/check-verification/",
+          { headers: { "X-User-Id": userId } }
+        );
+
+        const verified = Boolean(riderResponse.data?.verified);
+        if (!verified && !pathname.includes("/rider/pendings")) {
+          router.replace("/rider/pendings" as any);
+        }
+
+        if (verified && pathname.includes("/rider/pendings")) {
+          router.replace("/rider/home" as any);
+        }
+      } catch (error) {
+        if (!pathname.includes("/rider/pendings")) {
+          router.replace("/rider/pendings" as any);
+        }
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    };
+
+    checkRiderVerification();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, userId, userRole, registrationStage, pathname]);
+
+  if (checking) return null;
+
   return (
     <RoleGuard allowedRoles={["rider"]}>
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
@@ -28,6 +105,13 @@ export default function RiderLayout() {
             name="orders"
             options={{
               headerShown: false,
+            }}
+          />
+          <Tabs.Screen
+            name="history"
+            options={{
+              headerShown: false,
+              href: null,
             }}
           />
           <Tabs.Screen
@@ -71,6 +155,20 @@ export default function RiderLayout() {
           />
           <Tabs.Screen
             name="delivery-details"
+            options={{
+              headerShown: false,
+              href: null,
+            }}
+          />
+          <Tabs.Screen
+            name="add-delivery-media"
+            options={{
+              headerShown: false,
+              href: null,
+            }}
+          />
+          <Tabs.Screen
+            name="add-proof"
             options={{
               headerShown: false,
               href: null,

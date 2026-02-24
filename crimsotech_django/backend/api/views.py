@@ -20159,6 +20159,24 @@ class PurchasesBuyer(viewsets.ViewSet):
                         }
                         order_data['items'].append(item_data)
                 
+                # include refund/dispute metadata for rider notifications
+                try:
+                    from .models import Refund, DisputeRequest
+                    refund_obj = Refund.objects.filter(order_id=order.order).order_by('-created_at').first()
+                    if refund_obj:
+                        order_data['refund_status'] = refund_obj.status
+                        order_data['refund_reason'] = refund_obj.reason
+                        order_data['refund_reject_code'] = refund_obj.reject_reason_code
+                        order_data['refund_reject_details'] = refund_obj.reject_reason_details
+                        # also include dispute info if present
+                        dr = DisputeRequest.objects.filter(refund_id=refund_obj).first()
+                        if dr:
+                            order_data['dispute_reason'] = dr.reason or dr.description
+                            order_data['dispute_status'] = dr.status
+                except Exception:
+                    # ignore if models not importable for some reason
+                    pass
+
                 purchases.append(order_data)
             
             return Response({
@@ -24718,7 +24736,8 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "User not found"}, 
                             status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=True, methods=['post'])
+    # allow multipart and JSON payloads so seller can send reason/files
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser, JSONParser])
     def seller_respond_to_refund(self, request, pk=None):
         """
         SELLER VIEW: Seller responds to refund request (approve/reject/negotiate)
@@ -24802,16 +24821,68 @@ class RefundViewSet(viewsets.ViewSet):
                         refund.status = 'rejected'
                         refund.processed_by = user
                         refund.processed_at = timezone.now()
+
+                        # record provided reason code/details separately
+                        rc = request.data.get('reason_code') or request.data.get('reject_reason_code')
+                        rd = request.data.get('reason_details') or request.data.get('reject_reason_details') or notes
+                        if rc is not None:
+                            refund.reject_reason_code = str(rc)
+                        if rd is not None:
+                            # trim and limit to 100 chars same as model definition
+                            refund.reject_reason_details = str(rd)[:100]
+
+                        # keep a general customer note log as before
                         reject_note = f"Seller rejected: {notes}".strip()
                         existing_text = (refund.customer_note or '').strip()
                         if reject_note and reject_note.lower() not in existing_text.lower():
                             refund.customer_note = f"{existing_text}\n{reject_note}" if existing_text else reject_note
+
+                        # attempt to save additional proof files if provided
+                        files = request.FILES.getlist('file_data') or []
+                        if not files:
+                            single = request.FILES.get('file')
+                            if single:
+                                files = [single]
+
+                        if files:
+                            # determine delivery associated with this refund's order
+                            delivery = None
+                            try:
+                                from .models import Delivery, Proof
+                                delivery = Delivery.objects.filter(order=refund.order_id).first()
+                            except Exception:
+                                delivery = None
+
+                            if delivery:
+                                # only track 'seller' proofs for this delivery
+                                existing_count = Proof.objects.filter(delivery=delivery, proof_type='seller').count()
+                                if existing_count + len(files) > 4:
+                                    remaining = max(0, 4 - existing_count)
+                                    return Response({"error": f"Cannot upload: only {remaining} proof(s) remaining"},
+                                                    status=status.HTTP_400_BAD_REQUEST)
+                                for f in files:
+                                    try:
+                                        Proof.objects.create(
+                                            delivery=delivery,
+                                            proof_type='seller',
+                                            file_data=f,
+                                            file_type=(f.content_type or '')[:50]
+                                        )
+                                    except Exception as e:
+                                        print('Failed to save seller proof on reject', e)
+                            else:
+                                # no delivery found; log and ignore files
+                                print(f"No delivery found for order {refund.order_id}; seller proofs not saved")
+
                         refund.save()
 
+                        # include updated refund payload so client can refresh state immediately
+                        data = self._get_refund_details_data(refund, request, user)
                         return Response({
                             "message": "Refund rejected",
                             "refund_id": str(refund.refund_id),
-                            "status": refund.status
+                            "status": refund.status,
+                            "refund": data
                         })
 
                     elif action == 'negotiate':
@@ -26153,7 +26224,7 @@ class RefundViewSet(viewsets.ViewSet):
             for media in media_files
         ]
 
-        # Add seller-uploaded proofs (files uploaded as proof of refund)
+        # Add seller-uploaded proofs (files uploaded as proof of refund) stored in RefundProof
         proofs_qs = RefundProof.objects.filter(refund=refund)
         data['proofs'] = [
             {
@@ -26167,6 +26238,24 @@ class RefundViewSet(viewsets.ViewSet):
             }
             for p in proofs_qs
         ]
+        # additionally include proofs saved under the delivery/Proof table with type 'seller'
+        try:
+            delivery = Delivery.objects.filter(order=refund.order_id).first()
+            if delivery:
+                seller_proofs = Proof.objects.filter(delivery=delivery, proof_type='seller').order_by('-uploaded_at')
+                data['seller_delivery_proofs'] = [
+                    {
+                        "id": str(p.id),
+                        "file_url": request.build_absolute_uri(p.file_data.url) if p.file_data else None,
+                        "file_type": p.file_type,
+                        "uploaded_at": p.uploaded_at.isoformat() if p.uploaded_at else None,
+                    }
+                    for p in seller_proofs
+                ]
+            else:
+                data['seller_delivery_proofs'] = []
+        except Exception:
+            data['seller_delivery_proofs'] = []
         
         # Add return request information (if applicable)
         if refund.refund_type == 'return':

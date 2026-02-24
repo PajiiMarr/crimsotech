@@ -1365,23 +1365,44 @@ function PaymentCompletedUI({ refund, formatCurrency }: { refund: RefundDetail; 
           </div>
         )}
 
-        {refund.seller_response && (
+        {/* display seller rejection info when present */}
+        {(refund.seller_response || refund.reject_reason_code || refund.reject_reason_details) && (
           <div className="sm:col-span-2">
             <p className="text-xs text-gray-600">Seller Note</p>
-            <p className="text-sm text-gray-700">{refund.seller_response}</p>
+            <div className="text-sm text-gray-700 space-y-1">
+              {refund.reject_reason_code && (
+                <div><strong>Code:</strong> {refund.reject_reason_code}</div>
+              )}
+              {refund.reject_reason_details && (
+                <div>{refund.reject_reason_details}</div>
+              )}
+              {!refund.reject_reason_details && refund.seller_response && (
+                <div>{refund.seller_response}</div>
+              )}
+            </div>
           </div>
         )}
 
-        {refund?.proofs && refund.proofs.length > 0 && (
+        {(refund?.proofs?.length || refund?.seller_delivery_proofs?.length) > 0 && (
           <div className="sm:col-span-2 mt-3">
             <p className="text-xs text-gray-600">Seller Proofs</p>
             <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
-              {refund.proofs.map((p: any, idx: number) => (
+              {refund.proofs?.map((p: any, idx: number) => (
                 <a key={p.id || idx} href={p.file_url || '#'} target="_blank" rel="noreferrer" className="block rounded overflow-hidden bg-gray-100 border">
-                  {p.file_type && p.file_type.startsWith('image/') ? (
-                    <img src={p.file_url} alt={`Proof ${idx + 1}`} className="w-full h-20 object-cover" />
+                  {p.file_url && p.file_url.toLowerCase().match(/\.(jpeg|jpg|png|gif)$/) ? (
+                    <img src={p.file_url} className="h-24 w-24 object-cover rounded" alt={`proof-${p.id}`} />
                   ) : (
-                    <div className="w-full h-20 flex items-center justify-center text-gray-500">{p.file_type?.split('/')[1]?.toUpperCase() || 'FILE'}</div>
+                    <div className="h-24 w-24 flex items-center justify-center border rounded text-xs px-2">File</div>
+                  )}
+                </a>
+              ))}
+
+              {refund.seller_delivery_proofs?.map((p: any, idx: number) => (
+                <a key={`s-${p.id || idx}`} href={p.file_url || '#'} target="_blank" rel="noreferrer" className="block rounded overflow-hidden bg-gray-100 border" title="Seller proof">
+                  {p.file_url && p.file_url.toLowerCase().match(/\.(jpeg|jpg|png|gif)$/) ? (
+                    <img src={p.file_url} className="h-24 w-24 object-cover rounded" alt={`seller-proof-${p.id}`} />
+                  ) : (
+                    <div className="h-24 w-24 flex items-center justify-center border rounded text-xs px-2">File</div>
                   )}
                 </a>
               ))}
@@ -1574,7 +1595,42 @@ function RejectedStatusUI({ refund, formatCurrency, onFileDispute, fileDisabled 
         <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
         <div>
           <p className="font-medium text-red-800">Request Rejected</p>
-          <p className="text-sm text-red-700 mt-1">{refund.seller_response || 'No specific reason provided by seller'}</p>
+          {/* show code/details if available, otherwise fallback to seller_response */}
+          <div className="text-sm text-red-700 mt-1 space-y-1">
+            {refund.reject_reason_code && (<div><strong>Code:</strong> {refund.reject_reason_code}</div>)}
+            {refund.reject_reason_details && (<div>{refund.reject_reason_details}</div>)}
+            {!refund.reject_reason_details && !refund.reject_reason_code && refund.seller_response && (
+              <div>{refund.seller_response}</div>
+            )}
+          </div>
+
+          {/* show proofs if any */}
+          {(refund?.proofs?.length || refund?.seller_delivery_proofs?.length) > 0 && (
+            <div className="mt-3">
+              <p className="text-xs text-gray-600">Seller Proofs</p>
+              <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {refund.proofs?.map((p: any, idx: number) => (
+                  <a key={p.id || idx} href={p.file_url || '#'} target="_blank" rel="noreferrer" className="block rounded overflow-hidden bg-gray-100 border">
+                    {p.file_url && p.file_url.toLowerCase().match(/\.(jpeg|jpg|png|gif)$/) ? (
+                      <img src={p.file_url} className="h-24 w-24 object-cover rounded" alt={`proof-${p.id}`} />
+                    ) : (
+                      <div className="h-24 w-24 flex items-center justify-center border rounded text-xs px-2">File</div>
+                    )}
+                  </a>
+                ))}
+
+                {refund.seller_delivery_proofs?.map((p: any, idx: number) => (
+                  <a key={`s-${p.id || idx}`} href={p.file_url || '#'} target="_blank" rel="noreferrer" className="block rounded overflow-hidden bg-gray-100 border" title="Seller proof">
+                    {p.file_url && p.file_url.toLowerCase().match(/\.(jpeg|jpg|png|gif)$/) ? (
+                      <img src={p.file_url} className="h-24 w-24 object-cover rounded" alt={`seller-proof-${p.id}`} />
+                    ) : (
+                      <div className="h-24 w-24 flex items-center justify-center border rounded text-xs px-2">File</div>
+                    )}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="mt-3 text-xs text-gray-500">Use the actions card on the right to file a dispute for this case.</div>
         </div>
@@ -2305,7 +2361,8 @@ function DisputeDialog({
   disputeFiles,
   setDisputeFiles,
   actionLoading, 
-  handleAction 
+  handleAction,
+  confirmationOnly = false
 }: { 
   showDisputeDialog: boolean;
   setShowDisputeDialog: (show: boolean) => void;
@@ -2315,62 +2372,71 @@ function DisputeDialog({
   setDisputeFiles: (files: File[]) => void;
   actionLoading: boolean;
   handleAction: (action: string, data?: any) => Promise<void>;
+  confirmationOnly?: boolean;
 }) {
   return (
     <Dialog open={showDisputeDialog} onOpenChange={setShowDisputeDialog}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>File a Dispute</DialogTitle>
+          <DialogTitle>{confirmationOnly ? 'File a Dispute' : 'File a Dispute'}</DialogTitle>
           <DialogDescription>
-            Explain why you believe the seller's decision was incorrect
+            {confirmationOnly
+              ? 'Are you sure you want to file a dispute for this?'
+              : 'Explain why you believe the seller\'s decision was incorrect'}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="dispute-reason">Dispute Reason *</Label>
-            <Textarea
-              id="dispute-reason"
-              placeholder="Explain why you disagree with the seller's decision..."
-              value={disputeReason}
-              onChange={(e) => setDisputeReason(e.target.value)}
-              className="min-h-[120px]"
-            />
-          </div>
+        {!confirmationOnly && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="dispute-reason">Dispute Reason *</Label>
+              <Textarea
+                id="dispute-reason"
+                placeholder="Explain why you disagree with the seller's decision..."
+                value={disputeReason}
+                onChange={(e) => setDisputeReason(e.target.value)}
+                className="min-h-[120px]"
+              />
+            </div>
 
-          <div>
-            <Label>Attach Evidence (optional)</Label>
-            <input type="file" multiple onChange={(e) => {
-              const files = e.target.files ? Array.from(e.target.files) : [];
-              setDisputeFiles(files);
-            }} accept="image/*,.pdf,.doc,.docx" />
-            {disputeFiles.length > 0 && (
-              <div className="text-sm text-gray-600 mt-2">{disputeFiles.length} file(s) selected</div>
-            )}
-          </div>
+            <div>
+              <Label>Attach Evidence (optional)</Label>
+              <input type="file" multiple onChange={(e) => {
+                const files = e.target.files ? Array.from(e.target.files) : [];
+                setDisputeFiles(files);
+              }} accept="image/*,.pdf,.doc,.docx" />
+              {disputeFiles.length > 0 && (
+                <div className="text-sm text-gray-600 mt-2">{disputeFiles.length} file(s) selected</div>
+              )}
+            </div>
 
-          <Alert>
-            <Info className="h-4 w-4" />
-            <AlertTitle>Important</AlertTitle>
-            <AlertDescription className="text-xs">
-              Please provide clear reasons and any supporting evidence. False disputes may result in penalties.
-            </AlertDescription>
-          </Alert>
-        </div>
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>Important</AlertTitle>
+              <AlertDescription className="text-xs">
+                Please provide clear reasons and any supporting evidence. False disputes may result in penalties.
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={() => setShowDisputeDialog(false)}>
             Cancel
           </Button>
           <Button
             onClick={async () => {
-              await handleAction('file_dispute', { dispute_reason: disputeReason, description: disputeReason, files: disputeFiles });
+              if (confirmationOnly) {
+                await handleAction('file_dispute');
+              } else {
+                await handleAction('file_dispute', { dispute_reason: disputeReason, description: disputeReason, files: disputeFiles });
+              }
               setShowDisputeDialog(false);
               setDisputeReason('');
               setDisputeFiles([]);
             }}
-            disabled={!disputeReason.trim() || actionLoading}
+            disabled={confirmationOnly ? actionLoading : (!disputeReason.trim() || actionLoading)}
             className="bg-orange-600 hover:bg-orange-700"
           >
-            {actionLoading ? 'Submitting...' : 'Submit Dispute'}
+            {actionLoading ? 'Submitting...' : (confirmationOnly ? 'Confirm' : 'Submit Dispute')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -2452,6 +2518,8 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
   // Files selected in the quick tracking dialog (optional)
   const [trackingFiles, setTrackingFiles] = useState<File[]>([]);
   const [showDisputeDialog, setShowDisputeDialog] = useState(false);
+  // when true, dispute dialog is a simple confirmation without requiring reason/files
+  const [disputeConfirmOnly, setDisputeConfirmOnly] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeFiles, setDisputeFiles] = useState<File[]>([]);
   // UI message shown briefly after buyer submits return info
@@ -2592,7 +2660,8 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
             data.files.forEach((f: File, idx: number) => fd.append('file', f));
             body = fd;
           } else {
-            body = data;
+            // make sure body is at least an object (not undefined)
+            body = data != null ? data : {};
           }
           break;
         case 'contact_seller':
@@ -3183,16 +3252,10 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
             <Button
               className="w-full bg-orange-600 hover:bg-orange-700"
               onClick={() => {
-                // Prefill dispute reason with latest counter details if available
-                const latestCounter = (refund && refund.counter_requests && refund.counter_requests.length > 0) ? refund.counter_requests[0] : null;
-                if (latestCounter && latestCounter.status === 'rejected') {
-                  const amt = latestCounter.counter_refund_amount != null ? formatCurrency(latestCounter.counter_refund_amount) : null;
-                  const mRaw = latestCounter.counter_refund_method || '';
-                  const method = mRaw && mRaw.indexOf(':') !== -1 ? mRaw.split(':').pop() : mRaw;
-                  setDisputeReason(`I rejected the seller's counter-offer${amt ? ` of ${amt}` : ''}${method ? ` via ${method}` : ''} and would like to escalate this case.`);
-                } else {
-                  setDisputeReason('');
-                }
+                // for rejected case we only need a confirmation dialog; no reason/files required
+                setDisputeConfirmOnly(true);
+                setDisputeReason('');
+                setDisputeFiles([]);
                 setShowDisputeDialog(true);
               }}
               disabled={actionLoading}
@@ -3374,13 +3437,17 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
 
         <DisputeDialog
           showDisputeDialog={showDisputeDialog}
-          setShowDisputeDialog={setShowDisputeDialog}
+          setShowDisputeDialog={(v) => {
+            setShowDisputeDialog(v);
+            if (!v) setDisputeConfirmOnly(false);
+          }}
           disputeReason={disputeReason}
           setDisputeReason={setDisputeReason}
           disputeFiles={disputeFiles}
           setDisputeFiles={setDisputeFiles}
           actionLoading={actionLoading}
           handleAction={handleAction}
+          confirmationOnly={disputeConfirmOnly}
         />
 
         {/* Accept preview and Add-Account Dialogs */}
