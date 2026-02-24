@@ -665,12 +665,12 @@ class Profiling(APIView):
             return Response({"error": "User ID not provided"}, status=400)
         
         try:
-            user = User.objects.get(id=user_id)  # Changed from user_id to id
+            user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
         
         data = {
-            "user_id": user.id,  # Changed from user.user_id to user.id
+            "user_id": user.id,
             "registration_stage": user.registration_stage,
             "username": user.username,
         }
@@ -689,19 +689,67 @@ class Profiling(APIView):
             return Response(response_data)
         
     def put(self, request):
-        user_id = request.headers.get("X-User-Id")  # get from headers
+        user_id = request.headers.get("X-User-Id")
         
         if not user_id:
             return Response({"error": "User ID is required"}, status=400)
         
         try:
-            user = User.objects.get(id=user_id)  # Changed from user_id to id
+            user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
             
         serializer = UserSerializer(user, data=request.data, partial=True)
         if serializer.is_valid(raise_exception=True):
-            saved_user = serializer.save()
+            # Save the user and get the updated instance
+            updated_user = serializer.save()
+            
+            # Check if this is address profiling and create shipping address
+            # Check for any address-related fields in the request
+            address_fields = ['street', 'barangay', 'city', 'province', 'zip_code', 'country']
+            has_address_data = any(field in request.data for field in address_fields)
+            
+            if has_address_data:
+                try:
+                    # Check if user already has a default shipping address
+                    existing_default = ShippingAddress.objects.filter(
+                        user=updated_user,
+                        is_default=True
+                    ).first()
+                    
+                    if not existing_default:
+                        # Create default shipping address from user profile
+                        shipping_address = ShippingAddress(
+                            user=updated_user,
+                            recipient_name=f"{updated_user.first_name} {updated_user.last_name}".strip() or updated_user.username or "Customer",
+                            recipient_phone=updated_user.contact_number or "",
+                            street=updated_user.street or "",
+                            barangay=updated_user.barangay or "",
+                            city=updated_user.city or "",
+                            province=updated_user.province or "",
+                            state=updated_user.state or "",
+                            zip_code=updated_user.zip_code or "",
+                            country=updated_user.country or "Philippines",
+                            is_default=True,
+                            is_active=True
+                        )
+                        shipping_address.save()
+                    else:
+                        # Update existing default address with new profile data
+                        existing_default.recipient_name = f"{updated_user.first_name} {updated_user.last_name}".strip() or updated_user.username or "Customer"
+                        existing_default.recipient_phone = updated_user.contact_number or ""
+                        existing_default.street = updated_user.street or ""
+                        existing_default.barangay = updated_user.barangay or ""
+                        existing_default.city = updated_user.city or ""
+                        existing_default.province = updated_user.province or ""
+                        existing_default.state = updated_user.state or ""
+                        existing_default.zip_code = updated_user.zip_code or ""
+                        existing_default.country = updated_user.country or "Philippines"
+                        existing_default.save()
+                        
+                except Exception as e:
+                    # Log error but don't fail the profiling update
+                    print(f"Error creating/updating shipping address: {str(e)}")
             
             # Transform response to maintain frontend compatibility
             response_data = serializer.data.copy()
@@ -709,6 +757,7 @@ class Profiling(APIView):
                 response_data['user_id'] = response_data.pop('id')
             
             return Response(response_data)
+        
 
 class VerifyNumber(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
