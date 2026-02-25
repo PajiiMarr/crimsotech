@@ -8650,6 +8650,96 @@ class AdminReports(viewsets.ViewSet):
             pass
         return 0
 
+class AdminLogs(viewsets.ViewSet):
+    @action(detail=False, methods=['get'])
+    def get_logs(self, request):
+        # Get query parameters for filtering
+        role = request.query_params.get('role', None)
+        user_id = request.query_params.get('user_id', None)
+        days = request.query_params.get('days', 7)
+        
+        # Base queryset with select_related to minimize DB queries
+        logs = Logs.objects.select_related('user').all()
+        
+        # Apply date filter
+        if days:
+            try:
+                days = int(days)
+                cutoff_date = timezone.now() - timedelta(days=days)
+                logs = logs.filter(timestamp__gte=cutoff_date)
+            except ValueError:
+                pass
+        
+        # Filter by specific user if requested
+        if user_id:
+            logs = logs.filter(user_id=user_id)
+        
+        # Filter by role if specified
+        if role and role.lower() != 'all':
+            role_filters = {
+                'admin': {'user__is_admin': True},
+                'moderator': {'user__is_moderator': True},
+                'rider': {'user__is_rider': True},
+                'customer': {'user__is_customer': True}
+            }
+            if role.lower() in role_filters:
+                logs = logs.filter(**role_filters[role.lower()])
+        
+        # Order by most recent first
+        logs = logs.order_by('-timestamp')
+        
+        # Manual pagination
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 10))
+        
+        start = (page - 1) * page_size
+        end = start + page_size
+        
+        # Get total count
+        total = logs.count()
+        
+        # Slice the queryset
+        paginated_logs = logs[start:end]
+        
+        # Serialize
+        serializer = LogsSerializer(paginated_logs, many=True)
+        
+        # Build response with pagination info
+        return Response({
+            'count': total,
+            'next': f'{request.build_absolute_uri().split("?")[0]}?page={page + 1}&page_size={page_size}' if end < total else None,
+            'previous': f'{request.build_absolute_uri().split("?")[0]}?page={page - 1}&page_size={page_size}' if page > 1 else None,
+            'results': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Get summary of logs grouped by role"""
+        days = request.query_params.get('days', 7)
+        
+        try:
+            days = int(days)
+            cutoff_date = timezone.now() - timedelta(days=days)
+        except ValueError:
+            cutoff_date = timezone.now() - timedelta(days=7)
+        
+        # Get logs within date range
+        logs = Logs.objects.filter(timestamp__gte=cutoff_date)
+        
+        # Aggregate by role
+        summary = {
+            'total_logs': logs.count(),
+            'by_role': {
+                'admin': logs.filter(user__is_admin=True).count(),
+                'moderator': logs.filter(user__is_moderator=True).count(),
+                'rider': logs.filter(user__is_rider=True).count(),
+                'customer': logs.filter(user__is_customer=True).count(),
+            },
+            'period_days': days
+        }
+        
+        return Response(summary)
+    
 
 class ModeratorDashboard(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

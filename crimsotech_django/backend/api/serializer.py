@@ -948,3 +948,24 @@ class RiderMetricsSerializer(serializers.Serializer):
     current_month_earnings = serializers.DecimalField(max_digits=12, decimal_places=2)
     has_data = serializers.BooleanField()
     growth_metrics = serializers.DictField(required=False)
+
+class LogsSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    user_role = serializers.SerializerMethodField()
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    
+    class Meta:
+        model = Logs
+        fields = ['id', 'user', 'username', 'user_email', 'user_role', 'action', 'timestamp']
+    
+    def get_user_role(self, obj):
+        user = obj.user
+        if user.is_admin:
+            return 'admin'
+        elif user.is_moderator:
+            return 'moderator'
+        elif user.is_rider:
+            return 'rider'
+        elif user.is_customer:
+            return 'customer'
+        return 'unknown'
