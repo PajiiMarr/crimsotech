@@ -5,11 +5,23 @@ import { Separator } from "~/components/ui/separator";
 import { SidebarTrigger } from "~/components/ui/sidebar";
 import { Bell, User } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,} from "~/components/ui/dropdown-menu";
-import { Link } from "react-router";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
+import { useContext } from "react";
+import { userContext } from "~/contexts/user-role"; // Make sure this path is correct
+
+// Define the User type if not already exported from the context file
+interface User {
+  isAdmin: boolean;
+  isCustomer: boolean;
+  isRider: boolean;
+  isModerator: boolean;
+  user_id?: string;
+}
 
 export default function CustomerHeader() {
   const navigate = useNavigate();
+  const user = useContext(userContext);
+
   return (
     <header className="flex h-16 shrink-0 items-center justify-between gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
      
@@ -51,9 +63,14 @@ export default function CustomerHeader() {
 
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem>Profile</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/shop-list")}>
-              Shop
-            </DropdownMenuItem>
+            
+            {/* Conditionally render Shop menu item - hidden for admins */}
+            {user && !user.isAdmin && (
+              <DropdownMenuItem onClick={() => navigate("/shop-list")}>
+                Shop
+              </DropdownMenuItem>
+            )}
+            
             <DropdownMenuItem onClick={() => navigate("/logout")}>
               Sign Out
             </DropdownMenuItem>

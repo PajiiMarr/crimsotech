@@ -1,5 +1,5 @@
-// app/contexts/user-context.ts
-import { createContext } from "react-router";
+// app/contexts/user-role.ts
+import { createContext } from "react";  // Make sure this is from "react", not "react-router"
 
 export interface User {
   isAdmin: boolean;
