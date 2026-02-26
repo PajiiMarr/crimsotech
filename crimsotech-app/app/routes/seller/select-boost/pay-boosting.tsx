@@ -48,27 +48,36 @@ export async function action({ request }: { request: Request }) {
         const planId = formData.get('plan_id') as string;
         const productIds = formData.get('product_ids') as string;
         const receipt = formData.get('receipt') as File;
+        const paymentMethod = formData.get('payment_method') as string;
+        const customerId = formData.get('customer_id') as string;
         
-        if (!planId || !productIds || !receipt) {
+        if (!planId || !productIds || !receipt || !customerId) {
             return { success: false, error: 'Missing required fields' };
         }
 
         const uploadData = new FormData();
         uploadData.append('plan_id', planId);
         uploadData.append('product_ids', productIds);
-        uploadData.append('receipt', receipt);
+        uploadData.append('receipt_image', receipt); // Changed from 'receipt' to 'receipt_image' to match backend
+        uploadData.append('payment_method', paymentMethod || 'GCash');
+        uploadData.append('customer_id', customerId);
 
-        const response = await AxiosInstance.post('/boosting/add_receipt/', uploadData, {
+        // No need for '/api' prefix as it's already in AxiosInstance
+        const response = await AxiosInstance.post('/seller-boosts/add_receipt/', uploadData, {
             headers: { 'Content-Type': 'multipart/form-data' }
         });
 
         if (response.data.success) {
-            return { success: true, message: response.data.message };
+            return { 
+                success: true, 
+                message: response.data.message,
+                boosts: response.data.boosts 
+            };
         } else {
             return { success: false, error: response.data.error };
         }
     } catch (error: any) {
-        return { success: false, error: error.message };
+        return { success: false, error: error.response?.data?.error || error.message };
     }
 }
 
@@ -83,12 +92,13 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
     const [planDetails, setPlanDetails] = useState<BoostPlanDetails | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [paymentStatus, setPaymentStatus] = useState<'pending' | 'paid'>('pending');
+    const [paymentStatus, setPaymentStatus] = useState<'pending' | 'submitted' | 'paid'>('pending');
     const [receiptFile, setReceiptFile] = useState<File | null>(null);
     const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
     const [uploadingReceipt, setUploadingReceipt] = useState(false);
     const [paymentMethod, setPaymentMethod] = useState<string>('GCash');
     const [hasFetched, setHasFetched] = useState(false);
+    const [submittedBoosts, setSubmittedBoosts] = useState<any[]>([]);
 
     useEffect(() => {
         // Only fetch once
@@ -105,6 +115,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
     const fetchPlanDetails = async () => {
         try {
             setLoading(true);
+            // No '/api' prefix needed
             const response = await AxiosInstance.get(`/seller-boosts/${planId}/plan_detail/`);
             if (response.data.success) {
                 const plan = response.data.plan;
@@ -155,24 +166,20 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                 return;
             }
 
-            const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
+            const validTypes = ['image/jpeg', 'image/png', 'image/jpg'];
             if (!validTypes.includes(file.type)) {
-                setError("Invalid file type. Please upload JPEG, PNG, or PDF files.");
+                setError("Invalid file type. Please upload JPEG or PNG images.");
                 return;
             }
 
             setReceiptFile(file);
             setError(null);
 
-            if (file.type.startsWith('image/')) {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                    setReceiptPreview(reader.result as string);
-                };
-                reader.readAsDataURL(file);
-            } else {
-                setReceiptPreview(null);
-            }
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setReceiptPreview(reader.result as string);
+            };
+            reader.readAsDataURL(file);
         }
     };
 
@@ -182,20 +189,27 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
             return;
         }
 
+        console.log('Full user object:', JSON.stringify(user, null, 2)); // ADD THIS
+        console.log('user.id:', user.id); // ADD THIS
+
         try {
             setUploadingReceipt(true);
             const formData = new FormData();
             formData.append('plan_id', planId);
             formData.append('product_ids', productIdsParam);
-            formData.append('receipt', receiptFile);
+            formData.append('receipt_image', receiptFile);
             formData.append('payment_method', paymentMethod);
+            formData.append('customer_id', user.user_id);
 
-            const response = await AxiosInstance.post('/boosting/add_receipt/', formData, {
+            // No '/api' prefix needed
+            const response = await AxiosInstance.post('/seller-boosts/add_receipt/', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
 
             if (response.data.success) {
-                handlePaymentComplete();
+                setPaymentStatus('submitted');
+                setSubmittedBoosts(response.data.boosts || []);
+                setError(null);
             } else {
                 setError(response.data.error || "Failed to upload receipt");
             }
@@ -203,28 +217,6 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
             setError(err.response?.data?.error || "Error uploading receipt");
         } finally {
             setUploadingReceipt(false);
-        }
-    };
-
-    const handlePaymentComplete = async () => {
-        try {
-            setLoading(true);
-            const response = await AxiosInstance.post('/boosting/confirm_payment/', {
-                plan_id: planId,
-                product_ids: productIds
-            });
-            if (response.data.success) {
-                setPaymentStatus('paid');
-                setTimeout(() => {
-                    window.location.href = `/seller/seller-boosts`;
-                }, 1500);
-            } else {
-                setError(response.data.error || "Failed to confirm payment");
-            }
-        } catch (err: any) {
-            setError(err.response?.data?.error || "Error confirming payment");
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -282,14 +274,15 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                             </div>
 
                             <div className="flex-1 p-6 overflow-auto">
-                                {paymentStatus === 'paid' && (
-                                    <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
+                                {paymentStatus === 'submitted' && (
+                                    <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
                                         <div className="flex items-center justify-center gap-4">
                                             <div className="p-3 bg-green-100 rounded-full">
                                                 <CheckCircle className="h-8 w-8 text-green-600" />
                                             </div>
                                             <div>
-                                                <h3 className="font-semibold text-green-800">Payment Confirmed! Redirecting...</h3>
+                                                <h3 className="font-semibold text-green-800">Receipt Submitted Successfully!</h3>
+                                                <p className="text-sm text-green-600">Your boost request is pending admin approval.</p>
                                             </div>
                                         </div>
                                     </div>
@@ -317,6 +310,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                                         value={paymentMethod}
                                                                         onChange={(e) => setPaymentMethod(e.target.value)}
                                                                         className="bg-transparent border-none focus:ring-0 text-orange-800 font-semibold"
+                                                                        disabled={paymentStatus === 'submitted'}
                                                                     >
                                                                         <option value="GCash">GCash</option>
                                                                         <option value="Maya">Maya</option>
@@ -334,6 +328,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                                 value={paymentMethod}
                                                                 onChange={(e) => setPaymentMethod(e.target.value)}
                                                                 className="mt-2 p-2 border rounded-lg focus:ring-orange-500 focus:border-orange-500"
+                                                                disabled={paymentStatus === 'submitted'}
                                                             >
                                                                 <option value="GCash">GCash</option>
                                                                 <option value="Maya">Maya</option>
@@ -401,25 +396,16 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                                         <div className="flex flex-col items-center justify-center px-3 py-4 bg-orange-50 border-2 border-dashed border-orange-300 rounded-lg hover:bg-orange-100 transition-colors w-full">
                                                                             {receiptPreview ? (
                                                                                 <div className="mb-2">
-                                                                                    {receiptFile?.type.startsWith('image/') ? (
-                                                                                        <div className="relative">
-                                                                                            <img 
-                                                                                                src={receiptPreview} 
-                                                                                                alt="Receipt preview" 
-                                                                                                className="w-28 h-28 object-cover rounded-lg border"
-                                                                                            />
-                                                                                            <div className="absolute -top-2 -right-2 bg-orange-500 text-white rounded-full p-1">
-                                                                                                <Image className="h-2 w-2" />
-                                                                                            </div>
+                                                                                    <div className="relative">
+                                                                                        <img 
+                                                                                            src={receiptPreview} 
+                                                                                            alt="Receipt preview" 
+                                                                                            className="w-28 h-28 object-cover rounded-lg border"
+                                                                                        />
+                                                                                        <div className="absolute -top-2 -right-2 bg-orange-500 text-white rounded-full p-1">
+                                                                                            <Image className="h-2 w-2" />
                                                                                         </div>
-                                                                                    ) : (
-                                                                                        <div className="relative w-28 h-28 bg-gray-100 rounded-lg border flex items-center justify-center">
-                                                                                            <FileText className="h-10 w-10 text-gray-400" />
-                                                                                            <div className="absolute -top-2 -right-2 bg-orange-500 text-white rounded-full p-1">
-                                                                                                <FileText className="h-2 w-2" />
-                                                                                            </div>
-                                                                                        </div>
-                                                                                    )}
+                                                                                    </div>
                                                                                 </div>
                                                                             ) : (
                                                                                 <Upload className="h-10 w-10 text-orange-500 mb-2" />
@@ -428,15 +414,16 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                                                 {receiptFile ? 'Change file' : 'Choose file'}
                                                                             </span>
                                                                             <p className="text-xs text-gray-500 mt-1">
-                                                                                JPG, PNG, or PDF (max 5MB)
+                                                                                JPG or PNG (max 5MB)
                                                                             </p>
                                                                         </div>
                                                                         <Input
                                                                             id="receipt"
                                                                             type="file"
-                                                                            accept=".jpg,.jpeg,.png,.pdf,image/*"
+                                                                            accept=".jpg,.jpeg,.png,image/*"
                                                                             className="hidden"
                                                                             onChange={handleFileChange}
+                                                                            disabled={paymentStatus === 'submitted'}
                                                                         />
                                                                     </label>
                                                                 </div>
@@ -488,7 +475,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                                                 Processing...
                                                                             </div>
                                                                         ) : (
-                                                                            `Confirm Payment with ${paymentMethod}`
+                                                                            `Submit Payment with ${paymentMethod}`
                                                                         )}
                                                                     </Button>
                                                                     <Button

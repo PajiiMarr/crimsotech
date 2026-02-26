@@ -653,12 +653,40 @@ class Boost(models.Model):
         ('active', 'Active'),
         ('expired', 'Expired'),
         ('cancelled', 'Cancelled'),
-        ('pending', 'Pending')
-    ], default='active')
+        ('pending', 'Pending'),
+        ('payment_pending', 'Payment Pending')
+    ], default='pending')
     start_date = models.DateTimeField(default=timezone.now)
     end_date = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    receipt_image = models.ImageField(
+        upload_to='boost/receipts/', 
+        null=True, 
+        blank=True,
+        help_text="Payment receipt image for boost"
+    )
+    payment_method = models.CharField(
+        max_length=50, 
+        choices=[
+            ('GCash', 'GCash'),
+            ('Maya', 'Maya'),
+            ('Bank Transfer', 'Bank Transfer'),
+            ('Credit Card', 'Credit Card')
+        ],
+        null=True,
+        blank=True
+    )
+    payment_verified = models.BooleanField(default=False)
+    payment_verified_at = models.DateTimeField(null=True, blank=True)
+    payment_verified_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='verified_boost_payments'
+    )
 
     class Meta:
         indexes = [
@@ -666,6 +694,7 @@ class Boost(models.Model):
             models.Index(fields=['product', 'status']),
             models.Index(fields=['shop', 'status']),
             models.Index(fields=['start_date', 'end_date']),
+            models.Index(fields=['payment_verified', 'status']),  # New index
         ]
     
     def save(self, *args, **kwargs):
@@ -680,8 +709,8 @@ class Boost(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"Boost for {self.product.name}"
-
+        return f"Boost for {self.product.name if self.product else 'Unknown'}"
+    
 class Voucher(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     shop = models.ForeignKey(

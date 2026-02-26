@@ -31497,6 +31497,213 @@ class SellerBoosts(viewsets.ViewSet):
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['get'], url_path='user/(?P<user_id>[^/.]+)')
+    def user_boosts(self, request, user_id=None):
+        """
+        Get all boosts for a user filtered by status
+        Query params: ?status=active|pending|expired|cancelled|all
+        """
+        try:
+            # Get status filter from query params, default to 'all'
+            status_filter = request.query_params.get('status', 'all')
+            
+            if not user_id:
+                return Response({
+                    'success': False,
+                    'boosts': [],
+                    'message': 'user_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the user
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'boosts': [],
+                    'message': 'User not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get customer record if exists
+            try:
+                customer = Customer.objects.get(customer=user)
+            except Customer.DoesNotExist:
+                customer = None
+            
+            # Base queryset - filter by user through customer or directly
+            boosts_query = Boost.objects.filter(
+                Q(customer__customer=user) | Q(customer_id=user_id)
+            ).select_related(
+                'product', 
+                'boost_plan', 
+                'shop',
+                'customer__customer'
+            ).order_by('-created_at')
+            
+            # Apply status filter
+            now = timezone.now()
+            if status_filter != 'all':
+                if status_filter == 'active':
+                    boosts_query = boosts_query.filter(
+                        status='active',
+                        end_date__gt=now
+                    )
+                elif status_filter == 'expired':
+                    boosts_query = boosts_query.filter(
+                        Q(status='expired') | 
+                        Q(status='active', end_date__lte=now)
+                    )
+                elif status_filter == 'pending':
+                    boosts_query = boosts_query.filter(status='pending')
+                elif status_filter == 'cancelled':
+                    boosts_query = boosts_query.filter(status='cancelled')
+                else:
+                    # If invalid status, return error
+                    return Response({
+                        'success': False,
+                        'boosts': [],
+                        'message': f"Invalid status filter. Use: active, pending, expired, cancelled, or all"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Build response data
+            boosts_data = []
+            for boost in boosts_query:
+                # Get product details
+                product_data = None
+                if boost.product:
+                    # Get stock from variants
+                    total_stock = self._get_product_total_stock(boost.product)
+                    min_price = self._get_product_min_price(boost.product)
+                    max_price = self._get_product_max_price(boost.product)
+                    
+                    product_data = {
+                        'id': str(boost.product.id),
+                        'name': boost.product.name,
+                        'description': boost.product.description,
+                        'image': self._get_product_primary_image(boost.product),
+                        'total_stock': total_stock,
+                        'price_range': {
+                            'min': min_price,
+                            'max': max_price
+                        },
+                        'condition': boost.product.condition,
+                        'status': boost.product.status,
+                        'upload_status': boost.product.upload_status
+                    }
+                
+                # Get shop details
+                shop_data = None
+                if boost.shop:
+                    shop_data = {
+                        'id': str(boost.shop.id),
+                        'name': boost.shop.name,
+                        'city': boost.shop.city,
+                        'province': boost.shop.province
+                    }
+                elif boost.product and boost.product.shop:
+                    shop_data = {
+                        'id': str(boost.product.shop.id),
+                        'name': boost.product.shop.name,
+                        'city': boost.product.shop.city,
+                        'province': boost.product.shop.province
+                    }
+                
+                # Get plan details
+                plan_data = None
+                if boost.boost_plan:
+                    plan_data = {
+                        'id': str(boost.boost_plan.id),
+                        'name': boost.boost_plan.name,
+                        'price': float(boost.boost_plan.price),
+                        'duration': boost.boost_plan.duration,
+                        'time_unit': boost.boost_plan.time_unit
+                    }
+                
+                # Calculate days remaining for active boosts
+                days_remaining = None
+                if boost.status == 'active' and boost.end_date:
+                    days_remaining = (boost.end_date - now).days
+                
+                # Get receipt URL if exists
+                receipt_url = None
+                if boost.receipt_image:
+                    request = self.request if hasattr(self, 'request') else None
+                    if request:
+                        receipt_url = request.build_absolute_uri(boost.receipt_image.url)
+                    else:
+                        receipt_url = boost.receipt_image.url
+                
+                boosts_data.append({
+                    'id': str(boost.id),
+                    'status': boost.status,
+                    'payment_method': boost.payment_method,
+                    'payment_verified': boost.payment_verified,
+                    'has_receipt': bool(boost.receipt_image),
+                    'receipt_url': receipt_url,
+                    'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                    'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                    'created_at': boost.created_at.isoformat() if boost.created_at else None,
+                    'days_remaining': days_remaining,
+                    'product': product_data,
+                    'shop': shop_data,
+                    'plan': plan_data,
+                    'verification': {
+                        'verified': boost.payment_verified,
+                        'verified_at': boost.payment_verified_at.isoformat() if boost.payment_verified_at else None,
+                        'verified_by': boost.payment_verified_by.username if boost.payment_verified_by else None
+                    } if boost.payment_verified else None
+                })
+            
+            # Get counts by status
+            counts = {
+                'total': boosts_query.count(),
+                'active': Boost.objects.filter(
+                    Q(customer__customer=user) | Q(customer_id=user_id),
+                    status='active',
+                    end_date__gt=now
+                ).count(),
+                'pending': Boost.objects.filter(
+                    Q(customer__customer=user) | Q(customer_id=user_id),
+                    status='pending'
+                ).count(),
+                'expired': Boost.objects.filter(
+                    Q(customer__customer=user) | Q(customer_id=user_id),
+                    Q(status='expired') | Q(status='active', end_date__lte=now)
+                ).count(),
+                'cancelled': Boost.objects.filter(
+                    Q(customer__customer=user) | Q(customer_id=user_id),
+                    status='cancelled'
+                ).count()
+            }
+            
+            return Response({
+                'success': True,
+                'boosts': boosts_data,
+                'counts': counts,
+                'current_filter': status_filter,
+                'message': f'Boosts retrieved successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'boosts': [],
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_product_primary_image(self, product):
+        """Helper method to get primary product image"""
+        try:
+            media = product.productmedia_set.first()
+            if media and media.file_data:
+                request = self.request if hasattr(self, 'request') else None
+                if request:
+                    return request.build_absolute_uri(media.file_data.url)
+                return media.file_data.url
+        except:
+            pass
+        return None
+    
     @action(detail=False, methods=['get'])
     def active(self, request):
         """Get active boosts for seller's products"""
@@ -31838,7 +32045,7 @@ class SellerBoosts(viewsets.ViewSet):
         return eligibility
     
     def create(self, request):
-        """Create a new boost for a product (single or bulk)"""
+        """Create a new boost for a product (single or bulk) - MODIFIED to create pending requests"""
         try:
             data = request.data
             customer_id = data.get('customer_id')
@@ -31913,11 +32120,18 @@ class SellerBoosts(viewsets.ViewSet):
                 end_date__gt=timezone.now()
             ).count()
             
+            # Count pending boosts with this plan for this customer
+            pending_boosts_count = Boost.objects.filter(
+                customer=customer,
+                boost_plan=boost_plan,
+                status='pending'
+            ).count()
+            
             # Check if adding new boosts would exceed the limit
-            if active_boosts_count + len(product_ids) > plan_limit:
+            if active_boosts_count + pending_boosts_count + len(product_ids) > plan_limit:
                 return Response({
                     'success': False,
-                    'message': f'You already have {active_boosts_count} active boosts. Adding {len(product_ids)} more would exceed the limit of {plan_limit} product{"s" if plan_limit != 1 else ""} for this boost plan.'
+                    'message': f'You already have {active_boosts_count} active and {pending_boosts_count} pending boosts. Adding {len(product_ids)} more would exceed the limit of {plan_limit} product{"s" if plan_limit != 1 else ""} for this boost plan.'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # Get shop (optional)
@@ -31966,20 +32180,7 @@ class SellerBoosts(viewsets.ViewSet):
                     'total_selected': len(product_ids)
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Calculate end date based on boost plan
-            start_date = timezone.now()
-            duration_map = {
-                'hours': timedelta(hours=boost_plan.duration),
-                'days': timedelta(days=boost_plan.duration),
-                'weeks': timedelta(weeks=boost_plan.duration),
-                'months': timedelta(days=boost_plan.duration * 30)
-            }
-            end_date = start_date + duration_map.get(
-                boost_plan.time_unit, 
-                timedelta(days=30)
-            )
-            
-            # Create boosts for all valid products
+            # Create boosts for all valid products with status 'pending'
             created_boosts = []
             for product in valid_products:
                 boost = Boost.objects.create(
@@ -31987,9 +32188,8 @@ class SellerBoosts(viewsets.ViewSet):
                     boost_plan=boost_plan,
                     shop=shop,
                     customer=customer,
-                    status='active',
-                    start_date=start_date,
-                    end_date=end_date
+                    status='pending',  # Changed from 'active' to 'pending'
+                    # Don't set start_date and end_date yet - they'll be set when approved
                 )
                 created_boosts.append({
                     'id': str(boost.id),
@@ -31997,14 +32197,13 @@ class SellerBoosts(viewsets.ViewSet):
                     'product_name': boost.product.name,
                     'boost_plan_id': str(boost.boost_plan.id),
                     'status': boost.status,
-                    'start_date': boost.start_date.isoformat(),
-                    'end_date': boost.end_date.isoformat()
+                    'message': 'Pending admin approval'
                 })
             
             return Response({
                 'success': True,
                 'boosts': created_boosts,
-                'message': f'Successfully boosted {len(created_boosts)} product{"s" if len(created_boosts) != 1 else ""}'
+                'message': f'Successfully created {len(created_boosts)} boost request{"s" if len(created_boosts) != 1 else ""} pending approval'
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
@@ -32012,7 +32211,113 @@ class SellerBoosts(viewsets.ViewSet):
                 'success': False,
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
+    @action(detail=False, methods=['post'])
+    def add_receipt(self, request):
+        """Add receipt image to pending boost requests"""
+        try:
+            data = request.data
+            plan_id = data.get('plan_id')
+            product_ids_raw = data.get('product_ids', '')
+            product_ids = product_ids_raw.split(',') if isinstance(product_ids_raw, str) else product_ids_raw
+            product_ids = [pid.strip() for pid in product_ids if pid.strip()]
+            receipt_image = request.FILES.get('receipt_image')
+            payment_method = data.get('payment_method', 'GCash')
+            customer_id = data.get('customer_id')  # This is the User UUID
+
+            if not plan_id:
+                return Response({'success': False, 'error': 'plan_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not product_ids:
+                return Response({'success': False, 'error': 'product_ids is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not receipt_image:
+                return Response({'success': False, 'error': 'receipt_image is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not customer_id:
+                return Response({'success': False, 'error': 'customer_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate file type
+            valid_types = ['image/jpeg', 'image/png', 'image/jpg']
+            if receipt_image.content_type not in valid_types:
+                return Response({'success': False, 'error': 'Invalid file type. Please upload JPEG or PNG images.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate file size (max 5MB)
+            if receipt_image.size > 5 * 1024 * 1024:
+                return Response({'success': False, 'error': 'File size too large. Maximum size is 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get boost plan
+            try:
+                boost_plan = BoostPlan.objects.get(id=plan_id)
+            except BoostPlan.DoesNotExist:
+                return Response({'success': False, 'error': 'Boost plan not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            # Get Customer using the User UUID (customer_id is the User's PK)
+            try:
+                customer = Customer.objects.get(customer__id=customer_id)
+            except Customer.DoesNotExist:
+                return Response({'success': False, 'error': 'Customer not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            updated_boosts = []
+            skipped_products = []
+
+            for product_id in product_ids:
+                try:
+                    # Product.customer is FK to Customer, so filter by customer object
+                    product = Product.objects.get(id=product_id, customer=customer)
+                except Product.DoesNotExist:
+                    skipped_products.append({'product_id': product_id, 'reason': 'Product not found or unauthorized'})
+                    continue
+
+                # Look for existing pending boost for this product + plan + customer
+                boost = Boost.objects.filter(
+                    product=product,
+                    boost_plan=boost_plan,
+                    customer=customer,
+                    status='pending'
+                ).first()
+
+                if not boost:
+                    # Create new pending boost
+                    boost = Boost.objects.create(
+                        product=product,
+                        boost_plan=boost_plan,
+                        customer=customer,
+                        shop=product.shop,
+                        status='pending',
+                        payment_method=payment_method,
+                    )
+
+                # Assign the receipt image and payment method
+                boost.receipt_image = receipt_image
+                boost.payment_method = payment_method
+                boost.save()
+
+                updated_boosts.append({
+                    'id': str(boost.id),
+                    'product_id': str(product.id),
+                    'product_name': product.name,
+                    'status': boost.status,
+                    'has_receipt': bool(boost.receipt_image),
+                })
+
+            if not updated_boosts:
+                return Response({
+                    'success': False,
+                    'error': 'No valid products found',
+                    'skipped': skipped_products
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            return Response({
+                'success': True,
+                'boosts': updated_boosts,
+                'skipped': skipped_products,
+                'message': f'Receipt uploaded successfully for {len(updated_boosts)} product(s). Pending admin approval.',
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
     @action(detail=False, methods=['post'])
     def create_bulk(self, request):
         """Create multiple boosts at once (alias for create method)"""
@@ -32052,11 +32357,11 @@ class SellerBoosts(viewsets.ViewSet):
                 status='pending'
             ).count()
             
-            # Get total spent on boosts
+            # Get total spent on boosts (only active/expired, not pending)
             total_spent = sum(
                 float(boost.boost_plan.price) 
                 for boost in boosts 
-                if boost.boost_plan
+                if boost.boost_plan and boost.status in ['active', 'expired']
             )
             
             # Get active boost details
@@ -32076,6 +32381,18 @@ class SellerBoosts(viewsets.ViewSet):
                         'days_remaining': (boost.end_date - timezone.now()).days
                     })
             
+            # Get pending boost details
+            pending_boost_details = []
+            for boost in boosts.filter(status='pending'):
+                if boost.product:
+                    pending_boost_details.append({
+                        'product_name': boost.product.name,
+                        'product_id': str(boost.product.id),
+                        'plan_name': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                        'created_at': boost.created_at.isoformat() if boost.created_at else None,
+                        'has_receipt': bool(boost.receipt_image)
+                    })
+            
             # Get product statistics
             products = Product.objects.filter(
                 customer_id=customer_id,
@@ -32088,6 +32405,7 @@ class SellerBoosts(viewsets.ViewSet):
             total_products = products.count()
             eligible_products = 0
             already_boosted = 0
+            pending_boost_count = 0
             
             # Track total stock across all products
             total_inventory_stock = 0
@@ -32106,6 +32424,13 @@ class SellerBoosts(viewsets.ViewSet):
                     end_date__gt=timezone.now()
                 ).exists():
                     already_boosted += 1
+                
+                # Check if has pending boost
+                if Boost.objects.filter(
+                    product_id=product.id,
+                    status='pending'
+                ).exists():
+                    pending_boost_count += 1
             
             return Response({
                 'success': True,
@@ -32116,11 +32441,13 @@ class SellerBoosts(viewsets.ViewSet):
                     'pending_boosts': pending_boosts,
                     'total_spent': total_spent,
                     'active_boost_details': active_boost_details,
+                    'pending_boost_details': pending_boost_details,
                     'product_stats': {
                         'total_products': total_products,
                         'total_inventory_stock': total_inventory_stock,
                         'eligible_for_boost': eligible_products,
                         'already_boosted': already_boosted,
+                        'pending_boost': pending_boost_count,
                         'not_eligible': total_products - eligible_products
                     }
                 },
@@ -32209,6 +32536,12 @@ class SellerBoosts(viewsets.ViewSet):
                         end_date__gt=now
                     ).select_related('boost_plan').first()
                     
+                    # Check for pending boost
+                    pending_boost = Boost.objects.filter(
+                        product_id=product_id,
+                        status='pending'
+                    ).first()
+                    
                     # Get stock from variants
                     total_stock = self._get_product_total_stock(product)
                     
@@ -32220,14 +32553,20 @@ class SellerBoosts(viewsets.ViewSet):
                         'total_stock': total_stock,
                         'has_stock': total_stock > 0,
                         'is_boosted': active_boost is not None,
+                        'has_pending': pending_boost is not None,
                         'boost_info': {
                             'boost_id': str(active_boost.id) if active_boost else None,
                             'plan_name': active_boost.boost_plan.name if active_boost and active_boost.boost_plan else None,
                             'end_date': active_boost.end_date.isoformat() if active_boost else None,
                             'days_remaining': (active_boost.end_date - now).days if active_boost else None
                         } if active_boost else None,
+                        'pending_info': {
+                            'boost_id': str(pending_boost.id),
+                            'created_at': pending_boost.created_at.isoformat() if pending_boost else None,
+                            'has_receipt': bool(pending_boost.receipt_image) if pending_boost else False
+                        } if pending_boost else None,
                         'eligibility': eligibility,
-                        'can_be_boosted': self._can_product_be_boosted(product)
+                        'can_be_boosted': self._can_product_be_boosted(product) and not pending_boost
                     })
                     
                 except Product.DoesNotExist:
@@ -32235,6 +32574,7 @@ class SellerBoosts(viewsets.ViewSet):
                         'product_id': product_id,
                         'product_name': 'Unknown',
                         'is_boosted': False,
+                        'has_pending': False,
                         'boost_info': None,
                         'eligibility': {
                             'is_eligible': False,
@@ -32250,6 +32590,7 @@ class SellerBoosts(viewsets.ViewSet):
                 'summary': {
                     'total_checked': len(results),
                     'boosted': len([r for r in results if r['is_boosted']]),
+                    'pending': len([r for r in results if r['has_pending']]),
                     'can_be_boosted': len([r for r in results if r['can_be_boosted']]),
                     'not_eligible': len([r for r in results if not r['can_be_boosted']])
                 },
@@ -32293,7 +32634,7 @@ class SellerBoosts(viewsets.ViewSet):
             
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-
+                
 class HomeBoosts(viewsets.ViewSet):
     """ViewSet for showing boosted products on home page"""
     

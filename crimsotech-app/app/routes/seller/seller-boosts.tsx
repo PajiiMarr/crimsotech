@@ -40,7 +40,10 @@ import {
   Package,
   ArrowUpDown,
   EyeOff,
-  Edit
+  Edit,
+  Image as ImageIcon,
+  CheckCircle,
+  XCircle
 } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import { type ColumnDef } from "@tanstack/react-table";
@@ -105,21 +108,65 @@ interface BoostPlan {
   popular: boolean;
 }
 
-interface ActiveBoost {
+interface Boost {
   id: string;
-  product_id: string;
-  boost_plan_id: string;
-  status: 'active' | 'expired' | 'pending' | 'cancelled';
-  start_date: string;
-  end_date: string;
-  plan_name: string;
-  plan_price: number;
-  product?: Product;
-  shop_name: string;
-  shop_owner: string;
-  duration: number;
-  cost: number;
+  status: 'active' | 'pending' | 'expired' | 'cancelled';
+  payment_method?: string;
+  payment_verified: boolean;
+  has_receipt: boolean;
+  receipt_url?: string;
+  start_date?: string;
+  end_date?: string;
   created_at: string;
+  days_remaining?: number;
+  product?: {
+    id: string;
+    name: string;
+    description: string;
+    image?: string;
+    total_stock: number;
+    price_range: {
+      min: number;
+      max: number;
+    };
+    condition: string;
+    status: string;
+    upload_status: string;
+  };
+  shop?: {
+    id: string;
+    name: string;
+    city: string;
+    province: string;
+  };
+  plan?: {
+    id: string;
+    name: string;
+    price: number;
+    duration: number;
+    time_unit: string;
+  };
+  verification?: {
+    verified: boolean;
+    verified_at?: string;
+    verified_by?: string;
+  };
+}
+
+interface BoostCounts {
+  total: number;
+  active: number;
+  pending: number;
+  expired: number;
+  cancelled: number;
+}
+
+interface UserBoostsResponse {
+  success: boolean;
+  boosts: Boost[];
+  counts: BoostCounts;
+  current_filter: string;
+  message: string;
 }
 
 interface BoostMetrics {
@@ -144,18 +191,6 @@ interface PlansSummary {
 interface BoostPlansResponse {
   success: boolean;
   plans: BoostPlan[];
-  message: string;
-}
-
-interface ActiveBoostsResponse {
-  success: boolean;
-  boosts: ActiveBoost[];
-  message: string;
-}
-
-interface BoostMetricsResponse {
-  success: boolean;
-  metrics: BoostMetrics;
   message: string;
 }
 
@@ -264,6 +299,16 @@ function getStatusColor(status: string) {
   }
 }
 
+function getBoostStatusColor(status: string) {
+  switch(status) {
+    case 'active': return 'bg-green-100 text-green-800 border-green-200';
+    case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    case 'expired': return 'bg-gray-100 text-gray-800 border-gray-200';
+    case 'cancelled': return 'bg-red-100 text-red-800 border-red-200';
+    default: return 'bg-gray-100 text-gray-800 border-gray-200';
+  }
+}
+
 function getTimeUnitDisplay(unit: string, duration: number) {
   const plural = duration > 1 ? 's' : '';
   switch(unit) {
@@ -278,7 +323,15 @@ function getTimeUnitDisplay(unit: string, duration: number) {
 export default function SellerBoosts({ loaderData }: { loaderData: LoaderData }) {
   const { user, userId, shopId } = loaderData;
   
-  const [activeBoosts, setActiveBoosts] = useState<ActiveBoost[]>([]);
+  const [boosts, setBoosts] = useState<Boost[]>([]);
+  const [boostCounts, setBoostCounts] = useState<BoostCounts>({
+    total: 0,
+    active: 0,
+    pending: 0,
+    expired: 0,
+    cancelled: 0
+  });
+  const [activeStatusFilter, setActiveStatusFilter] = useState<string>('all');
   const [boostPlans, setBoostPlans] = useState<BoostPlan[]>([]);
   const [boostMetrics, setBoostMetrics] = useState<BoostMetrics>({
     total_boosts: 0,
@@ -313,54 +366,27 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
 
     try {
       setIsLoading(true);
-      const params = {
-        start_date: start.toISOString(),
-        end_date: end.toISOString(),
-        customer_id: userId,
-        shop_id: shopId
-      };
-
-      const [metricsResponse, boostsResponse, plansResponse] = await Promise.all([
-        AxiosInstance.get('/seller-boosts/stats/', { params }),
-        AxiosInstance.get('/seller-boosts/active/', { params }),
-        AxiosInstance.get('/seller-boosts/plans/', { params: { status: 'active' } })
-      ]);
-
-      if (metricsResponse.data.success) {
-        setBoostMetrics(metricsResponse.data.stats || {
-          total_boosts: 0,
-          active_boosts: 0,
-          total_spent: 0,
-          most_used_plan: "No boosts",
-          average_boost_duration: 0,
-          boosts_by_month: []
-        });
-      }
+      
+      // Fetch boosts by status using the user_boosts endpoint
+      const boostsResponse = await AxiosInstance.get(`/seller-boosts/user/${userId}/`, {
+        params: { status: activeStatusFilter !== 'all' ? activeStatusFilter : 'all' }
+      });
 
       if (boostsResponse.data.success) {
-        const transformedBoosts = boostsResponse.data.boosts.map((boost: any) => {
-          const startDate = new Date(boost.start_date);
-          const endDate = new Date(boost.end_date);
-          const duration = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-          
-          return {
-            id: boost.id,
-            product_id: boost.product_id,
-            boost_plan_id: boost.boost_plan_id,
-            status: boost.status,
-            start_date: boost.start_date,
-            end_date: boost.end_date,
-            plan_name: boost.plan_name,
-            plan_price: boost.plan_price,
-            shop_name: boost.shop_name || 'My Shop',
-            shop_owner: boost.shop_owner || 'Me',
-            duration: duration,
-            cost: boost.plan_price,
-            created_at: boost.created_at || boost.start_date
-          };
+        setBoosts(boostsResponse.data.boosts || []);
+        setBoostCounts(boostsResponse.data.counts || {
+          total: 0,
+          active: 0,
+          pending: 0,
+          expired: 0,
+          cancelled: 0
         });
-        setActiveBoosts(transformedBoosts);
       }
+
+      // Fetch plans
+      const plansResponse = await AxiosInstance.get('/seller-boosts/plans/', { 
+        params: { status: 'active' } 
+      });
 
       if (plansResponse.data.success && plansResponse.data.plans) {
         const transformedPlans = plansResponse.data.plans.map((plan: any) => ({
@@ -396,17 +422,51 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
           archived_plans: archivedPlans
         });
       }
-    } catch (error) {
-      console.error('Error fetching boost data:', error);
+
+      // Calculate metrics from boosts data
+      const activeBoosts = boostsResponse.data.boosts?.filter((b: Boost) => b.status === 'active') || [];
+      const totalSpent = boostsResponse.data.boosts?.reduce((sum: number, boost: Boost) => {
+        if (boost.status === 'active' || boost.status === 'expired') {
+          return sum + (boost.plan?.price || 0);
+        }
+        return sum;
+      }, 0) || 0;
+
+      // Count plan usage
+      const planUsage: Record<string, number> = {};
+      boostsResponse.data.boosts?.forEach((boost: Boost) => {
+        if (boost.plan?.name) {
+          planUsage[boost.plan.name] = (planUsage[boost.plan.name] || 0) + 1;
+        }
+      });
+
+      const mostUsedPlan = Object.entries(planUsage).sort((a, b) => b[1] - a[1])[0]?.[0] || "No boosts";
+
+      // Calculate average duration for active boosts
+      const durations = activeBoosts.map((boost: Boost) => boost.days_remaining || 0);
+      const avgDuration = durations.length > 0 
+        ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) 
+        : 0;
+
       setBoostMetrics({
-        total_boosts: 0,
-        active_boosts: 0,
-        total_spent: 0,
-        most_used_plan: "No boosts",
-        average_boost_duration: 0,
+        total_boosts: boostsResponse.data.boosts?.length || 0,
+        active_boosts: activeBoosts.length,
+        total_spent: totalSpent,
+        most_used_plan: mostUsedPlan,
+        average_boost_duration: avgDuration,
         boosts_by_month: []
       });
-      setActiveBoosts([]);
+
+    } catch (error) {
+      console.error('Error fetching boost data:', error);
+      setBoosts([]);
+      setBoostCounts({
+        total: 0,
+        active: 0,
+        pending: 0,
+        expired: 0,
+        cancelled: 0
+      });
       setBoostPlans([]);
       setPlansSummary({
         total_plans: 0,
@@ -423,7 +483,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     if (userId && shopId) {
       fetchBoostData(dateRange.start, dateRange.end);
     }
-  }, [userId, shopId]);
+  }, [userId, shopId, activeStatusFilter]);
 
   const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
     setDateRange({
@@ -432,6 +492,10 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
     });
     fetchBoostData(range.start, range.end);
+  };
+
+  const handleStatusFilterChange = (status: string) => {
+    setActiveStatusFilter(status);
   };
 
   const handleSelectBoostPlan = async (planId: string) => {
@@ -463,7 +527,8 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     }
   };
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('en-PH', {
       year: 'numeric',
       month: 'short',
@@ -471,24 +536,27 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     });
   };
 
-  const getStatusBadge = (status: string) => {
-    const statusConfig = {
-      active: { variant: "default" as const, label: "Active", color: '#10b981' },
-      expired: { variant: "secondary" as const, label: "Expired", color: '#6b7280' },
-      pending: { variant: "outline" as const, label: "Pending", color: '#f59e0b' },
-      cancelled: { variant: "destructive" as const, label: "Cancelled", color: '#ef4444' },
+  const getStatusBadge = (status: string, paymentVerified?: boolean) => {
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "outline", label: string, icon?: any }> = {
+      active: { variant: "default", label: "Active", icon: Zap },
+      pending: { variant: "outline", label: "Pending", icon: Clock },
+      expired: { variant: "secondary", label: "Expired", icon: XCircle },
+      cancelled: { variant: "destructive", label: "Cancelled", icon: XCircle },
     };
     
-    const config = statusConfig[status as keyof typeof statusConfig] || 
-                  { variant: "outline" as const, label: status, color: '#6b7280' };
+    const config = statusConfig[status] || { variant: "outline", label: status };
+    const Icon = config.icon;
     
     return (
       <Badge 
         variant={config.variant}
-        className="text-xs px-2 capitalize"
-        style={{ backgroundColor: `${config.color}20`, color: config.color }}
+        className="text-xs px-2 py-1 capitalize flex items-center gap-1"
       >
+        {Icon && <Icon className="h-3 w-3" />}
         {config.label}
+        {status === 'pending' && paymentVerified && (
+          <CheckCircle className="h-3 w-3 ml-1 text-green-500" />
+        )}
       </Badge>
     );
   };
@@ -506,11 +574,11 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
 
   const boostFilterConfig = {
     status: {
-      options: [...new Set(activeBoosts.map(boost => boost.status))],
+      options: [...new Set(boosts.map(boost => boost.status))],
       placeholder: 'Status'
     },
-    plan_name: {
-      options: [...new Set(activeBoosts.map(boost => boost.plan_name))],
+    plan: {
+      options: [...new Set(boosts.map(boost => boost.plan?.name).filter(Boolean))],
       placeholder: 'Boost Type'
     }
   };
@@ -542,51 +610,47 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     </Card>
   );
 
-  const columns: ColumnDef<ActiveBoost>[] = [
+  const columns: ColumnDef<Boost>[] = [
     {
-      accessorKey: "shop_name",
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm px-2 sm:px-4"
-        >
-          Shop
-          <ArrowUpDown className="ml-1 sm:ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
-      cell: ({ row }) => (
-        <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
-          <Store className="w-3 h-3 sm:w-4 sm:h-4 text-muted-foreground flex-shrink-0" />
-          <div className="font-medium text-xs sm:text-sm truncate">{row.getValue("shop_name")}</div>
-        </div>
-      ),
-    },
-    {
-      accessorKey: "shop_owner",
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm px-2 sm:px-4"
-        >
-          Owner
-          <ArrowUpDown className="ml-1 sm:ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
-      cell: ({ row }) => (
-        <div className="flex items-center gap-1 px-2 sm:px-4 py-2 text-xs sm:text-sm">
-          <User className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-          <span className="truncate">{row.getValue("shop_owner")}</span>
-        </div>
-      ),
-    },
-    {
-      accessorKey: "plan_name",
-      header: "Type",
+      accessorKey: "product",
+      header: "Product",
       cell: ({ row }) => {
-        const type = row.getValue("plan_name") as string;
-        const color = getBoostTypeColor(type);
+        const product = row.original.product;
+        return (
+          <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
+            {product?.image ? (
+              <img src={product.image} alt={product.name} className="w-8 h-8 rounded object-cover" />
+            ) : (
+              <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center">
+                <ImageIcon className="w-4 h-4 text-gray-400" />
+              </div>
+            )}
+            <div className="font-medium text-xs sm:text-sm truncate max-w-[150px]">
+              {product?.name || 'Unknown Product'}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "shop",
+      header: "Shop",
+      cell: ({ row }) => {
+        const shop = row.original.shop;
+        return (
+          <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
+            <Store className="w-3 h-3 sm:w-4 sm:h-4 text-muted-foreground flex-shrink-0" />
+            <div className="font-medium text-xs sm:text-sm truncate">{shop?.name || 'My Shop'}</div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "plan",
+      header: "Boost Plan",
+      cell: ({ row }) => {
+        const plan = row.original.plan;
+        const color = getBoostTypeColor(plan?.name || '');
         
         return (
           <Badge 
@@ -594,7 +658,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
             className="text-xs px-2"
             style={{ backgroundColor: `${color}20`, color: color }}
           >
-            {type}
+            {plan?.name || 'Unknown Plan'}
           </Badge>
         );
       },
@@ -603,27 +667,20 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => {
-        return getStatusBadge(row.getValue("status") as string);
+        return getStatusBadge(row.original.status, row.original.payment_verified);
       },
     },
     {
       accessorKey: "start_date",
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm px-2 sm:px-4"
-        >
-          Start Date
-          <ArrowUpDown className="ml-1 sm:ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
+      header: "Start Date",
       cell: ({ row }) => {
-        const date = new Date(row.getValue("start_date"));
-        const formattedDate = date.toLocaleDateString('en-PH', {
+        const date = row.original.start_date;
+        if (!date) return <span className="text-xs text-gray-400">N/A</span>;
+        
+        const formattedDate = new Date(date).toLocaleDateString('en-PH', {
           month: 'short',
           day: 'numeric',
-          year: date.getFullYear() !== new Date().getFullYear() ? '2-digit' : undefined
+          year: 'numeric'
         });
         
         return (
@@ -636,22 +693,15 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     },
     {
       accessorKey: "end_date",
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm px-2 sm:px-4"
-        >
-          End Date
-          <ArrowUpDown className="ml-1 sm:ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
+      header: "End Date",
       cell: ({ row }) => {
-        const date = new Date(row.getValue("end_date"));
-        const formattedDate = date.toLocaleDateString('en-PH', {
+        const date = row.original.end_date;
+        if (!date) return <span className="text-xs text-gray-400">N/A</span>;
+        
+        const formattedDate = new Date(date).toLocaleDateString('en-PH', {
           month: 'short',
           day: 'numeric',
-          year: date.getFullYear() !== new Date().getFullYear() ? '2-digit' : undefined
+          year: 'numeric'
         });
         
         return (
@@ -663,41 +713,57 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       },
     },
     {
-      accessorKey: "duration",
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm px-2 sm:px-4"
-        >
-          Duration
-          <ArrowUpDown className="ml-1 sm:ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
-      cell: ({ row }) => (
-        <div className="flex items-center gap-1 px-2 sm:px-4 py-2 text-xs sm:text-sm">
-          <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-muted-foreground flex-shrink-0" />
-          <span>{row.getValue("duration")}d</span>
-        </div>
-      ),
+      accessorKey: "days_remaining",
+      header: "Days Left",
+      cell: ({ row }) => {
+        const days = row.original.days_remaining;
+        if (days === undefined || days === null) return <span className="text-xs text-gray-400">-</span>;
+        
+        return (
+          <div className="flex items-center gap-1 px-2 sm:px-4 py-2 text-xs sm:text-sm">
+            <Clock className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+            <span className={days < 3 ? 'text-orange-600 font-medium' : ''}>{days}d</span>
+          </div>
+        );
+      },
     },
     {
-      accessorKey: "cost",
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm px-2 sm:px-4"
-        >
-          Cost
-          <ArrowUpDown className="ml-1 sm:ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      ),
-      cell: ({ row }) => (
-        <div className="flex items-center gap-1 px-2 sm:px-4 py-2 text-xs sm:text-sm">
-          ₱{parseFloat(row.getValue("cost")).toLocaleString()}
-        </div>
-      ),
+      accessorKey: "plan.price",
+      header: "Cost",
+      cell: ({ row }) => {
+        const price = row.original.plan?.price;
+        return (
+          <div className="flex items-center gap-1 px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium">
+            ₱{price?.toLocaleString() || '0'}
+          </div>
+        );
+      },
+    },
+    {
+      id: "receipt",
+      header: "Receipt",
+      cell: ({ row }) => {
+        const boost = row.original;
+        if (!boost.has_receipt) return <span className="text-xs text-gray-400">No receipt</span>;
+        
+        return (
+          <div className="flex items-center gap-1">
+            {boost.receipt_url ? (
+              <a 
+                href={boost.receipt_url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1"
+              >
+                <ImageIcon className="h-3 w-3" />
+                View
+              </a>
+            ) : (
+              <Badge variant="outline" className="text-xs">Uploaded</Badge>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -724,6 +790,59 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
             onDateRangeChange={handleDateRangeChange}
             isLoading={isLoading}
           />
+
+          {/* Status Tabs */}
+          <div className="flex flex-wrap gap-2 border-b pb-2">
+            <Button
+              variant={activeStatusFilter === 'all' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusFilterChange('all')}
+              className="gap-2"
+            >
+              All
+              <Badge variant="secondary" className="ml-1">{boostCounts.total}</Badge>
+            </Button>
+            <Button
+              variant={activeStatusFilter === 'active' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusFilterChange('active')}
+              className="gap-2"
+            >
+              <Zap className="h-3 w-3" />
+              Active
+              <Badge variant="secondary" className="ml-1">{boostCounts.active}</Badge>
+            </Button>
+            <Button
+              variant={activeStatusFilter === 'pending' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusFilterChange('pending')}
+              className="gap-2"
+            >
+              <Clock className="h-3 w-3" />
+              Pending
+              <Badge variant="secondary" className="ml-1">{boostCounts.pending}</Badge>
+            </Button>
+            <Button
+              variant={activeStatusFilter === 'expired' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusFilterChange('expired')}
+              className="gap-2"
+            >
+              <XCircle className="h-3 w-3" />
+              Expired
+              <Badge variant="secondary" className="ml-1">{boostCounts.expired}</Badge>
+            </Button>
+            <Button
+              variant={activeStatusFilter === 'cancelled' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleStatusFilterChange('cancelled')}
+              className="gap-2"
+            >
+              <XCircle className="h-3 w-3" />
+              Cancelled
+              <Badge variant="secondary" className="ml-1">{boostCounts.cancelled}</Badge>
+            </Button>
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {isLoading ? (
@@ -756,6 +875,23 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                   <CardContent className="p-4 sm:p-6">
                     <div className="flex items-center justify-between">
                       <div>
+                        <p className="text-sm text-muted-foreground">Pending Approval</p>
+                        <p className="text-xl sm:text-2xl font-bold mt-1">{boostCounts.pending}</p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Awaiting admin review
+                        </p>
+                      </div>
+                      <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
+                        <Clock className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
                         <p className="text-sm text-muted-foreground">Total Spent</p>
                         <p className="text-xl sm:text-2xl font-bold mt-1">
                           ₱{boostMetrics.total_spent.toLocaleString()}
@@ -775,25 +911,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                   <CardContent className="p-4 sm:p-6">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Avg. Duration</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">
-                          {boostMetrics.average_boost_duration || 0}d
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Average boost duration
-                        </p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                        <Clock className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
                         <p className="text-sm text-muted-foreground">Popular Plan</p>
                         <p className="text-xl sm:text-2xl font-bold mt-1">
                           {boostMetrics.most_used_plan || "None"}
@@ -802,8 +919,8 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                           Most used boost plan
                         </p>
                       </div>
-                      <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                        <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
+                      <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
+                        <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
                       </div>
                     </div>
                   </CardContent>
@@ -955,10 +1072,17 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg sm:text-xl">My Boosts</CardTitle>
-              <CardDescription>
-                {isLoading ? 'Loading boosts...' : `Showing ${activeBoosts.length} boosts`}
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg sm:text-xl">My Boosts</CardTitle>
+                  <CardDescription>
+                    {isLoading ? 'Loading boosts...' : `Showing ${boosts.length} boosts`}
+                  </CardDescription>
+                </div>
+                <Badge variant="outline" className="text-xs">
+                  Filter: {activeStatusFilter === 'all' ? 'All' : activeStatusFilter}
+                </Badge>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {isLoading ? (
@@ -966,14 +1090,16 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                   <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
                   <p>Loading boosts...</p>
                 </div>
-              ) : activeBoosts.length === 0 ? (
+              ) : boosts.length === 0 ? (
                 <div className="p-12 text-center">
                   <div className="rounded-full bg-gray-100 p-4 mb-4 inline-flex">
                     <Zap className="h-8 w-8 text-gray-400" />
                   </div>
                   <h3 className="text-lg font-semibold mb-2">No Boosts Found</h3>
                   <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                    You haven't boosted any products yet. Boost your products to increase visibility and sales.
+                    {activeStatusFilter === 'all' 
+                      ? "You haven't boosted any products yet. Boost your products to increase visibility and sales."
+                      : `You don't have any ${activeStatusFilter} boosts at the moment.`}
                   </p>
                   <Button 
                     className="gap-2"
@@ -986,11 +1112,11 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
               ) : (
                 <DataTable 
                   columns={columns} 
-                  data={activeBoosts}
+                  data={boosts}
                   filterConfig={boostFilterConfig}
                   searchConfig={{
-                    column: "shop_name",
-                    placeholder: "Search boosts..."
+                    column: "product.name",
+                    placeholder: "Search by product name..."
                   }}
                   isLoading={isLoading}
                 />

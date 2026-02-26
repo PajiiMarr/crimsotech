@@ -275,9 +275,63 @@ class BoostPlanSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class BoostSerializer(serializers.ModelSerializer):
+    receipt_image_url = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Boost
+        fields = '__all__'  # or list all fields including the new ones
+        read_only_fields = ['payment_verified_at', 'payment_verified_by']
+    
+    def get_receipt_image_url(self, obj):
+        if obj.receipt_image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.receipt_image.url)
+            return obj.receipt_image.url
+        return None
+
+class BoostDetailSerializer(serializers.ModelSerializer):
+    product_id = ProductSerializer(read_only=True)
+    boost_plan_id = BoostPlanSerializer(read_only=True)
+    shop_id = ShopSerializer(read_only=True)
+    customer_id = CustomerSerializer(read_only=True)
+    receipt_image_url = serializers.SerializerMethodField()
+    payment_verified_by_details = UserSerializer(source='payment_verified_by', read_only=True)
+    
     class Meta:
         model = Boost
         fields = '__all__'
+    
+    def get_receipt_image_url(self, obj):
+        if obj.receipt_image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.receipt_image.url)
+            return obj.receipt_image.url
+        return None
+
+class BoostReceiptUploadSerializer(serializers.Serializer):
+    plan_id = serializers.UUIDField()
+    product_ids = serializers.ListField(child=serializers.UUIDField())
+    receipt_image = serializers.ImageField()
+    payment_method = serializers.ChoiceField(choices=['GCash', 'Maya', 'Bank Transfer', 'Credit Card'])
+    
+    def validate_receipt_image(self, value):
+        # Validate file size (max 5MB)
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("File size too large. Maximum size is 5MB.")
+        
+        # Validate file type
+        valid_types = ['image/jpeg', 'image/png', 'image/jpg']
+        if value.content_type not in valid_types:
+            raise serializers.ValidationError("Invalid file type. Please upload JPEG or PNG images.")
+        
+        return value
+    
+    def validate_product_ids(self, value):
+        if not value or len(value) == 0:
+            raise serializers.ValidationError("At least one product ID is required.")
+        return value
 
 class VoucherSerializer(serializers.ModelSerializer):
     class Meta:
