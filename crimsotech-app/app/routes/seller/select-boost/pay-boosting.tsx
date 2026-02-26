@@ -100,7 +100,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
             setError("No boost plan or products selected");
             setLoading(false);
         }
-    }, [planId, productIds, hasFetched]); // Added hasFetched to dependencies
+    }, [planId, productIds, hasFetched]);
 
     const fetchPlanDetails = async () => {
         try {
@@ -118,7 +118,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                     product_count: productIds.length,
                     product_ids: productIds
                 });
-                setHasFetched(true); // Mark as fetched after successful load
+                setHasFetched(true);
             } else {
                 setError(response.data.error || "Failed to load plan details");
                 setHasFetched(true);
@@ -232,7 +232,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
         <UserProvider user={user}>
             <div className="min-h-screen flex items-center justify-center">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
                     <h2 className="text-xl font-semibold text-gray-900">Loading Boosting Payment...</h2>
                 </div>
             </div>
@@ -246,7 +246,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                     <AlertCircle className="h-16 w-16 text-red-500 mx-auto mb-4" />
                     <h2 className="text-xl font-semibold text-gray-900 mb-2">{error || "Boosting Request Not Found"}</h2>
                     <Link to="/seller/seller-boosts">
-                        <Button className="bg-purple-600 hover:bg-purple-700">View Boosting Plans</Button>
+                        <Button className="bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700">View Boosting Plans</Button>
                     </Link>
                 </div>
             </div>
@@ -262,7 +262,8 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                 <div className="flex-1 flex flex-col">
                     <div className="max-w-7xl mx-auto p-4 w-full h-full">
                         <div className="bg-white rounded-xl shadow-md h-auto flex flex-col overflow-hidden">
-                            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 p-6">
+                            {/* Header - Orange gradient */}
+                            <div className="bg-gradient-to-r from-orange-600 to-amber-600 p-6">
                                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                                     <div className="flex items-center gap-4">
                                         <div className="p-3 bg-white/20 rounded-full">
@@ -270,12 +271,12 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                         </div>
                                         <div className="text-center sm:text-left">
                                             <h1 className="text-2xl font-bold text-white">Complete Boosting Payment</h1>
-                                            <p className="text-purple-100">{planDetails.name} - {planDetails.product_count} Product{planDetails.product_count !== 1 ? 's' : ''}</p>
+                                            <p className="text-orange-100">{planDetails.name} - {planDetails.product_count} Product{planDetails.product_count !== 1 ? 's' : ''}</p>
                                         </div>
                                     </div>
                                     <div className="text-center sm:text-right">
                                         <div className="text-3xl font-bold text-white">₱{planDetails.total_amount.toFixed(2)}</div>
-                                        <div className="text-purple-100">Total Amount</div>
+                                        <div className="text-orange-100">Total Amount</div>
                                     </div>
                                 </div>
                             </div>
@@ -295,9 +296,10 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                 )}
 
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
+                                    {/* Left Column - QR Code */}
                                     <div className="h-full">
                                         <div className="h-full flex flex-col">
-                                            <div className="border-2 border-dashed border-purple-300 rounded-2xl p-6 bg-gradient-to-b from-white to-purple-50 h-full flex flex-col">
+                                            <div className="border-2 border-dashed border-orange-300 rounded-2xl p-6 bg-gradient-to-b from-white to-orange-50 h-full flex flex-col">
                                                 <div className="flex-1 flex flex-col items-center justify-center">
                                                     {qrCodeImage ? (
                                                         <>
@@ -309,12 +311,12 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                                 />
                                                             </div>
                                                             <div className="mt-auto pt-4 w-full text-center">
-                                                                <div className="inline-flex items-center gap-3 px-5 py-2 bg-purple-100 text-purple-800 rounded-full mb-2">
+                                                                <div className="inline-flex items-center gap-3 px-5 py-2 bg-orange-100 text-orange-800 rounded-full mb-2">
                                                                     <PaymentIcon className="h-4 w-4" />
                                                                     <select 
                                                                         value={paymentMethod}
                                                                         onChange={(e) => setPaymentMethod(e.target.value)}
-                                                                        className="bg-transparent border-none focus:ring-0 text-purple-800 font-semibold"
+                                                                        className="bg-transparent border-none focus:ring-0 text-orange-800 font-semibold"
                                                                     >
                                                                         <option value="GCash">GCash</option>
                                                                         <option value="Maya">Maya</option>
@@ -331,7 +333,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                             <select 
                                                                 value={paymentMethod}
                                                                 onChange={(e) => setPaymentMethod(e.target.value)}
-                                                                className="mt-2 p-2 border rounded-lg"
+                                                                className="mt-2 p-2 border rounded-lg focus:ring-orange-500 focus:border-orange-500"
                                                             >
                                                                 <option value="GCash">GCash</option>
                                                                 <option value="Maya">Maya</option>
@@ -343,6 +345,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                         </div>
                                     </div>
 
+                                    {/* Right Column - Payment Details */}
                                     <div className="h-full">
                                         <div className="h-full flex flex-col">
                                             <div className="bg-gray-50 rounded-xl p-5 h-full flex flex-col">
@@ -350,8 +353,8 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                 <div className="space-y-3 flex-1 overflow-y-auto">
                                                     <div className="flex justify-between items-center p-3 bg-white rounded-lg border">
                                                         <div className="flex items-center gap-3">
-                                                            <div className="p-2 bg-purple-100 rounded-lg">
-                                                                <PaymentIcon className="h-4 w-4 text-purple-600" />
+                                                            <div className="p-2 bg-orange-100 rounded-lg">
+                                                                <PaymentIcon className="h-4 w-4 text-orange-600" />
                                                             </div>
                                                             <div>
                                                                 <div className="text-xs text-gray-500">Payment Method</div>
@@ -381,10 +384,11 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                         </div>
                                                     </div>
 
-                                                    <div className="p-4 bg-white rounded-lg border border-dashed border-blue-300">
+                                                    {/* Receipt Upload Section */}
+                                                    <div className="p-4 bg-white rounded-lg border border-dashed border-orange-300">
                                                         <div className="text-center">
-                                                            <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-blue-100 mb-2">
-                                                                <Upload className="h-5 w-5 text-blue-600" />
+                                                            <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-orange-100 mb-2">
+                                                                <Upload className="h-5 w-5 text-orange-600" />
                                                             </div>
                                                             <h4 className="font-semibold text-gray-900 mb-1 text-sm">Upload Payment Receipt</h4>
                                                             <p className="text-xs text-gray-600 mb-3">
@@ -394,7 +398,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                             <div className="space-y-2">
                                                                 <div className="flex items-center justify-center">
                                                                     <label className="cursor-pointer w-full">
-                                                                        <div className="flex flex-col items-center justify-center px-3 py-4 bg-blue-50 border-2 border-dashed border-blue-300 rounded-lg hover:bg-blue-100 transition-colors w-full">
+                                                                        <div className="flex flex-col items-center justify-center px-3 py-4 bg-orange-50 border-2 border-dashed border-orange-300 rounded-lg hover:bg-orange-100 transition-colors w-full">
                                                                             {receiptPreview ? (
                                                                                 <div className="mb-2">
                                                                                     {receiptFile?.type.startsWith('image/') ? (
@@ -404,23 +408,23 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                                                                 alt="Receipt preview" 
                                                                                                 className="w-28 h-28 object-cover rounded-lg border"
                                                                                             />
-                                                                                            <div className="absolute -top-2 -right-2 bg-purple-500 text-white rounded-full p-1">
+                                                                                            <div className="absolute -top-2 -right-2 bg-orange-500 text-white rounded-full p-1">
                                                                                                 <Image className="h-2 w-2" />
                                                                                             </div>
                                                                                         </div>
                                                                                     ) : (
                                                                                         <div className="relative w-28 h-28 bg-gray-100 rounded-lg border flex items-center justify-center">
                                                                                             <FileText className="h-10 w-10 text-gray-400" />
-                                                                                            <div className="absolute -top-2 -right-2 bg-purple-500 text-white rounded-full p-1">
+                                                                                            <div className="absolute -top-2 -right-2 bg-orange-500 text-white rounded-full p-1">
                                                                                                 <FileText className="h-2 w-2" />
                                                                                             </div>
                                                                                         </div>
                                                                                     )}
                                                                                 </div>
                                                                             ) : (
-                                                                                <Upload className="h-10 w-10 text-blue-500 mb-2" />
+                                                                                <Upload className="h-10 w-10 text-orange-500 mb-2" />
                                                                             )}
-                                                                            <span className="text-xs font-medium text-blue-600">
+                                                                            <span className="text-xs font-medium text-orange-600">
                                                                                 {receiptFile ? 'Change file' : 'Choose file'}
                                                                             </span>
                                                                             <p className="text-xs text-gray-500 mt-1">
@@ -451,23 +455,25 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                         </div>
                                                     </div>
 
+                                                    {/* Total Amount */}
                                                     <div className="pt-3 space-y-3">
-                                                        <div className="flex justify-between items-center p-3 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg">
+                                                        <div className="flex justify-between items-center p-3 bg-gradient-to-r from-orange-50 to-amber-50 rounded-lg">
                                                             <div>
                                                                 <div className="text-sm font-semibold text-gray-900">Total Amount</div>
                                                                 <div className="text-xs text-gray-600">Plan price × {planDetails.product_count} product{planDetails.product_count !== 1 ? 's' : ''}</div>
                                                             </div>
-                                                            <div className="text-xl font-bold text-purple-600">
+                                                            <div className="text-xl font-bold text-orange-600">
                                                                 ₱{planDetails.total_amount.toFixed(2)}
                                                             </div>
                                                         </div>
 
+                                                        {/* Action Buttons */}
                                                         <div className="space-y-2">
                                                             {paymentStatus === 'pending' ? (
                                                                 <>
                                                                     <Button
                                                                         size="lg"
-                                                                        className="w-full h-12 text-sm font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+                                                                        className="w-full h-12 text-sm font-semibold bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700"
                                                                         onClick={uploadReceipt}
                                                                         disabled={loading || uploadingReceipt || !receiptFile}
                                                                     >
@@ -488,7 +494,7 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                                                     <Button
                                                                         variant="outline"
                                                                         size="sm"
-                                                                        className="w-full h-10"
+                                                                        className="w-full h-10 border-orange-300 text-orange-700 hover:bg-orange-50"
                                                                         onClick={() => window.location.href = `/seller/seller-boosts`}
                                                                         disabled={uploadingReceipt}
                                                                     >

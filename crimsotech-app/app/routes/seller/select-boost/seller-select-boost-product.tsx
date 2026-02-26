@@ -25,7 +25,9 @@ import {
   X,
   CheckCircle,
   AlertTriangle,
-  Crown
+  Crown,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import { type ColumnDef } from "@tanstack/react-table";
@@ -53,6 +55,11 @@ import {
   TooltipTrigger,
 } from "~/components/ui/tooltip";
 import { toast } from "sonner";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "~/components/ui/collapsible";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -192,6 +199,7 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
   });
   const [loadingBoostStatus, setLoadingBoostStatus] = useState(false);
   const [boostStatusChecked, setBoostStatusChecked] = useState(false);
+  const [featuresOpen, setFeaturesOpen] = useState(false);
 
   useEffect(() => {
     const fetchBoostPlan = async () => {
@@ -855,11 +863,11 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
   const getStatusBadge = (status: string) => {
     const statusLower = status.toLowerCase();
     const statusConfig = {
-      active: { variant: "default" as const, label: "Active", color: '#10b981' },
+      active: { variant: "default" as const, label: "Active", color: '#059669' },
       inactive: { variant: "secondary" as const, label: "Inactive", color: '#6b7280' },
-      draft: { variant: "outline" as const, label: "Draft", color: '#f59e0b' },
-      sold: { variant: "secondary" as const, label: "Sold", color: '#8b5cf6' },
-      delivered: { variant: "secondary" as const, label: "Delivered", color: '#8b5cf6' },
+      draft: { variant: "outline" as const, label: "Draft", color: '#d97706' },
+      sold: { variant: "secondary" as const, label: "Sold", color: '#7c3aed' },
+      delivered: { variant: "secondary" as const, label: "Delivered", color: '#7c3aed' },
     };
     
     const config = statusConfig[statusLower as keyof typeof statusConfig] || 
@@ -910,6 +918,7 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
             }
           }}
           aria-label="Select all"
+          className="border-orange-300 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
         />
       ),
       cell: ({ row }) => {
@@ -923,7 +932,7 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
             onCheckedChange={() => handleProductSelect(product.id)}
             disabled={!canBoost || product.is_boosted}
             aria-label="Select row"
-            className={product.is_boosted ? "opacity-50" : ""}
+            className={`${product.is_boosted ? "opacity-50" : ""} border-orange-300 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500`}
           />
         );
       },
@@ -991,8 +1000,8 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
         const product = row.original;
         const isBoosted = product.is_boosted || false;
         const color = quantity === 0 ? 'text-red-600' : 
-                     quantity < 10 ? 'text-yellow-600' : 
-                     isBoosted ? 'text-orange-600' : 'text-green-600';
+                     quantity < 10 ? 'text-amber-600' : 
+                     isBoosted ? 'text-orange-600' : 'text-emerald-600';
         return <div className={`font-medium ${color}`}>{quantity}</div>;
       },
     },
@@ -1037,21 +1046,21 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
   if (error) {
     return (
       <UserProvider user={user}>
-        <div className="p-6 space-y-6">
-          <div className="flex items-center gap-3">
+        <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+          <div className="flex items-center gap-2 md:gap-3">
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
             </Button>
-            <h1 className="text-2xl font-bold">Select Products to Boost</h1>
+            <h1 className="text-xl md:text-2xl font-bold">Select Products to Boost</h1>
           </div>
           
           <Card>
-            <CardContent className="p-12 text-center">
-              <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold mb-2">Error Loading Boost Plan</h2>
-              <p className="text-muted-foreground mb-4">{error}</p>
-              <div className="flex gap-3 justify-center">
+            <CardContent className="p-6 md:p-12 text-center">
+              <AlertCircle className="h-10 w-10 md:h-12 md:w-12 text-red-500 mx-auto mb-4" />
+              <h2 className="text-lg md:text-xl font-semibold mb-2">Error Loading Boost Plan</h2>
+              <p className="text-sm md:text-base text-muted-foreground mb-4">{error}</p>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
                 <Button onClick={() => navigate(-1)}>
                   <ArrowLeft className="h-4 w-4 mr-2" />
                   Back
@@ -1071,20 +1080,20 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
   if (isLoading) {
     return (
       <UserProvider user={user}>
-        <div className="p-6 space-y-6">
-          <div className="flex items-center gap-3">
+        <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+          <div className="flex items-center gap-2 md:gap-3">
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
             </Button>
-            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-6 md:h-8 w-32 md:w-48" />
           </div>
           
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <Skeleton className="h-[400px] rounded-lg" />
-            <div className="lg:col-span-2 space-y-6">
-              <Skeleton className="h-12 rounded-lg" />
-              <Skeleton className="h-64 rounded-lg" />
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6">
+            <Skeleton className="h-[300px] md:h-[400px] rounded-lg" />
+            <div className="lg:col-span-3 space-y-4 md:space-y-6">
+              <Skeleton className="h-10 md:h-12 rounded-lg" />
+              <Skeleton className="h-[200px] md:h-64 rounded-lg" />
             </div>
           </div>
         </div>
@@ -1095,20 +1104,20 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
   if (!planId || !boostPlan) {
     return (
       <UserProvider user={user}>
-        <div className="p-6 space-y-6">
-          <div className="flex items-center gap-3">
+        <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+          <div className="flex items-center gap-2 md:gap-3">
             <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
             </Button>
-            <h1 className="text-2xl font-bold">Select Products to Boost</h1>
+            <h1 className="text-xl md:text-2xl font-bold">Select Products to Boost</h1>
           </div>
           
           <Card>
-            <CardContent className="p-12 text-center">
-              <AlertCircle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold mb-2">Boost Plan Not Found</h2>
-              <p className="text-muted-foreground mb-6">
+            <CardContent className="p-6 md:p-12 text-center">
+              <AlertCircle className="h-10 w-10 md:h-12 md:w-12 text-amber-500 mx-auto mb-4" />
+              <h2 className="text-lg md:text-xl font-semibold mb-2">Boost Plan Not Found</h2>
+              <p className="text-sm md:text-base text-muted-foreground mb-6">
                 The boost plan you're trying to select doesn't exist or is no longer available.
               </p>
               <Button onClick={() => navigate(-1)}>
@@ -1128,614 +1137,432 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
 
   return (
     <UserProvider user={user}>
-      <div className="p-6 flex flex-col h-screen">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back
+      <div className="p-3 sm:p-4 md:p-6 flex flex-col min-h-screen">
+        {/* Header - Simplified and responsive */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 md:mb-6">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="shrink-0">
+              <ArrowLeft className="h-4 w-4" />
+              <span className="hidden sm:inline ml-2">Back</span>
             </Button>
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">Select Products to Boost</h1>
-              <p className="text-sm text-muted-foreground">
-                Choose products to apply the "{boostPlan.name}" boost
-                {planProductLimit > 1 && ` • Limit: ${planProductLimit} products`}
-                {activeBoostCount > 0 && ` • ${activeBoostCount} already active`}
-                {alreadyBoostedCount > 0 && ` • ${alreadyBoostedCount} already boosted`}
+            <div className="min-w-0 flex-1 sm:flex-initial">
+              <h1 className="text-lg sm:text-xl md:text-2xl font-bold truncate">Select Products</h1>
+              <p className="text-xs sm:text-sm text-muted-foreground truncate">
+                {boostPlan.name} • {planProductLimit} limit
               </p>
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
-            {selectedProducts.size > 0 && (
-              <div className="flex items-center gap-2 bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg">
-                <CheckCircle className="h-4 w-4" />
+          {selectedProducts.size > 0 && (
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex items-center gap-1 sm:gap-2 bg-orange-50 text-orange-700 px-2 sm:px-3 py-1.5 rounded-lg border border-orange-200 text-xs sm:text-sm">
+                <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 shrink-0" />
                 <span className="font-medium">{selectedProducts.size} selected</span>
-                {remainingSelectionLimit >= 0 && (
-                  <span className="text-sm">
-                    ({remainingSelectionLimit - selectedProducts.size} more available)
-                  </span>
-                )}
+                <span className="hidden xs:inline text-orange-600">
+                  ({remainingSelectionLimit - selectedProducts.size} left)
+                </span>
               </div>
-            )}
-            
-            {selectedProducts.size > 0 && (
+              
               <Button 
-                size="lg"
+                size="sm"
                 onClick={() => setApplyBoostDialogOpen(true)}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                className="bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white shadow-sm text-xs sm:text-sm px-2 sm:px-3"
                 disabled={applyingBoost}
               >
-                <Zap className="h-5 w-5 mr-2" />
-                {applyingBoost ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  `Boost ${selectedProducts.size} Product${selectedProducts.size !== 1 ? 's' : ''}`
-                )}
+                <Zap className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                <span className="hidden xs:inline">Boost</span>
               </Button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
-        {/* Main Content Area */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
-          {/* Left: Boost Plan Summary Card */}
-          <div className="lg:col-span-1 flex flex-col">
-            <Card className="h-full flex flex-col">
-              <CardHeader className="bg-gradient-to-r from-blue-500 to-purple-600 text-white">
-                <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="h-5 w-5" />
-                  {boostPlan.name}
-                </CardTitle>
-                <CardDescription className="text-white/80">
-                  Boost Plan Summary
-                </CardDescription>
+        {/* Main Content - Responsive grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6 flex-1">
+          {/* Left: Enhanced Plan Summary Card with all features */}
+          <div className="lg:col-span-1">
+            <Card className="border-orange-200">
+              <CardHeader className="p-3 sm:p-4 pb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-orange-100 rounded-lg">
+                    <Sparkles className="h-4 w-4 text-orange-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <CardTitle className="text-sm sm:text-base font-semibold truncate">{boostPlan.name}</CardTitle>
+                    <CardDescription className="text-xs">Boost Plan</CardDescription>
+                  </div>
+                </div>
               </CardHeader>
-              <CardContent className="pt-6 flex-1 overflow-y-auto">
-                <div className="space-y-6">
-                  <div>
-                    <div className="text-3xl font-bold text-center mb-2">
-                      ₱{boostPlan.price.toFixed(2)}
-                    </div>
-                    <div className="text-center text-sm text-muted-foreground">
-                      for {boostPlan.duration} {getTimeUnitDisplay(boostPlan.time_unit, boostPlan.duration)}
-                    </div>
+              
+              <CardContent className="p-3 sm:p-4 pt-0 space-y-4">
+                {/* Price - Prominent */}
+                <div className="text-center py-2">
+                  <div className="text-2xl sm:text-3xl font-bold text-orange-600">
+                    ₱{boostPlan.price.toFixed(2)}
                   </div>
-                  
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                        <Package className="h-5 w-5 text-blue-600" />
+                  <div className="text-xs text-muted-foreground">
+                    for {boostPlan.duration} {getTimeUnitDisplay(boostPlan.time_unit, boostPlan.duration)}
+                  </div>
+                </div>
+
+                {/* Key metrics in a clean grid */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-orange-50/50 p-2 rounded-lg">
+                    <div className="text-xs text-muted-foreground">Product Limit</div>
+                    <div className="text-sm font-semibold text-orange-700">{planProductLimit}</div>
+                  </div>
+                  <div className="bg-emerald-50/50 p-2 rounded-lg">
+                    <div className="text-xs text-muted-foreground">Available</div>
+                    <div className="text-sm font-semibold text-emerald-700">{remainingSelectionLimit}</div>
+                  </div>
+                </div>
+
+                {/* Status indicators - compact */}
+                {(activeBoostCount > 0 || alreadyBoostedCount > 0) && (
+                  <div className="space-y-1.5">
+                    {activeBoostCount > 0 && (
+                      <div className="flex items-center gap-1.5 text-xs bg-amber-50 p-2 rounded-lg">
+                        <Clock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                        <span className="text-amber-700">{activeBoostCount} active with this plan</span>
                       </div>
-                      <div>
-                        <div className="font-medium">Product Limit</div>
-                        <div className="text-sm text-muted-foreground">
-                          {planProductLimit} product{planProductLimit !== 1 ? 's' : ''} at a time
-                        </div>
-                        {activeBoostCount > 0 && (
-                          <div className="text-xs text-yellow-600">
-                            ({activeBoostCount} already active with this plan)
-                          </div>
+                    )}
+                    {alreadyBoostedCount > 0 && (
+                      <div className="flex items-center gap-1.5 text-xs bg-orange-50 p-2 rounded-lg">
+                        <Crown className="h-3.5 w-3.5 text-orange-600 shrink-0" />
+                        <span className="text-orange-700">{alreadyBoostedCount} already boosted</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* All Features - Clean collapsible section */}
+                {boostPlan.features && boostPlan.features.length > 0 && (
+                  <Collapsible open={featuresOpen} onOpenChange={setFeaturesOpen} className="border-t border-orange-100 pt-3">
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="w-full flex items-center justify-between p-0 h-auto hover:bg-transparent">
+                        <span className="text-xs font-medium flex items-center gap-1">
+                          <Check className="h-3.5 w-3.5 text-emerald-500" />
+                          Features ({boostPlan.features.length})
+                        </span>
+                        {featuresOpen ? (
+                          <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                         )}
-                        {alreadyBoostedCount > 0 && (
-                          <div className="text-xs text-orange-600">
-                            ({alreadyBoostedCount} already boosted)
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-2">
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {boostPlan.features.map((feature: any, index: number) => (
+                          <div key={index} className="flex items-start gap-2 text-xs bg-gray-50 p-2 rounded">
+                            <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                            <span className="text-muted-foreground">
+                              {feature.value || feature.feature_name || feature.name || 'Feature'}
+                            </span>
                           </div>
-                        )}
+                        ))}
                       </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center">
-                        <TrendingUp className="h-5 w-5 text-green-600" />
-                      </div>
-                      <div>
-                        <div className="font-medium">Remaining Slots</div>
-                        <div className="text-sm text-muted-foreground">
-                          {remainingSelectionLimit > 0 ? (
-                            <span className="text-green-600 font-medium">
-                              {remainingSelectionLimit} available
-                            </span>
-                          ) : (
-                            <span className="text-red-600 font-medium">
-                              No slots available
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
-                        <Clock className="h-5 w-5 text-purple-600" />
-                      </div>
-                      <div>
-                        <div className="font-medium">Duration</div>
-                        <div className="text-sm text-muted-foreground">
-                          {boostPlan.duration} {boostPlan.time_unit}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="pt-4 border-t">
-                    <h4 className="font-medium mb-2">What you get:</h4>
-                    <ul className="space-y-2 text-sm">
-                      {boostPlan.features?.slice(0, 5).map((feature: any, index: number) => (
-                        <li key={index} className="flex items-start gap-2">
-                          <Check className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
-                          <span className="text-muted-foreground">
-                            {feature.value || feature.feature_name || feature.name || 'Feature'}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  
-                  <div className="pt-4 border-t">
-                    <h4 className="font-medium mb-2">Selection Rules:</h4>
-                    <ul className="space-y-1 text-xs text-muted-foreground">
-                      <li className="flex items-start gap-2">
-                        <Check className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
-                        <span>Product must be published and active</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <Check className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
-                        <span>Product must have stock available</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <X className="h-3 w-3 text-orange-500 mt-0.5 flex-shrink-0" />
-                        <span className="text-orange-600">Product must not already be boosted</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <Check className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
-                        <span>Total selection cannot exceed plan limit</span>
-                      </li>
-                    </ul>
-                  </div>
-                  
-                  <div className="pt-4 border-t">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="h-3 w-3 rounded-full bg-orange-500"></div>
-                      <h4 className="font-medium">Orange Border = Already Boosted</h4>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Products with orange borders already have active boosts and cannot be selected again.
-                    </p>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+
+
+                {/* Visual indicator for boosted products */}
+                <div className="border-t border-orange-100 pt-3">
+                  <div className="flex items-center gap-2 text-xs">
+                    <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+                    <span className="text-muted-foreground">Orange border = Already boosted</span>
                   </div>
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Right: Product Selection Area - Scrollable */}
-          <div className="lg:col-span-2 flex flex-col min-h-0">
-            <div className="space-y-6 flex-1 overflow-y-auto pr-2">
-              {/* Filters and Search */}
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex flex-col sm:flex-row gap-4">
-                    <div className="flex-1">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          placeholder="Search products by name, description, or category..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="pl-10"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <Select value={statusFilter} onValueChange={setStatusFilter}>
-                        <SelectTrigger className="w-[140px]">
-                          <SelectValue placeholder="Status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Status</SelectItem>
-                          <SelectItem value="active">Active</SelectItem>
-                          <SelectItem value="inactive">Inactive</SelectItem>
-                          <SelectItem value="draft">Draft</SelectItem>
-                          <SelectItem value="delivered">Delivered</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      
-                      <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                        <SelectTrigger className="w-[140px]">
-                          <SelectValue placeholder="Category" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Categories</SelectItem>
-                          {categories.map((category) => (
-                            <SelectItem key={category} value={category}>{category}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      
-                      <div className="flex border rounded-lg">
-                        <Button
-                          variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                          size="sm"
-                          onClick={() => setViewMode('grid')}
-                          className="h-9 px-3"
-                        >
-                          <Grid className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant={viewMode === 'list' ? 'default' : 'ghost'}
-                          size="sm"
-                          onClick={() => setViewMode('list')}
-                          className="h-9 px-3"
-                        >
-                          <List className="h-4 w-4" />
-                        </Button>
-                      </div>
+          {/* Right: Product Selection Area */}
+          <div className="lg:col-span-3 space-y-4">
+            {/* Filters - Responsive */}
+            <Card className="border-orange-200">
+              <CardContent className="p-3 sm:p-4">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-orange-400" />
+                      <Input
+                        placeholder="Search products..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-9 h-9 sm:h-10 text-sm focus-visible:ring-orange-500"
+                      />
                     </div>
                   </div>
                   
-                  {/* Selection Stats */}
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-muted-foreground">
-                      <span className="font-medium">{selectedProducts.size}</span> of{" "}
-                      <span className="font-medium">{remainingSelectionLimit}</span> product{remainingSelectionLimit !== 1 ? 's' : ''} selected
-                      {alreadyBoostedCount > 0 && (
-                        <span className="ml-2 text-orange-600">
-                          • {alreadyBoostedCount} already boosted
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="w-[110px] sm:w-[140px] h-9 sm:h-10 text-xs sm:text-sm">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="inactive">Inactive</SelectItem>
+                        <SelectItem value="draft">Draft</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    
+                    <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                      <SelectTrigger className="w-[110px] sm:w-[140px] h-9 sm:h-10 text-xs sm:text-sm">
+                        <SelectValue placeholder="Category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
+                        {categories.map((category) => (
+                          <SelectItem key={category} value={category} className="truncate">
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    
+                    <div className="flex border rounded-lg">
                       <Button
-                        variant="outline"
+                        variant={viewMode === 'grid' ? 'default' : 'ghost'}
                         size="sm"
-                        onClick={handleSelectAll}
-                        disabled={remainingSelectionLimit <= 0 || !canSelectMore || applyingBoost}
+                        onClick={() => setViewMode('grid')}
+                        className={`h-9 px-2 sm:px-3 ${viewMode === 'grid' ? 'bg-orange-500 text-white hover:bg-orange-600' : ''}`}
                       >
-                        Select All Valid
+                        <Grid className="h-4 w-4" />
                       </Button>
+                      <Button
+                        variant={viewMode === 'list' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('list')}
+                        className={`h-9 px-2 sm:px-3 ${viewMode === 'list' ? 'bg-orange-500 text-white hover:bg-orange-600' : ''}`}
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick actions */}
+                <div className="flex items-center justify-between mt-3">
+                  <p className="text-xs sm:text-sm text-muted-foreground">
+                    <span className="font-medium">{filteredProducts.length}</span> products
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSelectAll}
+                      disabled={remainingSelectionLimit <= 0 || !canSelectMore}
+                      className="h-8 text-xs border-orange-300 text-orange-700 hover:bg-orange-50"
+                    >
+                      Select All
+                    </Button>
+                    {selectedProducts.size > 0 && (
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={handleDeselectAll}
-                        disabled={selectedProducts.size === 0 || applyingBoost}
+                        className="h-8 text-xs text-orange-700 hover:bg-orange-50"
                       >
-                        Clear All
+                        Clear
                       </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Products Display */}
-              <Card className="flex-1 min-h-0">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>Select Products</CardTitle>
-                      <CardDescription>
-                        {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''} found
-                        {selectedProducts.size > 0 && (
-                          <> • {selectedProducts.size} selected (Limit: {planProductLimit} product{planProductLimit !== 1 ? 's' : ''})</>
-                        )}
-                        {alreadyBoostedCount > 0 && (
-                          <span className="ml-2 text-orange-600">
-                            • {alreadyBoostedCount} already boosted
-                          </span>
-                        )}
-                      </CardDescription>
-                    </div>
-                    {selectedProducts.size > 0 && (
-                      <div className="flex items-center gap-2">
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={handleDeselectAll}
-                          disabled={applyingBoost}
-                        >
-                          <X className="h-4 w-4 mr-1" />
-                          Clear Selection
-                        </Button>
-                      </div>
                     )}
                   </div>
-                </CardHeader>
-                <CardContent className="overflow-y-auto max-h-[calc(100vh-450px)]">
-                  {isLoadingProducts || loadingBoostStatus ? (
-                    <div className="text-center py-12">
-                      <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
-                      <p>Loading products and boost status...</p>
-                    </div>
-                  ) : filteredProducts.length === 0 ? (
-                    <div className="text-center py-12">
-                      <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold mb-2">No Products Found</h3>
-                      <p className="text-muted-foreground mb-6">
-                        {searchQuery || statusFilter !== 'all' || categoryFilter !== 'all'
-                          ? 'Try adjusting your search or filters'
-                          : 'You have no products available for boosting'}
-                      </p>
-                      {(!searchQuery && statusFilter === 'all' && categoryFilter === 'all') && (
-                        <Button asChild>
-                          <Link to="/seller/seller-create-product">
-                            <Plus className="h-4 w-4 mr-2" />
-                            Create Your First Product
-                          </Link>
-                        </Button>
-                      )}
-                    </div>
-                  ) : viewMode === 'grid' ? (
-                    // Grid View with Multi-Select and Orange Borders for Boosted Products
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {filteredProducts.map((product) => {
-                        const isSelected = selectedProducts.has(product.id);
-                        const canBoost = validateProductForBoost(product).length === 0;
-                        const isBoosted = product.is_boosted || false;
-                        const errors = validationErrors[product.id] || [];
-                        
-                        return (
-                          <Card 
-                            key={product.id} 
-                            className={`overflow-hidden transition-all hover:shadow-md ${
-                              isSelected ? 'ring-2 ring-blue-500 border-blue-500' : 
-                              isBoosted ? 'ring-2 ring-orange-500 border-orange-500' : 'border-gray-200'
-                            } ${!canBoost || isBoosted ? 'opacity-75' : ''}`}
-                            style={{
-                              borderColor: isBoosted ? '#f97316' : isSelected ? '#3b82f6' : '#e5e7eb',
-                              borderWidth: (isBoosted || isSelected) ? '2px' : '1px'
-                            }}
-                          >
-                            <CardContent className="p-4">
-                              <div className="flex items-start justify-between mb-3">
-                                <div className="flex items-center gap-3">
-                                  <Checkbox
-                                    checked={isSelected}
-                                    onCheckedChange={() => handleProductSelect(product.id)}
-                                    disabled={!canBoost || isBoosted || applyingBoost}
-                                    className={`${errors.length > 0 ? 'border-red-500' : 
-                                              isBoosted ? 'border-orange-500 opacity-50' : ''}`}
-                                  />
-                                  <div className={`h-12 w-12 rounded-md flex items-center justify-center ${
-                                    isBoosted ? 'bg-orange-100' : 'bg-gray-100'
-                                  }`}>
-                                    {isBoosted ? (
-                                      <Crown className="h-6 w-6 text-orange-600" />
-                                    ) : (
-                                      <Package className="h-6 w-6 text-gray-600" />
-                                    )}
-                                  </div>
-                                  <div>
-                                    <div className="font-medium truncate max-w-[180px]">{product.name}</div>
-                                    <div className="text-xs text-muted-foreground">{getCategoryName(product)}</div>
-                                  </div>
-                                </div>
-                                {isBoosted && (
-                                  <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
-                                    <Zap className="h-3 w-3 mr-1" />
-                                    Already Boosted
-                                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Products Grid/List */}
+            <Card className="border-orange-200">
+              <CardContent className="p-3 sm:p-4">
+                {isLoadingProducts || loadingBoostStatus ? (
+                  <div className="text-center py-8 sm:py-12">
+                    <Loader2 className="h-6 w-6 sm:h-8 sm:w-8 animate-spin text-orange-500 mx-auto mb-3" />
+                    <p className="text-sm">Loading products...</p>
+                  </div>
+                ) : filteredProducts.length === 0 ? (
+                  <div className="text-center py-8 sm:py-12">
+                    <Package className="h-10 w-10 sm:h-12 sm:w-12 text-orange-300 mx-auto mb-3" />
+                    <h3 className="text-sm sm:text-base font-semibold mb-1">No Products Found</h3>
+                    <p className="text-xs sm:text-sm text-muted-foreground mb-4">
+                      {searchQuery || statusFilter !== 'all' || categoryFilter !== 'all'
+                        ? 'Try adjusting your filters'
+                        : 'No products available'}
+                    </p>
+                    {!searchQuery && statusFilter === 'all' && categoryFilter === 'all' && (
+                      <Button size="sm" asChild className="bg-orange-500 hover:bg-orange-600">
+                        <Link to="/seller/seller-create-product">
+                          <Plus className="h-4 w-4 mr-2" />
+                          Create Product
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                ) : viewMode === 'grid' ? (
+                  // Responsive Grid
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {filteredProducts.map((product) => {
+                      const isSelected = selectedProducts.has(product.id);
+                      const canBoost = validateProductForBoost(product).length === 0;
+                      const isBoosted = product.is_boosted || false;
+                      const errors = validationErrors[product.id] || [];
+                      
+                      return (
+                        <Card 
+                          key={product.id} 
+                          className={`overflow-hidden ${
+                            isSelected ? 'ring-2 ring-orange-500' : 
+                            isBoosted ? 'ring-2 ring-orange-500' : 'border-orange-200'
+                          } ${!canBoost || isBoosted ? 'opacity-75' : ''}`}
+                        >
+                          <CardContent className="p-3">
+                            <div className="flex items-start gap-2 mb-2">
+                              <Checkbox
+                                checked={isSelected}
+                                onCheckedChange={() => handleProductSelect(product.id)}
+                                disabled={!canBoost || isBoosted}
+                                className="mt-1 border-orange-300 data-[state=checked]:bg-orange-500"
+                              />
+                              <div className={`h-10 w-10 rounded-md flex items-center justify-center shrink-0 ${
+                                isBoosted ? 'bg-orange-100' : 'bg-orange-50'
+                              }`}>
+                                {isBoosted ? (
+                                  <Crown className="h-5 w-5 text-orange-600" />
+                                ) : (
+                                  <Package className="h-5 w-5 text-orange-500" />
                                 )}
                               </div>
-                              
-                              {errors.length > 0 && (
-                                <div className="mb-3 p-2 bg-red-50 rounded-md">
-                                  {errors.map((error, index) => (
-                                    <div key={index} className="text-xs text-red-600 flex items-start gap-1">
-                                      <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                                      {error}
-                                    </div>
-                                  ))}
+                              <div className="min-w-0 flex-1">
+                                <div className="font-medium text-sm truncate">{product.name}</div>
+                                <div className="text-xs text-muted-foreground truncate">
+                                  {getCategoryName(product)}
                                 </div>
-                              )}
-                              
-                              <div className="space-y-2 mb-4">
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-muted-foreground">Price:</span>
-                                  <span className={`font-medium ${isBoosted ? 'text-orange-600' : ''}`}>
-                                    {formatPrice(product.price)}
-                                  </span>
-                                </div>
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-muted-foreground">Stock:</span>
-                                  <span className={`font-medium ${
-                                    product.quantity === 0 ? 'text-red-600' : 
-                                    product.quantity < 10 ? 'text-yellow-600' : 
-                                    isBoosted ? 'text-orange-600' : 'text-green-600'
-                                  }`}>
-                                    {product.quantity} units
-                                  </span>
-                                </div>
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-muted-foreground">Status:</span>
-                                  {isBoosted ? (
-                                    <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
-                                      <Zap className="h-3 w-3 mr-1" />
-                                      Boosted
-                                    </Badge>
-                                  ) : (
-                                    getStatusBadge(product.status)
-                                  )}
-                                </div>
-                                {isBoosted && product.boost_info && (
-                                  <div className="flex items-center justify-between text-sm">
-                                    <span className="text-muted-foreground">Boost ends in:</span>
-                                    <span className="text-orange-600 font-medium">
-                                      {product.boost_info.days_remaining} days
-                                    </span>
-                                  </div>
-                                )}
                               </div>
-                              
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      className={`w-full ${isBoosted ? 'bg-orange-100 text-orange-700 hover:bg-orange-200 border-orange-300' : ''}`}
-                                      variant={isSelected ? "default" : isBoosted ? "outline" : "outline"}
-                                      onClick={() => handleProductSelect(product.id)}
-                                      disabled={!canBoost || isBoosted || applyingBoost}
-                                    >
-                                      {isSelected ? (
-                                        <>
-                                          <Check className="h-4 w-4 mr-2" />
-                                          Selected
-                                        </>
-                                      ) : isBoosted ? (
-                                        <>
-                                          <Zap className="h-4 w-4 mr-2" />
-                                          Already Boosted
-                                        </>
-                                      ) : !canBoost ? (
-                                        'Cannot Boost'
-                                      ) : (
-                                        'Select Product'
-                                      )}
-                                    </Button>
-                                  </TooltipTrigger>
-                                  {(!canBoost || isBoosted) && errors.length > 0 && (
-                                    <TooltipContent>
-                                      <div className="max-w-xs">
-                                        {errors.map((error, index) => (
-                                          <div key={index}>• {error}</div>
-                                        ))}
-                                      </div>
-                                    </TooltipContent>
-                                  )}
-                                  {isBoosted && (
-                                    <TooltipContent>
-                                      <div className="max-w-xs">
-                                        This product already has an active boost and cannot be boosted again.
-                                      </div>
-                                    </TooltipContent>
-                                  )}
-                                </Tooltip>
-                              </TooltipProvider>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    // List View (DataTable)
-                    <DataTable
-                      columns={columns}
-                      data={filteredProducts}
-                      searchConfig={{
-                        column: "name",
-                        placeholder: "Search products..."
-                      }}
-                    />
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+                            </div>
+
+                            {errors.length > 0 && (
+                              <div className="mb-2 p-1.5 bg-red-50 rounded text-xs text-red-600">
+                                <AlertTriangle className="h-3 w-3 inline mr-1" />
+                                {errors[0]}
+                              </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-1 text-xs mb-2">
+                              <div>
+                                <span className="text-muted-foreground">Price:</span>
+                                <span className="ml-1 font-medium">{formatPrice(product.price)}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">Stock:</span>
+                                <span className={`ml-1 font-medium ${
+                                  product.quantity === 0 ? 'text-red-600' : 
+                                  product.quantity < 10 ? 'text-amber-600' : 'text-emerald-600'
+                                }`}>
+                                  {product.quantity}
+                                </span>
+                              </div>
+                            </div>
+
+                            <Button
+                              className={`w-full h-8 text-xs ${
+                                isSelected ? 'bg-orange-500 text-white hover:bg-orange-600' : 
+                                isBoosted ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 
+                                'border-orange-300 text-orange-700 hover:bg-orange-50'
+                              }`}
+                              variant={isSelected ? "default" : isBoosted ? "outline" : "outline"}
+                              onClick={() => handleProductSelect(product.id)}
+                              disabled={!canBoost || isBoosted}
+                            >
+                              {isSelected ? 'Selected' : isBoosted ? 'Boosted' : 'Select'}
+                            </Button>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <DataTable
+                    columns={columns}
+                    data={filteredProducts}
+                    searchConfig={{
+                      column: "name",
+                      placeholder: "Search..."
+                    }}
+                  />
+                )}
+              </CardContent>
+            </Card>
           </div>
         </div>
-      </div>
 
-      {/* Apply Boost Confirmation Dialog */}
-      <Dialog open={applyBoostDialogOpen} onOpenChange={setApplyBoostDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-yellow-600" />
-              Confirm Boost Application
-            </DialogTitle>
-            <DialogDescription>
-              You are about to apply the "{boostPlan.name}" boost to {selectedProducts.size} product{selectedProducts.size !== 1 ? 's' : ''}.
-            </DialogDescription>
-          </DialogHeader>
-          
-          {selectedProducts.size > 0 && (
-            <div className="space-y-4">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="mb-3">
-                  <div className="font-medium mb-2">Selected Products:</div>
-                  <div className="max-h-40 overflow-y-auto space-y-2">
-                    {Array.from(selectedProducts).slice(0, 5).map((productId) => {
-                      const product = products.find(p => p.id === productId);
-                      return product ? (
-                        <div key={productId} className="flex items-center justify-between text-sm p-2 bg-white rounded">
-                          <div className="truncate flex-1">{product.name}</div>
-                          <div className="font-medium">{formatPrice(product.price)}</div>
-                        </div>
-                      ) : null;
-                    })}
-                    {selectedProducts.size > 5 && (
-                      <div className="text-sm text-muted-foreground text-center">
-                        +{selectedProducts.size - 5} more product{selectedProducts.size - 5 !== 1 ? 's' : ''}
+        {/* Simplified Confirmation Dialog */}
+        <Dialog open={applyBoostDialogOpen} onOpenChange={setApplyBoostDialogOpen}>
+          <DialogContent className="sm:max-w-md border-orange-200">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-orange-700 text-base">
+                <Zap className="h-4 w-4 text-orange-500" />
+                Confirm Boost
+              </DialogTitle>
+            </DialogHeader>
+            
+            <div className="space-y-3 py-2">
+              <div className="bg-orange-50 p-3 rounded-lg border border-orange-200 text-sm">
+                <p className="font-medium mb-2">Selected Products ({selectedProducts.size})</p>
+                <div className="max-h-32 overflow-y-auto space-y-1.5">
+                  {Array.from(selectedProducts).slice(0, 3).map((productId) => {
+                    const product = products.find(p => p.id === productId);
+                    return product ? (
+                      <div key={productId} className="flex justify-between text-xs bg-white p-2 rounded border border-orange-100">
+                        <span className="truncate flex-1">{product.name}</span>
+                        <span className="font-medium text-orange-600 ml-2">{formatPrice(product.price)}</span>
                       </div>
-                    )}
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <div className="text-muted-foreground">Total Products</div>
-                    <div className="font-medium">{selectedProducts.size} item{selectedProducts.size !== 1 ? 's' : ''}</div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground">Plan Limit</div>
-                    <div className="font-medium">
-                      {planProductLimit} product{planProductLimit !== 1 ? 's' : ''}
-                      {activeBoostCount > 0 && ` (${activeBoostCount} active)`}
+                    ) : null;
+                  })}
+                  {selectedProducts.size > 3 && (
+                    <div className="text-xs text-center text-muted-foreground">
+                      +{selectedProducts.size - 3} more
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
               
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="font-medium">{boostPlan.name} Boost</div>
-                  <div className="text-lg font-bold text-blue-600">
-                    ₱{boostPlan.price.toFixed(2)}
-                  </div>
+              <div className="bg-gradient-to-r from-orange-50 to-amber-50 p-3 rounded-lg border border-orange-200">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="font-medium">{boostPlan.name}</span>
+                  <span className="font-bold text-orange-600">₱{boostPlan.price.toFixed(2)}</span>
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  {boostPlan.duration} {getTimeUnitDisplay(boostPlan.time_unit, boostPlan.duration)} • 
-                  Plan Limit: {planProductLimit} product{planProductLimit !== 1 ? 's' : ''}
-                </div>
-              </div>
-              
-              <div className="text-sm text-muted-foreground">
-                By confirming, you agree to the boost terms and authorize payment for boosting {selectedProducts.size} product{selectedProducts.size !== 1 ? 's' : ''}.
+                <p className="text-xs text-muted-foreground mt-1">
+                  {boostPlan.duration} {boostPlan.time_unit} • {planProductLimit} product limit
+                </p>
               </div>
             </div>
-          )}
-          
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={() => setApplyBoostDialogOpen(false)}
-              disabled={applyingBoost}
-            >
-              Cancel
-            </Button>
-            <Link
-              to={`/seller/seller-boosts/pay-boost/${planId}?product_ids=${Array.from(selectedProducts).join(',')}`}
-              state={{ selectedProducts: Array.from(selectedProducts), boostPlan }}
-            >
+            
+            <DialogFooter className="gap-2">
               <Button
-                disabled={applyingBoost}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                variant="outline"
+                size="sm"
+                onClick={() => setApplyBoostDialogOpen(false)}
+                className="border-orange-300 text-orange-700 hover:bg-orange-50"
               >
-                {applyingBoost ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Applying Boost...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="h-4 w-4 mr-2" />
-                    Proceed to Payment
-                  </>
-                )}
+                Cancel
               </Button>
-            </Link>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <Link
+                to={`/seller/seller-boosts/pay-boost/${planId}?product_ids=${Array.from(selectedProducts).join(',')}`}
+                state={{ selectedProducts: Array.from(selectedProducts), boostPlan }}
+              >
+                <Button
+                  size="sm"
+                  className="bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white"
+                >
+                  <Zap className="h-4 w-4 mr-2" />
+                  Pay ₱{(boostPlan.price * selectedProducts.size).toFixed(2)}
+                </Button>
+              </Link>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
     </UserProvider>
   );
 }
