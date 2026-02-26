@@ -1539,6 +1539,14 @@ class DisputeRequest(models.Model):
         ('resolved', 'Resolved'),
     ]
 
+    CASE_TYPES = [
+        ('merchant_fulfillment_issue', 'Merchant Fulfillment Issue'),
+        ('logistics_delivery_issue', 'Logistics/Delivery Issue'),
+        ('customer_related_issue', 'Customer Related Issue'),
+        ('shared_responsibility', 'Shared Responsibility'),
+        ('platform_system_issue', 'Platform System Issue'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     refund_id = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='dispute', null=True, blank=True)
     requested_by = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -1547,6 +1555,7 @@ class DisputeRequest(models.Model):
     processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_disputes')
     resolved_at = models.DateTimeField(null=True, blank=True)
     admin_notes = models.TextField(blank=True, null=True)
+    case_category = models.CharField(blank=True, null=True, max_length=50, choices=CASE_TYPES)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
