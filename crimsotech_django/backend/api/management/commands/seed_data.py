@@ -39,7 +39,7 @@ class Command(BaseCommand):
                 # self.create_engagement_data()
                 
                 # # Create boosts and boost plans
-                # self.create_boosts_and_plans(products, shops, customers, admin_user)
+                self.create_boosts_and_plans(shops, customers, admin_user)
                 
                 # # Create shop follows (followers)
                 # self.create_shop_follows(shops, customers)
@@ -2553,7 +2553,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"🎉 Successfully created/updated {len(products)} products"))
         return products
 
-    def create_boosts_and_plans(self, products, shops, customers, admin_user):
+    def create_boosts_and_plans(self, shops, customers, admin_user):
         """Create boost plans, features, and active boosts with real references"""
         # First, let's clean up duplicate BoostPlans if they exist
         self.cleanup_duplicate_boost_plans()

@@ -1,4 +1,4 @@
-// app/routes/seller.select-boost-product.tsx
+// app/routes/seller/select-boost/seller-select-boost-product.tsx
 import type { Route } from "./+types/seller-select-boost-product";
 import { UserProvider } from '~/components/providers/user-role-provider';
 import { Link, useLoaderData, useNavigate } from "react-router";
@@ -1712,23 +1712,27 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
             >
               Cancel
             </Button>
-            <Button
-              onClick={handleApplyBoost}
-              disabled={applyingBoost}
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+            <Link
+              to={`/seller/seller-boosts/pay-boost/${planId}?product_ids=${Array.from(selectedProducts).join(',')}`}
+              state={{ selectedProducts: Array.from(selectedProducts), boostPlan }}
             >
-              {applyingBoost ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Applying Boost...
-                </>
-              ) : (
-                <>
-                  <Zap className="h-4 w-4 mr-2" />
-                  Boost {selectedProducts.size} Product{selectedProducts.size !== 1 ? 's' : ''}
-                </>
-              )}
-            </Button>
+              <Button
+                disabled={applyingBoost}
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+              >
+                {applyingBoost ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Applying Boost...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-4 w-4 mr-2" />
+                    Proceed to Payment
+                  </>
+                )}
+              </Button>
+            </Link>
           </DialogFooter>
         </DialogContent>
       </Dialog>

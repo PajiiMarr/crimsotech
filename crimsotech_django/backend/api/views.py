@@ -31363,6 +31363,28 @@ class ProfileView(APIView):
 class SellerBoosts(viewsets.ViewSet):
     """ViewSet for seller boost operations"""
     
+    def _get_product_total_stock(self, product):
+        """Helper method to get total stock from variants"""
+        return product.variants.filter(
+            is_active=True
+        ).aggregate(total=Sum('quantity'))['total'] or 0
+    
+    def _get_product_min_price(self, product):
+        """Helper method to get minimum price from variants"""
+        min_price = product.variants.filter(
+            is_active=True,
+            price__isnull=False
+        ).order_by('price').values_list('price', flat=True).first()
+        return float(min_price) if min_price else 0
+    
+    def _get_product_max_price(self, product):
+        """Helper method to get maximum price from variants"""
+        max_price = product.variants.filter(
+            is_active=True,
+            price__isnull=False
+        ).order_by('-price').values_list('price', flat=True).first()
+        return float(max_price) if max_price else 0
+    
     @action(detail=False, methods=['get'])
     def plans(self, request):
         """Get all active boost plans with features"""
@@ -31501,6 +31523,7 @@ class SellerBoosts(viewsets.ViewSet):
                 boosts_data.append({
                     'id': str(boost.id),
                     'product_id': str(boost.product.id) if boost.product else None,
+                    'product_name': boost.product.name if boost.product else None,
                     'boost_plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
                     'status': boost.status,
                     'start_date': boost.start_date.isoformat(),
@@ -31556,25 +31579,30 @@ class SellerBoosts(viewsets.ViewSet):
                 end_date__gt=now
             )
             
-            # Create subquery to get boost details
-            boost_details_subquery = Boost.objects.filter(
-                product_id=OuterRef('id'),
-                status='active',
-                end_date__gt=now
-            ).select_related('boost_plan')
-            
             # Annotate products with boost information
             products = products_query.annotate(
                 is_boosted=Exists(active_boost_subquery)
-            ).order_by('-created_at')
+            ).prefetch_related('variants').order_by('-created_at')
             
             products_data = []
             for product in products:
+                # Get stock from variants
+                total_stock = self._get_product_total_stock(product)
+                
+                # Get price range from variants
+                min_price = self._get_product_min_price(product)
+                max_price = self._get_product_max_price(product)
+                
                 boost_info = None
                 
                 if product.is_boosted:
                     # Get the active boost details
-                    boost = boost_details_subquery.filter(product_id=product.id).first()
+                    boost = Boost.objects.filter(
+                        product_id=product.id,
+                        status='active',
+                        end_date__gt=now
+                    ).select_related('boost_plan').first()
+                    
                     if boost:
                         boost_info = {
                             'boost_id': str(boost.id),
@@ -31590,8 +31618,14 @@ class SellerBoosts(viewsets.ViewSet):
                     'id': str(product.id),
                     'name': product.name,
                     'description': product.description,
-                    'price': float(product.price),
-                    'quantity': product.quantity,
+                    'price_range': {
+                        'min': min_price,
+                        'max': max_price
+                    },
+                    'price': min_price,  # For backward compatibility
+                    'quantity': total_stock,  # FIXED: Now using variants quantity
+                    'total_stock': total_stock,  # Added for clarity
+                    'has_variants': product.variants.filter(is_active=True).count() > 0,
                     'status': product.status,
                     'upload_status': product.upload_status,
                     'is_boosted': product.is_boosted,
@@ -31680,6 +31714,11 @@ class SellerBoosts(viewsets.ViewSet):
                     }
                 }
             
+            # Get stock from variants
+            total_stock = self._get_product_total_stock(product)
+            min_price = self._get_product_min_price(product)
+            max_price = self._get_product_max_price(product)
+            
             # Check eligibility
             eligibility = self._check_product_eligibility(product)
             
@@ -31708,7 +31747,12 @@ class SellerBoosts(viewsets.ViewSet):
                     'boost_info': boost_info,
                     'eligibility': eligibility,
                     'product_details': {
-                        'quantity': product.quantity,
+                        'total_stock': total_stock,  # FIXED: Now using variants quantity
+                        'price_range': {
+                            'min': min_price,
+                            'max': max_price
+                        },
+                        'has_variants': product.variants.filter(is_active=True).count() > 0,
                         'upload_status': product.upload_status,
                         'status': product.status,
                         'is_removed': product.is_removed
@@ -31727,7 +31771,10 @@ class SellerBoosts(viewsets.ViewSet):
     
     def _can_product_be_boosted(self, product):
         """Check if a product can be boosted"""
-        if product.quantity <= 0:
+        # Get total stock from variants
+        total_stock = self._get_product_total_stock(product)
+        
+        if total_stock <= 0:
             return False
         if product.upload_status != 'published':
             return False
@@ -31748,12 +31795,14 @@ class SellerBoosts(viewsets.ViewSet):
     
     def _check_product_eligibility(self, product):
         """Detailed eligibility check for a product"""
+        total_stock = self._get_product_total_stock(product)
+        
         eligibility = {
             'is_eligible': True,
             'issues': []
         }
         
-        if product.quantity <= 0:
+        if total_stock <= 0:
             eligibility['is_eligible'] = False
             eligibility['issues'].append("Product is out of stock")
         
@@ -32014,9 +32063,15 @@ class SellerBoosts(viewsets.ViewSet):
             active_boost_details = []
             for boost in boosts.filter(status='active', end_date__gt=timezone.now()):
                 if boost.product:
+                    # Get stock from variants
+                    total_stock = self._get_product_total_stock(boost.product)
+                    
                     active_boost_details.append({
                         'product_name': boost.product.name,
+                        'product_id': str(boost.product.id),
+                        'product_stock': total_stock,
                         'plan_name': boost.boost_plan.name if boost.boost_plan else 'Unknown',
+                        'plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
                         'end_date': boost.end_date.isoformat(),
                         'days_remaining': (boost.end_date - timezone.now()).days
                     })
@@ -32025,7 +32080,7 @@ class SellerBoosts(viewsets.ViewSet):
             products = Product.objects.filter(
                 customer_id=customer_id,
                 is_removed=False
-            )
+            ).prefetch_related('variants')
             
             if shop_id:
                 products = products.filter(shop_id=shop_id)
@@ -32034,7 +32089,13 @@ class SellerBoosts(viewsets.ViewSet):
             eligible_products = 0
             already_boosted = 0
             
+            # Track total stock across all products
+            total_inventory_stock = 0
+            
             for product in products:
+                total_stock = self._get_product_total_stock(product)
+                total_inventory_stock += total_stock
+                
                 if self._can_product_be_boosted(product):
                     eligible_products += 1
                 
@@ -32057,6 +32118,7 @@ class SellerBoosts(viewsets.ViewSet):
                     'active_boost_details': active_boost_details,
                     'product_stats': {
                         'total_products': total_products,
+                        'total_inventory_stock': total_inventory_stock,
                         'eligible_for_boost': eligible_products,
                         'already_boosted': already_boosted,
                         'not_eligible': total_products - eligible_products
@@ -32147,11 +32209,16 @@ class SellerBoosts(viewsets.ViewSet):
                         end_date__gt=now
                     ).select_related('boost_plan').first()
                     
+                    # Get stock from variants
+                    total_stock = self._get_product_total_stock(product)
+                    
                     eligibility = self._check_product_eligibility(product)
                     
                     results.append({
                         'product_id': product_id,
                         'product_name': product.name,
+                        'total_stock': total_stock,
+                        'has_stock': total_stock > 0,
                         'is_boosted': active_boost is not None,
                         'boost_info': {
                             'boost_id': str(active_boost.id) if active_boost else None,
@@ -32226,7 +32293,6 @@ class SellerBoosts(viewsets.ViewSet):
             
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-
 
 class HomeBoosts(viewsets.ViewSet):
     """ViewSet for showing boosted products on home page"""
