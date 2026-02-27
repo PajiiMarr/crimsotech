@@ -10,8 +10,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Image,
+  Alert,
 } from "react-native";
 import { Feather, Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "../../contexts/AuthContext";
 import { router } from "expo-router";
 
@@ -34,6 +37,8 @@ interface Message {
   sender: "rider" | "client";
   timestamp: string;
   status?: "sent" | "delivered" | "seen";
+  image?: string;
+  location?: { latitude: number; longitude: number; address?: string };
 }
 
 // --- Client Type ---
@@ -67,6 +72,27 @@ const ALL_CLIENTS: Client[] = [
     orderId: "ORD-2024-5433",
     isOnline: false,
     avatar: "RG",
+  },
+  {
+    id: "4",
+    name: "Sarah Lee",
+    orderId: "ORD-2024-5434",
+    isOnline: true,
+    avatar: "SL",
+  },
+  {
+    id: "5",
+    name: "Mike Tan",
+    orderId: "ORD-2024-5435",
+    isOnline: false,
+    avatar: "MT",
+  },
+  {
+    id: "6",
+    name: "Elena Cruz",
+    orderId: "ORD-2024-5436",
+    isOnline: true,
+    avatar: "EC",
   },
 ];
 
@@ -166,6 +192,54 @@ const CLIENT_MESSAGES_MAP: { [key: string]: Message[] } = {
       text: "By 5 PM today!",
       sender: "rider",
       timestamp: "8:35 AM",
+      status: "seen",
+    },
+  ],
+  "4": [
+    {
+      id: "14",
+      text: "Is it possible to deliver earlier?",
+      sender: "client",
+      timestamp: "11:00 AM",
+      status: "seen",
+    },
+    {
+      id: "15",
+      text: "I'll try my best, but I have two stops before you.",
+      sender: "rider",
+      timestamp: "11:05 AM",
+      status: "seen",
+    },
+    {
+      id: "16",
+      text: "Okay, just keep me posted.",
+      sender: "client",
+      timestamp: "11:06 AM",
+      status: "seen",
+    },
+  ],
+  "5": [
+    {
+      id: "17",
+      text: "I won't be home, can you leave it with the guard?",
+      sender: "client",
+      timestamp: "Yesterday",
+      status: "seen",
+    },
+    {
+      id: "18",
+      text: "Noted! I'll take a photo once delivered.",
+      sender: "rider",
+      timestamp: "Yesterday",
+      status: "seen",
+    },
+  ],
+  "6": [
+    {
+      id: "19",
+      text: "Thanks for the fast delivery!",
+      sender: "client",
+      timestamp: "Just now",
       status: "seen",
     },
   ],
@@ -276,12 +350,96 @@ export default function MessagePage() {
 
   // Share Location
   const handleShareLocation = () => {
-    console.log("Sharing location...");
+    // Determine the sender (in a real app, this would always be 'rider' sending their own location)
+    // For demo purposes, we'll randomize slightly to show different behavior or just default to rider
+
+    const newLocationMessage: Message = {
+      id: Date.now().toString(),
+      text: "",
+      sender: "rider",
+      timestamp: new Date().toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      }),
+      status: "sent",
+      location: {
+        latitude: 14.5995,
+        longitude: 120.9842,
+        address: "Manila, Metro Manila, Philippines",
+      },
+    };
+
+    setMessages([...messages, newLocationMessage]);
+
+    // Simulate status updates
+    setTimeout(() => {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === newLocationMessage.id
+            ? { ...msg, status: "delivered" }
+            : msg,
+        ),
+      );
+    }, 1000);
+
+    setTimeout(() => {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === newLocationMessage.id ? { ...msg, status: "seen" } : msg,
+        ),
+      );
+    }, 2000);
   };
 
   // Attach Image
-  const handleAttachImage = () => {
-    console.log("Attaching image...");
+  const handleAttachImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true, // Allow simple crop for better UX
+        quality: 0.5,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const imageUri = result.assets[0].uri;
+
+        const newMessage: Message = {
+          id: Date.now().toString(),
+          text: "", // Empty text for image message
+          sender: "rider",
+          timestamp: new Date().toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          }),
+          status: "sent",
+          image: imageUri,
+        };
+
+        setMessages([...messages, newMessage]);
+
+        // Simulate status updates (same as text messages)
+        setTimeout(() => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === newMessage.id ? { ...msg, status: "delivered" } : msg,
+            ),
+          );
+        }, 1000);
+
+        setTimeout(() => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === newMessage.id ? { ...msg, status: "seen" } : msg,
+            ),
+          );
+        }, 2000);
+      }
+    } catch (error) {
+      console.error("Error picking image:", error);
+      Alert.alert("Error", "Could not pick image.");
+    }
   };
 
   // Get last message for conversation list
@@ -354,16 +512,44 @@ export default function MessagePage() {
           style={[
             styles.messageBubble,
             isRider ? styles.riderBubble : styles.clientBubble,
+            item.image || item.location
+              ? { padding: 0, overflow: "hidden" }
+              : {}, // Remove padding/border for media
           ]}
         >
-          <Text
-            style={[
-              styles.messageText,
-              isRider ? styles.riderText : styles.clientText,
-            ]}
-          >
-            {item.text}
-          </Text>
+          {item.image ? (
+            <Image
+              source={{ uri: item.image }}
+              style={{
+                width: 200,
+                height: 200,
+                borderRadius: 0,
+                resizeMode: "cover",
+              }}
+            />
+          ) : item.location ? (
+            <View style={styles.locationMessageContainer}>
+              <View style={styles.mapPlaceholder}>
+                <Ionicons name="location-sharp" size={32} color="#EF4444" />
+              </View>
+              <View style={styles.locationDetails}>
+                <Text style={styles.locationTitle}>Live Location</Text>
+                <Text style={styles.locationAddress} numberOfLines={2}>
+                  {item.location.address ||
+                    `${item.location.latitude}, ${item.location.longitude}`}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <Text
+              style={[
+                styles.messageText,
+                isRider ? styles.riderText : styles.clientText,
+              ]}
+            >
+              {item.text}
+            </Text>
+          )}
         </View>
         <View
           style={[styles.messageFooter, isRider && styles.messageFooterRight]}
@@ -842,6 +1028,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.textMain,
     fontWeight: "600",
+  },
+
+  // 5️⃣ Location Feature
+  locationMessageContainer: {
+    width: 220,
+    backgroundColor: "white",
+    borderRadius: 12,
+    overflow: "hidden",
+    borderColor: "#eee",
+    borderWidth: 1,
+  },
+  mapPlaceholder: {
+    height: 100,
+    backgroundColor: "#e1e1e1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  locationDetails: {
+    padding: 10,
+  },
+  locationTitle: {
+    fontWeight: "bold",
+    fontSize: 14,
+    color: COLORS.textMain,
+  },
+  locationAddress: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
   },
 
   // 3️⃣ Input Area
