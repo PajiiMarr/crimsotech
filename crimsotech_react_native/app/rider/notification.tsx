@@ -120,7 +120,16 @@ export default function RiderNotificationPage() {
 
   const handleOpenNotification = (n: AppNotification) => {
     markAsRead(n.id);
-    if (n.route) router.push(n.route as any);
+    router.push({
+      pathname: "/rider/notification-details",
+      params: {
+        id: n.id,
+        title: n.title,
+        message: n.message,
+        timeLabel: n.timeLabel,
+        type: n.type,
+      },
+    });
   };
 
   const handleMarkAllRead = () => {
