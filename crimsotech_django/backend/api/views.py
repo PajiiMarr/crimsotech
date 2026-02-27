@@ -5184,10 +5184,6 @@ class AdminShops(viewsets.ViewSet):
 
 
 class AdminBoosting(viewsets.ViewSet):
-    """
-    ViewSet for admin boost management and analytics
-    """
-    
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
         if not date_str:
@@ -5741,6 +5737,189 @@ class AdminBoosting(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
              
+    @action(detail=False, methods=['get'], url_path='get_boost_details/(?P<boost_id>[0-9a-f-]+)')
+    def get_boost_details(self, request, boost_id=None):
+        """
+        Get detailed information for a specific boost by ID
+        URL: /api/admin-boosting/get_boost_details/{boost_id}/
+        """
+        try:
+            # Get the boost with all related data
+            boost = Boost.objects.select_related(
+                'product',
+                'boost_plan',
+                'shop',
+                'customer',
+                'customer__customer',
+                'payment_verified_by'
+            ).prefetch_related(
+                'product__variants',
+                'product__productmedia_set'
+            ).get(id=boost_id)
+            
+            # Get customer info
+            customer_data = None
+            if boost.customer and boost.customer.customer:
+                user = boost.customer.customer
+                customer_data = {
+                    'id': str(user.id),
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'contact_number': user.contact_number,
+                }
+            
+            # Get shop info
+            shop_data = None
+            if boost.shop:
+                shop_data = {
+                    'id': str(boost.shop.id),
+                    'name': boost.shop.name,
+                    'description': boost.shop.description,
+                    'city': boost.shop.city,
+                    'province': boost.shop.province,
+                    'street': boost.shop.street,
+                    'barangay': boost.shop.barangay,
+                    'contact_number': boost.shop.contact_number,
+                    'verified': boost.shop.verified,
+                    'shop_picture': boost.shop.shop_picture.url if boost.shop.shop_picture else None,
+                }
+            
+            # Get product info
+            product_data = None
+            if boost.product:
+                # Calculate total stock from variants
+                total_stock = boost.product.variants.filter(
+                    is_active=True
+                ).aggregate(total=models.Sum('quantity'))['total'] or 0
+                
+                # Get price range
+                min_price = boost.product.variants.filter(
+                    is_active=True, price__isnull=False
+                ).order_by('price').first()
+                max_price = boost.product.variants.filter(
+                    is_active=True, price__isnull=False
+                ).order_by('-price').first()
+                
+                price_range = None
+                if min_price and max_price:
+                    price_range = {
+                        'min': float(min_price.price),
+                        'max': float(max_price.price)
+                    }
+                
+                # Get primary image
+                primary_image = None
+                first_media = boost.product.productmedia_set.first()
+                if first_media and first_media.file_data:
+                    primary_image = first_media.file_data.url
+                
+                product_data = {
+                    'id': str(boost.product.id),
+                    'name': boost.product.name,
+                    'description': boost.product.description,
+                    'image': primary_image,
+                    'total_stock': total_stock,
+                    'price_range': price_range,
+                    'condition': boost.product.condition,
+                    'status': boost.product.status,
+                    'upload_status': boost.product.upload_status,
+                    'category': boost.product.category.name if boost.product.category else None,
+                    'shop_id': str(boost.product.shop.id) if boost.product.shop else None,
+                }
+            
+            # Get plan info
+            plan_data = None
+            if boost.boost_plan:
+                # Get features
+                features = []
+                plan_features = BoostPlanFeature.objects.filter(
+                    boost_plan=boost.boost_plan
+                ).select_related('feature')
+                
+                for pf in plan_features:
+                    features.append({
+                        'id': str(pf.id),
+                        'feature_name': pf.feature.name,
+                        'description': pf.feature.description,
+                        'value': pf.value,
+                    })
+                
+                plan_data = {
+                    'id': str(boost.boost_plan.id),
+                    'name': boost.boost_plan.name,
+                    'price': float(boost.boost_plan.price),
+                    'duration': boost.boost_plan.duration,
+                    'time_unit': boost.boost_plan.time_unit,
+                    'description': boost.boost_plan.name,
+                    'features': features,
+                }
+            
+            # Get verification info
+            verification_data = None
+            if boost.payment_verified and boost.payment_verified_by:
+                verification_data = {
+                    'verified': boost.payment_verified,
+                    'verified_at': boost.payment_verified_at.isoformat() if boost.payment_verified_at else None,
+                    'verified_by': str(boost.payment_verified_by.id) if boost.payment_verified_by else None,
+                    'verified_by_name': boost.payment_verified_by.username if boost.payment_verified_by else None,
+                }
+            
+            # Calculate days remaining for active boosts
+            days_remaining = None
+            if boost.status == 'active' and boost.end_date:
+                now = timezone.now()
+                if boost.end_date > now:
+                    days_remaining = (boost.end_date - now).days
+                else:
+                    days_remaining = 0
+            
+            # Get action history (you can implement this if you have a history model)
+            # For now, return empty list
+            actions = []
+            
+            # Build response
+            boost_data = {
+                'id': str(boost.id),
+                'boost_id': str(boost.id),
+                'status': boost.status,
+                'payment_method': boost.payment_method,
+                'payment_verified': boost.payment_verified,
+                'has_receipt': bool(boost.receipt_image),
+                'receipt_url': boost.receipt_image.url if boost.receipt_image else None,
+                'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                'created_at': boost.created_at.isoformat() if boost.created_at else None,
+                'days_remaining': days_remaining,
+                'amount': float(boost.boost_plan.price) if boost.boost_plan else None,
+                'price': float(boost.boost_plan.price) if boost.boost_plan else None,
+                'product': product_data,
+                'shop': shop_data,
+                'customer': customer_data,
+                'plan': plan_data,
+                'verification': verification_data,
+                'actions': actions,
+            }
+            
+            return Response({
+                'success': True,
+                'boost': boost_data,
+                'message': 'Boost details retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Boost.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': f'Boost with ID {boost_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving boost details: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class AdminOrders(viewsets.ViewSet):
     def parse_date(self, date_str):
