@@ -16,9 +16,7 @@ import {
   User, 
   Package, 
   AlertCircle,
-  Star,
   MapPin,
-  Shield,
   Eye,
   Ban,
   XCircle,
@@ -31,17 +29,25 @@ import {
   TrendingUp,
   Image as ImageIcon,
   Clock,
-  Hash,
   DollarSign,
   Zap,
-  CreditCard,
   FileText,
   Download,
   ExternalLink,
   RefreshCw,
   PauseCircle,
   PlayCircle,
-  ArrowLeft
+  ArrowLeft,
+  PhilippinePeso,
+  Mail,
+  Phone,
+  Shield,
+  Layers,
+  Award,
+  CreditCard,
+  Receipt,
+  Hash,
+  Building2
 } from 'lucide-react';
 import AxiosInstance from "~/components/axios/Axios";
 import { useState, useEffect } from 'react';
@@ -241,37 +247,37 @@ const getBoostStatusConfig = (status: string) => {
     case 'Active':
       return {
         variant: 'default' as const,
-        className: 'bg-green-50 text-green-700 border-green-200',
+        className: 'bg-emerald-50 text-emerald-700 border-emerald-200',
         icon: PlayCircle,
-        iconClassName: 'text-green-600'
+        iconClassName: 'text-emerald-600'
       };
     case 'Pending':
       return {
         variant: 'secondary' as const,
-        className: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+        className: 'bg-amber-50 text-amber-700 border-amber-200',
         icon: Clock,
-        iconClassName: 'text-yellow-600'
+        iconClassName: 'text-amber-600'
       };
     case 'Expired':
       return {
         variant: 'outline' as const,
-        className: 'bg-gray-50 text-gray-700 border-gray-200',
+        className: 'bg-slate-50 text-slate-700 border-slate-200',
         icon: XCircle,
-        iconClassName: 'text-gray-600'
+        iconClassName: 'text-slate-600'
       };
     case 'Cancelled':
       return {
         variant: 'destructive' as const,
-        className: 'bg-red-50 text-red-700 border-red-200',
+        className: 'bg-rose-50 text-rose-700 border-rose-200',
         icon: XCircle,
-        iconClassName: 'text-red-600'
+        iconClassName: 'text-rose-600'
       };
     case 'Suspended':
       return {
         variant: 'destructive' as const,
-        className: 'bg-amber-50 text-amber-700 border-amber-200',
+        className: 'bg-orange-50 text-orange-700 border-orange-200',
         icon: Ban,
-        iconClassName: 'text-amber-600'
+        iconClassName: 'text-orange-600'
       };
     case 'Completed':
       return {
@@ -283,9 +289,9 @@ const getBoostStatusConfig = (status: string) => {
     default:
       return {
         variant: 'secondary' as const,
-        className: 'bg-gray-50 text-gray-700 border-gray-200',
+        className: 'bg-slate-50 text-slate-700 border-slate-200',
         icon: AlertCircle,
-        iconClassName: 'text-gray-600'
+        iconClassName: 'text-slate-600'
       };
   }
 };
@@ -298,11 +304,44 @@ function BoostStatusBadge({ status }: { status: string }) {
   return (
     <Badge 
       variant={config.variant} 
-      className={`flex items-center gap-1.5 px-3 py-1 ${config.className}`}
+      className={`flex items-center gap-1.5 px-3 py-1.5 font-medium ${config.className}`}
     >
       <Icon className={`w-3.5 h-3.5 ${config.iconClassName}`} />
       {normalizeBoostStatus(status)}
     </Badge>
+  );
+}
+
+// Info Row Component for consistent styling
+function InfoRow({ label, value, icon: Icon }: { label: string; value: string | number; icon?: any }) {
+  return (
+    <div className="flex items-start gap-3 py-2 border-b border-slate-100 last:border-0">
+      {Icon && <Icon className="w-4 h-4 text-slate-500 mt-0.5 flex-shrink-0" />}
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">{label}</p>
+        <p className="text-sm font-semibold text-slate-900 break-words mt-0.5">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+// Stat Card Component
+function StatCard({ icon: Icon, label, value, tooltip }: { icon: any; label: string; value: string | number; tooltip?: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100 hover:border-slate-200 transition-colors cursor-help">
+          <div className="p-2 bg-white rounded-lg">
+            <Icon className="w-4 h-4 text-slate-700" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">{label}</p>
+            <p className="font-semibold text-slate-900">{value}</p>
+          </div>
+        </div>
+      </TooltipTrigger>
+      {tooltip && <TooltipContent><p>{tooltip}</p></TooltipContent>}
+    </Tooltip>
   );
 }
 
@@ -378,7 +417,7 @@ const formatDate = (dateString?: string) => {
   if (!dateString) return 'N/A';
   return new Date(dateString).toLocaleDateString('en-PH', {
     year: 'numeric',
-    month: 'long',
+    month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
@@ -418,12 +457,11 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
       setLoading(true);
       setError(null);
       
-      const response = await AxiosInstance.get(`/admin-boosting/get_boost_details/${boostId}/`);
+      const response = await AxiosInstance.get(`/admin-boosting/${boostId}/details/`);
       
       if (response.data.success) {
         const data = response.data.boost || response.data;
         
-        // Transform the data to match our interface
         const transformedBoost: BoostDetails = {
           id: data.id || data.boost_id || boostId,
           boost_id: data.boost_id || data.id,
@@ -508,90 +546,43 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
     }
   };
 
-  // Function to refresh data
   const refreshData = async () => {
     await fetchBoostDetails();
   };
 
-  // Determine available actions based on boost status
   const getAvailableActions = () => {
     if (!boost) return [];
     
     const normalizedStatus = normalizeBoostStatus(boost.status);
     const actions = [];
     
-    // Pending boosts
     if (normalizedStatus === 'Pending') {
       actions.push(
-        {
-          id: "approve",
-          label: "Approve Boost",
-          icon: CheckCircle,
-          variant: "default" as const,
-        },
-        {
-          id: "reject",
-          label: "Reject Boost",
-          icon: XCircle,
-          variant: "destructive" as const,
-        }
+        { id: "approve", label: "Approve Boost", icon: CheckCircle, variant: "default" as const },
+        { id: "reject", label: "Reject Boost", icon: XCircle, variant: "destructive" as const }
       );
     }
     
-    // Active boosts
     if (normalizedStatus === 'Active') {
       actions.push(
-        {
-          id: "suspend",
-          label: "Suspend Boost",
-          icon: Ban,
-          variant: "destructive" as const,
-        },
-        {
-          id: "cancel",
-          label: "Cancel Boost",
-          icon: XCircle,
-          variant: "destructive" as const,
-        }
+        { id: "suspend", label: "Suspend Boost", icon: Ban, variant: "destructive" as const },
+        { id: "cancel", label: "Cancel Boost", icon: XCircle, variant: "destructive" as const }
       );
     }
     
-    // Suspended boosts
     if (normalizedStatus === 'Suspended') {
       actions.push(
-        {
-          id: "resume",
-          label: "Resume Boost",
-          icon: PlayCircle,
-          variant: "default" as const,
-        },
-        {
-          id: "cancel",
-          label: "Cancel Boost",
-          icon: XCircle,
-          variant: "destructive" as const,
-        }
+        { id: "resume", label: "Resume Boost", icon: PlayCircle, variant: "default" as const },
+        { id: "cancel", label: "Cancel Boost", icon: XCircle, variant: "destructive" as const }
       );
     }
     
-    // Expired boosts
     if (normalizedStatus === 'Expired') {
-      actions.push({
-        id: "renew",
-        label: "Renew Boost",
-        icon: RefreshCw,
-        variant: "default" as const,
-      });
+      actions.push({ id: "renew", label: "Renew Boost", icon: RefreshCw, variant: "default" as const });
     }
     
-    // Cancelled boosts
     if (normalizedStatus === 'Cancelled') {
-      actions.push({
-        id: "restore",
-        label: "Restore Boost",
-        icon: RefreshCw,
-        variant: "default" as const,
-      });
+      actions.push({ id: "restore", label: "Restore Boost", icon: RefreshCw, variant: "default" as const });
     }
     
     return actions;
@@ -610,7 +601,6 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
   const handleConfirm = async () => {
     if (!activeAction || !boost) return;
     
-    // Validate required reason for reject, suspend, cancel actions
     if ((activeAction === 'reject' || activeAction === 'suspend' || activeAction === 'cancel') && !reason.trim()) {
       toast({
         title: "Validation Error",
@@ -625,27 +615,16 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
       const requestData: any = {
         boost_id: boost.id,
         action_type: activeAction,
-        user_id: user?.id
+        user_id: user?.user_id || user?.id
       };
       
-      // Add reason for applicable actions
-      if (reason.trim()) {
-        requestData.reason = reason;
-      }
-      
-      // Add suspension days for suspend action
-      if (activeAction === 'suspend') {
-        requestData.suspension_days = suspensionDays;
-      }
+      if (reason.trim()) requestData.reason = reason;
+      if (activeAction === 'suspend') requestData.suspension_days = suspensionDays;
       
       const response = await AxiosInstance.put(
         '/admin-boosting/update_boost_status/',
         requestData,
-        {
-          headers: {
-            "X-User-Id": user?.id || ''
-          }
-        }
+        { headers: { "X-User-Id": user?.user_id || user?.id || '' } }
       );
       
       toast({
@@ -654,19 +633,12 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
         variant: "success",
       });
       
-      // Refresh data
       await refreshData();
       
     } catch (error: any) {
-      console.error('Error executing action:', error);
-      
-      const errorMessage = error.response?.data?.error || 
-                          error.response?.data?.detail || 
-                          "Failed to complete action. Please try again.";
-      
       toast({
         title: "Error",
-        description: errorMessage,
+        description: error.response?.data?.error || "Failed to complete action",
         variant: "destructive",
       });
     } finally {
@@ -690,83 +662,65 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
     if (!currentAction || !boost) return null;
 
     return (
-      <>
-        <div className="space-y-4">
-          <div>
-            <h3 className="text-lg font-semibold">{currentAction.title}</h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              {currentAction.description}
-            </p>
-          </div>
-          
-          {/* Boost info */}
-          <div className="bg-muted/50 rounded-lg p-3">
-            <p className="text-sm font-medium">Boost ID: {boost.boost_id || boost.id.slice(0, 8)}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Current Status: {normalizeBoostStatus(boost.status)}
-            </p>
-            {boost.product && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Product: {boost.product.name}
-              </p>
-            )}
-          </div>
-          
-          {/* Reason input for actions that need it */}
-          {(activeAction === 'reject' || activeAction === 'suspend' || activeAction === 'cancel') && (
-            <div className="space-y-2">
-              <Label htmlFor="reason" className="text-sm font-medium">
-                Reason <span className="text-red-500">*</span>
-              </Label>
-              <Input
-                id="reason"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder={`Please provide a reason for ${activeAction}ing this boost...`}
-                className="h-10"
-                required
-              />
-              <p className="text-xs text-muted-foreground">
-                This reason will be recorded and may be shared with the seller.
-              </p>
-            </div>
-          )}
-          
-          {/* Suspension days for suspend action */}
-          {activeAction === 'suspend' && (
-            <div className="space-y-2">
-              <Label htmlFor="suspension-days" className="text-sm font-medium">
-                Suspension Duration
-              </Label>
-              <div className="flex items-center gap-3">
-                <Input
-                  id="suspension-days"
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={suspensionDays}
-                  onChange={(e) => setSuspensionDays(Math.max(1, parseInt(e.target.value) || 7))}
-                  className="h-10 w-24"
-                />
-                <span className="text-sm text-muted-foreground">days</span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                The boost will be automatically resumed after this period.
-              </p>
-            </div>
-          )}
-          
-          {/* Warning message for destructive actions */}
-          {currentAction.variant === "destructive" && (
-            <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
-              <p className="text-sm font-medium text-destructive flex items-center gap-1">
-                <AlertCircle className="w-4 h-4" />
-                Warning: This action may have consequences
-              </p>
-            </div>
-          )}
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">{currentAction.title}</h3>
+          <p className="text-sm text-slate-600 mt-1">{currentAction.description}</p>
         </div>
-      </>
+        
+        <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+          <p className="text-sm font-medium text-slate-900">Boost #{boost.boost_id || boost.id.slice(0, 8)}</p>
+          <p className="text-xs text-slate-600 mt-1">Status: {normalizeBoostStatus(boost.status)}</p>
+          {boost.product && <p className="text-xs text-slate-600 mt-1">Product: {boost.product.name}</p>}
+        </div>
+        
+        {(activeAction === 'reject' || activeAction === 'suspend' || activeAction === 'cancel') && (
+          <div className="space-y-2">
+            <Label htmlFor="reason" className="text-sm font-medium text-slate-700">
+              Reason <span className="text-rose-500">*</span>
+            </Label>
+            <Input
+              id="reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={`Reason for ${activeAction}ing this boost...`}
+              className="border-slate-200 focus:border-slate-400 focus:ring-slate-400"
+              required
+            />
+            <p className="text-xs text-slate-500">This reason will be recorded and may be shared with the seller.</p>
+          </div>
+        )}
+        
+        {activeAction === 'suspend' && (
+          <div className="space-y-2">
+            <Label htmlFor="suspension-days" className="text-sm font-medium text-slate-700">
+              Suspension Duration
+            </Label>
+            <div className="flex items-center gap-3">
+              <Input
+                id="suspension-days"
+                type="number"
+                min="1"
+                max="365"
+                value={suspensionDays}
+                onChange={(e) => setSuspensionDays(Math.max(1, parseInt(e.target.value) || 7))}
+                className="h-10 w-24 border-slate-200 focus:border-slate-400"
+              />
+              <span className="text-sm text-slate-600">days</span>
+            </div>
+            <p className="text-xs text-slate-500">The boost will be automatically resumed after this period.</p>
+          </div>
+        )}
+        
+        {currentAction.variant === "destructive" && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-3">
+            <p className="text-sm font-medium text-rose-700 flex items-center gap-1">
+              <AlertCircle className="w-4 h-4" />
+              Warning: This action may have consequences
+            </p>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -775,32 +729,19 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
 
     return (
       <AlertDialog open={showDialog} onOpenChange={!processing ? setShowDialog : undefined}>
-        <AlertDialogContent className="sm:max-w-[500px] max-w-[95vw]">
+        <AlertDialogContent className="sm:max-w-[500px]">
           {renderDialogContent()}
-          <AlertDialogFooter className="mt-6 sm:flex-row flex-col gap-2">
-            <AlertDialogCancel 
-              onClick={handleCancel}
-              disabled={processing}
-              className="mt-0 sm:w-auto w-full order-2 sm:order-1"
-            >
+          <AlertDialogFooter className="mt-6 gap-2">
+            <AlertDialogCancel onClick={handleCancel} disabled={processing}>
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction 
               onClick={handleConfirm}
-              className={
-                `sm:w-auto w-full order-1 sm:order-2 ${
-                  currentAction.variant === "destructive" 
-                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" 
-                    : ""
-                }`
-              }
+              className={currentAction.variant === "destructive" ? "bg-rose-600 hover:bg-rose-700" : ""}
               disabled={processing || ((activeAction === 'reject' || activeAction === 'suspend' || activeAction === 'cancel') && !reason.trim())}
             >
               {processing ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />
-                  Processing...
-                </>
+                <><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />Processing...</>
               ) : (
                 currentAction.confirmText
               )}
@@ -821,31 +762,16 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
             <DrawerTitle>{currentAction.title}</DrawerTitle>
             <DrawerDescription>{currentAction.description}</DrawerDescription>
           </DrawerHeader>
-          <div className="px-4 pb-4">
-            {renderDialogContent()}
-          </div>
-          <DrawerFooter className="pt-2 flex-col sm:flex-row gap-2">
+          <div className="px-4 pb-4">{renderDialogContent()}</div>
+          <DrawerFooter className="pt-2 flex-col gap-2">
             <Button 
               onClick={handleConfirm}
-              className={
-                `sm:w-auto w-full ${
-                  currentAction.variant === "destructive" 
-                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" 
-                    : ""
-                }`
-              }
+              className={currentAction.variant === "destructive" ? "bg-rose-600 hover:bg-rose-700" : ""}
               disabled={processing || ((activeAction === 'reject' || activeAction === 'suspend' || activeAction === 'cancel') && !reason.trim())}
             >
-              {processing ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />
-                  Processing...
-                </>
-              ) : (
-                currentAction.confirmText
-              )}
+              {processing ? "Processing..." : currentAction.confirmText}
             </Button>
-            <DrawerClose asChild className="sm:w-auto w-full">
+            <DrawerClose asChild>
               <Button variant="outline" onClick={handleCancel} disabled={processing}>
                 Cancel
               </Button>
@@ -859,41 +785,19 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
   if (loading) {
     return (
       <UserProvider user={user}>
-        <div className="container mx-auto p-4 sm:p-6">
-          <div className="flex items-center gap-4 mb-6">
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/admin/boosting">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back
-              </Link>
-            </Button>
-            <div className="h-8 w-48 bg-gray-200 animate-pulse rounded" />
-          </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="h-6 w-32 bg-gray-200 animate-pulse rounded mb-2" />
-                  <div className="h-4 w-48 bg-gray-200 animate-pulse rounded" />
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="h-20 w-full bg-gray-200 animate-pulse rounded" />
-                  <div className="h-20 w-full bg-gray-200 animate-pulse rounded" />
-                </CardContent>
-              </Card>
+        <div className="min-h-screen bg-slate-50">
+          <div className="container mx-auto p-4 sm:p-6">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-20 h-10 bg-slate-200 animate-pulse rounded" />
+              <div className="h-8 w-48 bg-slate-200 animate-pulse rounded" />
             </div>
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="h-6 w-32 bg-gray-200 animate-pulse rounded" />
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="h-10 w-full bg-gray-200 animate-pulse rounded" />
-                  <div className="h-10 w-full bg-gray-200 animate-pulse rounded" />
-                  <div className="h-10 w-full bg-gray-200 animate-pulse rounded" />
-                </CardContent>
-              </Card>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-6">
+                <div className="h-96 bg-slate-200 animate-pulse rounded-xl" />
+              </div>
+              <div className="space-y-6">
+                <div className="h-96 bg-slate-200 animate-pulse rounded-xl" />
+              </div>
             </div>
           </div>
         </div>
@@ -904,14 +808,14 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
   if (error || !boost) {
     return (
       <UserProvider user={user}>
-        <div className="container mx-auto p-4 sm:p-6">
-          <div className="flex flex-col items-center justify-center py-12">
-            <div className="rounded-full bg-red-100 p-4 mb-4">
-              <AlertCircle className="h-12 w-12 text-red-600" />
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+          <div className="text-center max-w-md p-8">
+            <div className="rounded-full bg-rose-100 p-4 mb-4 inline-block">
+              <AlertCircle className="h-12 w-12 text-rose-600" />
             </div>
-            <h2 className="text-2xl font-bold mb-2">Boost Not Found</h2>
-            <p className="text-muted-foreground mb-6">{error || 'The boost you\'re looking for doesn\'t exist.'}</p>
-            <Button asChild>
+            <h2 className="text-2xl font-bold text-slate-900 mb-2">Boost Not Found</h2>
+            <p className="text-slate-600 mb-6">{error || 'The boost you\'re looking for doesn\'t exist.'}</p>
+            <Button asChild className="bg-slate-900 hover:bg-slate-800">
               <Link to="/admin/boosting">
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to Boosts
@@ -929,643 +833,512 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
   return (
     <UserProvider user={user}>
       <TooltipProvider>
-        <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
-          {/* Header with back button and actions */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="sm" asChild>
-                <Link to="/admin/boosting">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Back
-                </Link>
-              </Button>
-              <h1 className="text-2xl sm:text-3xl font-bold">Boost Details</h1>
+        <div className="min-h-screen bg-slate-50">
+          <div className="container mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div className="flex items-center gap-4">
+                <Button variant="ghost" size="sm" asChild className="text-slate-600 hover:text-slate-900">
+                  <Link to="/admin/boosting">
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Back
+                  </Link>
+                </Button>
+                <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Boost Details</h1>
+              </div>
+              
+              {availableActions.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="border-slate-200 hover:bg-slate-100">
+                      <MoreVertical className="w-4 h-4 mr-2" />
+                      Actions
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    {availableActions.map((action, index) => {
+                      const isDestructive = action.variant === "destructive";
+                      const prevAction = availableActions[index - 1];
+                      const needsSeparator = isDestructive && prevAction && prevAction.variant !== "destructive";
+
+                      return (
+                        <div key={action.id}>
+                          {needsSeparator && <DropdownMenuSeparator />}
+                          <DropdownMenuItem
+                            onClick={() => handleActionClick(action.id)}
+                            className={`flex items-center gap-2 cursor-pointer ${
+                              isDestructive ? "text-rose-600 focus:text-rose-600" : "text-slate-700"
+                            }`}
+                          >
+                            <action.icon className="w-4 h-4" />
+                            {action.label}
+                          </DropdownMenuItem>
+                        </div>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
-            
-            {/* Admin Actions Dropdown */}
-            {availableActions.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="ml-auto">
-                    <MoreVertical className="w-4 h-4 mr-2" />
-                    Actions
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  {availableActions.map((action, index) => {
-                    const isDestructive = action.variant === "destructive";
-                    const prevAction = availableActions[index - 1];
-                    const needsSeparator = isDestructive && prevAction && prevAction.variant !== "destructive";
 
-                    return (
-                      <div key={action.id}>
-                        {needsSeparator && <DropdownMenuSeparator />}
-                        <DropdownMenuItem
-                          onClick={() => handleActionClick(action.id)}
-                          className={`flex items-center gap-2 cursor-pointer ${
-                            isDestructive 
-                              ? "text-destructive focus:text-destructive" 
-                              : ""
-                          }`}
-                        >
-                          <action.icon className="w-4 h-4" />
-                          {action.label}
-                        </DropdownMenuItem>
-                      </div>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-
-          {/* Status Banner */}
-          <Card className={`${statusConfig.className} border-2`}>
-            <CardContent className="p-4 sm:p-6">
+            {/* Status Banner */}
+            <div className={`${statusConfig.className} rounded-xl border-2 p-6 shadow-sm`}>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-full bg-white/50">
+                  <div className="p-3 rounded-full bg-white/80">
                     <StatusIcon className={`h-6 w-6 ${statusConfig.iconClassName}`} />
                   </div>
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <h2 className="text-xl font-semibold">Boost #{boost.boost_id || boost.id.slice(0, 8)}</h2>
+                      <h2 className="text-xl font-semibold text-slate-900">
+                        Boost #{boost.boost_id || boost.id.slice(0, 8)}
+                      </h2>
                       <BoostStatusBadge status={boost.status} />
                     </div>
-                    <p className="text-sm opacity-80">
-                      Created on {formatDate(boost.created_at)}
-                    </p>
+                    <p className="text-sm text-slate-600">Created on {formatDate(boost.created_at)}</p>
                   </div>
                 </div>
                 
                 <div className="text-left sm:text-right">
-                  <p className="text-sm opacity-80">Amount</p>
-                  <p className="text-2xl font-bold">{formatCurrency(boost.amount || boost.plan?.price)}</p>
+                  <p className="text-sm font-medium text-slate-600">Amount</p>
+                  <p className="text-3xl font-bold text-slate-900">{formatCurrency(boost.amount || boost.plan?.price)}</p>
                   {boost.payment_verified && (
-                    <Badge variant="default" className="mt-1 bg-green-600">
+                    <Badge variant="default" className="mt-2 bg-emerald-600 hover:bg-emerald-700">
                       <CheckCircle className="w-3 h-3 mr-1" />
                       Payment Verified
                     </Badge>
                   )}
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          {/* Main Content Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Main Details */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* Product Details Card */}
-              {boost.product && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <Package className="h-5 w-5" />
-                      Product Details
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-col sm:flex-row gap-4">
-                      {/* Product Image */}
-                      <div className="sm:w-32 sm:h-32 w-full h-48 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
-                        {boost.product.image ? (
-                          <img 
-                            src={boost.product.image} 
-                            alt={boost.product.name}
-                            className="w-full h-full object-cover cursor-pointer"
-                            onClick={() => setSelectedImage(boost.product?.image || null)}
-                          />
-                        ) : (
-                          <ImageIcon className="h-12 w-12 text-gray-400" />
-                        )}
-                      </div>
-                      
-                      {/* Product Info */}
-                      <div className="flex-1 space-y-3">
-                        <div>
-                          <Link 
-                            to={`/admin/products/${boost.product.id}`}
-                            className="text-lg font-semibold hover:underline flex items-center gap-1"
-                          >
-                            {boost.product.name}
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </Link>
-                          <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
-                            {boost.product.description}
-                          </p>
+            {/* Main Content Grid - 2 columns with balanced heights */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left Column - Takes full height with grid layout */}
+              <div className="space-y-6 lg:grid lg:grid-rows-[auto_auto_auto_1fr] lg:gap-6 lg:space-y-0 lg:h-full">
+                {/* Product Details Card */}
+                {boost.product && (
+                  <Card className="border-slate-200 shadow-sm overflow-hidden">
+                    <CardHeader className="bg-slate-50 border-b border-slate-200 pb-3">
+                      <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                        <Package className="h-5 w-5 text-slate-600" />
+                        Product Details
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <div className="flex flex-col sm:flex-row">
+                        <div 
+                          className="sm:w-40 sm:h-40 w-full h-48 bg-slate-100 flex items-center justify-center cursor-pointer border-r border-slate-200"
+                          onClick={() => setSelectedImage(boost.product?.image || null)}
+                        >
+                          {boost.product.image ? (
+                            <img src={boost.product.image} alt={boost.product.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <ImageIcon className="h-12 w-12 text-slate-400" />
+                          )}
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-3 text-sm">
-                          {boost.product.price_range && (
-                            <div>
-                              <span className="text-muted-foreground">Price Range:</span>
-                              <span className="ml-2 font-medium">
-                                {formatCurrency(boost.product.price_range.min)} - {formatCurrency(boost.product.price_range.max)}
-                              </span>
-                            </div>
-                          )}
-                          <div>
-                            <span className="text-muted-foreground">Stock:</span>
-                            <span className="ml-2 font-medium">{boost.product.total_stock}</span>
-                          </div>
-                          {boost.product.condition && (
-                            <div>
-                              <span className="text-muted-foreground">Condition:</span>
-                              <span className="ml-2 font-medium">{boost.product.condition}</span>
-                            </div>
-                          )}
-                          {boost.product.category && (
-                            <div>
-                              <span className="text-muted-foreground">Category:</span>
-                              <span className="ml-2 font-medium">{boost.product.category}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <Button variant="outline" size="sm" asChild className="mt-2">
-                          <Link to={`/admin/products/${boost.product.id}`}>
-                            <Eye className="h-3 w-3 mr-2" />
-                            View Full Product
-                          </Link>
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Shop Details Card */}
-              {boost.shop && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <Store className="h-5 w-5" />
-                      Shop Details
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          {boost.shop.shop_picture ? (
-                            <img 
-                              src={boost.shop.shop_picture} 
-                              alt={boost.shop.name}
-                              className="w-10 h-10 rounded-lg object-cover"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 bg-muted rounded-lg flex items-center justify-center">
-                              <Store className="w-5 h-5 text-muted-foreground" />
-                            </div>
-                          )}
-                          <div>
+                        <div className="flex-1 p-4">
+                          <div className="mb-3">
                             <Link 
-                              to={`/admin/shops/${boost.shop.id}`}
-                              className="font-semibold hover:underline flex items-center gap-1"
+                              to={`/admin/products/${boost.product.id}`}
+                              className="text-lg font-semibold text-slate-900 hover:text-slate-700 flex items-center gap-1"
                             >
-                              {boost.shop.name}
-                              <ExternalLink className="h-3 w-3 ml-1" />
+                              {boost.product.name}
+                              <ExternalLink className="h-3 w-3 text-slate-500" />
                             </Link>
-                            {boost.shop.description && (
-                              <p className="text-xs text-muted-foreground">{boost.shop.description}</p>
+                            <p className="text-sm text-slate-600 mt-1 line-clamp-2">{boost.product.description}</p>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-3">
+                            {boost.product.price_range && (
+                              <div className="bg-slate-50 p-2 rounded">
+                                <p className="text-xs text-slate-500">Price Range</p>
+                                <p className="font-medium text-sm text-slate-900">
+                                  {formatCurrency(boost.product.price_range.min)} - {formatCurrency(boost.product.price_range.max)}
+                                </p>
+                              </div>
                             )}
+                            <div className="bg-slate-50 p-2 rounded">
+                              <p className="text-xs text-slate-500">Stock</p>
+                              <p className="font-medium text-sm text-slate-900">{boost.product.total_stock}</p>
+                            </div>
                           </div>
                         </div>
-                        {boost.shop.verified !== undefined && (
-                          <Badge variant={boost.shop.verified ? "default" : "secondary"}>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Shop Details Card */}
+                {boost.shop && (
+                  <Card className="border-slate-200 shadow-sm">
+                    <CardHeader className="bg-slate-50 border-b border-slate-200 pb-3">
+                      <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                        <Store className="h-5 w-5 text-slate-600" />
+                        Shop Information
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-3 mb-4">
+                        {boost.shop.shop_picture ? (
+                          <img src={boost.shop.shop_picture} alt={boost.shop.name} className="w-12 h-12 rounded-lg object-cover" />
+                        ) : (
+                          <div className="w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center">
+                            <Store className="w-6 h-6 text-slate-500" />
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <Link 
+                            to={`/admin/shops/${boost.shop.id}`}
+                            className="font-semibold text-slate-900 hover:text-slate-700 flex items-center gap-1"
+                          >
+                            {boost.shop.name}
+                            <ExternalLink className="h-3 w-3 text-slate-500" />
+                          </Link>
+                          <Badge variant={boost.shop.verified ? "default" : "secondary"} className="mt-1">
                             {boost.shop.verified ? 'Verified' : 'Unverified'}
                           </Badge>
-                        )}
-                      </div>
-                      
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                        {boost.shop.contact_number && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground">Contact:</span>
-                            <span>{boost.shop.contact_number}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2">
-                          <MapPin className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                          <span className="text-sm">
-                            {[boost.shop.street, boost.shop.barangay, boost.shop.city, boost.shop.province]
-                              .filter(Boolean)
-                              .join(', ')}
-                          </span>
                         </div>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+                      
+                      <div className="space-y-2">
+                        {boost.shop.contact_number && (
+                          <InfoRow label="Contact" value={boost.shop.contact_number} icon={Phone} />
+                        )}
+                        <InfoRow 
+                          label="Location" 
+                          value={[boost.shop.street, boost.shop.barangay, boost.shop.city, boost.shop.province]
+                            .filter(Boolean).join(', ')} 
+                          icon={MapPin} 
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
 
-              {/* Customer Details Card */}
-              {boost.customer && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <User className="h-5 w-5" />
-                      Customer Details
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      <div>
-                        <p className="text-lg font-semibold">{boost.customer.name || boost.customer.username}</p>
-                        <p className="text-sm text-muted-foreground">ID: {boost.customer.id}</p>
+                {/* Customer Details Card */}
+                {boost.customer && (
+                  <Card className="border-slate-200 shadow-sm">
+                    <CardHeader className="bg-slate-50 border-b border-slate-200 pb-3">
+                      <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                        <User className="h-5 w-5 text-slate-600" />
+                        Customer Information
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                      <div className="mb-3">
+                        <p className="font-semibold text-slate-900">{boost.customer.name || boost.customer.username}</p>
+                        <p className="text-xs text-slate-500 mt-1">ID: {boost.customer.id.slice(0, 8)}</p>
                       </div>
                       
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      <div className="space-y-2">
                         {boost.customer.email && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground">Email:</span>
-                            <span className="truncate">{boost.customer.email}</span>
-                          </div>
+                          <InfoRow label="Email" value={boost.customer.email} icon={Mail} />
                         )}
                         {boost.customer.contact_number && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground">Contact:</span>
-                            <span>{boost.customer.contact_number}</span>
-                          </div>
+                          <InfoRow label="Phone" value={boost.customer.contact_number} icon={Phone} />
                         )}
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+                    </CardContent>
+                  </Card>
+                )}
 
-              {/* Action History Card */}
-              {boost.actions && boost.actions.length > 0 && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <Clock className="h-5 w-5" />
-                      Action History
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {boost.actions.map((action) => (
-                        <div key={action.id} className="flex items-start gap-3 pb-4 border-b last:border-0 last:pb-0">
-                          <div className="p-2 rounded-full bg-gray-100">
-                            <FileText className="h-4 w-4 text-gray-600" />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center justify-between flex-wrap gap-2">
-                              <p className="font-medium capitalize">{action.action_type.replace('_', ' ')}</p>
-                              <p className="text-xs text-muted-foreground">{formatDate(action.performed_at)}</p>
+                {/* Action History Card - Takes remaining space */}
+                {boost.actions && boost.actions.length > 0 ? (
+                  <Card className="border-slate-200 shadow-sm h-full">
+                    <CardHeader className="bg-slate-50 border-b border-slate-200 pb-3">
+                      <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                        <Clock className="h-5 w-5 text-slate-600" />
+                        Action History
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                      <div className="space-y-4">
+                        {boost.actions.map((action) => (
+                          <div key={action.id} className="flex items-start gap-3 pb-4 border-b border-slate-100 last:border-0 last:pb-0">
+                            <div className="p-2 rounded-full bg-slate-100">
+                              <FileText className="h-4 w-4 text-slate-600" />
                             </div>
-                            {action.performed_by && (
-                              <p className="text-xs text-muted-foreground">By: {action.performed_by}</p>
-                            )}
-                            {action.reason && (
-                              <p className="text-sm mt-1 bg-muted/50 p-2 rounded">Reason: {action.reason}</p>
-                            )}
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between flex-wrap gap-2">
+                                <p className="font-medium text-slate-900 capitalize">{action.action_type.replace('_', ' ')}</p>
+                                <p className="text-xs text-slate-500">{formatDate(action.performed_at)}</p>
+                              </div>
+                              {action.performed_by && (
+                                <p className="text-xs text-slate-500 mt-1">By: {action.performed_by}</p>
+                              )}
+                              {action.reason && (
+                                <p className="text-sm mt-2 bg-slate-50 p-2 rounded text-slate-700">Reason: {action.reason}</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  /* Placeholder card to fill space when no actions */
+                  <Card className="border-slate-200 shadow-sm h-full bg-slate-50/50">
+                    <CardHeader className="bg-slate-50 border-b border-slate-200 pb-3">
+                      <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                        <Clock className="h-5 w-5 text-slate-600" />
+                        Action History
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4 flex items-center justify-center h-32">
+                      <p className="text-sm text-slate-500">No action history available</p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              {/* Right Column */}
+              <div className="space-y-6">
+                {/* Boost Plan Card */}
+                {boost.plan && (
+                  <Card className="border-slate-200 shadow-sm">
+                    <CardHeader className="bg-slate-50 border-b border-slate-200 pb-3">
+                      <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                        <Zap className="h-5 w-5 text-slate-600" />
+                        Boost Plan
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                      <div className="mb-4">
+                        <p className="font-semibold text-lg text-slate-900">{boost.plan.name}</p>
+                        {boost.plan.description && (
+                          <p className="text-sm text-slate-600 mt-1">{boost.plan.description}</p>
+                        )}
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        <div className="bg-slate-50 p-3 rounded-lg">
+                          <p className="text-xs text-slate-500">Price</p>
+                          <p className="font-bold text-lg text-slate-900">{formatCurrency(boost.plan.price)}</p>
+                        </div>
+                        <div className="bg-slate-50 p-3 rounded-lg">
+                          <p className="text-xs text-slate-500">Duration</p>
+                          <p className="font-bold text-lg text-slate-900">{boost.plan.duration} {boost.plan.time_unit}</p>
+                        </div>
+                      </div>
+                      
+                      {boost.plan.features && boost.plan.features.length > 0 && (
+                        <div>
+                          <p className="text-sm font-medium text-slate-900 mb-3 flex items-center gap-2">
+                            <Award className="h-4 w-4 text-slate-600" />
+                            Features
+                          </p>
+                          <div className="space-y-2">
+                            {boost.plan.features.map((feature, index) => {
+                              const featureName = typeof feature === 'string' ? feature : feature.feature_name || 'Feature';
+                              return (
+                                <div key={index} className="flex items-start gap-2 p-2 bg-slate-50 rounded">
+                                  <CheckCircle className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                                  <span className="text-sm text-slate-700">{featureName}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
 
-            {/* Right Column - Sidebar Info */}
-            <div className="space-y-6">
-              {/* Boost Plan Card */}
-              {boost.plan && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <Zap className="h-5 w-5" />
-                      Boost Plan
+                {/* Timeline Card */}
+                <Card className="border-slate-200 shadow-sm">
+                  <CardHeader className="bg-slate-50 border-b border-slate-200 pb-3">
+                    <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                      <Calendar className="h-5 w-5 text-slate-600" />
+                      Timeline
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <p className="font-semibold text-base">{boost.plan.name}</p>
-                      {boost.plan.description && (
-                        <p className="text-sm text-muted-foreground mt-1">{boost.plan.description}</p>
+                  <CardContent className="p-4">
+                    <div className="space-y-2">
+                      <InfoRow label="Created" value={formatDate(boost.created_at)} />
+                      {boost.start_date && <InfoRow label="Started" value={formatDate(boost.start_date)} />}
+                      {boost.end_date && <InfoRow label="Ends" value={formatDate(boost.end_date)} />}
+                      
+                      {boost.days_remaining !== undefined && boost.status === 'active' && (
+                        <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                          <div className="flex items-center gap-2">
+                            <Clock className="h-4 w-4 text-blue-600" />
+                            <span className="text-sm font-medium text-blue-700">{boost.days_remaining} days remaining</span>
+                          </div>
+                        </div>
                       )}
                     </div>
-                    
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <p className="text-muted-foreground">Price</p>
-                        <p className="font-medium text-base">{formatCurrency(boost.plan.price)}</p>
+                  </CardContent>
+                </Card>
+
+                {/* Payment Information Card */}
+                <Card className="border-slate-200 shadow-sm">
+                  <CardHeader className="bg-slate-50 border-b border-slate-200 pb-3">
+                    <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                      <PhilippinePeso className="h-5 w-5 text-slate-600" />
+                      Payment Information
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4">
+                    <div className="space-y-3 mb-4">
+                      <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                        <span className="text-sm text-slate-600">Amount</span>
+                        <span className="font-bold text-lg text-slate-900">{formatCurrency(boost.amount || boost.plan?.price)}</span>
                       </div>
-                      <div>
-                        <p className="text-muted-foreground">Duration</p>
-                        <p className="font-medium">{boost.plan.duration} {boost.plan.time_unit}</p>
+                      <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                        <span className="text-sm text-slate-600">Method</span>
+                        <Badge variant="outline" className="font-normal border-slate-200 bg-slate-50">
+                          {boost.payment_method || 'N/A'}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between items-center py-2">
+                        <span className="text-sm text-slate-600">Verified</span>
+                        <Badge variant={boost.payment_verified ? "default" : "secondary"} 
+                               className={boost.payment_verified ? "bg-emerald-600" : ""}>
+                          {boost.payment_verified ? 'Yes' : 'No'}
+                        </Badge>
                       </div>
                     </div>
                     
-                    {boost.plan.features && boost.plan.features.length > 0 && (
-                      <div>
-                        <p className="text-sm font-medium mb-2">Features:</p>
-                        <ul className="space-y-1">
-                          {boost.plan.features.slice(0, 5).map((feature, index) => {
-                            // Fix: Handle both string and object features
-                            const featureName = typeof feature === 'string' 
-                              ? feature 
-                              : feature.feature_name || 'Feature';
-                            
-                            return (
-                              <li key={index} className="text-xs flex items-start gap-2">
-                                <CheckCircle className="h-3 w-3 text-green-600 mt-0.5 flex-shrink-0" />
-                                <span>{featureName}</span>
-                              </li>
-                            );
-                          })}
-                        </ul>
+                    {/* Receipt Section */}
+                    {boost.has_receipt && (
+                      <div className="pt-3 border-t border-slate-200">
+                        <p className="text-sm font-medium text-slate-900 mb-3 flex items-center gap-2">
+                          <Receipt className="h-4 w-4 text-slate-600" />
+                          Payment Receipt
+                        </p>
+                        {boost.receipt_url ? (
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" className="flex-1 border-slate-200 hover:bg-slate-100" asChild>
+                              <a href={boost.receipt_url} target="_blank" rel="noopener noreferrer">
+                                <Eye className="h-4 w-4 mr-2" /> View
+                              </a>
+                            </Button>
+                            <Button variant="outline" size="sm" className="border-slate-200 hover:bg-slate-100" asChild>
+                              <a href={boost.receipt_url} download>
+                                <Download className="h-4 w-4" />
+                              </a>
+                            </Button>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-600">Receipt uploaded but URL not available</p>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Verification Details */}
+                    {boost.verification && boost.verification.verified && (
+                      <div className="mt-4 pt-3 border-t border-slate-200">
+                        <p className="text-xs text-slate-500">Verified by</p>
+                        <p className="font-medium text-slate-900">{boost.verification.verified_by_name}</p>
+                        <p className="text-xs text-slate-500 mt-1">{formatDate(boost.verification.verified_at)}</p>
                       </div>
                     )}
                   </CardContent>
                 </Card>
-              )}
 
-              {/* Timeline Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <Calendar className="h-5 w-5" />
-                    Timeline
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Created:</span>
-                      <span className="font-medium">{formatDate(boost.created_at)}</span>
-                    </div>
-                    {boost.start_date && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Started:</span>
-                        <span className="font-medium">{formatDate(boost.start_date)}</span>
-                      </div>
-                    )}
-                    {boost.end_date && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Ends:</span>
-                        <span className="font-medium">{formatDate(boost.end_date)}</span>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {boost.days_remaining !== undefined && boost.status === 'active' && (
-                    <div className="p-3 bg-blue-50 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-blue-600" />
-                        <span className="text-sm text-blue-700 font-medium">
-                          {boost.days_remaining} days remaining
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {boost.status === 'expired' && (
-                    <div className="p-3 bg-gray-50 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <XCircle className="h-4 w-4 text-gray-600" />
-                        <span className="text-sm text-gray-700">This boost has expired</span>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Payment Information Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <DollarSign className="h-5 w-5" />
-                    Payment Information
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Amount:</span>
-                      <span className="font-bold text-lg text-primary">
-                        {formatCurrency(boost.amount || boost.plan?.price)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Payment Method:</span>
-                      <Badge variant="outline" className="font-normal">
-                        {boost.payment_method || 'N/A'}
-                      </Badge>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Payment Verified:</span>
-                      <Badge variant={boost.payment_verified ? "default" : "secondary"}>
-                        {boost.payment_verified ? 'Yes' : 'No'}
-                      </Badge>
-                    </div>
-                  </div>
-                  
-                  {/* Receipt Section */}
-                  {boost.has_receipt && (
-                    <div className="pt-3 border-t">
-                      <p className="text-sm font-medium mb-3 flex items-center gap-2">
-                        <FileText className="h-4 w-4" />
-                        Payment Receipt
-                      </p>
-                      {boost.receipt_url ? (
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="flex-1"
-                            asChild
-                          >
-                            <a href={boost.receipt_url} target="_blank" rel="noopener noreferrer">
-                              <Eye className="h-4 w-4 mr-2" />
-                              View Receipt
-                            </a>
-                          </Button>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            asChild
-                          >
-                            <a href={boost.receipt_url} download>
-                              <Download className="h-4 w-4" />
-                            </a>
-                          </Button>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">Receipt uploaded but URL not available</p>
-                      )}
-                    </div>
-                  )}
-                  
-                  {/* Verification Details */}
-                  {boost.verification && boost.verification.verified && (
-                    <div className="pt-3 border-t text-sm">
-                      <p className="text-muted-foreground">Verified by:</p>
-                      <p className="font-medium">{boost.verification.verified_by_name || boost.verification.verified_by}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {formatDate(boost.verification.verified_at)}
-                      </p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Quick Stats Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <TrendingUp className="h-5 w-5" />
-                    Quick Stats
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20 cursor-help">
-                          <Box className="w-5 h-5 text-muted-foreground mb-2" />
-                          <span className="text-xs text-muted-foreground mb-1">Product Stock</span>
-                          <span className="font-semibold text-base">{boost.product?.total_stock || 0}</span>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Total stock of the boosted product</p>
-                      </TooltipContent>
-                    </Tooltip>
-
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex flex-col items-center p-3 border rounded-lg bg-muted/20 cursor-help">
-                          <Clock className="w-5 h-5 text-muted-foreground mb-2" />
-                          <span className="text-xs text-muted-foreground mb-1">Duration</span>
-                          <span className="font-semibold text-base">{boost.plan?.duration || 0} {boost.plan?.time_unit || 'days'}</span>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Boost plan duration</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </CardContent>
-              </Card>
+                {/* Quick Stats */}
+                <div className="grid grid-cols-2 gap-3">
+                  <StatCard 
+                    icon={Box} 
+                    label="Product Stock" 
+                    value={boost.product?.total_stock || 0}
+                    tooltip="Total stock of the boosted product"
+                  />
+                  <StatCard 
+                    icon={Hash} 
+                    label="Boost ID" 
+                    value={boost.id.slice(0, 8)}
+                    tooltip="Boost identifier"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Bottom Accordion Sections */}
-          <Accordion type="single" collapsible className="w-full">
-            {/* Additional Details Accordion */}
-            <AccordionItem value="additional-details">
-              <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
-                <div className="flex items-center gap-2">
-                  <Tag className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Additional Details
-                </div>
-              </AccordionTrigger>
-              <AccordionContent>
-                <div className="p-4 sm:p-6">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-xs sm:text-sm text-muted-foreground">Boost ID</p>
-                      <p className="font-medium text-sm sm:text-base break-all">{boost.id}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs sm:text-sm text-muted-foreground">Payment Method</p>
-                      <p className="font-medium text-sm sm:text-base">{boost.payment_method || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs sm:text-sm text-muted-foreground">Has Receipt</p>
-                      <Badge variant={boost.has_receipt ? "default" : "secondary"}>
-                        {boost.has_receipt ? 'Yes' : 'No'}
-                      </Badge>
-                    </div>
-                    {boost.start_date && (
-                      <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">Start Date</p>
-                        <p className="font-medium text-sm sm:text-base">{formatDate(boost.start_date)}</p>
-                      </div>
-                    )}
-                    {boost.end_date && (
-                      <div>
-                        <p className="text-xs sm:text-sm text-muted-foreground">End Date</p>
-                        <p className="font-medium text-sm sm:text-base">{formatDate(boost.end_date)}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-
-            {/* Boost Plan Features Accordion */}
-            {boost.plan?.features && boost.plan.features.length > 0 && (
-              <AccordionItem value="plan-features">
-                <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+            {/* Bottom Accordion Sections */}
+            <Accordion type="single" collapsible className="w-full space-y-2">
+              <AccordionItem value="additional-details" className="border-slate-200 bg-white rounded-lg px-6">
+                <AccordionTrigger className="text-base font-semibold text-slate-900 hover:no-underline py-4">
                   <div className="flex items-center gap-2">
-                    <Zap className="w-4 h-4 sm:w-5 sm:h-5" />
-                    Boost Plan Features
+                    <Tag className="w-4 h-4 text-slate-600" />
+                    Additional Details
                   </div>
                 </AccordionTrigger>
                 <AccordionContent>
-                  <div className="p-4 sm:p-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="pb-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="bg-slate-50 p-3 rounded-lg">
+                      <p className="text-xs text-slate-500 mb-1">Boost ID (Full)</p>
+                      <p className="font-mono text-xs text-slate-900 break-all">{boost.id}</p>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-lg">
+                      <p className="text-xs text-slate-500 mb-1">Payment Method</p>
+                      <p className="font-medium text-sm text-slate-900">{boost.payment_method || 'N/A'}</p>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-lg">
+                      <p className="text-xs text-slate-500 mb-1">Has Receipt</p>
+                      <Badge variant={boost.has_receipt ? "default" : "secondary"} 
+                             className={boost.has_receipt ? "bg-emerald-600" : ""}>
+                        {boost.has_receipt ? 'Yes' : 'No'}
+                      </Badge>
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+
+              {boost.plan?.features && boost.plan.features.length > 0 && (
+                <AccordionItem value="plan-features" className="border-slate-200 bg-white rounded-lg px-6">
+                  <AccordionTrigger className="text-base font-semibold text-slate-900 hover:no-underline py-4">
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-slate-600" />
+                      Boost Plan Features ({boost.plan.features.length})
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="pb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {boost.plan.features.map((feature, index) => {
-                        // Fix: Handle both string and object features
-                        const featureName = typeof feature === 'string' 
-                          ? feature 
-                          : feature.feature_name || 'Feature';
-                        
-                        const featureValue = typeof feature === 'string' 
-                          ? undefined 
-                          : feature.value;
+                        const featureName = typeof feature === 'string' ? feature : feature.feature_name || 'Feature';
+                        const featureValue = typeof feature === 'string' ? undefined : feature.value;
                         
                         return (
-                          <div key={index} className="flex items-start gap-2 p-3 border rounded-lg">
-                            <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+                          <div key={index} className="flex items-start gap-2 p-3 bg-slate-50 rounded-lg border border-slate-100">
+                            <Shield className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
                             <div>
-                              <p className="font-medium text-sm">{featureName}</p>
-                              {featureValue && (
-                                <p className="text-xs text-muted-foreground mt-1">{featureValue}</p>
-                              )}
+                              <p className="font-medium text-sm text-slate-900">{featureName}</p>
+                              {featureValue && <p className="text-xs text-slate-600 mt-1">{featureValue}</p>}
                             </div>
                           </div>
                         );
                       })}
                     </div>
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            )}
-          </Accordion>
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+            </Accordion>
 
-          {/* Image Modal */}
-          {selectedImage && (
-            <div 
-              className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-              onClick={() => setSelectedImage(null)}
-            >
-              <div className="relative max-w-4xl max-h-[90vh]">
-                <img 
-                  src={selectedImage} 
-                  alt="Product" 
-                  className="w-full h-full object-contain"
-                />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="absolute top-2 right-2 bg-white"
-                  onClick={() => setSelectedImage(null)}
-                >
-                  <XCircle className="w-4 h-4" />
-                </Button>
+            {/* Image Modal */}
+            {selectedImage && (
+              <div 
+                className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
+                onClick={() => setSelectedImage(null)}
+              >
+                <div className="relative max-w-5xl max-h-[90vh]">
+                  <img src={selectedImage} alt="Product" className="w-full h-full object-contain rounded-lg" />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="absolute top-4 right-4 bg-white hover:bg-slate-100 border-slate-200"
+                    onClick={() => setSelectedImage(null)}
+                  >
+                    <XCircle className="h-5 w-5" />
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Responsive Dialog */}
-          {isMobile ? renderMobileDialog() : renderDesktopDialog()}
+            {/* Responsive Dialog */}
+            {isMobile ? renderMobileDialog() : renderDesktopDialog()}
+          </div>
         </div>
       </TooltipProvider>
     </UserProvider>
