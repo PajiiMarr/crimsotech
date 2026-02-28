@@ -888,9 +888,11 @@ class DisputeRequestCreateSerializer(serializers.ModelSerializer):
     # reason should be optional/blank when dispute is filed simply via confirmation
     reason = serializers.CharField(required=False, allow_blank=True)
 
+    case_category = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = DisputeRequest
-        fields = ['reason', 'description']
+        fields = ['reason', 'description', 'case_category']
 
     def create(self, validated_data):
         # Remove non-model 'description' before creating the model instance
