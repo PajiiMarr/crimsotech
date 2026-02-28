@@ -39,6 +39,8 @@ ALLOWED_HOSTS = [
 
 # Application definition
 INSTALLED_APPS = [
+    "daphne",
+    "channels",
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -211,3 +213,5 @@ STORAGES = {
 }
 
 MEDIA_URL = f"{env.str('SUPABASE_ENDPOINT')}/{env.str('SUPABASE_STORAGE_BUCKET')}/"
+
+ASGI_APPLICATION = "backend.asgi.application"
