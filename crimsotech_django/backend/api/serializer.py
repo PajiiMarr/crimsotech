@@ -4,6 +4,21 @@ from django.contrib.auth.hashers import make_password
 from django.db.models import Avg
 from api.utils.storage_utils import convert_s3_to_public_url
 
+# Helper function to get media URL consistently
+def get_media_url(file_field):
+    """Helper to get the appropriate URL for a file field"""
+    if not file_field:
+        return None
+    
+    try:
+        # Try to get the URL from the file field
+        url = file_field.url
+        # Convert S3 URL to public URL if needed
+        return convert_s3_to_public_url(url)
+    except Exception as e:
+        print(f"Error getting media URL: {e}")
+        return None
+
 # Existing serializers (don't modify)
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -57,9 +72,18 @@ class CustomerSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class RiderSerializer(serializers.ModelSerializer):
+    vehicle_image_url = serializers.SerializerMethodField()
+    license_image_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = Rider
         fields = '__all__'
+    
+    def get_vehicle_image_url(self, obj):
+        return get_media_url(obj.vehicle_image)
+    
+    def get_license_image_url(self, obj):
+        return get_media_url(obj.license_image)
 
 # NEW BASIC SERIALIZERS
 class ModeratorSerializer(serializers.ModelSerializer):
@@ -90,6 +114,7 @@ class OTPSerializer(serializers.ModelSerializer):
 class ShopSerializer(serializers.ModelSerializer):
     address = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
+    shop_picture_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Shop
@@ -104,7 +129,9 @@ class ShopSerializer(serializers.ModelSerializer):
         if reviews.exists():
             return sum(r.rating for r in reviews) / reviews.count()
         return None  # or 0 if you prefer
-       
+    
+    def get_shop_picture_url(self, obj):
+        return get_media_url(obj.shop_picture)
 
 class ShopFollowSerializer(serializers.ModelSerializer):
     class Meta:
@@ -121,11 +148,45 @@ class CategorySerializer(serializers.ModelSerializer):
         model = Category
         fields = '__all__'
 
-class FavoritesSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Favorites
-        fields = '__all__'
-
+class FavoritesSerializer(serializers.Serializer):
+    id = serializers.UUIDField(read_only=True)
+    product = serializers.SerializerMethodField()
+    customer = serializers.SerializerMethodField()
+    product_details = serializers.SerializerMethodField()
+    
+    def get_product(self, obj):
+        if isinstance(obj, dict):
+            product = obj.get('product')
+        else:
+            product = obj.product
+            
+        if product:
+            return {
+                'id': product.id,
+                'name': product.name,
+                'description': product.description,
+                'shop_id': product.shop.id if product.shop else None,
+                'shop_name': product.shop.name if product.shop else None
+            }
+        return None
+    
+    def get_customer(self, obj):
+        if isinstance(obj, dict):
+            customer = obj.get('customer')
+        else:
+            customer = obj.customer
+            
+        if customer:
+            return {
+                'id': customer.customer.id,
+                'username': customer.customer.username
+            }
+        return None
+    
+    def get_product_details(self, obj):
+        if isinstance(obj, dict):
+            return obj.get('product_details')
+        return None
 
 class ProductMediaSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
@@ -135,10 +196,7 @@ class ProductMediaSerializer(serializers.ModelSerializer):
         fields = ['id', 'file_data', 'file_type', 'file_url']
     
     def get_file_url(self, obj):
-        if obj.file_data:
-            # Convert S3 URL to public URL
-            return convert_s3_to_public_url(obj.file_data.url)
-        return None
+        return get_media_url(obj.file_data)
 
 # NEW: Simplified Variants Serializer (contains all fields from the refactored Variants model)
 class VariantsSerializer(serializers.ModelSerializer):
@@ -159,23 +217,19 @@ class VariantsSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at', 'option_created_at']
     
     def get_image_url(self, obj):
-        if obj.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.image.url)
-            return obj.image.url
-        return None
+        return get_media_url(obj.image)
 
 class ProductSerializer(serializers.ModelSerializer):
     shop = ShopSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
     category_admin = CategorySerializer(read_only=True)
     variants = serializers.SerializerMethodField()
-    media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
+    media_files = serializers.SerializerMethodField()
     primary_image = serializers.SerializerMethodField()
     price_display = serializers.SerializerMethodField()
     price_range = serializers.SerializerMethodField()
     total_stock = serializers.IntegerField(source='total_variant_stock', read_only=True)
+    open_for_swap = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Product
@@ -191,19 +245,24 @@ class ProductSerializer(serializers.ModelSerializer):
         """Get the first media file as primary image"""
         media = obj.productmedia_set.first()
         if media and media.file_data:
-            url = media.file_data.url
-            request = self.context.get('request')
-            if request:
-                try:
-                    url = request.build_absolute_uri(url)
-                except Exception:
-                    pass
             return {
                 'id': str(media.id),
-                'url': url,
+                'url': get_media_url(media.file_data),
                 'file_type': media.file_type
             }
         return None
+
+    def get_media_files(self, obj):
+        """Get all media files with S3 URLs"""
+        media_files = []
+        for media in obj.productmedia_set.all():
+            media_files.append({
+                'id': str(media.id),
+                'file_data': get_media_url(media.file_data) if media.file_data else None,
+                'file_type': media.file_type,
+                'file_url': get_media_url(media.file_data) if media.file_data else None
+            })
+        return media_files
 
     def get_variants(self, obj):
         """Return all variants for detail view, empty list for list view"""
@@ -263,7 +322,6 @@ class ProductSerializer(serializers.ModelSerializer):
         
         return None
     
-    
 class IssuesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Issues
@@ -283,12 +341,7 @@ class BoostSerializer(serializers.ModelSerializer):
         read_only_fields = ['payment_verified_at', 'payment_verified_by']
     
     def get_receipt_image_url(self, obj):
-        if obj.receipt_image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.receipt_image.url)
-            return obj.receipt_image.url
-        return None
+        return get_media_url(obj.receipt_image)
 
 class BoostDetailSerializer(serializers.ModelSerializer):
     product_id = ProductSerializer(read_only=True)
@@ -303,12 +356,7 @@ class BoostDetailSerializer(serializers.ModelSerializer):
         fields = '__all__'
     
     def get_receipt_image_url(self, obj):
-        if obj.receipt_image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.receipt_image.url)
-            return obj.receipt_image.url
-        return None
+        return get_media_url(obj.receipt_image)
 
 class BoostReceiptUploadSerializer(serializers.Serializer):
     plan_id = serializers.UUIDField()
@@ -352,13 +400,16 @@ class AiRecommendationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AiRecommendation
         fields = '__all__'
-        
-
 
 class OrderSerializer(serializers.ModelSerializer):
+    receipt_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = Order
         fields = '__all__'
+    
+    def get_receipt_url(self, obj):
+        return get_media_url(obj.receipt)
 
 class CheckoutSerializer(serializers.ModelSerializer):
     class Meta:
@@ -370,11 +421,12 @@ class ShopDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)
     address = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
+    shop_picture_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Shop
         fields = [
-            'id', 'name', 'shop_picture', 'province', 'city', 'barangay', 'street',
+            'id', 'name', 'shop_picture', 'shop_picture_url', 'province', 'city', 'barangay', 'street',
             'contact_number', 'verified', 'status', 'total_sales', 'address', 'avg_rating'
         ]
 
@@ -386,13 +438,17 @@ class ShopDetailSerializer(serializers.ModelSerializer):
         # Assuming Product has a related_name='products' and Review model has 'rating' field
         avg = obj.owned_products.aggregate(avg=Avg('reviews__rating'))['avg'] or 0
         return round(avg, 1)
+    
+    def get_shop_picture_url(self, obj):
+        return get_media_url(obj.shop_picture)
 
-class ProductSerializer(serializers.ModelSerializer):
+# Note: There are duplicate ProductSerializer definitions - keeping the enhanced one
+class ProductDetailSerializer(serializers.ModelSerializer):
     shop = ShopSerializer()
     category = CategorySerializer()
     category_admin = CategorySerializer()
     variants = serializers.SerializerMethodField()
-    media_files = ProductMediaSerializer(source='productmedia_set', many=True, read_only=True)
+    media_files = serializers.SerializerMethodField()
     primary_image = serializers.SerializerMethodField()
     # Add computed fields from variants
     total_stock = serializers.IntegerField(source='total_variant_stock', read_only=True)
@@ -423,20 +479,24 @@ class ProductSerializer(serializers.ModelSerializer):
         """Get the first media file as primary image"""
         media = obj.productmedia_set.first()
         if media and media.file_data:
-            url = media.file_data.url
-            request = self.context.get('request')
-            if request:
-                try:
-                    url = request.build_absolute_uri(url)
-                except Exception:
-                    # Fallback to raw url if anything goes wrong
-                    url = media.file_data.url
             return {
                 'id': str(media.id),
-                'url': url,
+                'url': get_media_url(media.file_data),
                 'file_type': media.file_type
             }
         return None
+
+    def get_media_files(self, obj):
+        """Get all media files with S3 URLs"""
+        media_files = []
+        for media in obj.productmedia_set.all():
+            media_files.append({
+                'id': str(media.id),
+                'file_data': get_media_url(media.file_data) if media.file_data else None,
+                'file_type': media.file_type,
+                'file_url': get_media_url(media.file_data) if media.file_data else None
+            })
+        return media_files
 
     def get_variants(self, obj):
         """Return all variants for this product using the simplified VariantsSerializer"""
@@ -500,35 +560,39 @@ class ReviewDetailSerializer(serializers.ModelSerializer):
         model = Review
         fields = '__all__'
 
+# Note: Duplicate BoostDetailSerializer - keeping the enhanced one
 class BoostDetailSerializer(serializers.ModelSerializer):
-    product_id = ProductSerializer(read_only=True)
+    product_id = ProductDetailSerializer(read_only=True)
     boost_plan_id = BoostPlanSerializer(read_only=True)
-    shop_id = ShopSerializer(read_only=True)
+    shop_id = ShopDetailSerializer(read_only=True)
     customer_id = CustomerSerializer(read_only=True)
+    receipt_image_url = serializers.SerializerMethodField()
     
     class Meta:
         model = Boost
         fields = '__all__'
-
+    
+    def get_receipt_image_url(self, obj):
+        return get_media_url(obj.receipt_image)
 
 #CHECKOUT
 class CartProductSerializer(serializers.ModelSerializer):
     """Serializer for product details in cart"""
     shop_name = serializers.SerializerMethodField()
-    media_files = serializers.SerializerMethodField()
+    primary_image_url = serializers.SerializerMethodField()
     
     class Meta:
         model = Product
-        fields = ['id', 'name', 'price', 'shop_name', 'media_files']
+        fields = ['id', 'name', 'price', 'shop_name', 'primary_image_url']
     
     def get_shop_name(self, obj):
         return obj.shop.name if obj.shop else "Unknown Shop"
     
-    def get_media_files(self, obj):
-        if hasattr(obj, 'media_files') and obj.media_files.exists():
-            return obj.media_files.first().file_url
+    def get_primary_image_url(self, obj):
+        media = obj.productmedia_set.first()
+        if media and media.file_data:
+            return get_media_url(media.file_data)
         return None
-
 
 class CartItemSerializer(serializers.ModelSerializer):
     product_details = serializers.SerializerMethodField()
@@ -552,7 +616,7 @@ class CartItemSerializer(serializers.ModelSerializer):
         for media in obj.product.productmedia_set.all()[:3]:  # Limit to 3 images
             media_files.append({
                 'id': str(media.id),
-                'url': self.get_full_url(media.file_data.url) if media.file_data else None,
+                'url': get_media_url(media.file_data) if media.file_data else None,
                 'file_type': media.file_type
             })
         
@@ -571,18 +635,14 @@ class CartItemSerializer(serializers.ModelSerializer):
         if not obj.variant:
             return None
         
-        # Get variant image with full URL
-        variant_image = None
-        if obj.variant.image:
-            variant_image = self.get_full_url(obj.variant.image.url)
-        
         return {
             'id': str(obj.variant.id),
             'title': obj.variant.title,
             'sku_code': obj.variant.sku_code,
             'price': str(obj.variant.price) if obj.variant.price else None,
             'compare_price': str(obj.variant.compare_price) if obj.variant.compare_price else None,
-            'image': variant_image,
+            'image': get_media_url(obj.variant.image) if obj.variant.image else None,
+            'image_url': get_media_url(obj.variant.image) if obj.variant.image else None,
             'option_title': obj.variant.option_title,
             'options': obj.variant.option_map,
             'quantity_available': obj.variant.quantity  # Add available stock
@@ -602,22 +662,8 @@ class CartItemSerializer(serializers.ModelSerializer):
         """Get the first product media with full URL"""
         first_media = product.productmedia_set.first()
         if first_media and first_media.file_data:
-            return self.get_full_url(first_media.file_data.url)
+            return get_media_url(first_media.file_data)
         return None
-
-    def get_full_url(self, url):
-        """Convert relative URL to absolute URL using request context"""
-        request = self.context.get('request')
-        if request and url:
-            try:
-                # If it's already a full URL, return as is
-                if url.startswith(('http://', 'https://')):
-                    return url
-                # Otherwise build absolute URL
-                return request.build_absolute_uri(url)
-            except Exception:
-                return url
-        return url
     
 class CheckoutDetailSerializer(serializers.ModelSerializer):
     voucher_id = VoucherSerializer(read_only=True)
@@ -629,7 +675,7 @@ class CheckoutDetailSerializer(serializers.ModelSerializer):
 
 class CustomerActivityDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)
-    product_id = ProductSerializer(read_only=True)
+    product_id = ProductDetailSerializer(read_only=True)
     
     class Meta:
         model = CustomerActivity
@@ -637,7 +683,7 @@ class CustomerActivityDetailSerializer(serializers.ModelSerializer):
 
 class AiRecommendationDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)
-    product_id = ProductSerializer(read_only=True)
+    product_id = ProductDetailSerializer(read_only=True)
     
     class Meta:
         model = AiRecommendation
@@ -739,14 +785,14 @@ class CartDisplayItemSerializer(serializers.ModelSerializer):
     color = serializers.CharField(source='product.color', default='N/A')
     price = serializers.DecimalField(source='product.price', max_digits=12, decimal_places=2)
     quantity = serializers.IntegerField()
-    image = serializers.ImageField(source='product.image', read_only=True)
+    image_url = serializers.SerializerMethodField()
     shop_name = serializers.CharField(source='product.shop.name', default='Unknown Shop')
     selected = serializers.SerializerMethodField()
     variant_details = serializers.SerializerMethodField()
 
     class Meta:
         model = CartItem
-        fields = ['id', 'name', 'color', 'price', 'quantity', 'image', 'shop_name', 'selected', 'variant_details']
+        fields = ['id', 'name', 'color', 'price', 'quantity', 'image_url', 'shop_name', 'selected', 'variant_details']
 
     def get_selected(self, obj):
         return True  # default to selected
@@ -757,8 +803,15 @@ class CartDisplayItemSerializer(serializers.ModelSerializer):
                 'id': str(obj.variant.id),
                 'title': obj.variant.title,
                 'sku_code': obj.variant.sku_code,
-                'price': str(obj.variant.price) if obj.variant.price else None
+                'price': str(obj.variant.price) if obj.variant.price else None,
+                'image_url': get_media_url(obj.variant.image) if obj.variant.image else None
             }
+        return None
+    
+    def get_image_url(self, obj):
+        media = obj.product.productmedia_set.first()
+        if media and media.file_data:
+            return get_media_url(media.file_data)
         return None
     
 
@@ -770,9 +823,14 @@ class UserPaymentMethodSerializer(serializers.ModelSerializer):
 
 # Refund Serializers
 class RefundMediaSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = RefundMedia
         fields = '__all__'
+    
+    def get_file_url(self, obj):
+        return get_media_url(obj.file_data)
 
 class RefundProofSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
@@ -784,11 +842,7 @@ class RefundProofSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'uploaded_by', 'file_url', 'created_at']
 
     def get_file_url(self, obj):
-        if obj.file_data:
-            request = self.context.get('request')
-            url = obj.file_data.url
-            return request.build_absolute_uri(url) if request else url
-        return None
+        return get_media_url(obj.file_data)
 
     def get_uploaded_by(self, obj):
         if obj.uploaded_by:
@@ -816,14 +870,24 @@ class CounterRefundRequestSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class DisputeEvidenceSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = DisputeEvidence
         fields = '__all__'
+    
+    def get_file_url(self, obj):
+        return get_media_url(obj.file_data)
 
 class ReturnRequestMediaSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = ReturnRequestMedia
         fields = '__all__'
+    
+    def get_file_url(self, obj):
+        return get_media_url(obj.file_data)
 
 class ReturnAddressSerializer(serializers.ModelSerializer):
     shop = serializers.SerializerMethodField()
@@ -922,9 +986,6 @@ class RefundSerializer(serializers.ModelSerializer):
     class Meta:
         model = Refund
         fields = '__all__'
-
-
-
 
 class AppliedGiftSerializer(serializers.ModelSerializer):
     class Meta:
