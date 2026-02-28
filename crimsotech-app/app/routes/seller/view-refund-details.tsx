@@ -2333,7 +2333,7 @@ function RejectModal({
     { id: 'insufficient_evidence', label: 'Insufficient evidence' },
     { id: 'buyer_fault', label: 'Buyer at fault' },
     { id: 'good_condition_handed', label: 'Item was in good condition when handed to rider' },
-    { id: 'proper_packaging', label: 'Proper packaging was used' },
+    { id: 'order_handed_to_rider', label: 'Properly handed the order to the rider' },
     { id: 'fraud', label: 'Suspicious or fraudulent' },
     { id: 'other', label: 'Other' },
   ];

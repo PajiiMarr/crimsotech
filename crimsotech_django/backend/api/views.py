@@ -26075,6 +26075,17 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            # Debug: log entry into admin_process_refund
+            try:
+                print('[admin_process_refund] called', {
+                    'user_id': user_id,
+                    'refund_id': pk,
+                    'data_keys': list(request.data.keys()) if hasattr(request, 'data') else None,
+                    'files': bool(getattr(request, 'FILES', None))
+                })
+            except Exception:
+                print('[admin_process_refund] debug print failed to read request data')
+
             user = User.objects.get(id=user_id)
             # Require admin or moderator
             if not (user.is_admin or user.is_moderator):
@@ -26197,18 +26208,27 @@ class RefundViewSet(viewsets.ViewSet):
                         print('[admin_process_refund] resolve_dispute start', {
                             'refund_id': str(refund.refund_id),
                             'dispute_id': str(dispute_id),
-                            'current_status': str(dispute.status),
+                            'dispute_current_status': str(dispute.status),
+                            'refund_current_status': str(refund.status),
+                            'refund_payment_status': str(refund.refund_payment_status),
                             'action': str(dispute_action),
                             'user': str(user.id)
                         })
-                        
+
                         if dispute_action == 'approve':
                             dispute.status = 'approved'
-                            refund.refund_payment_status = 'processing'
-                            # record which admin processed the dispute
+                            # Promote refund status to 'approved' as well
+                            if str(refund.status).lower() == 'dispute':
+                                refund.status = 'approved'
+                            # Do NOT set refund.refund_payment_status here; leave payment as pending
+                            # record which admin processed the dispute (metadata)
                             refund.processed_by = user
                             refund.processed_at = timezone.now()
                             refund.save()
+                            print('[admin_process_refund] dispute approved, refund updated', {
+                                'refund_status_after': str(refund.status),
+                                'refund_payment_status_after': str(refund.refund_payment_status)
+                            })
                         elif dispute_action == 'reject':
                             dispute.status = 'rejected'
                             refund.status = 'rejected'
@@ -26229,7 +26249,7 @@ class RefundViewSet(viewsets.ViewSet):
                         print('[admin_process_refund] resolve_dispute persisted', {
                             'refund_id': str(refund.refund_id),
                             'dispute_id': str(dispute.id),
-                            'new_status': str(dispute.status),
+                            'new_dispute_status': str(dispute.status),
                             'refund_status': str(refund.status),
                             'refund_payment_status': str(refund.refund_payment_status)
                         })
@@ -27204,8 +27224,8 @@ class ReturnAddressViewSet(viewsets.ViewSet):
 
 
 # Dispute views (placed at end for easy removal)
-class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
-    """Admin-facing read-only disputes endpoint. Placed at file end for easy removal if needed."""
+class DisputeViewSet(viewsets.ModelViewSet):
+    """Admin-facing disputes endpoint. Allows partial updates (PATCH) and admin actions."""
     queryset = DisputeRequest.objects.all().order_by('-created_at')
     serializer_class = DisputeRequestSerializer
 
@@ -27222,6 +27242,49 @@ class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
         if requested_by:
             qs = qs.filter(requested_by__id=requested_by)
         return qs
+
+    def partial_update(self, request, pk=None):
+        """Allow partial updates via PATCH for fields like case_category and admin_notes.
+        Also accepts processed_by via `X-User-Id` header and will sanitize it.
+        """
+        try:
+            dispute = self.get_object()
+
+            # Only allow specific writable fields from the payload
+            writable = ['case_category', 'admin_notes', 'status']
+            changed = False
+            for key in writable:
+                if key in request.data:
+                    setattr(dispute, key, request.data.get(key))
+                    changed = True
+
+            # Resolve processed_by from header if present
+            user_id = request.headers.get('X-User-Id') or request.data.get('processed_by')
+            if user_id:
+                import re
+                user_id = str(user_id).strip()
+                user_id = re.sub(r"^[\'\"\u201c\u201d\u2018\u2019]+|[\'\"\u201c\u201d\u2018\u2019]+$", '', user_id)
+                resolved_user = None
+                try:
+                    resolved_user = User.objects.get(id=user_id)
+                except (User.DoesNotExist, ValueError):
+                    try:
+                        resolved_user = User.objects.get(username=user_id)
+                    except User.DoesNotExist:
+                        try:
+                            resolved_user = User.objects.get(email=user_id)
+                        except User.DoesNotExist:
+                            resolved_user = None
+                if resolved_user:
+                    dispute.processed_by = resolved_user
+                    changed = True
+
+            if changed:
+                dispute.save()
+
+            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -27362,8 +27425,8 @@ class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
                                 resolved_user = None
             if resolved_user:
                 dispute.processed_by = resolved_user
+                
             # When approved, set approved/final amounts to the requested total.
-            # Fallback: compute from order checkouts if not stored on refund.
             try:
                 import logging
                 logger = logging.getLogger(__name__)
@@ -27384,19 +27447,22 @@ class DisputeViewSet(viewsets.ReadOnlyModelViewSet):
                         try:
                             from decimal import Decimal
                             refund.approved_refund_amount = Decimal(str(requested_total))
-                            # Model does not have `final_refund_amount` (do not write non-existent fields)
-                            refund.save(update_fields=['approved_refund_amount'])
-                            logger.info('Accept: saved approved_refund_amount=%s for refund=%s', refund.approved_refund_amount, getattr(refund, 'refund_id', None))
+                            # CRITICAL: Update the refund status to 'approved'
+                            refund.status = 'approved'
+                            refund.save(update_fields=['approved_refund_amount', 'status'])
+                            logger.info('Accept: saved approved_refund_amount=%s and set status=approved for refund=%s', 
+                                    refund.approved_refund_amount, getattr(refund, 'refund_id', None))
                         except Exception as e:
                             logger.exception('Accept: failed to save refund amounts: %s', e)
             except Exception:
                 # Non-blocking: continue saving dispute approval even if refund update fails
                 pass
+                
             dispute.save(update_fields=['status', 'processed_by', 'resolved_at'])
             return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
+        
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Admin rejects dispute: set status to 'rejected' and store admin notes"""

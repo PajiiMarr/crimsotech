@@ -6,6 +6,8 @@ import { Button } from '~/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '~/components/ui/card';
 import { Badge } from '~/components/ui/badge';
 import { Input } from '~/components/ui/input';
+import { Checkbox } from '~/components/ui/checkbox';
+import { Label } from '~/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '~/components/ui/dialog';
 import { useToast } from '~/hooks/use-toast';
 import AxiosInstance from '~/components/axios/Axios';
@@ -13,7 +15,8 @@ import {
   ArrowLeft, CheckCircle, XCircle, Eye, AlertTriangle, Package, 
   PackageCheck, Truck, Clock, MessageCircle, User, Wallet, 
   Calendar, RefreshCw, CheckSquare, ShieldAlert, Ban, 
-  FileText, ShoppingBag, CreditCard, DollarSign, Shield
+  FileText, ShoppingBag, CreditCard, DollarSign, Shield,
+  Scale, Gavel, Search, Loader2, Send, AlertCircle
 } from 'lucide-react';
 
 // Minimal shape matching what `/admin-refunds/refund_list/` returns
@@ -47,6 +50,14 @@ interface RefundFlat {
   negotiation_offers?: any[];
   dispute_reason?: string | null;
   cancelled_reason?: string | null;
+  dispute_details?: any;
+  dispute_request?: {
+    id?: string;
+    status?: string;
+    reason?: string;
+    case_category?: string;
+    admin_notes?: string;
+  } | null;
   // Return request details (optional) — serialized from admin refund_list
   return_request?: {
     id?: string | null;
@@ -69,755 +80,487 @@ interface RefundFlat {
   } | null;
 } 
 
-// ===== Status UI Components =====
+// ===== SIMPLIFIED STATUS CONFIGURATION =====
+const statusConfig = {
+  pending: {
+    label: 'Pending',
+    color: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+    icon: Clock,
+    description: 'Seller needs to review this refund request',
+  },
+  negotiation: {
+    label: 'Negotiation',
+    color: 'bg-blue-50 text-blue-700 border-blue-200',
+    icon: MessageCircle,
+    description: 'Active negotiation between buyer and seller',
+  },
+  approved: {
+    label: 'Approved',
+    color: 'bg-green-50 text-green-700 border-green-200',
+    icon: CheckCircle,
+    description: 'Refund has been approved',
+  },
+  waiting: {
+    label: 'Waiting',
+    color: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    icon: Package,
+    description: 'Waiting for return shipment',
+  },
+  shipped: {
+    label: 'Shipped',
+    color: 'bg-blue-50 text-blue-700 border-blue-200',
+    icon: Truck,
+    description: 'Return item in transit',
+  },
+  received: {
+    label: 'Received',
+    color: 'bg-green-50 text-green-700 border-green-200',
+    icon: PackageCheck,
+    description: 'Item received by seller',
+  },
+  to_verify: {
+    label: 'To Verify',
+    color: 'bg-purple-50 text-purple-700 border-purple-200',
+    icon: PackageCheck,
+    description: 'Item received, needs inspection',
+  },
+  inspected: {
+    label: 'Inspected',
+    color: 'bg-purple-50 text-purple-700 border-purple-200',
+    icon: CheckSquare,
+    description: 'Item inspection complete',
+  },
+  to_process: {
+    label: 'To Process',
+    color: 'bg-purple-50 text-purple-700 border-purple-200',
+    icon: RefreshCw,
+    description: 'Ready for refund processing',
+  },
+  dispute: {
+    label: 'Dispute',
+    color: 'bg-orange-50 text-orange-700 border-orange-200',
+    icon: ShieldAlert,
+    description: 'Dispute filed, awaiting admin review',
+  },
+  under_review: {
+    label: 'Under Review',
+    color: 'bg-purple-100 text-purple-800 border-purple-300',
+    icon: Scale,
+    description: 'Admin is currently reviewing the dispute',
+  },
+  completed: {
+    label: 'Completed',
+    color: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    icon: CheckSquare,
+    description: 'Return and refund completed',
+  },
+  rejected: {
+    label: 'Rejected',
+    color: 'bg-red-50 text-red-700 border-red-200',
+    icon: XCircle,
+    description: 'Request rejected',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    color: 'bg-gray-50 text-gray-700 border-gray-200',
+    icon: Ban,
+    description: 'Request cancelled',
+  }
+};
 
-function AdminPendingStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const offers = refund.negotiation_offers || [];
-  const hasOffers = offers.length > 0;
+// ===== SIMPLIFIED STATUS UI COMPONENTS =====
+
+function StatusBadge({ status }: { status: string }) {
+  const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending;
+  const Icon = config.icon;
   
   return (
-    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <Clock className="h-5 w-5 text-yellow-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-yellow-800">Pending Seller Review</p>
-              <p className="text-sm text-yellow-700 mt-1">
-                Seller needs to review this refund request and decide to approve, reject, or negotiate.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-yellow-100 text-yellow-800 border-yellow-300">
-              Awaiting Action
-            </Badge>
-          </div>
+    <Badge variant="outline" className={`${config.color} flex items-center gap-1 text-xs px-2 py-0.5`}>
+      <Icon className="h-3 w-3" />
+      {config.label}
+    </Badge>
+  );
+}
 
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-yellow-100">
-              <p className="text-xs font-medium text-yellow-800 mb-1">Time Elapsed</p>
-              <p className="text-sm">
-                Requested {refund.requested_at ? new Date(refund.requested_at).toLocaleDateString() : 'recently'}
-              </p>
-            </div>
-            
-            <div className="bg-white/50 p-3 rounded border border-yellow-100">
-              <p className="text-xs font-medium text-yellow-800 mb-1">Action Required</p>
-              <p className="text-sm">Seller response needed</p>
-            </div>
-          </div>
+// Base component for all status displays
+function BaseStatusUI({ 
+  status, 
+  refund 
+}: { 
+  status: keyof typeof statusConfig, 
+  refund: RefundFlat & { [key: string]: any } 
+}) {
+  const config = statusConfig[status];
+  const Icon = config.icon;
+  
+  return (
+    <div className={`${config.color} border rounded-md p-3`}>
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4" />
+        <span className="text-sm font-medium">{config.label}</span>
+        <span className="text-xs text-muted-foreground mx-1">•</span>
+        <span className="text-xs">{config.description}</span>
+      </div>
+      
+      {/* Optional: Show additional context for specific statuses */}
+      {status === 'pending' && refund.requested_at && (
+        <div className="mt-2 text-xs text-muted-foreground border-t border-yellow-200 pt-2">
+          Requested: {new Date(refund.requested_at).toLocaleDateString()}
+        </div>
+      )}
+      
+      {status === 'dispute' && refund.dispute_reason && (
+        <div className="mt-2 text-xs text-muted-foreground border-t border-orange-200 pt-2">
+          Reason: {refund.dispute_reason}
+        </div>
+      )}
+      
+      {status === 'under_review' && refund.dispute_reason && (
+        <div className="mt-2 text-xs text-muted-foreground border-t border-purple-200 pt-2">
+          Dispute Reason: {refund.dispute_reason}
+        </div>
+      )}
+      
+      {status === 'waiting' && refund.return_request?.tracking_number && (
+        <div className="mt-2 text-xs text-muted-foreground border-t border-indigo-200 pt-2">
+          Tracking: {refund.return_request.tracking_number}
+        </div>
+      )}
+      
+      {status === 'shipped' && refund.return_request?.shipped_at && (
+        <div className="mt-2 text-xs text-muted-foreground border-t border-blue-200 pt-2">
+          Shipped: {new Date(refund.return_request.shipped_at).toLocaleDateString()}
+        </div>
+      )}
+      
+      {status === 'received' && refund.return_request?.received_at && (
+        <div className="mt-2 text-xs text-muted-foreground border-t border-green-200 pt-2">
+          Received: {new Date(refund.return_request.received_at).toLocaleDateString()}
+        </div>
+      )}
+      
+      {status === 'to_process' && refund.total_refund_amount && (
+        <div className="mt-2 text-xs text-muted-foreground border-t border-purple-200 pt-2">
+          Amount: ₱{Number(refund.total_refund_amount).toLocaleString()}
+        </div>
+      )}
+      
+      {status === 'completed' && refund.processed_at && (
+        <div className="mt-2 text-xs text-muted-foreground border-t border-emerald-200 pt-2">
+          Completed: {new Date(refund.processed_at).toLocaleDateString()}
+        </div>
+      )}
+    </div>
+  );
+}
 
-          {hasOffers && (
-            <div className="mt-3 p-3 bg-yellow-100/50 rounded border border-yellow-200">
-              <p className="text-sm font-medium text-yellow-800 mb-1">Negotiation History</p>
-              <p className="text-xs text-yellow-700">
-                {offers.length} previous offer{offers.length !== 1 ? 's' : ''} made
-              </p>
+// Individual status components (using the base component)
+function PendingStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="pending" refund={refund} />;
+}
+
+function NegotiationStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="negotiation" refund={refund} />;
+}
+
+function ApprovedStatusUI({ refund, onProcessRefund }: { refund: RefundFlat & { [key: string]: any }, onProcessRefund: () => void }) {
+  const hasDispute = refund.dispute_request || refund.dispute_details;
+  
+  return (
+    <div className="space-y-3">
+      <BaseStatusUI status="approved" refund={refund} />
+      
+      {/* Show liability info if there was a dispute */}
+      {hasDispute && refund.dispute_request?.case_category && (
+        <div className="bg-purple-50 border border-purple-200 rounded-md p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Shield className="h-4 w-4 text-purple-600" />
+            <span className="text-sm font-medium text-purple-700">Liability Determination</span>
+          </div>
+          <div className="text-xs text-purple-600">
+            <span className="font-medium">Case Category:</span>{' '}
+            {refund.dispute_request.case_category?.split('_').map(word => 
+              word.charAt(0).toUpperCase() + word.slice(1)
+            ).join(' ')}
+          </div>
+          {refund.dispute_request.admin_notes && (
+            <div className="text-xs text-purple-600 mt-1">
+              <span className="font-medium">Notes:</span> {refund.dispute_request.admin_notes}
             </div>
           )}
         </div>
-      </div>
+      )}
+      
+      {/* Process Refund Button */}
+      <Button
+        onClick={onProcessRefund}
+        className="w-full bg-green-600 hover:bg-green-700"
+        size="sm"
+      >
+        <RefreshCw className="w-4 h-4 mr-2" />
+        Process Refund
+      </Button>
     </div>
   );
 }
 
-function AdminNegotiationStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const offers = refund.negotiation_offers || [];
-  const latestOffer = offers.length > 0 ? offers[offers.length - 1] : null;
-  
+function WaitingStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="waiting" refund={refund} />;
+}
+
+function ShippedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="shipped" refund={refund} />;
+}
+
+function ReceivedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="received" refund={refund} />;
+}
+
+function ToVerifyStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="to_verify" refund={refund} />;
+}
+
+function InspectedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="inspected" refund={refund} />;
+}
+
+function ToProcessStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="to_process" refund={refund} />;
+}
+
+function DisputeStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="dispute" refund={refund} />;
+}
+
+function UnderReviewStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="under_review" refund={refund} />;
+}
+
+function CompletedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="completed" refund={refund} />;
+}
+
+function RejectedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="rejected" refund={refund} />;
+}
+
+function CancelledStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="cancelled" refund={refund} />;
+}
+
+// ===== PROCESSING UI COMPONENT =====
+function ProcessingUI({ refund, onComplete, onCancel }: { 
+  refund: RefundFlat & { [key: string]: any },
+  onComplete: () => void,
+  onCancel: () => void
+}) {
+  const [selectedMethod, setSelectedMethod] = useState<string>(
+    refund.final_refund_method || refund.preferred_refund_method || 'wallet'
+  );
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showConfirmComplete, setShowConfirmComplete] = useState(false);
+  const { toast } = useToast();
+
+  const refundMethods = [
+    { id: 'wallet', label: 'Wallet Credit', icon: Wallet, description: 'Instant credit to user wallet' },
+    { id: 'original', label: 'Original Payment', icon: CreditCard, description: 'Refund to original payment method (3-5 business days)' },
+    { id: 'bank', label: 'Bank Transfer', icon: DollarSign, description: 'Manual bank transfer (1-2 business days)' },
+    { id: 'gcash', label: 'GCash', icon: Send, description: 'Send to GCash account' }
+  ];
+
+  const handleCompleteRefund = async () => {
+    setIsSubmitting(true);
+    try {
+      // Update refund payment status to completed
+      await AxiosInstance.post(
+        `/return-refund/${encodeURIComponent(String(refund.refund))}/admin_complete_refund/`,
+        {
+          final_refund_method: selectedMethod,
+          refund_payment_status: 'completed'
+        },
+        { headers: { 'X-User-Id': String(refund.processed_by_username) } }
+      );
+
+      toast({ 
+        title: 'Success', 
+        description: 'Refund has been completed successfully.' 
+      });
+
+      // Update local state
+      onComplete();
+      
+    } catch (err: any) {
+      console.error('Error completing refund:', err);
+      toast({ 
+        title: 'Error', 
+        description: err.response?.data?.error || 'Failed to complete refund', 
+        variant: 'destructive' 
+      });
+    } finally {
+      setIsSubmitting(false);
+      setShowConfirmComplete(false);
+    }
+  };
+
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <MessageCircle className="h-5 w-5 text-blue-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-blue-800">Active Negotiation</p>
-              <p className="text-sm text-blue-700 mt-1">
-                Seller and buyer are negotiating refund terms. Admin can monitor or intervene if needed.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
-              Negotiating
-            </Badge>
-          </div>
-
-          {latestOffer && (
-            <div className="mt-3 p-3 bg-white/50 rounded border border-blue-100">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium text-blue-800">Latest Offer</p>
-                <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded">
-                  {latestOffer.status || 'Pending'}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <p className="text-xs text-gray-600">Amount</p>
-                  <p className="font-medium">₱{Number(latestOffer.amount || 0).toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-600">Type</p>
-                  <p className="font-medium">{latestOffer.refund_type || 'Partial'}</p>
-                </div>
-                {latestOffer.notes && (
-                  <div className="col-span-2">
-                    <p className="text-xs text-gray-600">Notes</p>
-                    <p className="text-sm text-gray-700">{latestOffer.notes}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-3 flex items-center text-sm text-blue-700">
-            <AlertTriangle className="h-4 w-4 mr-2" />
-            <span>Admin can override negotiation by proceeding directly to processing</span>
+    <div className="space-y-4">
+      {/* Status Banner */}
+      <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+        <div className="flex items-start gap-3">
+          <RefreshCw className="h-5 w-5 text-blue-600 animate-spin" />
+          <div>
+            <h3 className="font-medium text-blue-800">Processing Refund</h3>
+            <p className="text-sm text-blue-600 mt-1">
+              Select a refund method and complete the transaction.
+            </p>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
 
-function AdminApprovedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const rr = (refund as any).return_request || null;
-  const isReturn = String((refund.final_refund_type || '').toLowerCase()) === 'return' || String((refund.refund_type || '').toLowerCase()) === 'return' || String((refund.refund_category || '').toLowerCase()) === 'return_item';
-  const rrStatus = String(rr?.status || '').toLowerCase();
-  const payStatus = String(refund.refund_payment_status || '').toLowerCase();
-  const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
-  const isReturnAcceptedWaitingModeration = isReturn && rrStatus === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
-  
-  return (
-    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <CheckCircle className="h-5 w-5 text-green-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
+      {/* Refund Details Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Refund Details</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <p className="font-medium text-green-800">Refund Approved</p>
-              <p className="text-sm text-green-700 mt-1">
-                {isReturn ? (
-                  isReturnAcceptedWaitingModeration ? 'Seller accepted the return item. Proceed to refund now.' : 'Return request approved. Waiting for customer to ship the item back.'
-                ) : 'Refund approved. Proceed to process the refund'}
-              </p>
+              <span className="text-muted-foreground">Refund Amount:</span>
+              <p className="font-medium text-lg">₱{Number(refund.total_refund_amount || 0).toLocaleString()}</p>
             </div>
-            <Badge variant="outline" className="bg-green-100 text-green-800 border-green-300">
-              Approved
-            </Badge>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-green-100">
-              <p className="text-xs font-medium text-green-800 mb-1">Refund Method</p>
-              <p className="text-sm font-medium flex items-center gap-2">
-                {refund.final_refund_method === 'wallet' && <Wallet className="h-4 w-4" />}
-                {refund.final_refund_method === 'card' && <CreditCard className="h-4 w-4" />}
-                {refund.final_refund_method === 'bank' && <DollarSign className="h-4 w-4" />}
-                {refund.final_refund_method || refund.preferred_refund_method || 'Not specified'}
-              </p>
-            </div>
-            
-            <div className="bg-white/50 p-3 rounded border border-green-100">
-              <p className="text-xs font-medium text-green-800 mb-1">Amount</p>
-              <p className="text-sm font-medium">₱{Number(refund.total_refund_amount || 0).toLocaleString()}</p>
-              {refund.total_refund_amount != null && (
-                <p className="text-xs text-gray-500 mt-1">(using <span className="font-medium">total_refund_amount</span>)</p>
-              )}
-            </div>
-          </div>
-
-          {isReturn && !rr?.tracking_number && (
-            <div className="mt-3 p-3 bg-yellow-50 rounded border border-yellow-200">
-              <div className="flex items-center">
-                <Package className="h-4 w-4 text-yellow-600 mr-2" />
-                <p className="text-sm text-yellow-700">
-                  <span className="font-medium">Waiting for return shipment.</span> Customer has been notified to ship the item back.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminWaitingStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const rr = (refund as any).return_request || null;
-  const tracking = rr?.tracking_number || refund.tracking_number || null;
-  const notified = Boolean(refund.buyer_notified_at);
-  const shippedAt = rr?.shipped_at || null;
-  
-  return (
-    <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <Package className="h-5 w-5 text-indigo-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium text-indigo-800">Waiting for Return Shipment</p>
-              <p className="text-sm text-indigo-700 mt-1">
-                {tracking 
-                  ? `Item is being shipped back. Tracking provided.` 
-                  : (notified 
-                    ? 'Customer has been notified to ship the item. Awaiting shipment.' 
-                    : 'Customer will ship the return item')}
-              </p>
+              <span className="text-muted-foreground">Refund Fee:</span>
+              <p className="font-medium">₱{Number(refund.refund_fee || 0).toLocaleString()}</p>
             </div>
-            <Badge variant="outline" className="bg-indigo-100 text-indigo-800 border-indigo-300">
-              Waiting
-            </Badge>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            {tracking && (
-              <div className="bg-white/50 p-3 rounded border border-indigo-100">
-                <p className="text-xs font-medium text-indigo-800 mb-1">Tracking Number</p>
-                <p className="text-sm font-medium">{tracking}</p>
-                <p className="text-xs text-gray-600 mt-1">{rr?.logistic_service || 'Not specified'}</p>
-              </div>
-            )}
-            
-            {shippedAt && (
-              <div className="bg-white/50 p-3 rounded border border-indigo-100">
-                <p className="text-xs font-medium text-indigo-800 mb-1">Shipped Date</p>
-                <p className="text-sm">{new Date(shippedAt).toLocaleDateString()}</p>
-              </div>
-            )}
-            
-            {!tracking && (
-              <div className="col-span-2 p-3 bg-yellow-50 rounded border border-yellow-200">
-                <div className="flex items-center">
-                  <AlertTriangle className="h-4 w-4 text-yellow-600 mr-2" />
-                  <p className="text-sm text-yellow-700">
-                    No tracking number provided yet. Customer should provide tracking once shipped.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminShippedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const rr = (refund as any).return_request || null;
-  const medias = rr?.medias || rr?.media || [];
-  const estimatedDelivery = rr?.estimated_delivery || null;
-  
-  return (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <Truck className="h-5 w-5 text-blue-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium text-blue-800">Return In Transit</p>
-              <p className="text-sm text-blue-700 mt-1">
-                Item has been shipped back to seller. Waiting for delivery.
-              </p>
+              <span className="text-muted-foreground">Preferred Method:</span>
+              <p className="font-medium capitalize">{refund.preferred_refund_method || 'N/A'}</p>
             </div>
-            <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
-              In Transit
-            </Badge>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            {rr?.tracking_number && (
-              <div className="bg-white/50 p-3 rounded border border-blue-100">
-                <p className="text-xs font-medium text-blue-800 mb-1">Tracking Details</p>
-                <p className="text-sm font-medium">{rr.tracking_number}</p>
-                <p className="text-xs text-gray-600 mt-1">{rr.logistic_service || 'Not specified'}</p>
-                {rr.tracking_url && (
-                  <a 
-                    href={rr.tracking_url} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-600 hover:underline mt-1 inline-block"
-                  >
-                    Track Package →
-                  </a>
-                )}
-              </div>
-            )}
-
-            {rr?.shipped_at && (
-              <div className="bg-white/50 p-3 rounded border border-blue-100">
-                <p className="text-xs font-medium text-blue-800 mb-1">Shipping Timeline</p>
-                <p className="text-sm">Shipped: {new Date(rr.shipped_at).toLocaleDateString()}</p>
-                {estimatedDelivery && (
-                  <p className="text-sm">Est. Delivery: {new Date(estimatedDelivery).toLocaleDateString()}</p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {rr?.notes && (
-            <div className="mt-3 p-3 bg-white/50 rounded border border-blue-100">
-              <p className="text-xs font-medium text-blue-800 mb-1">Customer Notes</p>
-              <p className="text-sm text-gray-700">{rr.notes}</p>
-            </div>
-          )}
-
-          {medias && medias.length > 0 && (
-            <div className="mt-3">
-              <p className="text-xs font-medium text-blue-800 mb-2">Packaging Photos</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {medias.map((m: any, idx: number) => (
-                  <a 
-                    key={m.id || idx} 
-                    href={m.file_url || m.file_data || '#'} 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="block rounded overflow-hidden bg-gray-100 border hover:opacity-90 transition-opacity"
-                  >
-                    {m.file_type && m.file_type.startsWith('image/') ? (
-                      <img 
-                        src={m.file_url || m.file_data} 
-                        alt={`Return media ${idx + 1}`} 
-                        className="w-full h-24 object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-24 flex flex-col items-center justify-center text-gray-500 p-2">
-                        <FileText className="h-8 w-8 mb-1" />
-                        <span className="text-xs truncate w-full text-center">
-                          {m.file_name?.split('.')[0] || 'Document'}
-                        </span>
-                      </div>
-                    )}
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminReceivedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const rr = (refund as any).return_request || null;
-  const receivedAt = rr?.received_at || null;
-  
-  return (
-    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <Package className="h-5 w-5 text-green-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium text-green-800">Item Received by Seller</p>
-              <p className="text-sm text-green-700 mt-1">
-                Seller has received the returned item. Seller will inspect the item.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-green-100 text-green-800 border-green-300">
-              Received
-            </Badge>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            {receivedAt && (
-              <div className="bg-white/50 p-3 rounded border border-green-100">
-                <p className="text-xs font-medium text-green-800 mb-1">Received Date</p>
-                <p className="text-sm">{new Date(receivedAt).toLocaleDateString()}</p>
-                <p className="text-xs text-gray-600 mt-1">
-                  {new Date(receivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </div>
-            )}
-            
-            <div className="bg-white/50 p-3 rounded border border-green-100">
-              <p className="text-xs font-medium text-green-800 mb-1">Next Step</p>
-              <p className="text-sm">Quality Inspection</p>
-              <p className="text-xs text-gray-600 mt-1">Seller has 3 days to inspect</p>
-            </div>
-          </div>
-
-          {rr?.receipt_notes && (
-            <div className="mt-3 p-3 bg-white/50 rounded border border-green-100">
-              <p className="text-xs font-medium text-green-800 mb-1">Receipt Notes</p>
-              <p className="text-sm text-gray-700">{rr.receipt_notes}</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminToVerifyStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const rr = (refund as any).return_request || null;
-  const inspectionDeadline = rr?.inspection_deadline || null;
-  
-  return (
-    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <PackageCheck className="h-5 w-5 text-purple-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-purple-800">Quality Inspection Required</p>
-              <p className="text-sm text-purple-700 mt-1">
-                Item received. Seller must inspect condition and decide to accept or reject the return.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-purple-100 text-purple-800 border-purple-300">
-              To Inspect
-            </Badge>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-purple-100">
-              <p className="text-xs font-medium text-purple-800 mb-1">Inspection Deadline</p>
-              {inspectionDeadline ? (
-                <>
-                  <p className="text-sm">{new Date(inspectionDeadline).toLocaleDateString()}</p>
-                  <p className="text-xs text-gray-600 mt-1">
-                    {Math.ceil((new Date(inspectionDeadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} days remaining
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm">Within 3 business days</p>
-              )}
-            </div>
-            
-            <div className="bg-white/50 p-3 rounded border border-purple-100">
-              <p className="text-xs font-medium text-purple-800 mb-1">Possible Outcomes</p>
-              <div className="flex gap-2 mt-1">
-                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs">
-                  Accept
-                </Badge>
-                <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-xs">
-                  Reject
-                </Badge>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-3 p-3 bg-white/50 rounded border border-purple-100">
-            <div className="flex items-center">
-              <AlertTriangle className="h-4 w-4 text-yellow-600 mr-2 flex-shrink-0" />
-              <p className="text-sm text-gray-700">
-                If seller doesn't inspect within deadline, refund may be automatically processed.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminInspectedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const rr = (refund as any).return_request || null;
-  const inspectionResult = rr?.inspection_result || null;
-  const inspectionNotes = rr?.inspection_notes || null;
-  
-  return (
-    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <CheckSquare className="h-5 w-5 text-purple-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-purple-800">Inspection Complete</p>
-              <p className="text-sm text-purple-700 mt-1">
-                {inspectionResult ? 'Seller has inspected the item and submitted an inspection result.' : 'Seller has inspected the item. Waiting for decision.'}
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-purple-100 text-purple-800 border-purple-300">
-              Inspected
-            </Badge>
-          </div>
-
-          {inspectionResult && (
-            <div className="mt-3 p-3 bg-white/50 rounded border border-purple-100">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium text-purple-800">Inspection Result</p>
-                <Badge 
-                  variant="outline" 
-                  className={`${
-                    inspectionResult === 'accepted' 
-                      ? 'bg-green-50 text-green-700 border-green-200' 
-                      : 'bg-red-50 text-red-700 border-red-200'
-                  }`}
-                >
-                  {inspectionResult === 'accepted' ? 'Accepted' : 'Rejected'}
-                </Badge>
-              </div>
-              
-              {inspectionNotes && (
-                <div className="mt-2">
-                  <p className="text-xs text-gray-600 mb-1">Inspection Notes</p>
-                  <p className="text-sm text-gray-700">{inspectionNotes}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-purple-100">
-              <p className="text-xs font-medium text-purple-800 mb-1">Next Step</p>
-              <p className="text-sm font-medium flex items-center gap-2">
-                <RefreshCw className="h-4 w-4" />
-                Refund Processing
-              </p>
-            </div>
-            
-            {inspectionResult === 'accepted' && (
-              <div className="bg-white/50 p-3 rounded border border-purple-100">
-                <p className="text-xs font-medium text-purple-800 mb-1">Refund Amount</p>
-                <p className="text-sm font-medium">₱{Number(refund.total_refund_amount || 0).toLocaleString()}</p>
-                {refund.total_refund_amount != null && (
-                  <p className="text-xs text-gray-500 mt-1">(using <span className="font-medium">total_refund_amount</span>)</p>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminToProcessStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const paymentMethod = refund.final_refund_method || refund.preferred_refund_method;
-  
-  return (
-    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <RefreshCw className="h-5 w-5 text-purple-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-purple-800">Ready for Refund Processing</p>
-              <p className="text-sm text-purple-700 mt-1">
-                All conditions met. Ready to process the refund payment.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-purple-100 text-purple-800 border-purple-300">
-              To Process
-            </Badge>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-purple-100">
-              <p className="text-xs font-medium text-purple-800 mb-1">Payment Method</p>
-              <div className="flex items-center gap-2">
-                {paymentMethod === 'wallet' && <Wallet className="h-4 w-4" />}
-                {paymentMethod === 'card' && <CreditCard className="h-4 w-4" />}
-                {paymentMethod === 'bank' && <DollarSign className="h-4 w-4" />}
-                <p className="text-sm font-medium">{paymentMethod || 'Not specified'}</p>
-              </div>
-            </div>
-            
-            <div className="bg-white/50 p-3 rounded border border-purple-100">
-              <p className="text-xs font-medium text-purple-800 mb-1">Amount to Refund</p>
-              <p className="text-sm font-medium">₱{Number(refund.total_refund_amount || 0).toLocaleString()}</p>
-              {refund.refund_fee && (
-                <p className="text-xs text-gray-600 mt-1">Fee: ₱{Number(refund.refund_fee).toLocaleString()}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-3 p-3 bg-white/50 rounded border border-purple-100">
-            <p className="text-xs font-medium text-purple-800 mb-1">Processing Instructions</p>
-            <ol className="text-xs text-gray-700 list-decimal pl-4 space-y-1">
-              <li>Verify the refund amount and payment method</li>
-              <li>Process payment through the chosen method</li>
-              <li>Update refund status to 'completed' once payment is sent</li>
-              <li>Notify customer of successful refund</li>
-            </ol>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminDisputeStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const disputeReason = refund.dispute_reason || 'No reason provided';
-  
-  return (
-    <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <ShieldAlert className="h-5 w-5 text-orange-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-orange-800">Under Dispute Review</p>
-              <p className="text-sm text-orange-700 mt-1">
-                This refund request has been escalated to admin review due to a dispute.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-300">
-              Dispute
-            </Badge>
-          </div>
-
-          <div className="mt-3 p-3 bg-white/50 rounded border border-orange-100">
-            <p className="text-xs font-medium text-orange-800 mb-1">Dispute Reason</p>
-            <p className="text-sm text-gray-700">{disputeReason}</p>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-orange-100">
-              <p className="text-xs font-medium text-orange-800 mb-1">Admin Action Required</p>
-              <p className="text-sm">Review dispute and make final decision</p>
-            </div>
-            
-          
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminCompletedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const paymentStatus = refund.refund_payment_status || 'completed';
-  
-  return (
-    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <CheckSquare className="h-5 w-5 text-emerald-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-emerald-800">Refund Completed</p>
-              <p className="text-sm text-emerald-700 mt-1">
-                Refund has been successfully processed and completed.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-300">
-              Completed
-            </Badge>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-emerald-100">
-              <p className="text-xs font-medium text-emerald-800 mb-1">Payment Status</p>
-              <Badge 
-                variant="outline" 
-                className={`${
-                  paymentStatus === 'completed' 
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                    : 'bg-yellow-50 text-yellow-700 border-yellow-200'
-                }`}
-              >
-                {paymentStatus === 'completed' ? 'Paid' : paymentStatus}
+              <span className="text-muted-foreground">Payment Status:</span>
+              <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
+                {refund.refund_payment_status || 'pending'}
               </Badge>
             </div>
-            
-            <div className="bg-white/50 p-3 rounded border border-emerald-100">
-              <p className="text-xs font-medium text-emerald-800 mb-1">Final Amount</p>
-              <p className="text-sm font-medium">₱{Number(refund.total_refund_amount || 0).toLocaleString()}</p>
-            </div>
           </div>
+        </CardContent>
+      </Card>
 
-          <div className="mt-3 p-3 bg-white/50 rounded border border-emerald-100">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-emerald-800 mb-1">Processed By</p>
-                <p className="text-sm">{refund.processed_by_username || 'System'}</p>
-              </div>
-              {refund.processed_at && (
-                <div className="text-right">
-                  <p className="text-xs font-medium text-emerald-800 mb-1">Completed Date</p>
-                  <p className="text-sm">{new Date(refund.processed_at).toLocaleDateString()}</p>
+      {/* Refund Method Selection */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Select Refund Method</CardTitle>
+          <CardDescription className="text-xs">
+            Choose how the refund will be issued to the customer
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {refundMethods.map((method) => {
+              const Icon = method.icon;
+              const isSelected = selectedMethod === method.id;
+              return (
+                <div
+                  key={method.id}
+                  className={`border rounded-md p-3 cursor-pointer transition-all ${
+                    isSelected 
+                      ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' 
+                      : 'hover:border-gray-300'
+                  }`}
+                  onClick={() => setSelectedMethod(method.id)}
+                >
+                  <div className="flex items-start gap-2">
+                    <Icon className={`h-4 w-4 mt-0.5 ${isSelected ? 'text-blue-600' : 'text-muted-foreground'}`} />
+                    <div>
+                      <p className={`text-sm font-medium ${isSelected ? 'text-blue-700' : ''}`}>
+                        {method.label}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">{method.description}</p>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
+              );
+            })}
           </div>
-        </div>
+        </CardContent>
+      </Card>
+
+      {/* Transaction Notes */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Transaction Notes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <textarea
+            className="w-full border rounded-md p-2 text-sm min-h-[80px]"
+            placeholder="Add any notes about this refund transaction..."
+            defaultValue={refund.notes || ''}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Action Buttons */}
+      <div className="flex gap-3 justify-end">
+        <Button
+          variant="outline"
+          onClick={onCancel}
+          disabled={isSubmitting}
+          className="w-32"
+        >
+          Cancel
+        </Button>
+        
+        <Button
+          onClick={() => setShowConfirmComplete(true)}
+          disabled={isSubmitting || !selectedMethod}
+          className="w-48 bg-green-600 hover:bg-green-700"
+        >
+          {isSubmitting ? (
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+          ) : (
+            <CheckCircle className="h-4 w-4 mr-2" />
+          )}
+          Complete Refund
+        </Button>
       </div>
-    </div>
-  );
-}
 
-function AdminRejectedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const rejectionReason = refund.rejection_reason || refund.reason || 'No reason provided';
-  
-  return (
-    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-red-800">Refund Rejected</p>
-              <p className="text-sm text-red-700 mt-1">
-                This refund request has been rejected by the seller.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-red-100 text-red-800 border-red-300">
-              Rejected
-            </Badge>
-          </div>
-
-          <div className="mt-3 p-3 bg-white/50 rounded border border-red-100">
-            <p className="text-xs font-medium text-red-800 mb-1">Rejection Reason</p>
-            <p className="text-sm text-gray-700">{rejectionReason}</p>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-red-100">
-              <p className="text-xs font-medium text-red-800 mb-1">Customer Option</p>
-              <p className="text-sm">Customer can file a dispute within 7 days</p>
-            </div>
-            
-            <div className="bg-white/50 p-3 rounded border border-red-100">
-              <p className="text-xs font-medium text-red-800 mb-1">Date Rejected</p>
-              <p className="text-sm">{refund.processed_at ? new Date(refund.processed_at).toLocaleDateString() : 'N/A'}</p>
+      {/* Confirmation Dialog */}
+      <Dialog open={showConfirmComplete} onOpenChange={setShowConfirmComplete}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Complete Refund</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to complete this refund? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium text-yellow-800">Please verify:</p>
+                  <ul className="list-disc list-inside text-yellow-700 mt-1 space-y-1">
+                    <li>Refund amount: ₱{Number(refund.total_refund_amount || 0).toLocaleString()}</li>
+                    <li>Method: {refundMethods.find(m => m.id === selectedMethod)?.label}</li>
+                    <li>This will mark the refund as completed</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
-function AdminCancelledStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const cancellationReason = refund.cancelled_reason || 'No reason provided';
-  
-  return (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-      <div className="flex items-start gap-3">
-        <Ban className="h-5 w-5 text-gray-600 mt-0.5" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-gray-800">Refund Cancelled</p>
-              <p className="text-sm text-gray-700 mt-1">
-                This refund request has been cancelled.
-              </p>
-            </div>
-            <Badge variant="outline" className="bg-gray-100 text-gray-800 border-gray-300">
-              Cancelled
-            </Badge>
-          </div>
-
-          <div className="mt-3 p-3 bg-white/50 rounded border border-gray-100">
-            <p className="text-xs font-medium text-gray-800 mb-1">Cancellation Reason</p>
-            <p className="text-sm text-gray-700">{cancellationReason}</p>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/50 p-3 rounded border border-gray-100">
-              <p className="text-xs font-medium text-gray-800 mb-1">Initiated By</p>
-              <p className="text-sm">{refund.processed_by_username || 'Customer'}</p>
-            </div>
-            
-            <div className="bg-white/50 p-3 rounded border border-gray-100">
-              <p className="text-xs font-medium text-gray-800 mb-1">Date Cancelled</p>
-              <p className="text-sm">{refund.processed_at ? new Date(refund.processed_at).toLocaleDateString() : 'N/A'}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowConfirmComplete(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCompleteRefund} disabled={isSubmitting}>
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Confirm Complete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -874,9 +617,10 @@ export async function loader({ request, context, params }: any) {
     throw new Response('Refund not found', { status: 404 });
   }
 
-  // Try to fetch the authoritative admin refund details (ensures stored DB values like total_refund_amount are used)
+  // Try to fetch the authoritative admin refund details and dispute status
   let enrichedRefund = refund;
   try {
+    // First get admin refund details
     const detailEndpoint = `${API_BASE_URL}/return-refund/${encodeURIComponent(String(refund.refund))}/get_admin_refund_details/`;
     const detailRes = await fetch(detailEndpoint, {
       method: 'GET',
@@ -889,15 +633,55 @@ export async function loader({ request, context, params }: any) {
 
     if (detailRes.ok) {
       const details = await detailRes.json();
-      // Merge details into the flat refund record so UI picks up authoritative fields
       enrichedRefund = { ...refund, ...details };
-      if (details.total_refund_amount != null && Number(details.total_refund_amount) !== Number(refund.total_refund_amount || 0)) {
-        console.warn('Admin view: total_refund_amount mismatch between list and details', { refundId: refund.refund, listValue: refund.total_refund_amount, detailValue: details.total_refund_amount });
+    }
+
+    // Then check dispute status to determine if we should show under_review
+    const disputesRes = await fetch(`${API_BASE_URL}/disputes/?refund_id=${encodeURIComponent(String(refund.refund))}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'X-User-Id': String(userId)
+      },
+      credentials: 'include'
+    });
+
+    if (disputesRes.ok) {
+      const disputesData = await disputesRes.json();
+      const disputes = Array.isArray(disputesData) ? disputesData : Array.isArray(disputesData?.data) ? disputesData.data : [];
+      
+      // Find active dispute for this refund
+      const activeDispute = disputes.find((d: any) => 
+        String(d.refund) === String(refund.refund) && 
+        ['pending', 'under_review', 'investigating', 'in_review'].includes(String(d.status).toLowerCase())
+      );
+
+      if (activeDispute) {
+        const disputeStatus = String(activeDispute.status).toLowerCase();
+        
+        // Only override the refund status if the dispute is under review
+        // Don't override if dispute is approved
+        if (disputeStatus === 'under_review' || disputeStatus === 'investigating' || disputeStatus === 'in_review') {
+          enrichedRefund = { 
+            ...enrichedRefund, 
+            status: 'under_review',
+            dispute_reason: enrichedRefund.dispute_reason || activeDispute.reason || activeDispute.dispute_reason,
+            dispute_details: activeDispute,
+            dispute_request: activeDispute
+          };
+        } else {
+          // For pending or approved disputes, just attach the dispute info without overriding status
+          enrichedRefund = {
+            ...enrichedRefund,
+            dispute_request: activeDispute,
+            dispute_details: activeDispute,
+            dispute_reason: enrichedRefund.dispute_reason || activeDispute.reason || activeDispute.dispute_reason
+          };
+        }
       }
     }
   } catch (err) {
-    // Ignore detail fetch failures; fall back to list values
-    console.error('Failed to fetch admin refund details', err);
+    console.error('Failed to fetch additional details', err);
   }
 
   const user = { id: userId, isAdmin: true };
@@ -913,8 +697,220 @@ export default function AdminViewRefundDetails() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const actionsRef = useRef<HTMLDivElement | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  
+  // State for liability checkboxes
+  const [selectedLiabilities, setSelectedLiabilities] = useState<string[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authAction, setAuthAction] = useState<'reject' | 'confirm' | null>(null);
+  const [modalAuthChecked, setModalAuthChecked] = useState(false);
+
+  // Map liability IDs to backend case_type values
+  const liabilityOptions = [
+    { id: 'merchant_fulfillment_issue', label: 'Merchant Fulfillment Issue (Seller)' },
+    { id: 'logistics_delivery_issue', label: 'Logistics / Delivery Issue (Delivery Partner)' },
+    { id: 'customer_related_issue', label: 'Customer-Related Issue (Customer)' },
+    { id: 'shared_responsibility', label: 'Shared Responsibility' },
+    { id: 'platform_system_issue', label: 'Platform / System Issue' }
+  ];
+
+  const handleLiabilityChange = (liabilityId: string) => {
+    setSelectedLiabilities(prev => 
+      prev.includes(liabilityId)
+        ? prev.filter(id => id !== liabilityId)
+        : [...prev, liabilityId]
+    );
+  };
+
+  const handleConfirmProcessRefund = async () => {
+  if (selectedLiabilities.length === 0) {
+    toast({ 
+      title: 'Error', 
+      description: 'Please select at least one liability category.', 
+      variant: 'destructive' 
+    });
+    return;
+  }
+
+  setIsSubmitting(true);
+
+  try {
+    // First, find the active dispute for this refund
+    const disputesRes = await AxiosInstance.get('/disputes/', {
+      params: { refund_id: String(refund.refund) },
+      headers: { 'X-User-Id': String(user?.id || '') }
+    });
+
+    const disputes = Array.isArray(disputesRes?.data) ? disputesRes.data : 
+                    Array.isArray(disputesRes?.data?.data) ? disputesRes.data.data : [];
+    
+    const activeDispute = disputes.find((d: any) => 
+      String(d.refund) === String(refund.refund) || 
+      String(d.refund_id) === String(refund.refund)
+    );
+
+    if (!activeDispute || !activeDispute.id) {
+      toast({ 
+        title: 'Error', 
+        description: 'No active dispute found for this refund.', 
+        variant: 'destructive' 
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    // 1. First update the dispute with case category
+    const caseCategoryValue = selectedLiabilities.length > 0 ? selectedLiabilities[0] : '';
+    if (selectedLiabilities.length > 1) {
+      toast({ title: 'Note', description: 'Multiple liabilities selected — only the first will be saved due to backend constraint.' });
+    }
+
+    // Update dispute with case category first
+    await AxiosInstance.patch(`/disputes/${activeDispute.id}/`, {
+      case_category: caseCategoryValue,
+      admin_notes: `Case resolved with liabilities: ${selectedLiabilities.map(id => liabilityOptions.find(opt => opt.id === id)?.label).join(', ')}`
+    }, {
+      headers: { 'X-User-Id': String(user?.id || '') }
+    });
+
+    // 2. Then call the accept endpoint to approve the dispute
+    // This will set dispute.status = 'approved' and update refund status
+    await AxiosInstance.post(`/disputes/${activeDispute.id}/accept/`, {
+      admin_notes: `Case resolved with liabilities: ${selectedLiabilities.map(id => liabilityOptions.find(opt => opt.id === id)?.label).join(', ')}`
+    }, {
+      headers: { 'X-User-Id': String(user?.id || '') }
+    });
+
+    // 3. Also update the refund status to approved (in case the accept action didn't do it)
+    try {
+      const formData = new FormData();
+      formData.append('status', 'approved');
+      
+      await AxiosInstance.post(`/return-refund/${encodeURIComponent(String(refund.refund))}/admin_process_refund/`, formData, {
+        headers: { 'X-User-Id': String(user?.id || '') }
+      });
+    } catch (err) {
+      console.log('Refund status update via admin_process_refund failed, but dispute is approved');
+      // Try direct PATCH as fallback
+      try {
+        await AxiosInstance.patch(`/return-refund/${encodeURIComponent(String(refund.refund))}/`, {
+          status: 'approved'
+        }, {
+          headers: { 'X-User-Id': String(user?.id || '') }
+        });
+      } catch (patchErr) {
+        console.log('Direct PATCH also failed, but continuing...');
+      }
+    }
+
+    toast({ 
+      title: 'Success', 
+      description: 'Refund has been approved.' 
+    });
+
+    // Update local state: refund approved, payment pending
+    setRefund(prev => ({ 
+      ...prev, 
+      status: 'approved',
+      refund_payment_status: 'pending',
+      dispute_request: {
+        ...prev.dispute_request,
+        status: 'approved',
+        case_category: caseCategoryValue,
+        admin_notes: `Case resolved with liabilities: ${selectedLiabilities.map(id => liabilityOptions.find(opt => opt.id === id)?.label).join(', ')}`
+      }
+    }));
+
+    // Clear selected liabilities
+    setSelectedLiabilities([]);
+
+    // Force a refresh of the refund data
+    try {
+      const refreshRes = await AxiosInstance.get(`/return-refund/${encodeURIComponent(String(refund.refund))}/get_admin_refund_details/`, {
+        headers: { 'X-User-Id': String(user?.id || '') }
+      });
+      if (refreshRes.data) {
+        setRefund(prev => ({ 
+          ...prev, 
+          ...refreshRes.data,
+          status: 'approved', // Ensure status is approved
+          dispute_request: {
+            ...prev.dispute_request,
+            ...refreshRes.data.dispute_request,
+            status: 'approved'
+          }
+        }));
+      }
+    } catch (refreshErr) {
+      console.log('Failed to refresh refund data', refreshErr);
+    }
+
+  } catch (err: any) {
+    console.error('Error processing refund:', err);
+    toast({ 
+      title: 'Error', 
+      description: err.response?.data?.error || 'Failed to process refund. Please try again.', 
+      variant: 'destructive' 
+    });
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+
+  const handleProcessRefund = async () => {
+    setProcessing(true);
+    try {
+      const formData = new FormData();
+      formData.append('status', 'processing'); // Set to processing for payment
+
+      await AxiosInstance.post(`/return-refund/${encodeURIComponent(String(refund.refund))}/admin_process_refund/`, formData, {
+        headers: { 'X-User-Id': String(user?.id || '') }
+      });
+
+      toast({ title: 'Processing', description: 'Refund payment status set to processing.' });
+      
+      // Update local state to show processing UI
+      setRefund(prev => ({ 
+        ...prev, 
+        refund_payment_status: 'processing'
+      }));
+      
+    } catch (err) {
+      console.error('Failed to set refund to processing', err);
+      toast({ 
+        title: 'Error', 
+        description: 'Failed to set refund to processing', 
+        variant: 'destructive' 
+      });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleCompleteRefund = () => {
+    setRefund(prev => ({ 
+      ...prev, 
+      status: 'completed',
+      refund_payment_status: 'completed',
+      processed_at: new Date().toISOString()
+    }));
+    toast({ 
+      title: 'Completed', 
+      description: 'Refund has been marked as completed.' 
+    });
+  };
+
+  const handleCancelProcessing = () => {
+    setRefund(prev => ({ 
+      ...prev, 
+      refund_payment_status: 'pending'
+    }));
+    toast({ 
+      title: 'Cancelled', 
+      description: 'Refund processing has been cancelled.' 
+    });
+  };
 
   useEffect(() => {
     try {
@@ -953,132 +949,92 @@ export default function AdminViewRefundDetails() {
 
   const renderStatusUI = () => {
     const status = String(refund.status || '').toLowerCase();
-    const rr = (refund as any).return_request || null;
-    const rrStatus = String(rr?.status || '').toLowerCase();
+    const rr = refund.return_request;
+    const paymentCompleted = String(refund.refund_payment_status || '').toLowerCase() === 'completed';
 
-    // Explicit rule: if refund is approved and payment is completed, show completed UI
-    const isApproved = String(refund.status || '').toLowerCase() === 'approved';
-    const paymentCompletedExact = String((refund.refund_payment_status || '')).toLowerCase().trim() === 'completed';
-    if (isApproved && paymentCompletedExact) {
-      return <AdminCompletedStatusUI refund={refund} />;
+    // Derive dispute status from possible locations
+    const disputeStatus = String(
+      refund.dispute?.status ||
+      (Array.isArray(refund.disputes) && refund.disputes[0]?.status) ||
+      refund.dispute_details?.status ||
+      refund.dispute_request?.status ||
+      ''
+    ).toLowerCase();
+
+    // Only force under_review if dispute is under review AND refund status is dispute
+    // Don't force if dispute is approved
+    const disputeUnderReviewStates = ['under_review', 'investigating', 'in_review'];
+    const shouldForceUnderReview = disputeUnderReviewStates.includes(disputeStatus) && status === 'dispute';
+    const displayedStatus = shouldForceUnderReview ? 'under_review' : status;
+
+    // If payment is completed, show completed UI
+    if (paymentCompleted && displayedStatus === 'approved') {
+      return <CompletedStatusUI refund={refund} />;
     }
 
     // Map status to appropriate UI component
-    switch (status ) {
+    switch (displayedStatus) {
       case 'pending':
-        return <AdminPendingStatusUI refund={refund} />;
-      
+        return <PendingStatusUI refund={refund} />;
       case 'negotiation':
-        return <AdminNegotiationStatusUI refund={refund} />;
-      
+        return <NegotiationStatusUI refund={refund} />;
       case 'approved':
-        // If payment already completed, show completed UI
-        const paymentCompleted = String(refund.refund_payment_status || '').toLowerCase() === 'completed';
-        if (paymentCompleted) {
-          return <AdminCompletedStatusUI refund={refund} />;
-        }
-
-        // Check if this is a return and prefer return-specific UIs when a return_request exists
-        const isReturn = String((refund.final_refund_type || '').toLowerCase()) === 'return' || 
-                        String((refund.refund_type || '').toLowerCase()) === 'return';
-        const paymentPending = String(refund.refund_payment_status || '').toLowerCase() === 'pending' || 
-                              !refund.refund_payment_status;
-
-        // If this is a return, and there's a ReturnRequestItem, show waiting/shipped/received UIs accordingly
-        if (isReturn) {
-          if (rr) {
-            const rrStatus = String(rr.status || '').toLowerCase();
-            const hasTracking = Boolean(rr.tracking_number || refund.tracking_number);
-
-            // If returned item already received, show Received UI regardless of tracking
-            if (rrStatus === 'received') {
-              return <AdminReceivedStatusUI refund={refund} />;
-            }
-
-            // If return has been inspected by seller, show Inspected UI where seller will decide to accept/reject
-            if (rrStatus === 'inspected') {
-              return <AdminInspectedStatusUI refund={refund} />;
-            }
-
-            // If shipped or tracking exists, consider processing condition first
-            if (rrStatus === 'shipped' || hasTracking) {
-              const finalTypeLocal = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
-              // If seller accepted the return and payment is still pending, move to ToProcess so admin can process refund
-              if (paymentPending && String(refund.status || '').toLowerCase() === 'approved' && finalTypeLocal === 'return') {
-                return <AdminToProcessStatusUI refund={refund} />;
-              }
-              return <AdminShippedStatusUI refund={refund} />;
-            }
-
-            // Not shipped yet - waiting for customer to ship
-            return <AdminWaitingStatusUI refund={refund} />;
-          }
-
-          // No return_request record yet - fall back to waiting when payment is pending
-          if (paymentPending) {
-            return <AdminWaitingStatusUI refund={refund} />;
-          }
-        }
-
-        return <AdminApprovedStatusUI refund={refund} />;
-      
+        return <ApprovedStatusUI refund={refund} onProcessRefund={handleProcessRefund} />;
       case 'waiting':
-        return <AdminWaitingStatusUI refund={refund} />;
-      
+        return <WaitingStatusUI refund={refund} />;
       case 'shipped':
-        return <AdminShippedStatusUI refund={refund} />;
-      
+        return <ShippedStatusUI refund={refund} />;
       case 'received':
-        return <AdminReceivedStatusUI refund={refund} />;
-      
+        return <ReceivedStatusUI refund={refund} />;
       case 'to_verify':
-        return <AdminToVerifyStatusUI refund={refund} />;
-      
+        return <ToVerifyStatusUI refund={refund} />;
       case 'inspected':
-        return <AdminInspectedStatusUI refund={refund} />;
-      
+        return <InspectedStatusUI refund={refund} />;
       case 'to_process':
-        return <AdminToProcessStatusUI refund={refund} />;
-      
+        return <ToProcessStatusUI refund={refund} />;
       case 'dispute':
-        return <AdminDisputeStatusUI refund={refund} />;
-      
+        return <DisputeStatusUI refund={refund} />;
+      case 'under_review':
+        return <UnderReviewStatusUI refund={refund} />;
       case 'completed':
-        return <AdminCompletedStatusUI refund={refund} />;
-      
+        return <CompletedStatusUI refund={refund} />;
       case 'rejected':
-        return <AdminRejectedStatusUI refund={refund} />;
-      
+        return <RejectedStatusUI refund={refund} />;
       case 'cancelled':
-        return <AdminCancelledStatusUI refund={refund} />;
-      
+        return <CancelledStatusUI refund={refund} />;
       default:
         // Handle return_request status if main status doesn't match
-        switch (rrStatus) {
-          case 'shipped':
-            // If seller accepted the return and payment is pending, promote to To Process so admin can process refund
-            const finalTypeLocalDefault = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
-            const paymentPendingDefault = String(refund.refund_payment_status || '').toLowerCase() === 'pending' || !refund.refund_payment_status;
-            if (String(refund.status || '').toLowerCase() === 'approved' && paymentPendingDefault && finalTypeLocalDefault === 'return') {
-              return <AdminToProcessStatusUI refund={refund} />;
-            }
-            return <AdminShippedStatusUI refund={refund} />;
-          case 'received':
-            return <AdminReceivedStatusUI refund={refund} />;
-          case 'inspected':
-            return <AdminInspectedStatusUI refund={refund} />;
-          default:
-            // Fallback to waiting status for approved returns
-            const isReturnFallback = String((refund.final_refund_type || '').toLowerCase()) === 'return';
-            if (isReturnFallback && status === 'approved') {
-              return <AdminWaitingStatusUI refund={refund} />;
-            }
-            return null;
+        if (rr?.status) {
+          const rrStatus = String(rr.status).toLowerCase();
+          if (rrStatus === 'shipped') return <ShippedStatusUI refund={refund} />;
+          if (rrStatus === 'received') return <ReceivedStatusUI refund={refund} />;
+          if (rrStatus === 'inspected') return <InspectedStatusUI refund={refund} />;
         }
+        return null;
     }
   };
 
-  const st = String(refund.status || '').toLowerCase();
+  // Compute the status to display on badges and action gating
+  const st = (() => {
+    const s = String(refund.status || '').toLowerCase();
+    const disputeStatus = String(
+      refund.dispute?.status ||
+      (Array.isArray(refund.disputes) && refund.disputes[0]?.status) ||
+      refund.dispute_details?.status ||
+      refund.dispute_request?.status ||
+      ''
+    ).toLowerCase();
+    
+    // Only force under_review if dispute is under review AND refund status is dispute
+    const disputeUnderReviewStates = ['under_review', 'investigating', 'in_review'];
+    if (disputeUnderReviewStates.includes(disputeStatus) && s === 'dispute') {
+      return 'under_review';
+    }
+    return s;
+  })();
+
+  // Check if we're in processing state (payment status is processing)
+  const isProcessing = String(refund.refund_payment_status || '').toLowerCase() === 'processing';
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
@@ -1087,219 +1043,356 @@ export default function AdminViewRefundDetails() {
       </Button>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="flex items-center gap-2">
-                <Eye className="w-5 h-5" /> Refund {refund.refund}
-                <Badge variant="secondary" className="ml-2">
-                  {refund.status || 'pending'}
-                </Badge>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Eye className="w-4 h-4" /> Refund {refund.refund}
+                <StatusBadge status={st} />
               </CardTitle>
-              <CardDescription>Admin view — details and actions</CardDescription>
+              <CardDescription className="text-xs">Admin view — details and actions</CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="text-right text-sm text-muted-foreground">
-                <div>Requested: {refund.requested_at || 'N/A'}</div>
-                <div>Processed: {refund.processed_at || 'N/A'}</div>
-              </div>
-            </div>
+            <div className="text-right text-xs text-muted-foreground">
+            <div>Requested: {refund.requested_at ? new Date(refund.requested_at).toLocaleDateString() : 'N/A'}</div>
+            {st !== 'dispute' && refund.processed_at && (
+              <div>Processed: {new Date(refund.processed_at).toLocaleDateString()}</div>
+            )}
+          </div>  
           </div>
         </CardHeader>
 
         <CardContent>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="col-span-2">
-              <div className="space-y-4">
-                <section>
-                  <h4 className="text-sm font-semibold">Customer</h4>
-                  <div className="text-sm text-muted-foreground">{refund.requested_by_username} • {refund.requested_by_email}</div>
-                </section>
-
-                <section>
-                  <h4 className="text-sm font-semibold">Order</h4>
-                  <div className="text-sm text-muted-foreground">Order ID: {refund.order_id || 'N/A'}</div>
-                  <div className="text-sm text-muted-foreground">Order Total: ₱{Number(refund.order_total_amount || 0).toLocaleString()}</div>
-                </section>
-
-                <section>
-                  <h4 className="text-sm font-semibold">Amounts</h4>
-                  <div className="text-sm text-muted-foreground">
-                    <div>Total refund amount: <strong>₱{refund.total_refund_amount ?? 'N/A'}</strong></div>
-                  </div>
-                </section>
-
-                <section>
-                  <h4 className="text-sm font-semibold">Reason</h4>
-                  <div className="text-sm">{refund.reason || 'No reason provided'}</div>
-                </section>
-
-                {/* Status-specific UI */}
+          {isProcessing ? (
+            // Show Processing UI
+            <ProcessingUI 
+              refund={refund}
+              onComplete={handleCompleteRefund}
+              onCancel={handleCancelProcessing}
+            />
+          ) : (
+            // Show normal refund details UI
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="lg:col-span-2 space-y-3">
+                {/* Status-specific UI - now compact */}
                 {renderStatusUI()}
 
-                <section>
-                  <h4 className="text-sm font-semibold">Shipping / Logistics</h4>
-                  {
-                    // Prefer return_request details (if present), otherwise use top-level fields
-                  }
-                  <div className="text-sm text-muted-foreground">
-                    {refund.return_request?.logistic_service || refund.logistic_service || 'N/A'} • {refund.return_request?.tracking_number || refund.tracking_number || 'N/A'}
+                {/* Basic Information - simplified */}
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="border rounded-md p-2">
+                    <span className="text-muted-foreground block">Customer</span>
+                    <span className="font-medium">{refund.requested_by_username || 'N/A'}</span>
+                    {refund.requested_by_email && (
+                      <span className="text-muted-foreground block text-[10px]">{refund.requested_by_email}</span>
+                    )}
                   </div>
+                  <div className="border rounded-md p-2">
+                    <span className="text-muted-foreground block">Order</span>
+                    <span className="font-medium">{refund.order_id || 'N/A'}</span>
+                    <span className="text-muted-foreground block text-[10px]">
+                      Total: ₱{Number(refund.order_total_amount || 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
 
-                  {refund.return_request?.tracking_url && (
-                    <div className="text-sm mt-1">
-                      <a href={refund.return_request.tracking_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Track Package →</a>
-                    </div>
-                  )}
+                {/* Reason - simplified */}
+                <div className="border rounded-md p-2 text-xs">
+                  <span className="text-muted-foreground block mb-1">Reason</span>
+                  <span>{refund.reason || 'No reason provided'}</span>
+                </div>
 
-                  {refund.return_request?.shipped_at && (
-                    <div className="text-sm mt-1">Shipped: {new Date(refund.return_request.shipped_at).toLocaleDateString()}</div>
-                  )}
+                {/* Shipping / Logistics - simplified */}
+                {(refund.logistic_service || refund.tracking_number || refund.return_request) && (
+                  <div className="border rounded-md p-2 text-xs">
+                    <span className="text-muted-foreground block mb-1">Shipping</span>
+                    <span>
+                      {refund.return_request?.logistic_service || refund.logistic_service || 'N/A'} •{' '}
+                      {refund.return_request?.tracking_number || refund.tracking_number || 'N/A'}
+                    </span>
+                    {refund.return_request?.tracking_url && (
+                      <a href={refund.return_request.tracking_url} target="_blank" rel="noopener noreferrer" 
+                         className="text-blue-600 hover:underline block mt-1 text-[10px]">
+                        Track Package →
+                      </a>
+                    )}
+                  </div>
+                )}
 
-                  {refund.return_request?.received_at && (
-                    <div className="text-sm mt-1">Received: {new Date(refund.return_request.received_at).toLocaleDateString()}</div>
-                  )}
-                </section>
+                {/* Methods - simplified */}
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="border rounded-md p-2">
+                    <span className="text-muted-foreground block">Preferred</span>
+                    <span>{refund.preferred_refund_method || 'N/A'}</span>
+                  </div>
+                  <div className="border rounded-md p-2">
+                    <span className="text-muted-foreground block">Final</span>
+                    <span>{refund.final_refund_method || 'N/A'}</span>
+                  </div>
+                </div>
 
-                <section>
-                  <h4 className="text-sm font-semibold">Methods</h4>
-                  <div className="text-sm text-muted-foreground">Buyer preferred: {refund.preferred_refund_method || 'N/A'}</div>
-                  <div className="text-sm text-muted-foreground">Final: {refund.final_refund_method || 'N/A'}</div>
-                </section>
-
-                <section>
-                  <h4 className="text-sm font-semibold">Media</h4>
-                  <div className="text-sm text-muted-foreground">Has media: {refund.has_media ? 'Yes' : 'No'} • Count: {refund.media_count || 0}</div>
-                </section>
+                {/* Media - simplified */}
+                {refund.has_media && (
+                  <div className="border rounded-md p-2 text-xs">
+                    <span className="text-muted-foreground">Media: {refund.media_count || 0} file(s)</span>
+                  </div>
+                )}
               </div>
-            </div>
 
-            <aside className="">
-              <div className="space-y-4">
-                <Card>
-                  <CardContent id="admin-actions">
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">Admin Actions</div>
-                      <div className="flex flex-col gap-2">
-                                {/* Hide 'Proceed to process' when refund is already completed */}
-                        {!(String(refund.status || '').toLowerCase() === 'approved' && String(refund.refund_payment_status || '').toLowerCase().trim() === 'completed') && (
-                          <Button
-                            disabled={processing || !(st === 'approved' || st === 'dispute')}
-                            onClick={async () => {
-                              const st = String(refund.status || '').toLowerCase();
-                              if (st.includes('negotiation')) {
-                                setShowConfirmModal(true);
-                                return;
-                              }
-                              if (st === 'dispute') {
-                                try {
-                                  setProcessing(true);
-                                  // Fetch dispute by refund_id
-                                  const listRes = await AxiosInstance.get('/disputes/', {
-                                    params: { refund_id: String(refund.refund) },
-                                    headers: { 'X-User-Id': String(user?.id || '') }
-                                  });
-                                  const disputes = Array.isArray(listRes?.data) ? listRes.data : [];
-                                  const first = disputes[0];
-                                  if (!first || !first.id) {
-                                    toast({ title: 'No dispute found', description: 'Cannot start review without an existing dispute.', variant: 'destructive' });
-                                    setProcessing(false);
-                                    return;
-                                  }
-                                  // Start review to set dispute.status = under_review
-                                  await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, {
-                                    headers: { 'X-User-Id': String(user?.id || '') }
-                                  });
-                                  toast({ title: 'Review started', description: 'Dispute marked under review.' });
-                                  const refundIdForRoute = encodeURIComponent(String(refund.refund || refund.refund_id || refund.id || ''));
-                                  console.debug('[admin-review] navigating to review-dispute for refundId:', refundIdForRoute);
-                                  navigate(`/admin/view-refund/review-dispute/${refundIdForRoute}`);
-                                } catch (err) {
-                                  console.error('Start review error', err);
-                                  toast({ title: 'Failed to start review', description: String(err), variant: 'destructive' });
-                                } finally {
-                                  setProcessing(false);
-                                }
-                                return;
-                              }
-
-                              // Admin: set refund payment status to 'processing' before navigating to process page
-                              try {
-                                setProcessing(true);
-                                const id = refund.refund || refund.refund_id;
-                                const formData = new FormData();
-                                formData.append('set_status', 'processing');
-
-                                const resp = await AxiosInstance.post(`/return-refund/${encodeURIComponent(String(id))}/admin_process_refund/`, formData, {
-                                  headers: { 'X-User-Id': String(user?.id || '') }
-                                });
-
-                                if (resp && resp.data) {
-                                  toast({ title: 'Processing', description: 'Refund payment status set to processing.' });
-                                  navigate(`/admin/view-refund/process-refund/${encodeURIComponent(String(id))}`);
-                                } else {
-                                  throw new Error('Failed to set refund to processing');
-                                }
-                              } catch (err) {
-                                console.error('Failed to set refund to processing', err);
-                                toast({ title: 'Error', description: String(err?.response?.data?.error || err?.message || 'Failed to set to processing'), variant: 'destructive' });
-                              } finally {
+              {/* Admin Actions Sidebar - compact */}
+              <aside className="space-y-3">
+                <Card id="admin-actions" className="border shadow-none">
+                  <CardHeader className="py-2 px-3">
+                    <CardTitle className="text-sm">Admin Actions</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-3 pt-0 space-y-2">
+                    {!(st === 'approved' && String(refund.refund_payment_status || '').toLowerCase() === 'completed') && st !== 'under_review' && st !== 'processing' && (
+                      <Button
+                        size="sm"
+                        className="w-full text-xs h-8"
+                        disabled={processing}
+                        onClick={async () => {
+                          if (st.includes('negotiation')) {
+                            setShowConfirmModal(true);
+                            return;
+                          }
+                          if (st === 'dispute') {
+                            try {
+                              setProcessing(true);
+                              const listRes = await AxiosInstance.get('/disputes/', {
+                                params: { refund_id: String(refund.refund) },
+                                headers: { 'X-User-Id': String(user?.id || '') }
+                              });
+                              const disputes = Array.isArray(listRes?.data) ? listRes.data : [];
+                              const first = disputes[0];
+                              if (!first || !first.id) {
+                                toast({ title: 'No dispute found', description: 'Cannot start review without an existing dispute.', variant: 'destructive' });
                                 setProcessing(false);
+                                return;
                               }
-                            }}
-                            className="w-full"
-                          >
-                            {st === 'dispute' ? (
-                              <>
-                                <ShieldAlert className="w-4 h-4 mr-2" /> Start Review
-                              </>
-                            ) : (
-                              <>
-                                <CheckCircle className="w-4 h-4 mr-2" /> Proceed to process
-                              </>
-                            )}
-                          </Button>
+                              
+                              // Start the review
+                              await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, {
+                                headers: { 'X-User-Id': String(user?.id || '') }
+                              });
+                              
+                              toast({ title: 'Review started', description: 'Dispute marked under review.' });
+                              
+                              // Update local state
+                              setRefund(prev => ({ 
+                                ...prev, 
+                                status: 'under_review',
+                                dispute_reason: prev.dispute_reason || first.reason
+                              }));
+
+                            } catch (err) {
+                              console.error('Start review error', err);
+                              toast({ title: 'Failed to start review', description: String(err), variant: 'destructive' });
+                            } finally {
+                              setProcessing(false);
+                            }
+                            return;
+                          }
+                        }}
+                      >
+                        {st === 'dispute' ? (
+                          <>
+                            <ShieldAlert className="w-3 h-3 mr-1" /> Start Review
+                          </>
+                        ) : st === 'approved' ? (
+                          <>
+                            <RefreshCw className="w-3 h-3 mr-1" /> Process Refund
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-3 h-3 mr-1" /> Proceed
+                          </>
                         )}
+                      </Button>
+                    )}
+
+                    {/* Under Review Actions */}
+                    {st === 'under_review' && (
+                      <>
+                        {/* Liability Checkboxes */}
+                        <div className="space-y-2">
+                          <p className="text-xs font-medium">Liability / Case Category</p>
+                          <div className="space-y-1.5">
+                            {liabilityOptions.map((option) => (
+                              <div key={option.id} className="flex items-center space-x-2">
+                                <Checkbox 
+                                  id={option.id} 
+                                  checked={selectedLiabilities.includes(option.id)}
+                                  onCheckedChange={() => handleLiabilityChange(option.id)}
+                                  className="h-3 w-3"
+                                />
+                                <Label htmlFor={option.id} className="text-xs cursor-pointer">
+                                  {option.label}
+                                </Label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Escalate Button */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full text-xs h-8 border-orange-200 text-orange-700 hover:bg-orange-50"
+                          onClick={() => {
+                            toast({ 
+                              title: 'Escalated', 
+                              description: 'Case has been escalated to senior admin.' 
+                            });
+                          }}
+                        >
+                          <ShieldAlert className="w-3 h-3 mr-1" /> Escalate
+                        </Button>
+
+                        {/* Reject Button */}
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="w-full text-xs h-8"
+                          disabled={selectedLiabilities.length === 0 || processing}
+                          onClick={() => {
+                            if (selectedLiabilities.length === 0) {
+                              toast({ title: 'Select liability', description: 'Please select a liability before rejecting.', variant: 'destructive' });
+                              return;
+                            }
+                            setAuthAction('reject');
+                            setModalAuthChecked(false);
+                            setShowAuthModal(true);
+                          }}
+                        >
+                          <XCircle className="w-3 h-3 mr-1" /> Reject
+                        </Button>
+
+                        {/* Confirm & Approve Refund Button */}
+                        <Button
+                          size="sm"
+                          className="w-full text-xs h-8 bg-purple-600 hover:bg-purple-700 text-white"
+                          onClick={() => {
+                            if (selectedLiabilities.length === 0) {
+                              toast({ title: 'Select liability', description: 'Please select a liability before processing.', variant: 'destructive' });
+                              return;
+                            }
+                            setAuthAction('confirm');
+                            setModalAuthChecked(false);
+                            setShowAuthModal(true);
+                          }}
+                          disabled={selectedLiabilities.length === 0 || isSubmitting}
+                        >
+                          {isSubmitting ? (
+                            <>
+                              <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Processing...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="w-3 h-3 mr-1" /> Confirm & Approve Refund
+                            </>
+                          )}
+                        </Button>
+                      </>
+                    )}
+                    
+                    {refund.processed_by_username && st === 'under_review' && refund.processed_at && (
+                      <div className="text-[10px] text-muted-foreground mt-2 pt-2 border-t">
+                        Processed by: {refund.processed_by_username} • {new Date(refund.processed_at).toLocaleDateString()}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Authorization modal used for Reject / Confirm actions */}
+                <Dialog open={showAuthModal} onOpenChange={setShowAuthModal}>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>{authAction === 'reject' ? 'Confirm Rejection' : 'Authorize Approval'}</DialogTitle>
+                      <DialogDescription>
+                        {authAction === 'reject'
+                          ? 'Are you sure you want to reject this dispute? This action cannot be undone.'
+                          : 'Please confirm you authorize approving this refund.'}
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="mt-3">
+                      <div className="flex items-start space-x-2">
+                        <Checkbox id="modal-auth" checked={modalAuthChecked} onCheckedChange={(v) => setModalAuthChecked(v === true)} className="h-3 w-3 mt-0.5" />
+                        <Label htmlFor="modal-auth" className="text-[12px] text-muted-foreground leading-tight">
+                          I hereby declare that I have reviewed the refund case thoroughly and determined the responsible party. I authorize the approval of the refund in accordance with the selected resolution.
+                        </Label>
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
 
-                <Card>
-                  <CardContent>
-                    <div className="text-sm text-muted-foreground">Meta</div>
-                    {refund.processed_by_username && (
-                      <div className="text-sm">Processed by: {refund.processed_by_username}</div>
-                    )}
-                    {refund.processed_by_email && (
-                      <div className="text-sm">Processed email: {refund.processed_by_email}</div>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            </aside>
-          </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setShowAuthModal(false)}>Cancel</Button>
+                      <Button
+                        onClick={async () => {
+                          setShowAuthModal(false);
+                          try {
+                            if (authAction === 'reject') {
+                              // perform reject flow (reuse inline logic)
+                              setProcessing(true);
+                              const listRes = await AxiosInstance.get('/disputes/', {
+                                params: { refund_id: String(refund.refund) },
+                                headers: { 'X-User-Id': String(user?.id || '') }
+                              });
+                              const disputes = Array.isArray(listRes?.data) ? listRes.data : Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
+                              const active = disputes.find((d: any) => String(d.refund) === String(refund.refund) || String(d.refund_id) === String(refund.refund));
+                              if (!active || !active.id) {
+                                toast({ title: 'No dispute found', description: 'Cannot reject without an existing dispute.', variant: 'destructive' });
+                                setProcessing(false);
+                                return;
+                              }
+
+                              await AxiosInstance.post(`/disputes/${active.id}/reject/`, { admin_notes: 'Rejected by admin' }, {
+                                headers: { 'X-User-Id': String(user?.id || '') }
+                              });
+
+                              toast({ title: 'Rejected', description: 'Dispute has been rejected.' });
+                              setRefund(prev => ({ ...prev, status: 'rejected' }));
+                            } else if (authAction === 'confirm') {
+                              // call confirm handler but skip the declaration check (user authorized in modal)
+                              await handleConfirmProcessRefund();
+                            }
+                          } catch (err: any) {
+                            console.error('Auth action error', err);
+                            toast({ title: 'Error', description: err.response?.data?.error || 'Action failed', variant: 'destructive' });
+                          } finally {
+                            setProcessing(false);
+                            setIsSubmitting(false);
+                            setAuthAction(null);
+                            setModalAuthChecked(false);
+                          }
+                        }}
+                        disabled={!modalAuthChecked}
+                      >
+                        Confirm
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </aside>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {/* Confirmation dialog when admin overrides active negotiation */}
-      <Dialog open={showConfirmModal} onOpenChange={(open) => setShowConfirmModal(open)}>
+      <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Proceed to process refund?</DialogTitle>
+            <DialogTitle>Proceed with refund?</DialogTitle>
             <DialogDescription>
-              This refund is currently under negotiation between the buyer and the seller. Processing it now will bypass or close the negotiation. Are you sure you want to proceed?
+              This refund is currently under negotiation. Processing it now will bypass or close the negotiation. Are you sure you want to proceed?
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowConfirmModal(false)}>Cancel</Button>
-            <Button
-              className="ml-2"
-              onClick={() => {
-                setShowConfirmModal(false);
-                navigate(`/admin/view-refund/process-refund?refund=${encodeURIComponent(String(refund.refund))}`);
-              }}
-            >
+            <Button onClick={() => {
+              setShowConfirmModal(false);
+              // Process refund directly
+              handleProcessRefund();
+            }}>
               Proceed
             </Button>
           </DialogFooter>

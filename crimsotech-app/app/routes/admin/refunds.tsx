@@ -39,6 +39,7 @@ import {
   XCircle,
   Truck,
   Eye,
+  Scale,
   Edit,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -177,38 +178,51 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       : (refundsResponse.data && Array.isArray(refundsResponse.data.refunds) ? refundsResponse.data.refunds : []);
 
     if (rawRefunds.length) {
-      refundsList = rawRefunds.map((refund: any) => ({
-        refund: refund.refund,
-        order_id: refund.order_id || 'N/A',
-        order_total_amount: refund.order_total_amount || 0,
-        requested_by_username: refund.requested_by_username || 'Unknown',
-        requested_by_email: refund.requested_by_email || 'N/A',
-        processed_by_username: refund.processed_by_username,
-        processed_by_email: refund.processed_by_email,
-        reason: refund.reason || 'No reason provided',
-        // Amounts (may be missing)
-        requested_refund_amount: refund.requested_refund_amount != null ? refund.requested_refund_amount : null,
-        refund_fee: refund.refund_fee != null ? refund.refund_fee : null,
-        total_refund_amount: refund.total_refund_amount != null ? refund.total_refund_amount : null,
-        approved_refund_amount: refund.approved_refund_amount != null ? refund.approved_refund_amount : null,
-        status: refund.status || 'pending',
-        requested_at: refund.requested_at,
-        logistic_service: refund.logistic_service,
-        tracking_number: refund.tracking_number,
+      refundsList = rawRefunds.map((refund: any) => {
+        // Derive displayed status: prefer under_review when dispute is under review
+        const baseStatus = (refund.status || 'pending').toString().toLowerCase();
+        const disputeStatus = (
+          refund.dispute?.status ||
+          (Array.isArray(refund.disputes) && refund.disputes[0]?.status) ||
+          refund.dispute_details?.status ||
+          refund.dispute_request?.status ||
+          ''
+        ).toString().toLowerCase();
+        const disputeUnderReviewStates = ['under_review', 'investigating', 'in_review'];
+        const shouldForceUnderReview = disputeUnderReviewStates.includes(disputeStatus) && baseStatus === 'dispute' && String(refund.refund_payment_status || '').toLowerCase() === 'pending';
+        const displayedStatus = shouldForceUnderReview ? 'under_review' : baseStatus;
 
-        // New fields for return/negotiation handling
-        final_refund_type: refund.final_refund_type || null,
-        refund_type: refund.refund_type || null,
-        refund_payment_status: refund.refund_payment_status || null,
-        has_return_request: refund.has_return_request || false,
-        return_request_status: refund.return_request_status || null,
-
-        preferred_refund_method: refund.preferred_refund_method,
-        final_refund_method: refund.final_refund_method,
-        processed_at: refund.processed_at,
-        has_media: refund.has_media || false,
-        media_count: refund.media_count || 0
-      }));
+        return {
+          refund: refund.refund,
+          order_id: refund.order_id || 'N/A',
+          order_total_amount: refund.order_total_amount || 0,
+          requested_by_username: refund.requested_by_username || 'Unknown',
+          requested_by_email: refund.requested_by_email || 'N/A',
+          processed_by_username: refund.processed_by_username,
+          processed_by_email: refund.processed_by_email,
+          reason: refund.reason || 'No reason provided',
+          // Amounts (may be missing)
+          requested_refund_amount: refund.requested_refund_amount != null ? refund.requested_refund_amount : null,
+          refund_fee: refund.refund_fee != null ? refund.refund_fee : null,
+          total_refund_amount: refund.total_refund_amount != null ? refund.total_refund_amount : null,
+          approved_refund_amount: refund.approved_refund_amount != null ? refund.approved_refund_amount : null,
+          status: displayedStatus || (refund.status || 'pending'),
+          requested_at: refund.requested_at,
+          logistic_service: refund.logistic_service,
+          tracking_number: refund.tracking_number,
+          // New fields for return/negotiation handling
+          final_refund_type: refund.final_refund_type || null,
+          refund_type: refund.refund_type || null,
+          refund_payment_status: refund.refund_payment_status || null,
+          has_return_request: refund.has_return_request || false,
+          return_request_status: refund.return_request_status || null,
+          preferred_refund_method: refund.preferred_refund_method,
+          final_refund_method: refund.final_refund_method,
+          processed_at: refund.processed_at,
+          has_media: refund.has_media || false,
+          media_count: refund.media_count || 0
+        };
+      });
     }
 
   } catch (error) {
@@ -292,20 +306,6 @@ export default function Refunds({ loaderData }: { loaderData: LoaderData }) {
     status: {
       options: Array.from(new Set(safeRefunds.map(refund => refund.status))),
       placeholder: 'Status'
-    },
-    preferred_refund_method: {
-      options: Array.from(new Set(safeRefunds
-        .map(refund => refund.preferred_refund_method)
-        .filter((v): v is string => !!v)
-      )),
-      placeholder: 'Refund Method'
-    },
-    logistic_service: {
-      options: Array.from(new Set(safeRefunds
-        .map(refund => refund.logistic_service)
-        .filter((v): v is string => !!v)
-      )),
-      placeholder: 'Logistic Service'
     }
   };
 
@@ -459,47 +459,53 @@ const columns: ColumnDef<Refund>[] = [
     ),
   },
   {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }: { row: any}) => {
-      const status = row.getValue("status") as string;
-      const getStatusConfig = (status: string) => {
-        const configs = {
-          pending: { color: '#f59e0b', icon: Clock, label: 'Pending' },
-          approved: { color: '#10b981', icon: CheckCircle, label: 'Approved' },
-          rejected: { color: '#ef4444', icon: XCircle, label: 'Rejected' },
-          waiting: { color: '#3b82f6', icon: Clock, label: 'Waiting' },
-          'to process': { color: '#8b5cf6', icon: RefreshCw, label: 'To Process' },
-          completed: { color: '#06b6d4', icon: CheckCircle, label: 'Completed' }
-        };
-        return configs[status as keyof typeof configs] || configs.pending;
+  accessorKey: "status",
+  header: "Status",
+  cell: ({ row }: { row: any}) => {
+    // Simply use row.original.status directly since it's already flattened
+    const rawStatus = row.original?.status ?? row.getValue("status");
+    
+    // Normalize possible variants: e.g. 'to_process', 'to-process', 'To Process'
+    const status = String(rawStatus || 'pending').toLowerCase().replace(/[_-]/g, ' ').trim();
+
+    const getStatusConfig = (s: string) => {
+      const configs = {
+        pending: { color: '#f59e0b', icon: Clock, label: 'Pending' },
+        approved: { color: '#10b981', icon: CheckCircle, label: 'Approved' },
+        rejected: { color: '#ef4444', icon: XCircle, label: 'Rejected' },
+        waiting: { color: '#3b82f6', icon: Clock, label: 'Waiting' },
+        'to process': { color: '#8b5cf6', icon: RefreshCw, label: 'To Process' },
+        completed: { color: '#06b6d4', icon: CheckCircle, label: 'Completed' },
+        dispute: { color: '#dc2626', icon: AlertTriangle, label: 'Dispute' }, // Add dispute if needed
+        'under review': { color: '#7c3aed', icon: Scale, label: 'Under Review' }
       };
-      
-      const config = getStatusConfig(status);
-      const IconComponent = config.icon;
-      
-      return (
-        <Badge 
-          variant="secondary"
-          className="text-xs capitalize flex items-center gap-1"
-          style={{ backgroundColor: `${config.color}20`, color: config.color }}
-        >
-          <IconComponent className="w-3 h-3" />
-          {config.label}
-        </Badge>
-      );
-    },
+
+      return configs[s as keyof typeof configs] || configs.pending;
+    };
+
+    const config = getStatusConfig(status);
+    const IconComponent = config.icon;
+
+    return (
+      <Badge 
+        variant="secondary"
+        className="text-xs capitalize flex items-center gap-1"
+        style={{ backgroundColor: `${config.color}20`, color: config.color }}
+      >
+        <IconComponent className="w-3 h-3" />
+        {config.label}
+      </Badge>
+    );
   },
+},
   {
     id: 'request',
     header: 'Request',
     cell: ({ row }: { row: any }) => {
-      const reason = row.original.reason || 'No reason provided';
       const requested = row.original.requested_refund_amount;
       const total = row.original.total_refund_amount;
       return (
         <div className="text-xs sm:text-sm">
-          <div className="font-medium truncate max-w-[240px]">{reason}</div>
           {(requested != null || total != null) && (
             <div className="text-muted-foreground text-xs mt-1">
               {requested != null && <span>Requested: ₱{Number(requested).toLocaleString()}</span>}
@@ -565,38 +571,7 @@ const columns: ColumnDef<Refund>[] = [
       </div>
     ),
   },
-  {
-    accessorKey: "reason",
-    header: "Reason",
-    cell: ({ row }: { row: any}) => (
-      <div className="text-xs sm:text-sm max-w-[150px] truncate" title={row.getValue("reason")}>
-        {row.getValue("reason")}
-      </div>
-    ),
-  },
-  {
-    accessorKey: "preferred_refund_method",
-    header: "Method",
-    cell: ({ row }: { row: any}) => (
-      <div className="text-xs sm:text-sm">
-        {row.getValue("preferred_refund_method") || 'Not specified'}
-      </div>
-    ),
-  },
-  {
-    accessorKey: "logistic_service",
-    header: "Logistics",
-    cell: ({ row }: { row: any}) => (
-      <div className="flex items-center gap-1 text-xs sm:text-sm">
-        {row.getValue("logistic_service") && (
-          <>
-            <Truck className="w-3 h-3 text-muted-foreground" />
-            {row.getValue("logistic_service")}
-          </>
-        )}
-      </div>
-    ),
-  },
+  
   {
     id: 'actions',
     header: 'Actions',
