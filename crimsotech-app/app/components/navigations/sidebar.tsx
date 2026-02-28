@@ -21,6 +21,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
+  useSidebar,
 } from "~/components/ui/sidebar"
 import { Skeleton } from "../ui/skeleton";
 import AxiosInstance from "../axios/Axios";
@@ -217,16 +218,8 @@ export function AppSidebar() {
   const user = useUser();
   const location = useLocation();
   const navigate = useNavigate();
+  const { state } = useSidebar(); // Get sidebar state
 
-  const handleLogout = async () => {
-    try {
-      await AxiosInstance.post('/logout/');
-      sessionStorage.removeItem('user_profile');
-      navigate('/login');
-    } catch (error) {
-      console.error('Logout failed:', error);
-    }
-  };
   
   if (!user) {
     return (
@@ -250,26 +243,34 @@ export function AppSidebar() {
   const accessibleMenuItems = getAccessibleItems(menuItems, user);
   const displayName = getUserDisplayName(user);
   const userRole = getUserRole(user);
+  
+  // Check if sidebar is collapsed
+  const isCollapsed = state === "collapsed";
 
   return (
     <Sidebar variant="floating" collapsible="icon">
       <SidebarHeader className="p-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Welcome back,</p>
-            <p className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
-              Hi, {displayName}
-            </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              {userRole}
-            </p>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-            title="Logout"
-          >
-          </button>
+          {!isCollapsed ? (
+            // Show full user info when expanded
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Welcome back,</p>
+              <p className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
+                Hi, {displayName}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                {userRole}
+              </p>
+            </div>
+          ) : (
+            // Show only icon when collapsed
+            <div className="w-full flex justify-center">
+              <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center">
+                <User className="h-4 w-4 text-orange-600" />
+              </div>
+            </div>
+          )}
+          
         </div>
       </SidebarHeader>
 
@@ -278,7 +279,9 @@ export function AppSidebar() {
           <SidebarGroupContent>
             {accessibleMenuItems.map(group => (
               <div key={group.group}>
-                <SidebarGroupLabel>{group.group}</SidebarGroupLabel>
+                <SidebarGroupLabel>
+                  {!isCollapsed ? group.group : null}
+                </SidebarGroupLabel>
                 <SidebarMenu>
                   {group.children.map(item => {
                     const isActive = location.pathname === item.url;
@@ -288,7 +291,7 @@ export function AppSidebar() {
                         <SidebarMenuButton asChild isActive={isActive}>
                           <Link to={item.url}>
                             <item.icon />
-                            <span>{item.title}</span>
+                            {!isCollapsed && <span>{item.title}</span>}
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
