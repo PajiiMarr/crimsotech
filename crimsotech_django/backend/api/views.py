@@ -16764,7 +16764,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         
         return queryset.order_by('-created_at')
 
-
     def get_detail_queryset(self):
         """Detail view with all variants for single product page"""
         return Product.objects.filter(
@@ -33127,7 +33126,10 @@ class HomeBoosts(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def other_users(self, request):
-        """Get all boosted products that do NOT belong to the logged-in user"""
+        """
+        Get all boosted products that are active and not owned by the current user
+        URL: /api/home-boosts/other_users/?user_id=<user_id>
+        """
         try:
             # Get logged-in user ID from request
             user_id = request.query_params.get('user_id')
@@ -33135,33 +33137,68 @@ class HomeBoosts(viewsets.ViewSet):
             if not user_id:
                 return Response({
                     'success': False,
+                    'products': [],
+                    'count': 0,
                     'message': 'user_id is required'
                 }, status=400)
             
             # Get current time
             now = timezone.now()
             
-            # Get active boosts excluding user's products
+            # SIMPLE QUERY: Just get active boosts (don't filter by end_date since they're all in the past)
             boosts = Boost.objects.filter(
-                status='active',
-                end_date__gt=now
+                status='active'
             ).exclude(
-                product__customer__customer__id=user_id
-            ).select_related('product', 'product__customer__customer', 'boost_plan')[:20]
+                customer__customer__id=user_id
+            ).select_related(
+                'product',
+                'boost_plan',
+                'customer__customer'
+            )[:20]
+            
+            print(f"Found {boosts.count()} active boosts for other users")
             
             # Build response
             boosted_products = []
             for boost in boosts:
                 product = boost.product
-                seller = product.customer.customer if product.customer else None
+                if not product:
+                    continue
+                
+                # Get seller info - CORRECTED: Customer model uses customer field as PK
+                seller = None
+                if boost.customer and boost.customer.customer:
+                    seller = boost.customer.customer
+                
+                # Get product price
+                product_price = 0
+                try:
+                    # Try to get min price from variants
+                    min_price_variant = product.variants.filter(
+                        is_active=True,
+                        price__isnull=False
+                    ).order_by('price').first()
+                    if min_price_variant and min_price_variant.price:
+                        product_price = float(min_price_variant.price)
+                except:
+                    pass
+                
+                # Calculate days remaining (handle past dates)
+                days_remaining = 0
+                if boost.end_date and boost.end_date > now:
+                    days_remaining = (boost.end_date - now).days
                 
                 boosted_products.append({
                     'product_id': str(product.id),
                     'product_name': product.name,
-                    'product_price': float(product.price),
-                    'seller_username': seller.username if seller else None,
-                    'boost_plan': boost.boost_plan.name if boost.boost_plan else 'Unknown',
-                    'days_remaining': (boost.end_date - now).days
+                    'product_price': product_price,
+                    'seller_username': seller.username if seller else 'Unknown Seller',
+                    'seller_id': str(seller.id) if seller else None,
+                    'boost_plan': boost.boost_plan.name if boost.boost_plan else 'Standard Boost',
+                    'boost_plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
+                    'days_remaining': days_remaining,
+                    'boost_id': str(boost.id),
+                    'product_image': self._get_product_image(product),
                 })
             
             return Response({
@@ -33169,17 +33206,73 @@ class HomeBoosts(viewsets.ViewSet):
                 'products': boosted_products,
                 'count': len(boosted_products),
                 'message': 'Success'
+            }, status=200)
+            
+        except Exception as e:
+            print(f"Error in home boosts: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                'success': False,
+                'products': [],
+                'count': 0,
+                'message': str(e)
+            }, status=500)
+    
+    def _get_product_image(self, product):
+        """Helper to get product image URL"""
+        try:
+            first_media = product.productmedia_set.first()
+            if first_media and first_media.file_data:
+                from api.utils.storage_utils import convert_s3_to_public_url
+                return convert_s3_to_public_url(first_media.file_data.url)
+        except:
+            pass
+        return None
+    
+    @action(detail=False, methods=['get'])
+    def debug_boosts(self, request):
+        """Debug endpoint to see all boosts"""
+        try:
+            all_boosts = Boost.objects.all().select_related(
+                'product', 
+                'customer',
+                'customer__customer'
+            )
+            
+            boost_details = []
+            for boost in all_boosts:
+                # Safely get customer info
+                customer_username = None
+                customer_id = None
+                if boost.customer and boost.customer.customer:
+                    customer_username = boost.customer.customer.username
+                    customer_id = str(boost.customer.customer.id)
+                
+                boost_details.append({
+                    'id': str(boost.id),
+                    'status': boost.status,
+                    'start_date': str(boost.start_date) if boost.start_date else None,
+                    'end_date': str(boost.end_date) if boost.end_date else None,
+                    'product_id': str(boost.product.id) if boost.product else None,
+                    'product_name': boost.product.name if boost.product else None,
+                    'customer_id': customer_id,
+                    'customer_username': customer_username,
+                })
+            
+            return Response({
+                'success': True,
+                'total_boosts': all_boosts.count(),
+                'current_time': str(timezone.now()),
+                'boost_details': boost_details,
             })
             
         except Exception as e:
             return Response({
                 'success': False,
-                'message': str(e)
+                'error': str(e)
             }, status=500)
-
-
-
-
+        
 class RiderProofViewSet(viewsets.ViewSet):
     """
     ViewSet for riders to upload proof of delivery
