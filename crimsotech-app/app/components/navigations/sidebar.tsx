@@ -9,7 +9,7 @@ import {
   Truck, ShieldCheck, Activity, Flag, Megaphone, FolderKanban,
   Clock, Repeat, ArrowLeftRight, Sparkles, Tag, BadgePercent
 } from "lucide-react"
-import { Link, useLocation } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { useUser } from '~/components/providers/user-role-provider';
 import {
   Sidebar,
@@ -20,15 +20,35 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarFooter,
+  SidebarHeader,
 } from "~/components/ui/sidebar"
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuItem,
-  DropdownMenuContent,
-} from '~/components/ui/dropdown-menu'
 import { Skeleton } from "../ui/skeleton";
+import AxiosInstance from "../axios/Axios";
+
+// Helper functions for user display
+const getUserDisplayName = (user: any): string => {
+  if (user?.first_name && user?.last_name) {
+    return `${user.first_name} ${user.last_name}`;
+  }
+  if (user?.first_name) {
+    return user.first_name;
+  }
+  if (user?.username) {
+    return user.username;
+  }
+  if (user?.email) {
+    return user.email;
+  }
+  return "User";
+};
+
+const getUserRole = (user: any): string => {
+  if (user?.isAdmin) return "Admin";
+  if (user?.isModerator) return "Moderator";
+  if (user?.isRider) return "Rider";
+  if (user?.isCustomer) return "Customer";
+  return "User";
+};
 
 // Menu items organized by role with groups
 const menuItems = [
@@ -132,7 +152,7 @@ const menuItems = [
   {
     group: "Account",
     children: [
-      { title: "Earnings", url: "/rider/earnings", icon: PhilippinePeso, roles: ["rider"] }, // Changed from DollarSign to PhilippinePeso
+      { title: "Earnings", url: "/rider/earnings", icon: PhilippinePeso, roles: ["rider"] },
       { title: "Messages", url: "/rider/messages", icon: MessageSquare, roles: ["rider"] },
     ]
   },
@@ -177,10 +197,9 @@ const menuItems = [
   },
 ];
 
-// Rest of your code remains the same...
 function getAccessibleItems(
   list: typeof menuItems, 
-  user: { isAdmin: boolean, isCustomer: boolean, isRider: boolean, isModerator: boolean }
+  user: { isAdmin: boolean; isCustomer: boolean; isRider: boolean; isModerator: boolean; }
 ) {
   return list.map(group => ({
     ...group,
@@ -197,10 +216,24 @@ function getAccessibleItems(
 export function AppSidebar() {
   const user = useUser();
   const location = useLocation();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    try {
+      await AxiosInstance.post('/logout/');
+      sessionStorage.removeItem('user_profile');
+      navigate('/login');
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
   
   if (!user) {
     return (
       <Sidebar variant="floating" collapsible="icon">
+        <SidebarHeader className="p-4">
+          <Skeleton className="h-6 w-32" />
+        </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
             <SidebarGroupContent>
@@ -215,19 +248,33 @@ export function AppSidebar() {
   }
 
   const accessibleMenuItems = getAccessibleItems(menuItems, user);
+  const displayName = getUserDisplayName(user);
+  const userRole = getUserRole(user);
 
   return (
     <Sidebar variant="floating" collapsible="icon">
+      <SidebarHeader className="p-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Welcome back,</p>
+            <p className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
+              Hi, {displayName}
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              {userRole}
+            </p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+            title="Logout"
+          >
+          </button>
+        </div>
+      </SidebarHeader>
+
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel className="mb-5">
-            <Link to="/" className="h-20 flex w-full pt-5">
-              <img
-                src="/Crimsotech.png"
-                alt="CrimsoTech"
-              />
-            </Link>
-          </SidebarGroupLabel>
           <SidebarGroupContent>
             {accessibleMenuItems.map(group => (
               <div key={group.group}>

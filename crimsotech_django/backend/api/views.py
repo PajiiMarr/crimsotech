@@ -483,6 +483,38 @@ class Landing(viewsets.ViewSet):
                     'trust_badges': []
                 }
             }, status=status.HTTP_200_OK)        
+
+class FetchUser(viewsets.ViewSet):
+    
+    @action(detail=False, methods=['get'], url_path='profile')
+    def get_profile(self, request):
+        """
+        Get current user profile based on X-User-Id header
+        """
+        # Get user ID from header
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Fetch user
+            user = User.objects.get(id=user_id)
+            
+            # Serialize
+            serializer = UserSerializer(user)
+            
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 class UserView(APIView):
     def get(self, request):
         user = [{"user_id": user.id, "username": user.username, "email": user.email, "registration_stage": user.registration_stage, "is_rider": user.is_rider} for user in User.objects.all()]

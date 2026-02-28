@@ -100,8 +100,12 @@ export default function CustomerHeader() {
   return (
     <>
       <header className="flex h-16 shrink-0 items-center justify-between gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-        <div className="flex items-center gap-2 px-4">
+        <div className="flex items-center px-4">
           <SidebarTrigger className="-ml-1" />
+          <img src="/Crimsotech.png" className="w-20 h-20" alt="" />
+        </div>
+
+        <div>
         </div>
 
         <div className="flex items-center gap-4 px-4">

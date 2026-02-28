@@ -18,6 +18,7 @@ import "./app.css";
 import NProgress from "nprogress";
 import "nprogress/nprogress.css";
 import { useEffect, useRef, useCallback } from "react";
+import { UserProvider } from "./components/providers/user-role-provider";
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -285,8 +286,10 @@ export function ProgressLink({
 export default function App() {
   return (
     <>
-      <RouteChangeProgress />
-      <Outlet />
+      <UserProvider user={null}> {/* Start with null, let session storage populate */}
+          <RouteChangeProgress />
+          <Outlet />
+      </UserProvider>
     </>
   );
 }
