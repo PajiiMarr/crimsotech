@@ -1796,4 +1796,301 @@ class TimeOffRequest(models.Model):
             models.Index(fields=['status', 'start_date']),
         ]
 
+class Message(models.Model):
+    """
+    Message model for direct user-to-user chat
+    """
+    MESSAGE_TYPE_CHOICES = [
+        ('text', 'Text'),
+        ('image', 'Image'),
+        ('file', 'File'),
+        ('system', 'System Notification'),
+        ('order_update', 'Order Update'),
+        ('delivery_update', 'Delivery Update'),
+    ]
+    
+    MESSAGE_STATUS_CHOICES = [
+        ('sent', 'Sent'),
+        ('delivered', 'Delivered'),
+        ('read', 'Read'),
+        ('failed', 'Failed'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    
+    # Sender and Receiver (using your User model)
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sent_messages'
+    )
+    receiver = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='received_messages'
+    )
+    
+    # Message content
+    content = models.TextField(blank=True, null=True)
+    message_type = models.CharField(
+        max_length=20,
+        choices=MESSAGE_TYPE_CHOICES,
+        default='text'
+    )
+    
+    # For file attachments
+    attachment = models.FileField(
+        upload_to='chat/attachments/%Y/%m/%d/',
+        null=True,
+        blank=True
+    )
+    attachment_name = models.CharField(max_length=255, blank=True, null=True)
+    attachment_size = models.IntegerField(null=True, blank=True)  # Size in bytes
+    attachment_mime_type = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Message status tracking
+    status = models.CharField(
+        max_length=20,
+        choices=MESSAGE_STATUS_CHOICES,
+        default='sent'
+    )
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    
+    # Thread/Conversation tracking
+    conversation_id = models.UUIDField(
+        db_index=True,
+        help_text="ID to group messages in same conversation between two users"
+    )
+    
+    # Reply functionality
+    reply_to = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='replies'
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # For message editing (optional)
+    is_edited = models.BooleanField(default=False)
+    edited_at = models.DateTimeField(null=True, blank=True)
+    
+    # For message deletion (soft delete)
+    is_deleted_for_sender = models.BooleanField(default=False)
+    is_deleted_for_receiver = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    
+    # Context (optional - link to orders, products, etc.)
+    context_order = models.ForeignKey(
+        Order,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='chat_messages'
+    )
+    context_product = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='chat_messages'
+    )
+    context_shop = models.ForeignKey(
+        Shop,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='chat_messages'
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            # Core indexes for chat functionality
+            models.Index(fields=['sender', 'receiver', '-created_at']),
+            models.Index(fields=['conversation_id', '-created_at']),
+            models.Index(fields=['receiver', 'status', '-created_at']),
+            models.Index(fields=['sender', 'status', '-created_at']),
+            
+            # Indexes for filtering
+            models.Index(fields=['message_type', '-created_at']),
+            models.Index(fields=['status', 'created_at']),
+            
+            # Indexes for context lookups
+            models.Index(fields=['context_order']),
+            models.Index(fields=['context_product']),
+            models.Index(fields=['context_shop']),
+            
+            # Index for unread messages
+            models.Index(fields=['receiver', 'read_at', '-created_at']),
+        ]
+        verbose_name = "Message"
+        verbose_name_plural = "Messages"
+
+    def __str__(self):
+        return f"Message {self.id} from {self.sender} to {self.receiver}"
+
+    def mark_as_delivered(self):
+        """Mark message as delivered"""
+        if self.status == 'sent':
+            self.status = 'delivered'
+            self.delivered_at = timezone.now()
+            self.save(update_fields=['status', 'delivered_at'])
+
+    def mark_as_read(self):
+        """Mark message as read"""
+        if self.status in ['sent', 'delivered']:
+            self.status = 'read'
+            self.read_at = timezone.now()
+            self.save(update_fields=['status', 'read_at'])
+
+    def soft_delete_for_user(self, user):
+        """Soft delete message for a specific user"""
+        if user == self.sender:
+            self.is_deleted_for_sender = True
+        if user == self.receiver:
+            self.is_deleted_for_receiver = True
+        self.deleted_at = timezone.now()
+        self.save(update_fields=['is_deleted_for_sender', 'is_deleted_for_receiver', 'deleted_at'])
+
+    @classmethod
+    def get_conversation(cls, user1_id, user2_id):
+        """Get all messages between two users"""
+        return cls.objects.filter(
+            (Q(sender_id=user1_id, receiver_id=user2_id) |
+             Q(sender_id=user2_id, receiver_id=user1_id))
+        ).select_related('sender', 'receiver').order_by('created_at')
+
+    @classmethod
+    def get_unread_count(cls, user_id):
+        """Get count of unread messages for a user"""
+        return cls.objects.filter(
+            receiver_id=user_id,
+            status__in=['sent', 'delivered'],
+            read_at__isnull=True,
+            is_deleted_for_receiver=False
+        ).count()
+
+    @classmethod
+    def get_last_message(cls, user1_id, user2_id):
+        """Get the last message between two users"""
+        return cls.get_conversation(user1_id, user2_id).last()
+
+
+class Conversation(models.Model):
+    """
+    Model to track conversations between users (optional but useful)
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    
+    # Participants in the conversation
+    participants = models.ManyToManyField(
+        User,
+        related_name='conversations',
+        through='ConversationParticipant'
+    )
+    
+    # Last message preview
+    last_message = models.ForeignKey(
+        Message,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+'
+    )
+    last_message_at = models.DateTimeField(db_index=True, null=True, blank=True)
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # For group chats (if needed in future)
+    is_group = models.BooleanField(default=False)
+    group_name = models.CharField(max_length=255, blank=True, null=True)
+    group_avatar = models.ImageField(upload_to='chat/group_avatars/', null=True, blank=True)
+
+    class Meta:
+        ordering = ['-last_message_at']
+        indexes = [
+            models.Index(fields=['last_message_at']),
+            models.Index(fields=['is_group', 'last_message_at']),
+        ]
+
+    def __str__(self):
+        if self.is_group and self.group_name:
+            return f"Group: {self.group_name}"
+        return f"Conversation {self.id}"
+
+    def update_last_message(self, message):
+        """Update conversation with last message"""
+        self.last_message = message
+        self.last_message_at = message.created_at
+        self.save(update_fields=['last_message', 'last_message_at'])
+
+
+class ConversationParticipant(models.Model):
+    """
+    Through model for conversation participants with additional metadata
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    
+    # Participant-specific metadata
+    last_read_at = models.DateTimeField(null=True, blank=True)
+    last_read_message = models.ForeignKey(
+        Message,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+'
+    )
+    is_muted = models.BooleanField(default=False)
+    muted_until = models.DateTimeField(null=True, blank=True)
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    
+    joined_at = models.DateTimeField(auto_now_add=True)
+    left_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ['conversation', 'user']
+        indexes = [
+            models.Index(fields=['user', 'is_archived']),
+            models.Index(fields=['user', 'last_read_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user} in {self.conversation}"
+
+    def mark_as_read(self, up_to_message=None):
+        """Mark all messages up to a point as read for this participant"""
+        if up_to_message:
+            self.last_read_message = up_to_message
+        self.last_read_at = timezone.now()
+        self.save(update_fields=['last_read_message', 'last_read_at'])
+
+    def get_unread_count(self):
+        """Get count of unread messages for this participant in this conversation"""
+        if not self.last_read_message:
+            return Message.objects.filter(
+                conversation_id=self.conversation_id,
+                receiver=self.user,
+                read_at__isnull=True
+            ).exclude(sender=self.user).count()
         
+        return Message.objects.filter(
+            conversation_id=self.conversation_id,
+            receiver=self.user,
+            created_at__gt=self.last_read_message.created_at,
+            read_at__isnull=True
+        ).exclude(sender=self.user).count()
