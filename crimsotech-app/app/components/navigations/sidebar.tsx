@@ -4,8 +4,10 @@ import {
   Home, ShoppingCart, TicketCheck, Star, Gift, Handshake, Package,
   Store, CreditCard, List, MessageSquare, Users, 
   Shield, AlertCircle, FileText, Settings, Bell,
-  BarChart, Bike, MapPin, Calendar, DollarSign, ClipboardList,
-  PhilippinePeso
+  BarChart, Bike, MapPin, Calendar, ClipboardList,
+  PhilippinePeso, RotateCcw, Heart, LogOut, User, Receipt,
+  Truck, ShieldCheck, Activity, Flag, Megaphone, FolderKanban,
+  Clock, Repeat, ArrowLeftRight, Sparkles, Tag, BadgePercent
 } from "lucide-react"
 import { Link, useLocation } from 'react-router'
 import { useUser } from '~/components/providers/user-role-provider';
@@ -43,31 +45,31 @@ const menuItems = [
     children: [
       { title: "Products and Categories", url: "/admin/products", icon: Package, roles: ["admin"] },
       { title: "Shops", url: "/admin/shops", icon: Store, roles: ["admin"] },
-      { title: "Boosting Plans", url: "/admin/boosting", icon: CreditCard, roles: ["admin"] },
+      { title: "Boosting Plans", url: "/admin/boosting", icon: Sparkles, roles: ["admin"] },
     ]
   },
   {
     group: "Orders & Delivery",
     children: [
-      { title: "Orders", url: "/admin/orders", icon: List, roles: ["admin"] },
+      { title: "Orders", url: "/admin/orders", icon: Receipt, roles: ["admin"] },
       { title: "Riders", url: "/admin/riders", icon: Bike, roles: ["admin"] },
     ]
   },
   {
     group: "Financial",
     children: [
-      { title: "Vouchers", url: "/admin/vouchers", icon: Gift, roles: ["admin"] },
-      { title: "Refunds", url: "/admin/refunds", icon: AlertCircle, roles: ["admin"] },
+      { title: "Vouchers", url: "/admin/vouchers", icon: BadgePercent, roles: ["admin"] },
+      { title: "Refunds", url: "/admin/refunds", icon: RotateCcw, roles: ["admin"] },
     ]
   },
   {
     group: "Management",
     children: [
       { title: "Users", url: "/admin/users", icon: Users, roles: ["admin"] },
-      { title: "Team", url: "/admin/team", icon: Users, roles: ["admin"] },
+      { title: "Team", url: "/admin/team", icon: FolderKanban, roles: ["admin"] },
       { title: "Reports", url: "/admin/reports", icon: FileText, roles: ["admin"] },
-      { title: "Activity Log", url: "/admin/activity-log", icon: FileText, roles: ["admin"] },
-      { title: "Disputes", url: "/admin/dispute", icon: FileText, roles: ["admin"] },
+      { title: "Activity Log", url: "/admin/activity-log", icon: Activity, roles: ["admin"] },
+      { title: "Disputes", url: "/admin/dispute", icon: Flag, roles: ["admin"] },
     ]
   },
   {
@@ -84,38 +86,33 @@ const menuItems = [
     children: [
       { title: "Home", url: "/home", icon: Home, roles: ["customer"] },
       { title: "Cart", url: "/cart", icon: ShoppingCart, roles: ["customer"] },
-      
     ]
   },
   {
     group: "My Account",
     children: [
-      { title: "Purchases", url: "/purchases", icon: TicketCheck, roles: ["customer"] },
-      { title: "Product Return & Cancelled", url: "/return-refund", icon: TicketCheck, roles: ["customer"] },
-      { title: "Favorites", url: "/favorites", icon: Star, roles: ["customer"] },
-      { title: "Trade", url: "/trade", icon: Handshake, roles: ["customer"] },
-      
-      
+      { title: "Purchases", url: "/purchases", icon: Receipt, roles: ["customer"] },
+      { title: "Product Return & Cancelled", url: "/return-refund", icon: RotateCcw, roles: ["customer"] },
+      { title: "Favorites", url: "/favorites", icon: Heart, roles: ["customer"] },
+      { title: "Trade", url: "/trade", icon: ArrowLeftRight, roles: ["customer"] },
     ]
   },
   {
     group: "Product Listing",
     children: [
-      { title: "My products", url: "/personal-listing", icon: Package  , roles: ["customer"] },
+      { title: "My products", url: "/personal-listing", icon: Package, roles: ["customer"] },
       { title: "Order Lists", url: "/order-list", icon: ClipboardList, roles: ["customer"] },
-      { title: "Return/Refund/Cancel", url: "/return-refund-cancel", icon: ClipboardList, roles: ["customer"] },
+      { title: "Return/Refund/Cancel", url: "/return-refund-cancel", icon: Repeat, roles: ["customer"] },
       { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
     ]
   },
-
-   {
+  {
     group: "Settings",
     children: [
-      { title: "Subscription Plans", url: "/subscription-plan", icon: DollarSign, roles: ["customer"] },
-      { title: "Notification", url: "/notifications", icon: Bell , roles: ["customer"] },
+      { title: "Subscription Plans", url: "/subscription-plan", icon: PhilippinePeso, roles: ["customer"] },
+      { title: "Notification", url: "/notifications", icon: Bell, roles: ["customer"] },
     ]
   },
-
 
   // RIDER
   {
@@ -128,14 +125,14 @@ const menuItems = [
     group: "Deliveries",
     children: [
       { title: "Active Orders", url: "/rider/orders/active", icon: Package, roles: ["rider"] },
-      { title: "Order History", url: "/rider/orders/history", icon: List, roles: ["rider"] },
+      { title: "Order History", url: "/rider/orders/history", icon: Clock, roles: ["rider"] },
       { title: "Schedule", url: "/rider/schedule", icon: Calendar, roles: ["rider"] },
     ]
   },
   {
     group: "Account",
     children: [
-      { title: "Earnings", url: "/rider/earnings", icon: DollarSign, roles: ["rider"] },
+      { title: "Earnings", url: "/rider/earnings", icon: PhilippinePeso, roles: ["rider"] }, // Changed from DollarSign to PhilippinePeso
       { title: "Messages", url: "/rider/messages", icon: MessageSquare, roles: ["rider"] },
     ]
   },
@@ -148,18 +145,18 @@ const menuItems = [
       { title: "Analytics", url: "/moderator/analytics", icon: BarChart, roles: ["moderator"] },
     ]
   },
-    {
+  {
     group: "Products & Shops",
     children: [
       { title: "Products", url: "/moderator/products", icon: Package, roles: ["moderator"] },
       { title: "Shops", url: "/moderator/shops", icon: Store, roles: ["moderator"] },
-      { title: "Boosting Plans", url: "/moderator/boosting", icon: CreditCard, roles: ["moderator"] },
+      { title: "Boosting Plans", url: "/moderator/boosting", icon: Sparkles, roles: ["moderator"] },
     ]
   },
-    {
+  {
     group: "Orders & Delivery",
     children: [
-      { title: "Orders", url: "/moderator/orders", icon: List, roles: ["moderator"] },
+      { title: "Orders", url: "/moderator/orders", icon: Receipt, roles: ["moderator"] },
       { title: "Riders", url: "/moderator/riders", icon: Bike, roles: ["moderator"] },
     ]
   },
@@ -175,11 +172,12 @@ const menuItems = [
     group: "Actions",
     children: [
       { title: "Flagged Content", url: "/moderator/flagged", icon: Shield, roles: ["moderator"] },
-      { title: "Activity Log", url: "/moderator/logs", icon: FileText, roles: ["moderator"] },
+      { title: "Activity Log", url: "/moderator/logs", icon: Activity, roles: ["moderator"] },
     ]
   },
 ];
 
+// Rest of your code remains the same...
 function getAccessibleItems(
   list: typeof menuItems, 
   user: { isAdmin: boolean, isCustomer: boolean, isRider: boolean, isModerator: boolean }
@@ -223,7 +221,7 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="mb-5">
-            <Link to="/" className="h-20 flex  w-full pt-5">
+            <Link to="/" className="h-20 flex w-full pt-5">
               <img
                 src="/Crimsotech.png"
                 alt="CrimsoTech"
