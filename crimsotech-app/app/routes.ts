@@ -103,6 +103,7 @@ export default [
         route('shops', 'routes/admin/shops.tsx'),
         route('shops/:shop_id', 'routes/admin/view_shops/view_shops.tsx'),
         route('boosting', 'routes/admin/boosting.tsx'),
+        route('boosting/:boost_id', 'routes/admin/view_boosts/view_boost.tsx'),
         route('orders', 'routes/admin/orders.tsx'),
         route('orders/:order_id', 'routes/admin/view_orders/view_orders.tsx'),
 

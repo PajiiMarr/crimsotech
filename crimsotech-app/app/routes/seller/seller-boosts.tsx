@@ -7,7 +7,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
 import { Skeleton } from "~/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,35 +14,21 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
 import { 
-  Search, 
-  Plus, 
-  Eye, 
   Store, 
-  Tag, 
-  MoreHorizontal, 
-  MoreVertical,
-  AlertCircle, 
   Zap, 
   Loader2, 
-  BarChart3, 
   TrendingUp, 
   Clock, 
   Calendar, 
-  CreditCard, 
-  Shield, 
-  Target, 
-  Users, 
-  Award, 
-  Crown,
   DollarSign,
-  User,
   Package,
   ArrowUpDown,
-  EyeOff,
-  Edit,
   Image as ImageIcon,
   CheckCircle,
-  XCircle
+  XCircle,
+  MoreVertical,
+  Edit,
+  Filter
 } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import { type ColumnDef } from "@tanstack/react-table";
@@ -95,7 +80,7 @@ interface BoostPlan {
   duration: number;
   time_unit: 'hours' | 'days' | 'weeks' | 'months';
   status: 'active' | 'inactive' | 'archived';
-  features: BoostPlanFeature[];
+  features: BoostPlanFeature[]; // This expects an array of BoostPlanFeature objects, not strings
   created_at: string;
   description: string;
   usage_count: number;
@@ -106,6 +91,37 @@ interface BoostPlan {
   color: string;
   icon: string;
   popular: boolean;
+  featuresList?: any[]; // Optional for raw features
+}
+
+interface BoostProduct {
+  id: string;
+  name: string;
+  description: string;
+  image?: string;
+  total_stock: number;
+  price_range: {
+    min: number;
+    max: number;
+  };
+  condition: string;
+  status: string;
+  upload_status: string;
+}
+
+interface BoostShop {
+  id: string;
+  name: string;
+  city: string;
+  province: string;
+}
+
+interface BoostPlanInfo {
+  id: string;
+  name: string;
+  price: number;
+  duration: number;
+  time_unit: string;
 }
 
 interface Boost {
@@ -119,33 +135,9 @@ interface Boost {
   end_date?: string;
   created_at: string;
   days_remaining?: number;
-  product?: {
-    id: string;
-    name: string;
-    description: string;
-    image?: string;
-    total_stock: number;
-    price_range: {
-      min: number;
-      max: number;
-    };
-    condition: string;
-    status: string;
-    upload_status: string;
-  };
-  shop?: {
-    id: string;
-    name: string;
-    city: string;
-    province: string;
-  };
-  plan?: {
-    id: string;
-    name: string;
-    price: number;
-    duration: number;
-    time_unit: string;
-  };
+  product?: BoostProduct;
+  shop?: BoostShop;
+  plan?: BoostPlanInfo;
   verification?: {
     verified: boolean;
     verified_at?: string;
@@ -237,7 +229,7 @@ export async function loader({ request, context}: Route.LoaderArgs): Promise<Loa
   return { user, userId, shopId };
 }
 
-function generateFeaturesForPlan(name: string, duration: number, timeUnit: string): string[] {
+function generateFeaturesForPlan(name: string, duration: number, timeUnit: string): BoostPlanFeature[] {
   const baseFeatures = [
     'Featured placement in category',
     'Priority in search results',
@@ -260,16 +252,26 @@ function generateFeaturesForPlan(name: string, duration: number, timeUnit: strin
   ];
   
   const timeDisplay = `${duration} ${timeUnit}`;
+  let featureStrings: string[] = [];
   
   if (name.toLowerCase().includes('starter') || name.toLowerCase().includes('basic')) {
-    return [...baseFeatures, `${timeDisplay} duration`, 'Perfect for new products'];
+    featureStrings = [...baseFeatures, `${timeDisplay} duration`, 'Perfect for new products'];
   } else if (name.toLowerCase().includes('premium')) {
-    return [...baseFeatures, ...premiumFeatures.slice(0, 2), `${timeDisplay} duration`, 'Increased visibility'];
+    featureStrings = [...baseFeatures, ...premiumFeatures.slice(0, 2), `${timeDisplay} duration`, 'Increased visibility'];
   } else if (name.toLowerCase().includes('ultimate') || name.toLowerCase().includes('pro')) {
-    return [...baseFeatures, ...premiumFeatures, ...ultimateFeatures.slice(0, 2), `${timeDisplay} duration`, 'Maximum exposure'];
+    featureStrings = [...baseFeatures, ...premiumFeatures, ...ultimateFeatures.slice(0, 2), `${timeDisplay} duration`, 'Maximum exposure'];
+  } else {
+    featureStrings = [...baseFeatures, `${timeDisplay} duration`, 'Boost product visibility'];
   }
   
-  return [...baseFeatures, `${timeDisplay} duration`, 'Boost product visibility'];
+  // Convert string features to BoostPlanFeature objects
+  return featureStrings.map((feature, index) => ({
+    id: `generated-${index}`,
+    feature_id: `feature-${index}`,
+    feature_name: feature,
+    description: feature,
+    value: feature
+  }));
 }
 
 function generateDescriptionForPlan(name: string, price: number, duration: number, timeUnit: string): string {
@@ -368,7 +370,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       setIsLoading(true);
       
       // Fetch boosts by status using the user_boosts endpoint
-      const boostsResponse = await AxiosInstance.get(`/seller-boosts/user/${userId}/`, {
+      const boostsResponse = await AxiosInstance.get<UserBoostsResponse>(`/seller-boosts/user/${userId}/`, {
         params: { status: activeStatusFilter !== 'all' ? activeStatusFilter : 'all' }
       });
 
@@ -384,36 +386,57 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       }
 
       // Fetch plans
-      const plansResponse = await AxiosInstance.get('/seller-boosts/plans/', { 
+      const plansResponse = await AxiosInstance.get<BoostPlansResponse>('/seller-boosts/plans/', { 
         params: { status: 'active' } 
       });
 
       if (plansResponse.data.success && plansResponse.data.plans) {
-        const transformedPlans = plansResponse.data.plans.map((plan: any) => ({
-          id: plan.id,
-          name: plan.name,
-          price: typeof plan.price === 'string' ? parseFloat(plan.price) : plan.price,
-          duration: plan.duration,
-          time_unit: (plan.time_unit as 'hours' | 'days' | 'weeks' | 'months') || 'days',
-          status: (plan.status as 'active' | 'inactive' | 'archived') || 'active',
-          description: generateDescriptionForPlan(plan.name, plan.price, plan.duration, plan.time_unit),
-          features: generateFeaturesForPlan(plan.name, plan.duration, plan.time_unit),
-          usage_count: plan.usage_count || 0,
-          revenue: plan.revenue || 0,
-          created_by: plan.created_by || 'Admin',
-          created_at: plan.created_at,
-          updated_at: plan.updated_at,
-          position: plan.position || 1,
-          color: plan.color || 'blue',
-          icon: plan.icon || 'sparkles',
-          popular: plan.popular || false,
-          featuresList: plan.features || []
-        }));
+        // Transform plans to match the BoostPlan interface
+        const transformedPlans: BoostPlan[] = plansResponse.data.plans.map((plan: any) => {
+          // Handle features - ensure they match BoostPlanFeature[] type
+          let features: BoostPlanFeature[] = [];
+          
+          if (plan.features && Array.isArray(plan.features)) {
+            // If features are already objects with the right shape
+            features = plan.features.map((f: any) => ({
+              id: f.id || `feature-${Math.random()}`,
+              feature_id: f.feature_id || f.id || '',
+              feature_name: f.feature_name || f.name || '',
+              description: f.description || '',
+              value: f.value || ''
+            }));
+          } else {
+            // Generate default features
+            features = generateFeaturesForPlan(plan.name, plan.duration, plan.time_unit);
+          }
+          
+          return {
+            id: plan.id,
+            name: plan.name,
+            price: typeof plan.price === 'string' ? parseFloat(plan.price) : plan.price,
+            duration: plan.duration,
+            time_unit: (plan.time_unit as 'hours' | 'days' | 'weeks' | 'months') || 'days',
+            status: (plan.status as 'active' | 'inactive' | 'archived') || 'active',
+            description: plan.description || generateDescriptionForPlan(plan.name, plan.price, plan.duration, plan.time_unit),
+            features: features, // Now this matches BoostPlanFeature[] type
+            usage_count: plan.usage_count || 0,
+            revenue: plan.revenue || 0,
+            created_by: plan.created_by || 'Admin',
+            created_at: plan.created_at || new Date().toISOString(),
+            updated_at: plan.updated_at || new Date().toISOString(),
+            position: plan.position || 1,
+            color: plan.color || 'blue',
+            icon: plan.icon || 'sparkles',
+            popular: plan.popular || false,
+            featuresList: plan.features || []
+          };
+        });
+        
         setBoostPlans(transformedPlans);
 
-        const activePlans = transformedPlans.filter((p: { status: string; }) => p.status === 'active').length;
-        const inactivePlans = transformedPlans.filter((p: { status: string; }) => p.status === 'inactive').length;
-        const archivedPlans = transformedPlans.filter((p: { status: string; }) => p.status === 'archived').length;
+        const activePlans = transformedPlans.filter((p) => p.status === 'active').length;
+        const inactivePlans = transformedPlans.filter((p) => p.status === 'inactive').length;
+        const archivedPlans = transformedPlans.filter((p) => p.status === 'archived').length;
         
         setPlansSummary({
           total_plans: transformedPlans.length,
@@ -445,7 +468,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       // Calculate average duration for active boosts
       const durations = activeBoosts.map((boost: Boost) => boost.days_remaining || 0);
       const avgDuration = durations.length > 0 
-        ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) 
+        ? Math.round(durations.reduce((a: number, b: number) => a + b, 0) / durations.length) 
         : 0;
 
       setBoostMetrics({
@@ -572,16 +595,26 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     }
   };
 
-  const boostFilterConfig = {
-    status: {
-      options: [...new Set(boosts.map(boost => boost.status))],
-      placeholder: 'Status'
-    },
-    plan: {
-      options: [...new Set(boosts.map(boost => boost.plan?.name).filter(Boolean))],
-      placeholder: 'Boost Type'
+  // Fixed filter configuration with proper typing
+  const boostFilterConfig: { [key: string]: { options: string[]; placeholder: string } } = {};
+
+  // Add status filter if there are boosts
+  if (boosts.length > 0) {
+    const statusOptions = [...new Set(boosts.map(boost => boost.status))];
+    boostFilterConfig.status = {
+      options: statusOptions,
+      placeholder: 'Filter by Status'
+    };
+
+    // Add plan filter if there are boosts with plans
+    const planOptions = [...new Set(boosts.map(boost => boost.plan?.name).filter((name): name is string => !!name))];
+    if (planOptions.length > 0) {
+      boostFilterConfig.plan = {
+        options: planOptions,
+        placeholder: 'Filter by Plan'
+      };
     }
-  };
+  }
 
   const MetricCardSkeleton = () => (
     <Card>
@@ -956,7 +989,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                     There are currently no boost plans available. Please check back later or contact support.
                   </p>
                   <Button className="gap-2">
-                    <Plus className="w-4 h-4" />
+                    <Package className="w-4 h-4" />
                     Contact Support
                   </Button>
                 </CardContent>
@@ -1024,13 +1057,13 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                               </span>
                             </div>
                             <div className="flex flex-wrap gap-1">
-                              {plan.features.slice(0, 3).map((feature: any, index: number) => (
+                              {plan.features.slice(0, 3).map((feature: BoostPlanFeature, index: number) => (
                                 <Badge 
                                   key={index} 
                                   variant="secondary" 
                                   className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700"
                                 >
-                                  {typeof feature === 'string' ? feature.split(' ')[0] : feature.value?.split(' ')[0] || 'Feature'}
+                                  {feature.feature_name.split(' ')[0] || 'Feature'}
                                 </Badge>
                               ))}
                             </div>
@@ -1115,7 +1148,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                   data={boosts}
                   filterConfig={boostFilterConfig}
                   searchConfig={{
-                    column: "product.name",
+                    column: "product",
                     placeholder: "Search by product name..."
                   }}
                   isLoading={isLoading}

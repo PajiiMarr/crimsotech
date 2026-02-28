@@ -5184,10 +5184,6 @@ class AdminShops(viewsets.ViewSet):
 
 
 class AdminBoosting(viewsets.ViewSet):
-    """
-    ViewSet for admin boost management and analytics
-    """
-    
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
         if not date_str:
@@ -5741,6 +5737,431 @@ class AdminBoosting(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
              
+    @action(detail=True, methods=['get'], url_path='details')
+    def get_boost_details(self, request, pk=None):
+        """
+        Get detailed information for a specific boost by ID
+        URL: /api/admin-boosting/{boost_id}/details/
+        """
+        try:
+            # Get the boost with all related data
+            boost = Boost.objects.select_related(
+                'product',
+                'boost_plan',
+                'shop',
+                'customer',
+                'customer__customer',
+                'payment_verified_by'
+            ).prefetch_related(
+                'product__variants',
+                'product__productmedia_set'
+            ).get(id=pk)
+            
+            # Get customer info
+            customer_data = None
+            if boost.customer and boost.customer.customer:
+                user = boost.customer.customer
+                customer_data = {
+                    'id': str(user.id),
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'contact_number': user.contact_number,
+                }
+            
+            # Get shop info with image from S3
+            shop_data = None
+            if boost.shop:
+                shop_picture_url = None
+                if boost.shop.shop_picture:
+                    # Use the utility to convert S3 URL to public URL
+                    shop_picture_url = convert_s3_to_public_url(boost.shop.shop_picture.url)
+                
+                shop_data = {
+                    'id': str(boost.shop.id),
+                    'name': boost.shop.name,
+                    'description': boost.shop.description,
+                    'city': boost.shop.city,
+                    'province': boost.shop.province,
+                    'street': boost.shop.street,
+                    'barangay': boost.shop.barangay,
+                    'contact_number': boost.shop.contact_number,
+                    'verified': boost.shop.verified,
+                    'shop_picture': shop_picture_url,
+                }
+            
+            # Get product info with images from S3
+            product_data = None
+            if boost.product:
+                # Calculate total stock from variants
+                total_stock = boost.product.variants.filter(
+                    is_active=True
+                ).aggregate(total=models.Sum('quantity'))['total'] or 0
+                
+                # Get price range
+                min_price = boost.product.variants.filter(
+                    is_active=True, price__isnull=False
+                ).order_by('price').first()
+                max_price = boost.product.variants.filter(
+                    is_active=True, price__isnull=False
+                ).order_by('-price').first()
+                
+                price_range = None
+                if min_price and max_price:
+                    price_range = {
+                        'min': float(min_price.price),
+                        'max': float(max_price.price)
+                    }
+                
+                # Get primary image using the utility
+                primary_image = None
+                first_media = boost.product.productmedia_set.first()
+                if first_media and first_media.file_data:
+                    primary_image = convert_s3_to_public_url(first_media.file_data.url)
+                
+                # Get all media files with S3 URLs
+                media_files = []
+                for media in boost.product.productmedia_set.all()[:5]:  # Limit to 5 images
+                    if media.file_data:
+                        media_files.append({
+                            'id': str(media.id),
+                            'url': convert_s3_to_public_url(media.file_data.url),
+                            'file_type': media.file_type
+                        })
+                
+                product_data = {
+                    'id': str(boost.product.id),
+                    'name': boost.product.name,
+                    'description': boost.product.description,
+                    'image': primary_image,
+                    'media_files': media_files,
+                    'total_stock': total_stock,
+                    'price_range': price_range,
+                    'condition': boost.product.condition,
+                    'status': boost.product.status,
+                    'upload_status': boost.product.upload_status,
+                    'category': boost.product.category.name if boost.product.category else None,
+                    'shop_id': str(boost.product.shop.id) if boost.product.shop else None,
+                }
+            
+            # Get plan info
+            plan_data = None
+            if boost.boost_plan:
+                # Get features
+                features = []
+                plan_features = BoostPlanFeature.objects.filter(
+                    boost_plan=boost.boost_plan
+                ).select_related('feature')
+                
+                for pf in plan_features:
+                    features.append({
+                        'id': str(pf.id),
+                        'feature_name': pf.feature.name,
+                        'description': pf.feature.description,
+                        'value': pf.value,
+                    })
+                
+                plan_data = {
+                    'id': str(boost.boost_plan.id),
+                    'name': boost.boost_plan.name,
+                    'price': float(boost.boost_plan.price),
+                    'duration': boost.boost_plan.duration,
+                    'time_unit': boost.boost_plan.time_unit,
+                    'description': boost.boost_plan.name,
+                    'features': features,
+                }
+            
+            # Get verification info
+            verification_data = None
+            if boost.payment_verified and boost.payment_verified_by:
+                verification_data = {
+                    'verified': boost.payment_verified,
+                    'verified_at': boost.payment_verified_at.isoformat() if boost.payment_verified_at else None,
+                    'verified_by': str(boost.payment_verified_by.id) if boost.payment_verified_by else None,
+                    'verified_by_name': boost.payment_verified_by.username if boost.payment_verified_by else None,
+                }
+            
+            # Calculate days remaining for active boosts
+            days_remaining = None
+            if boost.status == 'active' and boost.end_date:
+                now = timezone.now()
+                if boost.end_date > now:
+                    days_remaining = (boost.end_date - now).days
+                else:
+                    days_remaining = 0
+            
+            # Get action history (you can implement this if you have a history model)
+            # For now, return empty list
+            actions = []
+            
+            # Get receipt image with S3 URL
+            receipt_url = None
+            if boost.receipt_image:
+                receipt_url = convert_s3_to_public_url(boost.receipt_image.url)
+            
+            # Build response
+            boost_data = {
+                'id': str(boost.id),
+                'boost_id': str(boost.id),
+                'status': boost.status,
+                'payment_method': boost.payment_method,
+                'payment_verified': boost.payment_verified,
+                'has_receipt': bool(boost.receipt_image),
+                'receipt_url': receipt_url,
+                'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                'created_at': boost.created_at.isoformat() if boost.created_at else None,
+                'days_remaining': days_remaining,
+                'amount': float(boost.boost_plan.price) if boost.boost_plan else None,
+                'price': float(boost.boost_plan.price) if boost.boost_plan else None,
+                'product': product_data,
+                'shop': shop_data,
+                'customer': customer_data,
+                'plan': plan_data,
+                'verification': verification_data,
+                'actions': actions,
+            }
+            
+            return Response({
+                'success': True,
+                'boost': boost_data,
+                'message': 'Boost details retrieved successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Boost.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': f'Boost with ID {pk} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving boost details: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+    @action(detail=False, methods=['put'], url_path='update_boost_status')
+    def update_boost_status(self, request):
+        """
+        Update boost status (approve, reject, suspend, resume, cancel, renew, restore)
+        URL: /api/admin-boosting/update_boost_status/
+        
+        Request body:
+        {
+            "boost_id": "uuid",
+            "action_type": "approve|reject|suspend|resume|cancel|renew|restore",
+            "user_id": "uuid",  # Admin user ID
+            "reason": "optional reason for action",
+            "suspension_days": 7  # Required for suspend action
+        }
+        """
+        try:
+            # Validate required fields
+            boost_id = request.data.get('boost_id')
+            action_type = request.data.get('action_type')
+            admin_user_id = request.data.get('user_id')
+            
+            if not boost_id:
+                return Response(
+                    {'success': False, 'error': 'boost_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not action_type:
+                return Response(
+                    {'success': False, 'error': 'action_type is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not admin_user_id:
+                return Response(
+                    {'success': False, 'error': 'user_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate action type
+            valid_actions = ['approve', 'reject', 'suspend', 'resume', 'cancel', 'renew', 'restore']
+            if action_type not in valid_actions:
+                return Response(
+                    {'success': False, 'error': f'Invalid action_type. Must be one of: {valid_actions}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the boost
+            try:
+                boost = Boost.objects.get(id=boost_id)
+            except Boost.DoesNotExist:
+                return Response(
+                    {'success': False, 'error': f'Boost with ID {boost_id} not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get admin user
+            try:
+                admin_user = User.objects.get(id=admin_user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {'success': False, 'error': 'Admin user not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get optional reason
+            reason = request.data.get('reason', '')
+            
+            # Process based on action type
+            now = timezone.now()
+            message = ""
+            
+            if action_type == 'approve':
+                # Approve pending boost
+                if boost.status != 'pending':
+                    return Response(
+                        {'success': False, 'error': 'Can only approve pending boosts'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                boost.status = 'active'
+                boost.payment_verified = True
+                boost.payment_verified_at = now
+                boost.payment_verified_by = admin_user
+                message = "Boost approved successfully"
+                
+            elif action_type == 'reject':
+                # Reject pending boost
+                if boost.status != 'pending':
+                    return Response(
+                        {'success': False, 'error': 'Can only reject pending boosts'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                if not reason:
+                    return Response(
+                        {'success': False, 'error': 'Reason is required for rejection'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                boost.status = 'cancelled'
+                boost.payment_verified = False
+                message = "Boost rejected successfully"
+                
+            elif action_type == 'suspend':
+                # Suspend active boost
+                if boost.status != 'active':
+                    return Response(
+                        {'success': False, 'error': 'Can only suspend active boosts'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                suspension_days = request.data.get('suspension_days')
+                if not suspension_days:
+                    return Response(
+                        {'success': False, 'error': 'suspension_days is required for suspend action'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                if not reason:
+                    return Response(
+                        {'success': False, 'error': 'Reason is required for suspension'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                boost.status = 'suspended'
+                message = f"Boost suspended for {suspension_days} days"
+                
+            elif action_type == 'resume':
+                # Resume suspended boost
+                if boost.status != 'suspended':
+                    return Response(
+                        {'success': False, 'error': 'Can only resume suspended boosts'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                boost.status = 'active'
+                message = "Boost resumed successfully"
+                
+            elif action_type == 'cancel':
+                # Cancel active or suspended boost
+                if boost.status not in ['active', 'suspended']:
+                    return Response(
+                        {'success': False, 'error': 'Can only cancel active or suspended boosts'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                if not reason:
+                    return Response(
+                        {'success': False, 'error': 'Reason is required for cancellation'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                boost.status = 'cancelled'
+                message = "Boost cancelled successfully"
+                
+            elif action_type == 'renew':
+                # Renew expired boost
+                if boost.status != 'expired':
+                    return Response(
+                        {'success': False, 'error': 'Can only renew expired boosts'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                if not boost.boost_plan:
+                    return Response(
+                        {'success': False, 'error': 'Cannot renew boost without a plan'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Calculate new end date based on plan
+                duration_map = {
+                    'hours': timedelta(hours=boost.boost_plan.duration),
+                    'days': timedelta(days=boost.boost_plan.duration),
+                    'weeks': timedelta(weeks=boost.boost_plan.duration),
+                    'months': timedelta(days=boost.boost_plan.duration * 30)
+                }
+                
+                boost.status = 'active'
+                boost.start_date = now
+                boost.end_date = now + duration_map.get(boost.boost_plan.time_unit, timedelta(days=30))
+                boost.payment_verified = True
+                boost.payment_verified_at = now
+                boost.payment_verified_by = admin_user
+                message = "Boost renewed successfully"
+                
+            elif action_type == 'restore':
+                # Restore cancelled boost
+                if boost.status != 'cancelled':
+                    return Response(
+                        {'success': False, 'error': 'Can only restore cancelled boosts'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                boost.status = 'active'
+                message = "Boost restored successfully"
+            
+            # Save changes
+            boost.save()
+            
+            # Log the action (optional)
+            Logs.objects.create(
+                user=admin_user,
+                action=f"Boost {action_type}: {boost.id} - {message}"
+            )
+            
+            return Response({
+                'success': True,
+                'message': message,
+                'boost': {
+                    'id': str(boost.id),
+                    'status': boost.status,
+                    'updated_at': boost.updated_at.isoformat()
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error updating boost status: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class AdminOrders(viewsets.ViewSet):
     def parse_date(self, date_str):

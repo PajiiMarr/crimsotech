@@ -1,4 +1,4 @@
-// app/routes/admin/boosts.tsx
+// app/routes/admin/boosting.tsx
 import { toast } from 'sonner';
 import type { Route } from './+types/boosting'
 import SidebarLayout from '~/components/layouts/sidebar'
@@ -690,7 +690,7 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
             />
 
             <Card>
-              <CardContent className="flex flex-col items-center justify-center ">
+              <CardContent className="flex flex-col items-center justify-center py-12">
                 <div className="rounded-full bg-gray-100 p-4 mb-4">
                   <Package className="h-12 w-12 text-gray-400" />
                 </div>
@@ -1287,11 +1287,11 @@ const columns: ColumnDef<Boost>[] = [
       return (
         <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
           <Link 
-            to={`/admin/boosts/${boost.id}`}
-            className="text-primary hover:underline text-xs sm:text-sm flex items-center gap-1"
+            to={`/admin/boosting/${boost.id}`}
+            className="text-primary hover:text-primary/80 transition-colors"
             title="View Details"
           >
-            <Eye className="w-3 h-3 sm:w-4 sm:h-4" />
+            <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
           </Link>
           
           {actions.length > 0 && (
@@ -1303,7 +1303,7 @@ const columns: ColumnDef<Boost>[] = [
                 {actions.map((action) => (
                   <SelectItem key={action.action} value={action.action}>
                     {action.label}
-                  </SelectItem>
+                </SelectItem>
                 ))}
               </SelectContent>
             </Select>
