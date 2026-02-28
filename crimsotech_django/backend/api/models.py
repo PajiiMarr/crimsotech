@@ -1555,7 +1555,8 @@ class DisputeRequest(models.Model):
     processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_disputes')
     resolved_at = models.DateTimeField(null=True, blank=True)
     admin_notes = models.TextField(blank=True, null=True)
-    case_category = models.CharField(blank=True, null=True, max_length=50, choices=CASE_TYPES)
+    case_category = models.JSONField(blank=True, null=True)
+    refund_fee = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
