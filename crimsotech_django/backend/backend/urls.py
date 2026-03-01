@@ -71,6 +71,8 @@ router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedul
 router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')
 router.register(r'rider-proof', RiderProofViewSet, basename='rider-proof')
 
+router.register(r'conversation', ConversationViewSet, basename='conversation')
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/checkout-order/get_order_details/<uuid:order_id>/', CheckoutOrder.as_view({'get': 'get_order_details'}), name='get_order_details'),

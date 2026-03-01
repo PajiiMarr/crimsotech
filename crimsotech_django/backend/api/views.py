@@ -32837,3 +32837,115 @@ class RiderProofViewSet(viewsets.ViewSet):
         }
         
         return Response(proof_data, status=status.HTTP_201_CREATED)
+
+class ConversationViewSet(viewsets.ViewSet):
+    
+    def list(self, request):
+        """GET /api/conversations/"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header required'}, status=401)
+            
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=404)
+        
+        conversations = Conversation.objects.filter(participants=user)
+        data = []
+        for conv in conversations:
+            other = conv.participants.exclude(id=user.id).first()
+            last_msg = Message.objects.filter(conversation_id=conv.id).last()
+            data.append({
+                'id': str(conv.id),
+                'participant_id': str(other.id) if other else '',
+                'participant_name': other.username if other else '',
+                'last_message': last_msg.content if last_msg else '',
+                'last_message_time': last_msg.created_at.isoformat() if last_msg else '',
+                'unread_count': 0,
+            })
+        return Response(data)
+    
+    @action(detail=False, methods=['get'], url_path='messages/(?P<conv_id>[^/]+)')
+    def messages(self, request, conv_id=None):
+        """GET /api/conversations/messages/{conv_id}/"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header required'}, status=401)
+            
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=404)
+        
+        messages = Message.objects.filter(conversation_id=conv_id).order_by('created_at')
+        data = [{
+            'id': str(m.id),
+            'sender_id': str(m.sender.id),
+            'sender_name': m.sender.username,
+            'content': m.content,
+            'timestamp': m.created_at.isoformat(),
+            'status': m.status,
+            'message_type': m.message_type,
+        } for m in messages]
+        return Response(data)
+    
+    @action(detail=False, methods=['post'])
+    def start(self, request):
+        """POST /api/conversation/start/ - Start a new conversation"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header required'}, status=401)
+            
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=404)
+        
+        other_id = request.data.get('user_id')
+        if not other_id:
+            return Response({'error': 'user_id required'}, status=400)
+            
+        try:
+            other = User.objects.get(id=other_id)
+        except User.DoesNotExist:
+            return Response({'error': 'Other user not found'}, status=404)
+        
+        # Check if conversation already exists between these two users
+        conv = Conversation.objects.filter(participants=user).filter(participants=other).first()
+        
+        if not conv:
+            # Create new conversation
+            conv = Conversation.objects.create()
+            conv.participants.add(user, other)
+            
+            # Create participant entries only if they don't exist
+            # The through model will handle the creation automatically when adding participants
+            # You don't need to manually create ConversationParticipant objects
+        else:
+            # Check if participants already have entries (they should)
+            pass
+        
+        return Response({'id': str(conv.id)})
+    
+    @action(detail=False, methods=['get'])
+    def search(self, request):
+        """GET /api/conversations/search/?q=term"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header required'}, status=401)
+            
+        q = request.GET.get('q', '')
+        if len(q) < 2:
+            return Response([])
+            
+        users = User.objects.filter(
+            Q(username__icontains=q) | Q(email__icontains=q)
+        ).exclude(id=user_id)[:10]
+        
+        data = [{
+            'id': str(u.id),
+            'username': u.username,
+            'email': u.email,
+        } for u in users]
+        return Response(data)

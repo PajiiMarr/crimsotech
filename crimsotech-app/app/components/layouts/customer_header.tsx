@@ -2,7 +2,7 @@
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "~/components/ui/breadcrumb";
 import { Separator } from "~/components/ui/separator";
 import { SidebarTrigger } from "~/components/ui/sidebar";
-import { Bell, User, Home } from "lucide-react";
+import { Bell, User, Home, MessageCircle } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "~/components/ui/dropdown-menu";
 import { Link, useNavigate, useLocation } from "react-router";
 import { useContext, useMemo } from "react";
@@ -110,6 +110,9 @@ export default function CustomerHeader() {
 
         <div className="flex items-center gap-4 px-4">
           <DropdownMenu>
+              <Link to='/messages' className="p-2 rounded-full hover:bg-gray-100 transition-colors">
+                <MessageCircle className="w-5 h-5 text-gray-600" />
+              </Link>
             <DropdownMenuTrigger asChild>
               <button className="p-2 rounded-full hover:bg-gray-100 transition-colors">
                 <User className="w-5 h-5 text-gray-600" />
