@@ -1,3 +1,4 @@
+// app/routes/product/view-product.tsx
 import {
   Star,
   Share2,

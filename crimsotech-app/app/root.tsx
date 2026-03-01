@@ -8,6 +8,7 @@ import {
   useNavigate,
   Link,
   useLocation,
+  useNavigation,
 } from "react-router";
 import { Toaster } from "~/components/ui/sonner";
 import { Button } from '~/components/ui/button'
@@ -16,7 +17,8 @@ import "./app.css";
 // ✅ NProgress
 import NProgress from "nprogress";
 import "nprogress/nprogress.css";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
+import { UserProvider } from "./components/providers/user-role-provider";
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -91,9 +93,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ✅ Modified NProgress Wrapper with immediate start on click
+// ✅ Enhanced NProgress Wrapper that catches all navigation types
 function RouteChangeProgress() {
   const location = useLocation();
+  const navigation = useNavigation(); // React Router's navigation state
   const progressStarted = useRef(false);
   const navigationStartTime = useRef<number | null>(null);
   
@@ -101,86 +104,95 @@ function RouteChangeProgress() {
     // Configure NProgress for faster, smoother animations
     NProgress.configure({
       showSpinner: false,
-      trickleSpeed: 100, // Faster trickle speed
+      trickleSpeed: 100,
       minimum: 0.08,
       easing: 'ease',
       speed: 400,
       trickle: true,
     });
+  }, []);
 
-    // Store the current location pathname for comparison
-    const currentPath = location.pathname + location.search;
-
-    // Handle programmatic navigation via useNavigate
-    const originalPushState = history.pushState;
-    const originalReplaceState = history.replaceState;
-
-    // Wrap history methods to detect programmatic navigation
-    history.pushState = function(...args) {
+  // Track React Router's navigation state
+  useEffect(() => {
+    if (navigation.state === "loading" || navigation.state === "submitting") {
       if (!progressStarted.current) {
         NProgress.start();
         progressStarted.current = true;
         navigationStartTime.current = Date.now();
+        
+        // Bump progress slightly for immediate feedback
+        setTimeout(() => NProgress.inc(0.2), 50);
       }
-      return originalPushState.apply(this, args);
-    };
+    } else if (navigation.state === "idle" && progressStarted.current) {
+      // Navigation completed
+      const navigationTime = navigationStartTime.current 
+        ? Date.now() - navigationStartTime.current 
+        : 0;
+      
+      // Smooth completion with delay based on navigation duration
+      const delay = Math.max(100, Math.min(300, navigationTime / 3));
+      
+      setTimeout(() => {
+        NProgress.done();
+        progressStarted.current = false;
+        navigationStartTime.current = null;
+      }, delay);
+    }
+  }, [navigation.state]);
 
-    history.replaceState = function(...args) {
+  // Handle browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
       if (!progressStarted.current) {
         NProgress.start();
         progressStarted.current = true;
         navigationStartTime.current = Date.now();
+        setTimeout(() => NProgress.inc(0.2), 50);
       }
-      return originalReplaceState.apply(this, args);
     };
 
-    // Enhanced click handler for immediate progress start
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Handle click events on all navigation elements
+  useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       
-      // Find the closest anchor or button element
-      const clickable = target.closest('a, button, [role="button"], [data-navigate]');
-      
+      // Check for any clickable element that might trigger navigation
+      const clickable = target.closest('a, button, [role="button"], [data-navigate], [onClick]');
       if (!clickable) return;
-      
+
       // Skip excluded elements
-      const isExcluded = clickable.closest('[data-no-progress], [data-exclude-progress]') !== null;
-      if (isExcluded) return;
-      
-      // Check if it's an anchor
+      if (clickable.closest('[data-no-progress]')) return;
+
+      // Handle anchor tags
       if (clickable.tagName === 'A') {
         const anchor = clickable as HTMLAnchorElement;
         
-        // Skip if anchor has target="_blank" (external link)
-        if (anchor.target === '_blank') return;
-        
-        // Skip if anchor doesn't have href or has empty href
-        if (!anchor.href || anchor.href === '#' || anchor.href === 'javascript:void(0)') return;
-        
-        // Skip if it's a same-page anchor (hash link)
-        if (anchor.hash && !anchor.pathname && !anchor.search) return;
-        
-        // Check if it's a same-origin link
+        // Skip external links and non-navigating anchors
+        if (anchor.target === '_blank' || 
+            !anchor.href || 
+            anchor.href === '#' || 
+            anchor.href.includes('javascript:')) {
+          return;
+        }
+
+        // Check if same-origin navigation
         try {
           const targetUrl = new URL(anchor.href);
           const currentUrl = new URL(window.location.href);
           
-          // Only trigger for same-origin navigation
           if (targetUrl.origin === currentUrl.origin) {
-            // Check if it's actually a different route
             const targetPath = targetUrl.pathname + targetUrl.search;
-            if (targetPath !== currentPath) {
-              // Start progress immediately
-              if (!progressStarted.current) {
-                NProgress.start();
-                progressStarted.current = true;
-                navigationStartTime.current = Date.now();
-                
-                // Add slight delay to ensure it's visible
-                setTimeout(() => {
-                  NProgress.inc(0.3); // Jump to 30% immediately for better UX
-                }, 10);
-              }
+            const currentPath = location.pathname + location.search;
+            
+            if (targetPath !== currentPath && !progressStarted.current) {
+              NProgress.start();
+              progressStarted.current = true;
+              navigationStartTime.current = Date.now();
+              setTimeout(() => NProgress.inc(0.2), 10);
             }
           }
         } catch (e) {
@@ -188,160 +200,139 @@ function RouteChangeProgress() {
         }
       }
       
-      // Check for React Router Link components or buttons with navigation
-      const isRouterLink = clickable.closest('[data-router-link], [data-link]') !== null;
-      const hasRouterNavigate = clickable.hasAttribute('data-navigate');
-      
-      if (isRouterLink || hasRouterNavigate) {
+      // Handle React Router Link components (they have data attributes)
+      if (clickable.closest('[data-discover="true"]')) {
         if (!progressStarted.current) {
           NProgress.start();
           progressStarted.current = true;
           navigationStartTime.current = Date.now();
-          
-          setTimeout(() => {
-            NProgress.inc(0.3);
-          }, 10);
+          setTimeout(() => NProgress.inc(0.2), 10);
         }
       }
     };
 
-    // Also handle mousedown for even faster response
-    const handleMouseDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      const clickable = target.closest('a, button, [role="button"], [data-navigate]');
-      
-      if (!clickable) return;
-      
-      // Quick start on mouse down for anchor links (optional, can be more aggressive)
-      if (clickable.tagName === 'A') {
-        const anchor = clickable as HTMLAnchorElement;
-        if (anchor.href && !anchor.href.includes('#') && anchor.target !== '_blank') {
-          // Start minimal progress on mouse down for immediate feedback
-          setTimeout(() => {
-            if (!progressStarted.current && e.button === 0) { // Left click only
-              NProgress.start();
-              NProgress.set(0.1); // Set to 10% immediately
-              progressStarted.current = true;
-              navigationStartTime.current = Date.now();
-            }
-          }, 50); // Small delay to ensure it's a real navigation
-        }
-      }
-    };
-
-    // Listen to React Router navigation events
-    const handleRouteChangeStart = () => {
-      if (!progressStarted.current) {
-        NProgress.start();
-        progressStarted.current = true;
-        navigationStartTime.current = Date.now();
-      }
-    };
-
-    // Add event listeners
     document.addEventListener('click', handleClick, true);
-    document.addEventListener('mousedown', handleMouseDown, true);
-    
-    // Custom event for React Router navigation
-    window.addEventListener('react-router:navigation-start', handleRouteChangeStart);
-
-    return () => {
-      document.removeEventListener('click', handleClick, true);
-      document.removeEventListener('mousedown', handleMouseDown, true);
-      window.removeEventListener('react-router:navigation-start', handleRouteChangeStart);
-      
-      // Restore original history methods
-      history.pushState = originalPushState;
-      history.replaceState = originalReplaceState;
-    };
-  }, [location]);
-
-  useEffect(() => {
-    // Complete progress when location changes
-    const completeProgress = () => {
-      if (progressStarted.current) {
-        // Calculate how long the navigation took
-        const navigationTime = navigationStartTime.current ? Date.now() - navigationStartTime.current : 0;
-        
-        // Add a small delay based on navigation time for smoother finish
-        const delay = Math.max(100, Math.min(300, navigationTime / 2));
-        
-        setTimeout(() => {
-          NProgress.done();
-          progressStarted.current = false;
-          navigationStartTime.current = null;
-        }, delay);
-      }
-    };
-
-    // Small delay to ensure page has started loading
-    setTimeout(completeProgress, 50);
-    
-    // Also complete if page takes too long (safety net)
-    const timeoutId = setTimeout(() => {
-      if (progressStarted.current) {
-        NProgress.done();
-        progressStarted.current = false;
-        navigationStartTime.current = null;
-      }
-    }, 3000); // 3 second timeout
-
-    return () => clearTimeout(timeoutId);
-  }, [location]);
-
-  // Hook to detect page load completion
-  useEffect(() => {
-    const handleLoad = () => {
-      if (progressStarted.current) {
-        // Page loaded, complete progress smoothly
-        setTimeout(() => {
-          NProgress.done();
-          progressStarted.current = false;
-          navigationStartTime.current = null;
-        }, 100);
-      }
-    };
-
-    window.addEventListener('load', handleLoad);
-    
-    return () => {
-      window.removeEventListener('load', handleLoad);
-    };
-  }, []);
+    return () => document.removeEventListener('click', handleClick, true);
+  }, [location.pathname, location.search]);
 
   return null;
 }
 
-// Custom hook for programmatic navigation with progress
+// ✅ Enhanced hook for programmatic navigation with progress
 export function useNavigationWithProgress() {
   const navigate = useNavigate();
   
-  const navigateWithProgress = (to: string | number, options?: any) => {
+  const navigateWithProgress = useCallback((
+    to: string | number,
+    options?: { replace?: boolean; state?: any }
+  ) => {
     // Start progress immediately
     NProgress.start();
     
-    // Dispatch custom event for route change start
-    window.dispatchEvent(new CustomEvent('react-router:navigation-start'));
-    
-    // Navigate after a tiny delay to ensure progress starts
+    // Navigate with a tiny delay to ensure progress is visible
     setTimeout(() => {
       if (typeof to === 'number') {
         navigate(to);
       } else {
         navigate(to, options);
       }
-    }, 10);
-  };
-  
+    }, 50);
+  }, [navigate]);
+
   return navigateWithProgress;
+}
+
+// ✅ Enhanced Link component that triggers progress
+export function ProgressLink({ 
+  to, 
+  children, 
+  onClick,
+  ...props 
+}: React.ComponentProps<typeof Link>) {
+  const location = useLocation();
+  
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    // Check if it's actually navigating to a different route
+    if (typeof to === 'string') {
+      try {
+        const targetUrl = new URL(to, window.location.origin);
+        const currentPath = location.pathname + location.search;
+        const targetPath = targetUrl.pathname + targetUrl.search;
+        
+        if (targetPath !== currentPath) {
+          NProgress.start();
+          setTimeout(() => NProgress.inc(0.2), 10);
+        }
+      } catch (e) {
+        // Handle relative paths
+        if (to !== location.pathname + location.search) {
+          NProgress.start();
+          setTimeout(() => NProgress.inc(0.2), 10);
+        }
+      }
+    }
+    
+    // Call original onClick if provided
+    onClick?.(e);
+  };
+
+  return (
+    <Link to={to} onClick={handleClick} {...props}>
+      {children}
+    </Link>
+  );
 }
 
 export default function App() {
   return (
     <>
-      <RouteChangeProgress />
-      <Outlet />
+      <UserProvider user={null}> {/* Start with null, let session storage populate */}
+          <RouteChangeProgress />
+          <Outlet />
+      </UserProvider>
     </>
+  );
+}
+
+// ✅ Example usage component showing different navigation methods
+export function NavigationExample() {
+  const navigate = useNavigate();
+  const navigateWithProgress = useNavigationWithProgress();
+
+  return (
+    <div>
+      {/* Regular Link - automatically tracked */}
+      <Link to="/about">About (Regular Link)</Link>
+
+      {/* Progress Link - enhanced version */}
+      <ProgressLink to="/contact">Contact (Progress Link)</ProgressLink>
+
+      {/* Regular button with useNavigate - NOT automatically tracked */}
+      <button onClick={() => navigate('/dashboard')}>
+        Go to Dashboard (No Progress)
+      </button>
+
+      {/* Button with useNavigationWithProgress - tracked */}
+      <button onClick={() => navigateWithProgress('/settings')}>
+        Go to Settings (With Progress)
+      </button>
+
+      {/* Button with manual progress trigger */}
+      <button 
+        onClick={() => {
+          NProgress.start();
+          navigate('/profile');
+        }}
+      >
+        Go to Profile (Manual Progress)
+      </button>
+
+      {/* Form submission - automatically tracked via navigation.state */}
+      <form action="/search" method="get">
+        <input type="text" name="q" />
+        <button type="submit">Search</button>
+      </form>
+    </div>
   );
 }
 
@@ -355,6 +346,8 @@ export function meta(): Route.MetaDescriptors {
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   const navigate = useNavigate();
+  const navigateWithProgress = useNavigationWithProgress();
+  
   let message = "Something went wrong";
   let details = "An unexpected error occurred.";
   let stack: string | undefined;
@@ -380,16 +373,16 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
       <p className="text-gray-500 max-w-md mb-6">{details}</p>
       <div className="flex flex-wrap gap-3">
         <Button
-          onClick={() => navigate(-1)}
+          onClick={() => navigateWithProgress(-1)}
           variant='secondary'
         >
           Go Back
         </Button>
-        <Link to='/'>
+        <ProgressLink to='/'>
           <Button>
             Go Home
           </Button>
-        </Link>
+        </ProgressLink>
       </div>
       {stack && (
         <pre className="mt-8 p-4 text-left text-sm text-gray-700 bg-gray-100 rounded-lg overflow-x-auto w-full max-w-2xl">

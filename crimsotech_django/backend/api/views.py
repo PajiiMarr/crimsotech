@@ -50,6 +50,7 @@ import os
 from .utils.model_handler import ElectronicsClassifier
 import json
 from api.utils.storage_utils import convert_s3_to_public_url
+from django.shortcuts import get_object_or_404
 
 
 # Initialize classifier once (Django will cache this)
@@ -482,6 +483,38 @@ class Landing(viewsets.ViewSet):
                     'trust_badges': []
                 }
             }, status=status.HTTP_200_OK)        
+
+class FetchUser(viewsets.ViewSet):
+    
+    @action(detail=False, methods=['get'], url_path='profile')
+    def get_profile(self, request):
+        """
+        Get current user profile based on X-User-Id header
+        """
+        # Get user ID from header
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Fetch user
+            user = User.objects.get(id=user_id)
+            
+            # Serialize
+            serializer = UserSerializer(user)
+            
+            return Response(serializer.data)
+            
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 class UserView(APIView):
     def get(self, request):
         user = [{"user_id": user.id, "username": user.username, "email": user.email, "registration_stage": user.registration_stage, "is_rider": user.is_rider} for user in User.objects.all()]
@@ -17111,7 +17144,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         
         return queryset.order_by('-created_at')
 
-
     def get_detail_queryset(self):
         """Detail view with all variants for single product page"""
         return Product.objects.filter(
@@ -18597,172 +18629,359 @@ class CustomerBoostPlan(viewsets.ViewSet):
 
 
 class CustomerFavoritesView(APIView):
-    def get(self, request):
-        try:
-            # Identify user by X-User-Id header (set by frontend) or query param
-            user_id = request.headers.get('X-User-Id') or request.GET.get('userId')
-            if not user_id:
-                # Gracefully return empty favorites when no user id is provided
-                return Response({'success': True, 'favorites': []})
+    def get_user_from_request(self, request):
+        """Helper method to extract and validate user from request"""
+        user_id = (
+            request.headers.get('X-User-Id') or 
+            request.GET.get('userId') or 
+            request.data.get('userId') or 
+            request.data.get('customer')
+        )
+        
+        # Normalize if the client sent objects
+        if isinstance(user_id, dict):
+            user_id = user_id.get('id') or user_id.get('user_id')
+            
+        return user_id
 
+    def get_user_object(self, user_id):
+        """Helper method to fetch user by various identifiers"""
+        if not user_id:
+            return None
+            
+        # Try different lookup methods
+        lookup_methods = [
+            ('id', user_id),
+            ('username', user_id),
+            ('email', user_id)
+        ]
+        
+        for lookup, value in lookup_methods:
             try:
-                user = User.objects.get(id=user_id)
-                customer = user.customer
-            except (User.DoesNotExist, Customer.DoesNotExist):
-                # No user/customer => return empty list
-                return Response({'success': True, 'favorites': []})     
+                return User.objects.get(**{lookup: value})
+            except (User.DoesNotExist, ValueError):
+                continue
+        return None
 
-            favorites = Favorites.objects.filter(customer=customer).order_by('-id')
-            serializer = FavoritesSerializer(favorites, many=True)
+    def get_customer_from_user(self, user):
+        """Helper method to get or create customer profile"""
+        if not user:
+            return None
+            
+        try:
+            return user.customer
+        except Customer.DoesNotExist:
+            # Create customer profile if it doesn't exist
+            return Customer.objects.create(customer=user)
+
+    def get_favorites_queryset(self, customer):
+        """Get optimized favorites queryset with related data"""
+        return Favorites.objects.filter(customer=customer).select_related(
+            'product',
+            'product__shop'
+        ).prefetch_related(
+            Prefetch(
+                'product__variants',
+                queryset=Variants.objects.filter(is_active=True),
+                to_attr='active_variants'
+            ),
+            Prefetch(
+                'product__productmedia_set',
+                queryset=ProductMedia.objects.all(),
+                to_attr='media_files'
+            )
+        ).order_by('-id')
+
+    def get(self, request):
+        """Get all favorites for a customer"""
+        try:
+            user_id = self.get_user_from_request(request)
+            
+            if not user_id:
+                logger.info("No user ID provided, returning empty favorites")
+                return Response({
+                    'success': True, 
+                    'favorites': [],
+                    'message': 'No user ID provided'
+                })
+
+            user = self.get_user_object(user_id)
+            if not user:
+                logger.warning(f"User not found for ID: {user_id}")
+                return Response({
+                    'success': True, 
+                    'favorites': [],
+                    'message': 'User not found'
+                })
+
+            customer = self.get_customer_from_user(user)
+            if not customer:
+                logger.warning(f"Could not create/get customer for user: {user_id}")
+                return Response({
+                    'success': True, 
+                    'favorites': [],
+                    'message': 'Customer profile not available'
+                })
+
+            favorites = self.get_favorites_queryset(customer)
+            
+            # Add variant information to each favorite
+            favorites_data = []
+            for favorite in favorites:
+                favorite_dict = {
+                    'id': favorite.id,
+                    'product': favorite.product,
+                    'customer': favorite.customer,
+                    'product_details': self.get_product_details(favorite.product)
+                }
+                favorites_data.append(favorite_dict)
+            
+            serializer = FavoritesSerializer(favorites_data, many=True)
+            
             return Response({
                 'success': True,
-                'favorites': serializer.data
+                'favorites': serializer.data,
+                'count': len(serializer.data)
             })
+
         except Exception as e:
+            logger.error(f"Error in GET favorites: {str(e)}", exc_info=True)
             return Response({
                 'success': False,
-                'message': str(e)
+                'message': 'An error occurred while fetching favorites',
+                'error': str(e) if settings.DEBUG else None
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
-
+        """Add a product to favorites"""
         try:
-            # Get customer ID from request body or header
-            user_id = request.data.get("customer") or request.headers.get('X-User-Id') or request.GET.get('userId')
+            # Extract and validate user ID
+            user_id = self.get_user_from_request(request)
             product_id = request.data.get("product")
-
-            # Normalize if the client sent objects
-            if isinstance(user_id, dict):
-                user_id = user_id.get('id') or user_id.get('user_id')
+            
+            # Normalize product ID if it's an object
             if isinstance(product_id, dict):
                 product_id = product_id.get('id') or product_id.get('product')
+            
+            logger.info(f"POST favorites - user_id: {user_id}, product_id: {product_id}")
 
-            print(f"POST /customer-favorites/ - raw user/customer: {request.data.get('customer')}, header: {request.headers.get('X-User-Id')}, resolved user_id: {user_id}, product_id: {product_id}")
-
+            # Validate required fields
             if not user_id:
-                return Response({"success": False, "message": "Customer ID required"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    "success": False, 
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             if not product_id:
-                return Response({"success": False, "message": "Product ID required"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    "success": False, 
+                    "message": "Product ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Fetch user
-            user = None
+            # Get user
+            user = self.get_user_object(user_id)
+            if not user:
+                return Response({
+                    "success": False, 
+                    "message": f"User not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get or create customer profile
+            customer = self.get_customer_from_user(user)
+
+            # Validate product exists and has at least one active variant
             try:
-                user = User.objects.get(id=user_id)
-                print(f"User found by id: {user.id}")
-            except User.DoesNotExist:
-                # try fallback lookups
-                try:
-                    user = User.objects.get(username=user_id)
-                    print(f"User found by username fallback: {user.id}")
-                except User.DoesNotExist:
-                    try:
-                        user = User.objects.get(email=user_id)
-                        print(f"User found by email fallback: {user.id}")
-                    except User.DoesNotExist:
-                        print(f"User {user_id} not found")
-                        return Response({"success": False, "message": f"User {user_id} not found"}, status=status.HTTP_404_NOT_FOUND)
-
-            # Ensure customer profile exists
-            customer, created = Customer.objects.get_or_create(customer=user)
-            if created:
-                print(f"Created customer profile for user {user_id}")
-            else:
-                print(f"Customer profile found for user {user_id}")
-
-            # Ensure product exists
-            try:
-                product = Product.objects.get(id=product_id)
+                product = Product.objects.prefetch_related('variants').get(id=product_id)
+                
+                # Check if product has active variants (following the rule)
+                active_variants = product.variants.filter(is_active=True)
+                if not active_variants.exists():
+                    return Response({
+                        "success": False,
+                        "message": "Product is not available (no active variants)"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
             except Product.DoesNotExist:
-                print(f"Product {product_id} not found")
-                return Response({"success": False, "message": f"Product {product_id} not found"}, status=status.HTTP_404_NOT_FOUND)
+                logger.warning(f"Product not found: {product_id}")
+                return Response({
+                    "success": False, 
+                    "message": f"Product not found"
+                }, status=status.HTTP_404_NOT_FOUND)
 
-            if Favorites.objects.filter(customer=customer, product=product).exists():
-                return Response({"success": False, "message": "Already favorited"}, status=status.HTTP_400_BAD_REQUEST)
+            # Check if already favorited
+            existing_favorite = Favorites.objects.filter(
+                customer=customer, 
+                product=product
+            ).first()
+            
+            if existing_favorite:
+                return Response({
+                    "success": False, 
+                    "message": "Product is already in favorites",
+                    "favorite_id": existing_favorite.id
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-            favorite = Favorites.objects.create(customer=customer, product=product)
-            print(f"Favorite created: {favorite.id} for product {product.id} and customer {customer.customer.id}")
-
-            serializer = FavoritesSerializer(favorite)
-            return Response({"success": True, "favorite": serializer.data}, status=status.HTTP_201_CREATED)
-
+            # Create favorite
+            favorite = Favorites.objects.create(
+                customer=customer, 
+                product=product
+            )
+            
+            # Get favorite with related data for response
+            favorite_with_details = self.get_favorites_queryset(customer).get(id=favorite.id)
+            favorite_data = {
+                'id': favorite_with_details.id,
+                'product': favorite_with_details.product,
+                'customer': favorite_with_details.customer,
+                'product_details': self.get_product_details(favorite_with_details.product)
+            }
+            
+            serializer = FavoritesSerializer(favorite_data)
+            
+            logger.info(f"Favorite created: {favorite.id} for product {product.id}")
+            
+            return Response({
+                "success": True, 
+                "favorite": serializer.data,
+                "message": "Product added to favorites"
+            }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
-            print(f"Error in POST /customer-favorites/: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return Response(
-                {
-                    "success": False,
-                    "message": str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
+            logger.error(f"Error in POST favorites: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": "An error occurred while adding to favorites",
+                "error": str(e) if settings.DEBUG else None
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, pk=None):
-        """Remove a product from customer favorites"""
+        """Remove a product from favorites"""
         try:
-            # Get customer ID from request body or header
-            user_id = request.data.get("customer") or request.headers.get('X-User-Id') or request.GET.get('userId')
+            # Get user ID from various sources
+            user_id = self.get_user_from_request(request)
             product_id = pk or request.data.get("product")
-
-            # Normalize if objects were passed
-            if isinstance(user_id, dict):
-                user_id = user_id.get('id') or user_id.get('user_id')
+            
+            # Normalize product ID if it's an object
             if isinstance(product_id, dict):
                 product_id = product_id.get('id') or product_id.get('product')
             
+            logger.info(f"DELETE favorites - user_id: {user_id}, product_id: {product_id}")
+            
+            # Validate required fields
             if not user_id:
-                return Response({"success": False, "message": "Customer ID required"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    "success": False, 
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
             
             if not product_id:
-                return Response({"success": False, "message": "Product ID required"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    "success": False, 
+                    "message": "Product ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Fetch user (try id, username, email)
-            user = None
-            try:
-                user = User.objects.get(id=user_id)
-            except User.DoesNotExist:
-                try:
-                    user = User.objects.get(username=user_id)
-                except User.DoesNotExist:
-                    try:
-                        user = User.objects.get(email=user_id)
-                    except User.DoesNotExist:
-                        return Response({"success": False, "message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Get user
+            user = self.get_user_object(user_id)
+            if not user:
+                return Response({
+                    "success": False, 
+                    "message": "User not found"
+                }, status=status.HTTP_404_NOT_FOUND)
 
-            # Fetch or create customer profile
+            # Get customer profile
             try:
                 customer = user.customer
             except Customer.DoesNotExist:
-                return Response({"success": False, "message": "Favorite not found"}, status=status.HTTP_404_NOT_FOUND)
+                return Response({
+                    "success": False, 
+                    "message": "Favorite not found"
+                }, status=status.HTTP_404_NOT_FOUND)
 
-            # Find favorite and delete
-            favorite = Favorites.objects.filter(customer=customer, product_id=product_id).first()
+            # Find and delete favorite
+            favorite = Favorites.objects.filter(
+                customer=customer, 
+                product_id=product_id
+            ).first()
+            
             if not favorite:
-                return Response({"success": False, "message": "Favorite not found"}, status=status.HTTP_404_NOT_FOUND)
+                return Response({
+                    "success": False, 
+                    "message": "Favorite not found"
+                }, status=status.HTTP_404_NOT_FOUND)
 
+            # Store product info for logging before deletion
+            product_name = favorite.product.name if favorite.product else "Unknown"
+            
             favorite.delete()
-            print(f"Favorite removed for product {product_id} by user {user_id}")
-            return Response({"success": True, "message": "Removed from favorites"}, status=status.HTTP_200_OK)
-
+            
+            logger.info(f"Favorite removed - Product: {product_name}, User: {user_id}")
+            
+            return Response({
+                "success": True, 
+                "message": "Product removed from favorites"
+            }, status=status.HTTP_200_OK)
 
         except Exception as e:
+            logger.error(f"Error in DELETE favorites: {str(e)}", exc_info=True)
             return Response({
                 "success": False,
-                "message": str(e)
+                "message": "An error occurred while removing from favorites",
+                "error": str(e) if settings.DEBUG else None
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    def get_product_details(self, product):
+        """Helper method to get detailed product information including variants"""
+        if not product:
+            return None
             
-from django.utils import timezone
-from datetime import timedelta
-from django.db.models import Prefetch
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django.db import transaction
-from .models import Order, Shop, Checkout, CartItem, Delivery, Product, Notification
+        active_variants = product.variants.filter(is_active=True)
+        
+        return {
+            'id': product.id,
+            'name': product.name,
+            'description': product.description,
+            'condition': product.condition,
+            'shop_name': product.shop.name if product.shop else None,
+            'shop_id': product.shop.id if product.shop else None,
+            'total_variants': active_variants.count(),
+            'min_price': active_variants.aggregate(Min('price'))['price__min'],
+            'max_price': active_variants.aggregate(Max('price'))['price__max'],
+            'total_stock': active_variants.aggregate(Sum('quantity'))['quantity__sum'] or 0,
+            'variants': [
+                {
+                    'id': v.id,
+                    'title': v.title,
+                    'price': v.price,
+                    'compare_price': v.compare_price,
+                    'quantity': v.quantity,
+                    'image': v.image.url if v.image else None,
+                    'is_refundable': v.is_refundable,
+                    'refund_days': v.refund_days,
+                    'allow_swap': v.allow_swap,
+                    'swap_type': v.swap_type,
+                    'usage_period': v.usage_period,
+                    'usage_unit': v.usage_unit,
+                    'option_title': v.option_title,
+                    'option_ids': v.option_ids,
+                    'option_map': v.option_map,
+                }
+                for v in active_variants
+            ],
+            'media': [
+                {
+                    'id': m.id,
+                    'file_data': m.file_data.url if m.file_data else None,
+                    'file_type': m.file_type
+                }
+                for m in product.productmedia_set.all()
+            ],
+            'is_refundable': product.is_refundable,
+            'refund_days': product.refund_days,
+            'upload_status': product.upload_status,
+            'created_at': product.created_at,
+            'updated_at': product.updated_at
+        }
+
 
 class SellerOrderList(viewsets.ViewSet):
     
@@ -19618,7 +19837,6 @@ class SellerOrderList(viewsets.ViewSet):
                 'message': f'Error retrieving order: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-from django.shortcuts import get_object_or_404
 
 class CheckoutOrder(viewsets.ViewSet):
     @action(detail=False, methods=['GET'])
@@ -32277,7 +32495,10 @@ class HomeBoosts(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def other_users(self, request):
-        """Get all boosted products that do NOT belong to the logged-in user"""
+        """
+        Get all boosted products that are active and not owned by the current user
+        URL: /api/home-boosts/other_users/?user_id=<user_id>
+        """
         try:
             # Get logged-in user ID from request
             user_id = request.query_params.get('user_id')
@@ -32285,33 +32506,68 @@ class HomeBoosts(viewsets.ViewSet):
             if not user_id:
                 return Response({
                     'success': False,
+                    'products': [],
+                    'count': 0,
                     'message': 'user_id is required'
                 }, status=400)
             
             # Get current time
             now = timezone.now()
             
-            # Get active boosts excluding user's products
+            # SIMPLE QUERY: Just get active boosts (don't filter by end_date since they're all in the past)
             boosts = Boost.objects.filter(
-                status='active',
-                end_date__gt=now
+                status='active'
             ).exclude(
-                product__customer__customer__id=user_id
-            ).select_related('product', 'product__customer__customer', 'boost_plan')[:20]
+                customer__customer__id=user_id
+            ).select_related(
+                'product',
+                'boost_plan',
+                'customer__customer'
+            )[:20]
+            
+            print(f"Found {boosts.count()} active boosts for other users")
             
             # Build response
             boosted_products = []
             for boost in boosts:
                 product = boost.product
-                seller = product.customer.customer if product.customer else None
+                if not product:
+                    continue
+                
+                # Get seller info - CORRECTED: Customer model uses customer field as PK
+                seller = None
+                if boost.customer and boost.customer.customer:
+                    seller = boost.customer.customer
+                
+                # Get product price
+                product_price = 0
+                try:
+                    # Try to get min price from variants
+                    min_price_variant = product.variants.filter(
+                        is_active=True,
+                        price__isnull=False
+                    ).order_by('price').first()
+                    if min_price_variant and min_price_variant.price:
+                        product_price = float(min_price_variant.price)
+                except:
+                    pass
+                
+                # Calculate days remaining (handle past dates)
+                days_remaining = 0
+                if boost.end_date and boost.end_date > now:
+                    days_remaining = (boost.end_date - now).days
                 
                 boosted_products.append({
                     'product_id': str(product.id),
                     'product_name': product.name,
-                    'product_price': float(product.price),
-                    'seller_username': seller.username if seller else None,
-                    'boost_plan': boost.boost_plan.name if boost.boost_plan else 'Unknown',
-                    'days_remaining': (boost.end_date - now).days
+                    'product_price': product_price,
+                    'seller_username': seller.username if seller else 'Unknown Seller',
+                    'seller_id': str(seller.id) if seller else None,
+                    'boost_plan': boost.boost_plan.name if boost.boost_plan else 'Standard Boost',
+                    'boost_plan_id': str(boost.boost_plan.id) if boost.boost_plan else None,
+                    'days_remaining': days_remaining,
+                    'boost_id': str(boost.id),
+                    'product_image': self._get_product_image(product),
                 })
             
             return Response({
@@ -32319,17 +32575,73 @@ class HomeBoosts(viewsets.ViewSet):
                 'products': boosted_products,
                 'count': len(boosted_products),
                 'message': 'Success'
+            }, status=200)
+            
+        except Exception as e:
+            print(f"Error in home boosts: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                'success': False,
+                'products': [],
+                'count': 0,
+                'message': str(e)
+            }, status=500)
+    
+    def _get_product_image(self, product):
+        """Helper to get product image URL"""
+        try:
+            first_media = product.productmedia_set.first()
+            if first_media and first_media.file_data:
+                from api.utils.storage_utils import convert_s3_to_public_url
+                return convert_s3_to_public_url(first_media.file_data.url)
+        except:
+            pass
+        return None
+    
+    @action(detail=False, methods=['get'])
+    def debug_boosts(self, request):
+        """Debug endpoint to see all boosts"""
+        try:
+            all_boosts = Boost.objects.all().select_related(
+                'product', 
+                'customer',
+                'customer__customer'
+            )
+            
+            boost_details = []
+            for boost in all_boosts:
+                # Safely get customer info
+                customer_username = None
+                customer_id = None
+                if boost.customer and boost.customer.customer:
+                    customer_username = boost.customer.customer.username
+                    customer_id = str(boost.customer.customer.id)
+                
+                boost_details.append({
+                    'id': str(boost.id),
+                    'status': boost.status,
+                    'start_date': str(boost.start_date) if boost.start_date else None,
+                    'end_date': str(boost.end_date) if boost.end_date else None,
+                    'product_id': str(boost.product.id) if boost.product else None,
+                    'product_name': boost.product.name if boost.product else None,
+                    'customer_id': customer_id,
+                    'customer_username': customer_username,
+                })
+            
+            return Response({
+                'success': True,
+                'total_boosts': all_boosts.count(),
+                'current_time': str(timezone.now()),
+                'boost_details': boost_details,
             })
             
         except Exception as e:
             return Response({
                 'success': False,
-                'message': str(e)
+                'error': str(e)
             }, status=500)
-
-
-
-
+        
 class RiderProofViewSet(viewsets.ViewSet):
     """
     ViewSet for riders to upload proof of delivery

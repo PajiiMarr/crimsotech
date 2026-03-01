@@ -228,19 +228,19 @@ const ShopHeader = ({
   onToggleExpand: () => void;
 }) => {
   return (
-    <div className="bg-white border-b p-3 flex items-center justify-between hover:bg-gray-50">
+    <div className="bg-white border-b p-3 flex items-center justify-between hover:bg-orange-50">
       <div className="flex items-center gap-3 flex-1">
         <Checkbox
           checked={allSelected}
           onCheckedChange={onSelectShop}
-          className="h-4 w-4"
+          className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
         />
         <button
           onClick={onToggleExpand}
           className="flex items-center gap-2 flex-1 text-left"
         >
-          <div className="p-1.5 bg-blue-50 rounded-md">
-            <Store className="h-4 w-4 text-blue-600" />
+          <div className="p-1.5 bg-orange-50 rounded-md">
+            <Store className="h-4 w-4 text-orange-600" />
           </div>
           <div className="flex-1">
             <h3 className="font-semibold text-sm text-gray-900">{shopName}</h3>
@@ -294,11 +294,11 @@ const CompactCartItem = ({
   };
 
   return (
-    <div className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-gray-50 transition-colors">
+    <div className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-orange-50 transition-colors">
       <Checkbox
         checked={item.selected}
         onCheckedChange={(checked) => onSelect(item.id, Boolean(checked))}
-        className="h-4 w-4"
+        className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
       />
 
       <div className="h-16 w-16 flex-shrink-0 relative">
@@ -333,7 +333,7 @@ const CompactCartItem = ({
               <button
                 onClick={handleDecrement}
                 disabled={isUpdating}
-                className="h-6 w-6 flex items-center justify-center hover:bg-gray-100 disabled:opacity-50 rounded-l"
+                className="h-6 w-6 flex items-center justify-center hover:bg-orange-100 disabled:opacity-50 rounded-l"
               >
                 <Minus className="h-3 w-3" />
               </button>
@@ -347,7 +347,7 @@ const CompactCartItem = ({
                   (item.max_available !== undefined &&
                     item.quantity >= item.max_available)
                 }
-                className="h-6 w-6 flex items-center justify-center hover:bg-gray-100 disabled:opacity-50 rounded-r"
+                className="h-6 w-6 flex items-center justify-center hover:bg-orange-100 disabled:opacity-50 rounded-r"
               >
                 <Plus className="h-3 w-3" />
               </button>
@@ -356,7 +356,7 @@ const CompactCartItem = ({
             <button
               onClick={() => onRemove(item.id)}
               disabled={isUpdating}
-              className="text-gray-400 hover:text-red-600 p-1 transition-colors disabled:opacity-50"
+              className="text-gray-400 hover:text-orange-600 p-1 transition-colors disabled:opacity-50"
               title="Remove item"
             >
               <Trash2 className="h-4 w-4" />
@@ -428,12 +428,12 @@ const ShopSection = ({
           </div>
 
           {/* Shop Summary */}
-          <div className="px-3 py-2 bg-gray-50 border-t">
+          <div className="px-3 py-2 bg-orange-50 border-t">
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-600">
                 Selected from {shopName}: {selectedItems.length} of {items.length}
               </span>
-              <span className="font-semibold">₱{selectedTotal.toFixed(2)}</span>
+              <span className="font-semibold text-orange-700">₱{selectedTotal.toFixed(2)}</span>
             </div>
           </div>
         </>
@@ -465,7 +465,7 @@ const SimpleCouponSection = ({
   return (
     <div className="border rounded-lg p-4 bg-white">
       <div className="flex items-center gap-2 mb-3">
-        <Tag className="h-4 w-4 text-blue-600" />
+        <Tag className="h-4 w-4 text-orange-600" />
         <span className="text-sm font-medium">Have a coupon?</span>
       </div>
 
@@ -475,7 +475,7 @@ const SimpleCouponSection = ({
           placeholder="Enter code"
           value={couponCode}
           onChange={(e) => setCouponCode(e.target.value)}
-          className="flex-1 text-sm border rounded px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          className="flex-1 text-sm border rounded px-3 py-2 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
           onKeyPress={(e) => e.key === "Enter" && handleApply()}
           disabled={isApplying}
         />
@@ -483,7 +483,7 @@ const SimpleCouponSection = ({
           onClick={handleApply}
           disabled={!couponCode.trim() || isApplying}
           size="sm"
-          className="bg-blue-600 hover:bg-blue-700 whitespace-nowrap"
+          className="bg-orange-500 hover:bg-orange-600 whitespace-nowrap"
         >
           {isApplying ? "Applying..." : "Apply"}
         </Button>
@@ -522,7 +522,7 @@ const SimpleOrderSummary = ({
 
         <div className="flex justify-between items-center">
           <span className="text-gray-600">Shops ({shopCount})</span>
-          <Badge variant="outline" className="text-xs">
+          <Badge variant="outline" className="text-xs border-orange-200 text-orange-700 bg-orange-50">
             Separate deliveries
           </Badge>
         </div>
@@ -530,7 +530,7 @@ const SimpleOrderSummary = ({
         {discount > 0 && (
           <div className="flex justify-between">
             <span className="text-gray-600">Discount</span>
-            <span className="text-green-600">-₱{discount.toFixed(2)}</span>
+            <span className="text-orange-600">-₱{discount.toFixed(2)}</span>
           </div>
         )}
 
@@ -543,7 +543,7 @@ const SimpleOrderSummary = ({
       <div className="border-t pt-4 mb-4">
         <div className="flex justify-between font-semibold text-base">
           <span>Total</span>
-          <span>₱{total.toFixed(2)}</span>
+          <span className="text-orange-700">₱{total.toFixed(2)}</span>
         </div>
         <div className="text-xs text-gray-500 mt-1">
           From {shopCount} {shopCount === 1 ? "shop" : "shops"}
@@ -553,7 +553,7 @@ const SimpleOrderSummary = ({
       <Button
         onClick={onProceedToCheckout}
         disabled={itemCount === 0}
-        className="w-full bg-blue-600 hover:bg-blue-700 h-10"
+        className="w-full bg-orange-500 hover:bg-orange-600 h-10"
       >
         <Package className="h-4 w-4 mr-2" />
         Proceed to Checkout ({itemCount})
@@ -828,14 +828,14 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   <>
                     <Button
                       onClick={() => navigate("/login")}
-                      className="w-full bg-blue-600 hover:bg-blue-700"
+                      className="w-full bg-orange-500 hover:bg-orange-600"
                     >
                       Go to Login
                     </Button>
                     <Button
                       onClick={() => navigate("/")}
                       variant="outline"
-                      className="w-full"
+                      className="w-full border-orange-200 text-orange-600 hover:bg-orange-50"
                     >
                       Continue Shopping
                     </Button>
@@ -844,14 +844,14 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   <>
                     <Button
                       onClick={() => window.location.reload()}
-                      className="w-full bg-blue-600 hover:bg-blue-700"
+                      className="w-full bg-orange-500 hover:bg-orange-600"
                     >
                       Try Again
                     </Button>
                     <Button
                       onClick={() => navigate("/")}
                       variant="outline"
-                      className="w-full"
+                      className="w-full border-orange-200 text-orange-600 hover:bg-orange-50"
                     >
                       Continue Shopping
                     </Button>
@@ -878,14 +878,14 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   return (
     <UserProvider user={safeUser}>
       <SidebarLayout>
-        <div className="w-full min-h-screen bg-gray-50">
-          <div className="w-full p-4 lg:p-6">
+        <div className="w-full min-h-screen">
+          <div className="w-full">
             {/* Header */}
             <div className="mb-6 w-full">
               <div className="flex items-center justify-between w-full">
                 <div>
                   <h1 className="text-xl lg:text-2xl font-bold flex items-center gap-2">
-                    <ShoppingCart className="h-5 w-5 lg:h-6 lg:w-6" />
+                    <ShoppingCart className="h-5 w-5 lg:h-6 lg:w-6 text-orange-500" />
                     Shopping Cart ({cartItems.length})
                   </h1>
                   <p className="text-sm text-gray-500 mt-1">
@@ -898,7 +898,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                     variant="ghost"
                     size="sm"
                     onClick={() => navigate("/")}
-                    className="hidden lg:flex items-center gap-1"
+                    className="hidden lg:flex items-center gap-1 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
                   >
                     <ArrowLeft className="h-4 w-4" />
                     Continue Shopping
@@ -909,8 +909,8 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
 
             {cartItems.length === 0 ? (
               <div className="w-full max-w-2xl mx-auto text-center py-12 lg:py-16">
-                <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gray-100 flex items-center justify-center">
-                  <ShoppingCart className="h-10 w-10 text-gray-400" />
+                <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-orange-50 flex items-center justify-center">
+                  <ShoppingCart className="h-10 w-10 text-orange-400" />
                 </div>
                 <h3 className="text-lg lg:text-xl font-medium mb-2">
                   Your cart is empty
@@ -921,11 +921,15 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                 <div className="flex flex-col sm:flex-row gap-3 justify-center">
                   <Button
                     onClick={() => navigate("/")}
-                    className="bg-blue-600 hover:bg-blue-700 px-6"
+                    className="bg-orange-500 hover:bg-orange-600 px-6"
                   >
                     Start Shopping
                   </Button>
-                  <Button onClick={() => navigate(-1)} variant="outline">
+                  <Button 
+                    onClick={() => navigate(-1)} 
+                    variant="outline"
+                    className="border-orange-200 text-orange-600 hover:bg-orange-50"
+                  >
                     Go Back
                   </Button>
                 </div>
@@ -943,7 +947,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                           cartItems.every((item) => item.selected)
                         }
                         onCheckedChange={handleSelectAll}
-                        className="h-4 w-4"
+                        className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
                       />
                       <span className="text-sm font-medium">
                         Select All Items ({cartItems.length})
@@ -959,7 +963,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                         size="sm"
                         onClick={removeSelectedItems}
                         disabled={selectedItems.length === 0}
-                        className="text-sm text-red-600 hover:text-red-700 hover:bg-red-50"
+                        className="text-sm text-orange-600 hover:text-orange-700 hover:bg-orange-50"
                       >
                         <X className="h-4 w-4 mr-1" />
                         Remove Selected ({selectedItems.length})
@@ -985,7 +989,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                     <Button
                       variant="outline"
                       onClick={() => navigate("/")}
-                      className="w-full mt-4 lg:hidden"
+                      className="w-full mt-4 lg:hidden border-orange-200 text-orange-600 hover:bg-orange-50"
                     >
                       <ArrowLeft className="h-4 w-4 mr-2" />
                       Continue Shopping
@@ -1009,7 +1013,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                     {/* Additional Info */}
                     <div className="border rounded-lg p-4 bg-white">
                       <div className="flex items-center gap-2 mb-2">
-                        <Package className="h-4 w-4 text-blue-600" />
+                        <Package className="h-4 w-4 text-orange-600" />
                         <h4 className="text-sm font-medium">Multi-Shop Order</h4>
                       </div>
                       <p className="text-xs text-gray-600 mb-3">
@@ -1019,11 +1023,11 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                       <div className="space-y-1 text-xs">
                         <div className="flex justify-between">
                           <span className="text-gray-500">Shops in order:</span>
-                          <span className="font-medium">{selectedShops}</span>
+                          <span className="font-medium text-orange-700">{selectedShops}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-500">Total items:</span>
-                          <span className="font-medium">{selectedItems.length}</span>
+                          <span className="font-medium text-orange-700">{selectedItems.length}</span>
                         </div>
                       </div>
                     </div>

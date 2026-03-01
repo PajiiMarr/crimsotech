@@ -322,24 +322,24 @@ const CompactProductCard = ({
       className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col relative"
     >
       {isGift ? (
-        <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-emerald-50 border border-emerald-100 rounded-full flex items-center gap-2">
-          <Gift className="h-4 w-4 text-emerald-600" />
-          <span className="text-xs text-emerald-700 font-medium">FREE GIFT</span>
+        <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-orange-50 border border-orange-200 rounded-full flex items-center gap-2">
+          <Gift className="h-4 w-4 text-orange-600" />
+          <span className="text-xs text-orange-700 font-medium">FREE GIFT</span>
         </div>
       ) : product.open_for_swap ? (
-        <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-indigo-50 border border-indigo-100 rounded-full flex items-center gap-2">
-          <Handshake className="h-4 w-4 text-indigo-600" />
-          <span className="text-xs text-indigo-700 font-medium">Open for Swap</span>
+        <div className="absolute top-2 left-2 z-30 px-2 py-0.5 bg-orange-50 border border-orange-200 rounded-full flex items-center gap-2">
+          <Handshake className="h-4 w-4 text-orange-600" />
+          <span className="text-xs text-orange-700 font-medium">Open for Swap</span>
         </div>
       ) : null}
 
       <button
         onClick={handleFavoriteClick}
         disabled={loadingFav}
-        className="absolute top-1 right-1 z-10 p-1 bg-white rounded-full shadow-sm hover:bg-red-50 transition-colors"
+        className="absolute top-1 right-1 z-10 p-1 bg-white rounded-full shadow-sm hover:bg-orange-50 transition-colors"
         title={isFavorite ? "Remove from favorites" : "Add to favorites"}
       >
-        <Heart className={`h-4 w-4 transition-colors ${isFavorite ? 'fill-red-500 text-red-500' : 'text-gray-400'}`} />
+        <Heart className={`h-4 w-4 transition-colors ${isFavorite ? 'fill-orange-500 text-orange-500' : 'text-gray-400'}`} />
       </button>
 
       <div className="aspect-square w-full overflow-hidden bg-gray-100">
@@ -365,7 +365,7 @@ const CompactProductCard = ({
             ? product.category 
             : product.category?.name || product.category_admin?.name;
           return categoryName ? (
-            <p className="text-[10px] text-blue-600 font-medium truncate mb-1">
+            <p className="text-[10px] text-orange-600 font-medium truncate mb-1">
               {categoryName}
             </p>
           ) : null;
@@ -380,7 +380,7 @@ const CompactProductCard = ({
         <div className="mt-auto pt-1">
           <div className="flex items-center justify-between">
             {isGift ? (
-              <span className="text-sm font-bold text-emerald-600">FREE GIFT</span>
+              <span className="text-sm font-bold text-orange-600">FREE GIFT</span>
             ) : (
               <span className="text-sm font-bold text-gray-900">{priceDisplay}</span>
             )}
@@ -409,18 +409,18 @@ const CategoriesSection = ({
   const [scrollPosition, setScrollPosition] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Category colors for visual variety
+  // Category colors for visual variety - all orange shades
   const categoryColors = [
-    { bg: 'from-blue-500 to-blue-600', text: 'text-blue-700', light: 'bg-blue-50' },
-    { bg: 'from-purple-500 to-purple-600', text: 'text-purple-700', light: 'bg-purple-50' },
-    { bg: 'from-pink-500 to-pink-600', text: 'text-pink-700', light: 'bg-pink-50' },
-    { bg: 'from-orange-500 to-orange-600', text: 'text-orange-700', light: 'bg-orange-50' },
-    { bg: 'from-green-500 to-green-600', text: 'text-green-700', light: 'bg-green-50' },
-    { bg: 'from-red-500 to-red-600', text: 'text-red-700', light: 'bg-red-50' },
-    { bg: 'from-indigo-500 to-indigo-600', text: 'text-indigo-700', light: 'bg-indigo-50' },
-    { bg: 'from-yellow-500 to-yellow-600', text: 'text-yellow-700', light: 'bg-yellow-50' },
-    { bg: 'from-teal-500 to-teal-600', text: 'text-teal-700', light: 'bg-teal-50' },
-    { bg: 'from-cyan-500 to-cyan-600', text: 'text-cyan-700', light: 'bg-cyan-50' },
+    { bg: 'from-orange-400 to-orange-500', text: 'text-orange-700', light: 'bg-orange-50' },
+    { bg: 'from-orange-500 to-orange-600', text: 'text-orange-700', light: 'bg-orange-100' },
+    { bg: 'from-amber-500 to-orange-500', text: 'text-amber-700', light: 'bg-amber-50' },
+    { bg: 'from-orange-600 to-orange-700', text: 'text-orange-800', light: 'bg-orange-100' },
+    { bg: 'from-orange-400 to-amber-500', text: 'text-orange-700', light: 'bg-amber-50' },
+    { bg: 'from-orange-500 to-red-400', text: 'text-orange-700', light: 'bg-orange-50' },
+    { bg: 'from-amber-600 to-orange-600', text: 'text-amber-800', light: 'bg-amber-100' },
+    { bg: 'from-orange-300 to-orange-500', text: 'text-orange-700', light: 'bg-orange-50' },
+    { bg: 'from-orange-500 to-amber-600', text: 'text-orange-700', light: 'bg-amber-50' },
+    { bg: 'from-orange-400 to-orange-600', text: 'text-orange-700', light: 'bg-orange-100' },
   ];
 
   const getCategoryColor = (index: number) => {
@@ -451,7 +451,7 @@ const CategoriesSection = ({
       {/* Header with title and actions */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg shadow-sm">
+          <div className="p-1.5 bg-gradient-to-br from-orange-400 to-orange-600 rounded-lg shadow-sm">
             <Tag className="h-4 w-4 text-white" />
           </div>
           <h2 className="text-sm font-semibold text-gray-800">Browse Categories</h2>
@@ -465,7 +465,7 @@ const CategoriesSection = ({
             variant="ghost"
             size="sm"
             onClick={() => setShowAllCategories(!showAllCategories)}
-            className="text-xs text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50"
+            className="text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-50"
           >
             {showAllCategories ? 'Show Less' : 'See All'}
             <ChevronRight className={`h-3 w-3 ml-1 transition-transform ${showAllCategories ? 'rotate-90' : ''}`} />
@@ -480,14 +480,14 @@ const CategoriesSection = ({
           <>
             <button
               onClick={() => handleScroll('left')}
-              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-gray-200 hover:bg-gray-50 -ml-3"
+              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-gray-200 hover:bg-orange-50 -ml-3"
               aria-label="Scroll left"
             >
               <ChevronLeft className="h-4 w-4 text-gray-600" />
             </button>
             <button
               onClick={() => handleScroll('right')}
-              className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-gray-200 hover:bg-gray-50 -mr-3"
+              className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-gray-200 hover:bg-orange-50 -mr-3"
               aria-label="Scroll right"
             >
               <ChevronRight className="h-4 w-4 text-gray-600" />
@@ -512,18 +512,18 @@ const CategoriesSection = ({
               relative w-16 h-16 mx-auto rounded-2xl mb-1.5 flex items-center justify-center
               transition-all duration-300 transform hover:scale-105 hover:shadow-md
               ${selectedCategory === '' 
-                ? 'bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-lg' 
+                ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg' 
                 : 'bg-gradient-to-br from-gray-100 to-gray-200 text-gray-700 hover:from-gray-200 hover:to-gray-300'
               }
             `}>
               <ShoppingBag className="h-6 w-6" />
               {selectedCategory === '' && (
-                <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full border-2 border-white"></div>
               )}
             </div>
             <span className={`
               text-xs font-medium block whitespace-normal break-words max-w-[70px] leading-tight
-              ${selectedCategory === '' ? 'text-indigo-700' : 'text-gray-600'}
+              ${selectedCategory === '' ? 'text-orange-700' : 'text-gray-600'}
             `}>
               All
             </span>
@@ -560,7 +560,7 @@ const CategoriesSection = ({
                     {cat.name.charAt(0).toUpperCase()}
                   </span>
                   {active && (
-                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
+                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full border-2 border-white"></div>
                   )}
                 </div>
                 <span className={`
@@ -586,7 +586,7 @@ const CategoriesSection = ({
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowAllCategories(true)}
-                  className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 p-0"
+                  className="w-10 h-10 rounded-full bg-gray-100 hover:bg-orange-100 p-0"
                 >
                   <span className="text-lg font-bold text-gray-600">+</span>
                 </Button>
@@ -602,7 +602,7 @@ const CategoriesSection = ({
       {/* Active category indicator */}
       {selectedCategory && (
         <div className="mt-3 flex items-center gap-2">
-          <Badge className="bg-indigo-100 text-indigo-800 hover:bg-indigo-200 border-0">
+          <Badge className="bg-orange-100 text-orange-800 hover:bg-orange-200 border-0">
             Active filter: {categories.find(c => c.id === selectedCategory)?.name}
           </Badge>
           <button
@@ -960,7 +960,7 @@ export default function Home({ loaderData }: any) {
             <Button
               onClick={handleManualShowHotItems}
               disabled={manualTriggerLoading}
-              className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-0.5"
+              className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-0.5"
             >
               {manualTriggerLoading ? (
                 <>
@@ -971,7 +971,7 @@ export default function Home({ loaderData }: any) {
                 <>
                   <div className="relative">
                     <Flame className="h-5 w-5 animate-pulse" />
-                    <div className="absolute -top-1 -right-1 h-2 w-2 bg-red-400 rounded-full animate-ping"></div>
+                    <div className="absolute -top-1 -right-1 h-2 w-2 bg-orange-400 rounded-full animate-ping"></div>
                   </div>
                   <span className="font-semibold">🔥 Show Hot Items</span>
                 </>
@@ -1025,13 +1025,13 @@ export default function Home({ loaderData }: any) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setViewMode('all')}
-                  className={`px-3 py-1 text-xs rounded ${viewMode === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                  className={`px-3 py-1 text-xs rounded ${viewMode === 'all' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-700'}`}
                 >
                   All
                 </button>
                 <button
                   onClick={() => setViewMode('gifts')}
-                  className={`px-3 py-1 text-xs rounded ${viewMode === 'gifts' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                  className={`px-3 py-1 text-xs rounded ${viewMode === 'gifts' ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-700'}`}
                 >
                   Gifts
                 </button>
@@ -1096,7 +1096,7 @@ export default function Home({ loaderData }: any) {
                 {searchTerm && (
                   <button
                     onClick={() => setSearchTerm("")}
-                    className="mt-2 text-xs text-blue-600 hover:text-blue-700"
+                    className="mt-2 text-xs text-orange-600 hover:text-orange-700"
                   >
                     Clear search
                   </button>
@@ -1109,8 +1109,8 @@ export default function Home({ loaderData }: any) {
         {/* Attractive Hot Items Modal */}
         <Dialog open={showHotItemsModal} onOpenChange={setShowHotItemsModal}>
           <DialogContent className="sm:max-w-xl max-h-[80vh] overflow-y-auto border-0 shadow-2xl">
-            {/* Gradient header */}
-            <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-6 rounded-t-lg">
+            {/* Gradient header - orange shades */}
+            <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white p-6 rounded-t-lg">
               <DialogHeader className="text-white">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -1137,7 +1137,7 @@ export default function Home({ loaderData }: any) {
                 </div>
               ) : hotItems.length === 0 ? (
                 <div className="text-center py-12">
-                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-orange-100 to-red-100 flex items-center justify-center">
+                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center">
                     <Package className="h-10 w-10 text-orange-500" />
                   </div>
                   <h3 className="text-xl font-bold text-gray-800 mb-2">No Hot Items Yet</h3>
@@ -1157,17 +1157,17 @@ export default function Home({ loaderData }: any) {
                           setShowHotItemsModal(false);
                         }}
                       >
-                        {/* Hot badge */}
+                        {/* Hot badge - orange */}
                         <div className="absolute -top-2 -left-2">
-                          <Badge className="bg-gradient-to-r from-orange-500 to-red-500 text-white border-0 shadow-lg px-3 py-1">
+                          <Badge className="bg-gradient-to-r from-orange-500 to-orange-600 text-white border-0 shadow-lg px-3 py-1">
                             <Zap className="h-3 w-3 mr-1" />
                             BOOSTED
                           </Badge>
                         </div>
                         
-                        {/* Days remaining indicator */}
+                        {/* Days remaining indicator - orange theme */}
                         <div className="absolute -top-2 -right-2">
-                          <div className="bg-blue-50 text-blue-700 text-xs font-medium px-2 py-1 rounded-full border border-blue-200">
+                          <div className="bg-orange-50 text-orange-700 text-xs font-medium px-2 py-1 rounded-full border border-orange-200">
                             {item.days_remaining} days left
                           </div>
                         </div>
@@ -1205,8 +1205,8 @@ export default function Home({ loaderData }: any) {
                     ))}
                   </div>
                   
-                  {/* Summary */}
-                  <div className="bg-gradient-to-r from-orange-50 to-red-50 rounded-lg p-4 border border-orange-100">
+                  {/* Summary - orange gradient */}
+                  <div className="bg-gradient-to-r from-orange-50 to-orange-100 rounded-lg p-4 border border-orange-200">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-gray-600">Showing <span className="font-bold text-orange-600">{hotItems.length}</span> boosted products</p>
@@ -1241,13 +1241,13 @@ export default function Home({ loaderData }: any) {
                   <Button
                     variant="outline"
                     onClick={handleDontShowAgain}
-                    className="border-gray-300 hover:bg-gray-50 text-gray-700"
+                    className="border-gray-300 hover:bg-orange-50 text-gray-700"
                   >
                     Don't show again
                   </Button>
                   <Button 
                     onClick={() => setShowHotItemsModal(false)}
-                    className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg"
+                    className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg"
                   >
                     Got it!
                   </Button>

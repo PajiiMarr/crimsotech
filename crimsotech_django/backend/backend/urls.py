@@ -8,6 +8,7 @@ from django.conf import settings
 router = DefaultRouter()
 
 router.register(r'landing', Landing, basename='landing')
+router.register(r'user', FetchUser, basename='user')
 
 router.register(r'verify', VerifyNumber, basename='verify')
 router.register(r'rider', RiderRegistration, basename='rider')

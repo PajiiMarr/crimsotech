@@ -1,3 +1,4 @@
+// app/sessions.server.ts
 import { createCookieSessionStorage } from "react-router";
 
 type SessionData = {
@@ -6,7 +7,15 @@ type SessionData = {
   registration_stage: number;
   isCustomer: boolean;
   isRider: boolean;
+  isAdmin: boolean;
+  isModerator: boolean;
   shopId?: string;
+  
+  // User profile data - store basic info in session
+  username?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
 };
 
 type SessionFlashData = {
@@ -18,9 +27,8 @@ const { getSession, commitSession, destroySession } =
     {
       cookie: {
         name: "__session",
-        // domain: "reactrouter.com", // ❌ REMOVE THIS LINE
         httpOnly: true,
-        maxAge: 60 * 60 * 24 * 7, // Also increased to 1 week (was 60 seconds!)
+        maxAge: 60 * 60 * 24 * 7, // 1 week
         path: "/",
         sameSite: "lax",
         secrets: ["s3cret1"],
