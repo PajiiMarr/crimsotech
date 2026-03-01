@@ -33,30 +33,31 @@ interface Gift {
   id: string
   name: string
   description: string
-  price?: string | number
-  stock: number
-  stock_status?: string
-  image_url: string
+  total_stock: number
   status: 'active' | 'inactive' | 'draft'
-  condition: 'new' | 'used' | 'refurbished'
+  upload_status: 'draft' | 'published' | 'archived'
+  condition: string
   category: {
     id: string
     name: string
   } | null
+  category_admin: {
+    id: string
+    name: string
+  } | null
+  variants: Array<{
+    id: string
+    title: string
+    quantity: number
+    sku_code?: string
+    critical_trigger?: number
+    is_active: boolean
+    image?: string | null
+  }>
   created_at: string
   updated_at: string
-}
-
-interface GiftListResponse {
-  success: boolean
-  gifts: Gift[]
-  message: string
-  data_source: string
-  gift_limit_info?: {
-    current_count: number
-    limit: number
-    remaining: number
-  }
+  is_removed?: boolean
+  removal_reason?: string
 }
 
 // Add loader function to get session data
@@ -110,7 +111,7 @@ export default function SellerGiftList() {
     try {
       // Add your delete API call here
       console.log('Delete gift:', giftId)
-      // await AxiosInstance.delete(`/seller-gifts/${giftId}/`)
+      // await AxiosInstance.delete(`/seller-products/${giftId}/`)
       
       // Remove gift from local state
       setGifts(prev => prev.filter(g => g.id !== giftId))
@@ -139,31 +140,64 @@ export default function SellerGiftList() {
 
       setLoading(true)
       try {
+        console.log('Fetching gifts for user:', userId)
         const response = await AxiosInstance.get('/seller-products/', {
-          params: { customer_id: userId, shop_id: shopId }
+          params: { customer_id: userId }
         })
 
-        if (response.data && response.data.success) {
-          const zeroPriced = (response.data.products || []).filter((p: any) => {
-            const price = parseFloat(p.price || '0')
-            return !isNaN(price) && price === 0
-          }).map((p: any) => ({
-            id: p.id || String(p.id),
-            name: p.name,
-            description: p.description,
-            price: p.price ?? p.sku_price ?? '0',
-            stock: p.quantity ?? p.total_sku_quantity ?? 0,
-            stock_status: p.stock_status || ((Number(p.quantity ?? p.total_sku_quantity ?? 0) === 0) ? 'out_of_stock' : 'in_stock'),
-            image_url: null,
-            status: p.status,
-            condition: p.condition,
-            category: p.category || p.category_admin || null,
-            created_at: p.created_at,
-            updated_at: p.updated_at
-          }))
+        console.log('API Full Response:', response.data)
 
+        if (response.data && response.data.success) {
+          console.log('Products received:', response.data.products)
+          
+          // Filter products with price = 0 (gifts)
+          const zeroPriced = (response.data.products || []).filter((p: any) => {
+            // Check different possible price fields
+            const price = parseFloat(p.price || p.starting_price || '0')
+            console.log(`Product ${p.name}: price=${price}, starting_price=${p.starting_price}`)
+            return !isNaN(price) && price === 0
+          }).map((p: any) => {
+            console.log('Processing gift:', p)
+            
+            // Calculate total stock from variants
+            let totalStock = 0
+            if (p.variants && Array.isArray(p.variants)) {
+              totalStock = p.variants.reduce((sum: number, v: any) => {
+                return sum + (parseInt(v.quantity) || 0)
+              }, 0)
+            } else if (p.total_stock) {
+              totalStock = parseInt(p.total_stock) || 0
+            } else if (p.quantity) {
+              totalStock = parseInt(p.quantity) || 0
+            }
+            
+            return {
+              id: p.id,
+              name: p.name,
+              description: p.description,
+              total_stock: totalStock,
+              status: p.status || 'active',
+              upload_status: p.upload_status || 'draft',
+              condition: p.condition || 'New',
+              category: p.category || null,
+              category_admin: p.category_admin || null,
+              variants: p.variants || [],
+              created_at: p.created_at,
+              updated_at: p.updated_at,
+              is_removed: p.is_removed,
+              removal_reason: p.removal_reason
+            }
+          })
+
+          console.log('Final filtered gifts:', zeroPriced)
           setGifts(zeroPriced)
+          
+          // Set gift limit info if available
+          if (response.data.product_limit_info) {
+            setGiftLimitInfo(response.data.product_limit_info)
+          }
         } else {
+          console.log('API returned success false or no products')
           setGifts([])
         }
       } catch (error) {
@@ -182,7 +216,7 @@ export default function SellerGiftList() {
       const newStatus = currentStatus === 'active' ? 'inactive' : 'active'
       // Add your status update API call here
       console.log('Toggle status:', giftId, newStatus)
-      // await AxiosInstance.patch(`/seller-gifts/${giftId}/`, { status: newStatus })
+      // await AxiosInstance.patch(`/seller-products/${giftId}/`, { status: newStatus })
       
       // Update local state
       setGifts(prev => prev.map(g => 
@@ -194,28 +228,31 @@ export default function SellerGiftList() {
     }
   }
 
-  const formatPoints = (points: number) => {
-    return new Intl.NumberFormat('en-US').format(points) + ' pts'
-  }
-
-  // Format price as PHP currency
-  const formatPrice = (price?: string | number) => {
+  const handleToggleUploadStatus = async (giftId: string, currentStatus: string) => {
     try {
-      const n = parseFloat(String(price ?? '0')) || 0
-      return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n)
-    } catch {
-      return '₱0.00'
+      const newStatus = currentStatus === 'published' ? 'draft' : 'published'
+      // Add your status update API call here
+      console.log('Toggle upload status:', giftId, newStatus)
+      // await AxiosInstance.patch(`/seller-products/${giftId}/`, { upload_status: newStatus })
+      
+      // Update local state
+      setGifts(prev => prev.map(g => 
+        g.id === giftId ? { ...g, upload_status: newStatus as Gift['upload_status'] } : g
+      ))
+    } catch (error) {
+      console.error('Error updating gift upload status:', error)
+      alert('Failed to update gift upload status')
     }
   }
 
-  const getStockStatusBadge = (stock: number, stock_status?: string) => {
-    const s = (stock_status || (stock === 0 ? 'out_of_stock' : 'in_stock')).toLowerCase()
-    if (s === 'out_of_stock' || s === 'outofstock' || s === 'out-of-stock') return <Badge variant="destructive">Out of Stock</Badge>
-    if (s === 'low_stock' || s === 'lowstock') return <Badge variant="outline" className="text-orange-600">Low Stock</Badge>
-    return <Badge variant="default">In Stock</Badge>
+  const getStockStatusBadge = (stock: number) => {
+    if (stock === 0) return <Badge variant="destructive">Out of Stock</Badge>
+    if (stock < 10) return <Badge variant="outline" className="text-orange-600 border-orange-200 bg-orange-50">Low Stock ({stock})</Badge>
+    return <Badge variant="default" className="bg-green-600">In Stock ({stock})</Badge>
   }
 
   const formatDate = (dateString: string) => {
+    if (!dateString) return 'N/A'
     return new Date(dateString).toLocaleDateString('en-PH', {
       year: 'numeric',
       month: 'short',
@@ -224,14 +261,13 @@ export default function SellerGiftList() {
   }
 
   const getStatusBadge = (status: string) => {
-    const statusConfig = {
-      active: { variant: "default" as const, label: "Active" },
-      inactive: { variant: "secondary" as const, label: "Inactive" },
-      draft: { variant: "outline" as const, label: "Draft" }
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
+      active: { variant: "default", label: "Active" },
+      inactive: { variant: "secondary", label: "Inactive" },
+      draft: { variant: "outline", label: "Draft" }
     }
 
-    const config = statusConfig[status as keyof typeof statusConfig] || 
-                   { variant: "outline" as const, label: status }
+    const config = statusConfig[status] || { variant: "outline", label: status }
 
     return (
       <Badge variant={config.variant} className="capitalize">
@@ -240,15 +276,14 @@ export default function SellerGiftList() {
     )
   }
 
-  const getConditionBadge = (condition: string) => {
-    const conditionConfig = {
-      new: { variant: "default" as const, label: "New" },
-      used: { variant: "secondary" as const, label: "Used" },
-      refurbished: { variant: "outline" as const, label: "Refurbished" }
+  const getUploadStatusBadge = (status: string) => {
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
+      published: { variant: "default", label: "Published" },
+      draft: { variant: "secondary", label: "Draft" },
+      archived: { variant: "outline", label: "Archived" }
     }
 
-    const config = conditionConfig[condition as keyof typeof conditionConfig] || 
-                   { variant: "outline" as const, label: condition }
+    const config = statusConfig[status] || { variant: "outline", label: status }
 
     return (
       <Badge variant={config.variant} className="capitalize">
@@ -258,7 +293,7 @@ export default function SellerGiftList() {
   }
 
   const getCategoryName = (gift: Gift) => {
-    return gift.category?.name || 'No Category'
+    return gift.category?.name || gift.category_admin?.name || 'No Category'
   }
 
   // Define columns for the data table
@@ -268,12 +303,14 @@ export default function SellerGiftList() {
       header: "Gift",
       cell: ({ row }) => {
         const gift = row.original
+        // Get first variant image if available
+        const variantImage = gift.variants?.find(v => v.image)?.image
         return (
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center overflow-hidden">
-              {gift.image_url ? (
+              {variantImage ? (
                 <img 
-                  src={gift.image_url} 
+                  src={variantImage} 
                   alt={gift.name}
                   className="h-full w-full object-cover"
                 />
@@ -284,7 +321,7 @@ export default function SellerGiftList() {
             <div className="min-w-0 flex-1">
               <div className="font-medium truncate">{gift.name}</div>
               <div className="text-xs text-muted-foreground truncate max-w-xs">
-                {gift.description}
+                {gift.description?.substring(0, 60)}{gift.description?.length > 60 ? '...' : ''}
               </div>
             </div>
           </div>
@@ -297,47 +334,39 @@ export default function SellerGiftList() {
       cell: ({ row }) => {
         const gift = row.original
         return (
-          <Badge variant="outline">
+          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
             {getCategoryName(gift)}
           </Badge>
         )
       },
     },
     {
-      accessorKey: "price",
-      header: "Price",
+      accessorKey: "total_stock",
+      header: "Total Stock",
       cell: ({ row }) => {
+        const stock = row.original.total_stock
+        console.log('Rendering stock for', row.original.name, ':', stock)
         return (
-          <div className="text-right font-medium">
-            {formatPrice(row.original.price)}
-          </div>
-        )
-      },
-    },
-    {
-      accessorKey: "stock",
-      header: "Stock",
-      cell: ({ row }) => {
-        const stock = row.original.stock
-        return (
-          <div className={`text-right ${stock === 0 ? 'text-red-600 font-medium' : ''}`}>
+          <div className={`text-center font-medium ${stock === 0 ? 'text-red-600' : ''}`}>
             {stock}
           </div>
         )
       },
     },
-    {
-      accessorKey: "stock_status",
-      header: "Stock Status",
-      cell: ({ row }) => {
-        return getStockStatusBadge(row.original.stock, row.original.stock_status)
-      },
-    },
+   
     {
       accessorKey: "status",
       header: "List Status",
       cell: ({ row }) => {
         return getStatusBadge(row.original.status)
+      },
+    },
+    {
+      accessorKey: "upload_status",
+      header: "Upload Status",
+      cell: ({ row }) => {
+        console.log('Rendering upload status for', row.original.name, ':', row.original.upload_status)
+        return getUploadStatusBadge(row.original.upload_status)
       },
     },
     {
@@ -347,63 +376,66 @@ export default function SellerGiftList() {
         return formatDate(row.original.created_at)
       },
     },
-    // In your seller-gift.tsx, update the actions column cell:
-{
-  id: "actions",
-  header: "Actions",
-  cell: ({ row }) => {
-    const gift = row.original
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="h-8 w-8 p-0">
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-          <DropdownMenuItem onClick={() => handleViewGift(gift.id)}>
-            <Eye className="h-4 w-4 mr-2" />
-            View Gift
-          </DropdownMenuItem>
-          {/* UPDATE THIS PART - Remove the asChild and use onClick */}
-          <DropdownMenuItem onClick={() => window.location.href = `/seller/apply-gift?giftId=${gift.id}`}>
-            <Award className="h-4 w-4 mr-2" />
-            Apply Gift
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => handleEditGift(gift.id)}>
-            <Edit className="h-4 w-4 mr-2" />
-            Edit Gift
-          </DropdownMenuItem>
-          <DropdownMenuItem 
-            onClick={() => handleToggleStatus(gift.id, gift.status)}
-          >
-            {gift.status === 'active' ? 'Deactivate' : 'Activate'}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem 
-            onClick={() => handleDeleteGift(gift.id)}
-            className="text-red-600 focus:text-red-600"
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete Gift
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    )
-  },
-}
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => {
+        const gift = row.original
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="h-8 w-8 p-0">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => handleViewGift(gift.id)}>
+                <Eye className="h-4 w-4 mr-2" />
+                View Gift
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => window.location.href = `/seller/apply-gift?giftId=${gift.id}`}>
+                <Award className="h-4 w-4 mr-2" />
+                Apply Gift
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleEditGift(gift.id)}>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Gift
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => handleToggleUploadStatus(gift.id, gift.upload_status)}
+              >
+                {gift.upload_status === 'published' ? 'Unpublish' : 'Publish'}
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => handleToggleStatus(gift.id, gift.status)}
+              >
+                {gift.status === 'active' ? 'Deactivate' : 'Activate'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                onClick={() => handleDeleteGift(gift.id)}
+                className="text-red-600 focus:text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Gift
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      },
+    },
   ]
 
   // Configuration for filters
   const filterConfig = {
+    upload_status: {
+      options: ["published", "draft", "archived"],
+      placeholder: "Upload Status"
+    },
     status: {
       options: ["active", "inactive", "draft"],
-      placeholder: "Status"
-    },
-    condition: {
-      options: ["new", "used", "refurbished"],
-      placeholder: "Condition"
+      placeholder: "List Status"
     }
   }
 
@@ -413,7 +445,10 @@ export default function SellerGiftList() {
         <div className="p-6">
           <Card>
             <CardContent className="p-6">
-              <div className="text-center">Loading gifts...</div>
+              <div className="text-center py-8">
+                <div className="animate-spin h-8 w-8 border-4 border-purple-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Loading gifts...</p>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -432,7 +467,7 @@ export default function SellerGiftList() {
               Manage your loyalty program gifts and rewards
             </p>
           </div>
-          <Button asChild className="bg-blue-600 hover:bg-blue-700">
+          <Button asChild className="bg-purple-600 hover:bg-purple-700">
             <Link to="/seller/seller-create-gift">
               <Plus className="h-4 w-4 mr-2" />
               Add Gift
@@ -440,10 +475,8 @@ export default function SellerGiftList() {
           </Button>
         </div>
 
-
-
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
@@ -451,8 +484,8 @@ export default function SellerGiftList() {
                   <div className="text-2xl font-bold">{gifts.length}</div>
                   <div className="text-sm text-muted-foreground">Total Gifts</div>
                 </div>
-                <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                  <Gift className="h-5 w-5 text-blue-600" />
+                <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
+                  <Gift className="h-5 w-5 text-purple-600" />
                 </div>
               </div>
             </CardContent>
@@ -464,7 +497,7 @@ export default function SellerGiftList() {
                   <div className="text-2xl font-bold text-green-600">
                     {gifts.filter(g => g.status === 'active').length}
                   </div>
-                  <div className="text-sm text-muted-foreground">Active Gifts</div>
+                  <div className="text-sm text-muted-foreground">Active</div>
                 </div>
                 <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center">
                   <Award className="h-5 w-5 text-green-600" />
@@ -476,8 +509,23 @@ export default function SellerGiftList() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
+                  <div className="text-2xl font-bold text-blue-600">
+                    {gifts.filter(g => g.upload_status === 'published').length}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Published</div>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                  <Eye className="h-5 w-5 text-blue-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
                   <div className="text-2xl font-bold text-orange-600">
-                    {gifts.filter(g => g.stock === 0).length}
+                    {gifts.filter(g => g.total_stock === 0).length}
                   </div>
                   <div className="text-sm text-muted-foreground">Out of Stock</div>
                 </div>
@@ -489,13 +537,15 @@ export default function SellerGiftList() {
           </Card>
         </div>
 
+       
+
         {/* Gifts Data Table */}
         <Card>
           <CardHeader>
             <CardTitle>Gifts</CardTitle>
             <CardDescription>
               {gifts.length} gift{gifts.length !== 1 ? 's' : ''} found
-              {giftLimitInfo && ` • ${giftLimitInfo.remaining} gifts remaining`}
+              {giftLimitInfo && ` • ${giftLimitInfo.remaining} slots remaining`}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -513,19 +563,33 @@ export default function SellerGiftList() {
                   <Link to="/seller/shops">Select a Shop</Link>
                 </Button>
               </div>
+            ) : gifts.length === 0 ? (
+              <div className="text-center py-12">
+                <Gift className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-medium mb-2">No gifts found</h3>
+                <p className="text-muted-foreground mb-4">
+                  You haven't created any gifts yet. Gifts are products with price set to 0.
+                </p>
+                <Button asChild className="bg-purple-600 hover:bg-purple-700">
+                  <Link to="/seller/seller-create-gift">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Your First Gift
+                  </Link>
+                </Button>
+              </div>
             ) : (
               <DataTable
                 columns={columns}
                 data={gifts}
                 searchConfig={{
                   column: "name",
-                  placeholder: "Search gifts by name, description, or category..."
+                  placeholder: "Search gifts by name..."
                 }}
                 filterConfig={filterConfig}
                 defaultSorting={[
                   {
                     id: "created_at",
-                    desc: true, // Sort by newest first
+                    desc: true,
                   },
                 ]}
               />
