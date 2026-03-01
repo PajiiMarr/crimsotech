@@ -15,17 +15,19 @@ python manage.py collectstatic --noinput || true
 echo ">>> starting server with WebSocket support"
 echo ">>> Redis URL: ${REDIS_URL}"
 
-# Use Gunicorn with Uvicorn workers for best WebSocket performance
+# Set Django settings module explicitly
+export DJANGO_SETTINGS_MODULE=backend.settings
+
+# Use Gunicorn with Uvicorn workers
 exec gunicorn backend.asgi:application \
   -k uvicorn.workers.UvicornWorker \
   --bind "0.0.0.0:${PORT:-8000}" \
-  --workers ${WEB_CONCURRENCY:-2} \
-  --threads ${WEB_THREADS:-2} \
+  --workers ${WEB_CONCURRENCY:-1} \
+  --threads 1 \
   --worker-connections 1000 \
   --max-requests 1000 \
   --max-requests-jitter 50 \
   --timeout 600 \
   --log-level info \
   --access-logfile - \
-  --error-logfile - \
-  --access-logformat '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
+  --error-logfile -
