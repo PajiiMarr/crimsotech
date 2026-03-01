@@ -4,10 +4,8 @@ import { Link } from "react-router";
 import { redirect, data } from "react-router";
 import { cleanInput } from '~/clean/clean';
 import AxiosInstance from '~/components/axios/Axios';
-import { useState } from 'react';
+import CreateGiftForm from '~/components/customer/seller-create-gift-form';
 import { Button } from '~/components/ui/button';
-
-// --- BACKEND/SERVER FUNCTIONS (UPDATED) ---
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -18,7 +16,6 @@ export function meta(): Route.MetaDescriptors {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  // ... (Loader content remains exactly the same) ...
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
@@ -48,16 +45,22 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
     );
 
-    const shop = shopsResponse.data.shop
-
-    const selectedShop = shop
+    const shop = shopsResponse.data.shop;
+    const selectedShop = shop;
 
     // Fetch global categories
     let globalCategories = [];
+    // Fetch model class names
+    let modelClasses: string[] = [];
     try {
-      const categoriesResponse = await AxiosInstance.get('/seller-gift/global-categories/');
+      const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
       if (categoriesResponse.data.success) {
         globalCategories = categoriesResponse.data.categories || [];
+      }
+      // Get model class names used by the classifier
+      const classesResponse = await AxiosInstance.get('/classes/');
+      if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
+        modelClasses = classesResponse.data.classes;
       }
     } catch (categoryError) {
       console.error('Failed to fetch global categories:', categoryError);
@@ -67,7 +70,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     return data({ 
       user,
       selectedShop: selectedShop,
-      globalCategories: globalCategories
+      globalCategories: globalCategories,
+      modelClasses
     }, {
       headers: {
         "Set-Cookie": await commitSession(session),
@@ -76,10 +80,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   } catch (error) {
     // Even if shops fail, try to fetch categories
     let globalCategories = [];
+    let modelClasses: string[] = [];
     try {
-      const categoriesResponse = await AxiosInstance.get('/seller-gift/global-categories/');
+      const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
       if (categoriesResponse.data.success) {
         globalCategories = categoriesResponse.data.categories || [];
+      }
+      const classesResponse = await AxiosInstance.get('/classes/');
+      if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
+        modelClasses = classesResponse.data.classes;
       }
     } catch (categoryError) {
       console.error('Failed to fetch global categories:', categoryError);
@@ -89,7 +98,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       user,
       shops: [],
       selectedShop: null,
-      globalCategories: globalCategories
+      globalCategories: globalCategories,
+      modelClasses
     }, {
       headers: {
         "Set-Cookie": await commitSession(session),
@@ -104,24 +114,17 @@ export async function action({ request }: Route.ActionArgs) {
 
   const formData = await request.formData();
 
-  console.log('this is a formdata: ', formData)
+  console.log('this is a formdata: ', formData);
 
-  // Get basic product fields
+  // Get basic gift fields
   const name = String(formData.get("name"));
   const description = String(formData.get("description"));
-  const quantity = String(formData.get("quantity"));
-  const used_for = String(formData.get("used_for") || "General use");
   const condition = String(formData.get("condition"));
-  const category_admin_id = String(formData.get("category_admin_id"));
+  const category_admin_id = String(formData.get("category_admin_id") || "");
+  const category_admin_name = String(formData.get("category_admin_name") || "");
 
-  // Get dimension fields
-  const length = formData.get("length");
-  const width = formData.get("width");
-  const height = formData.get("height");
-  const weight = formData.get("weight");
-
-  // Get critical trigger fields
-  const critical_threshold = formData.get("critical_threshold");
+  // Get critical stock trigger
+  const critical_stock = formData.get("critical_stock");
 
   // Get media files
   const media_files = formData.getAll("media_files") as File[];
@@ -129,7 +132,6 @@ export async function action({ request }: Route.ActionArgs) {
   // Clean inputs
   cleanInput(name);
   cleanInput(description);
-  cleanInput(used_for);
   cleanInput(condition);
 
   const errors: Record<string, string> = {};
@@ -151,14 +153,34 @@ export async function action({ request }: Route.ActionArgs) {
     errors.description = "Description should be at most 1000 characters";
   }
 
-  if (!quantity.trim()) {
-    errors.quantity = "Quantity is required";
-  } else if (isNaN(parseInt(quantity)) || parseInt(quantity) < 0) {
-    errors.quantity = "Please enter a valid quantity";
-  }
-
   if (!condition.trim()) {
     errors.condition = "Condition is required";
+  }
+
+  // Validate variants
+  const variantsRaw = formData.get('variants');
+  if (!variantsRaw) {
+    errors.variants = "Gifts must have at least one variant";
+  } else {
+    try {
+      const variants = JSON.parse(String(variantsRaw));
+      
+      if (!Array.isArray(variants) || variants.length === 0) {
+        errors.variants = "Gifts must have at least one variant";
+      } else {
+        // Validate each variant has required fields
+        variants.forEach((variant, index) => {
+          if (!variant.title || !variant.title.trim()) {
+            errors[`variant_${index}_title`] = "Variant title is required";
+          }
+          if (!variant.quantity || variant.quantity === '' || Number(variant.quantity) <= 0) {
+            errors[`variant_${index}_quantity`] = "Variant quantity must be greater than 0";
+          }
+        });
+      }
+    } catch (e) {
+      errors.variants = "Invalid variants format";
+    }
   }
 
   // Validate media files
@@ -191,29 +213,39 @@ export async function action({ request }: Route.ActionArgs) {
     // Append basic fields
     apiFormData.append('name', name.trim());
     apiFormData.append('description', description.trim());
-    apiFormData.append('quantity', quantity);
-    apiFormData.append('used_for', used_for.trim());
-    // Set price to 0 for gifts
-    apiFormData.append('price', '0');
     apiFormData.append('condition', condition.trim());
     apiFormData.append('shop', shop_id ?? "");
     apiFormData.append('status', "active");
     apiFormData.append('customer_id', userId);
 
-    // Add category_admin_id if provided and not "none"
-    if (category_admin_id.trim() && category_admin_id !== "none") {
-      apiFormData.append('category_admin_id', category_admin_id.trim());
+    // IMPORTANT: Set price to 0 for gifts
+    apiFormData.append('price', '0');
+    
+    // Set refundable to false for gifts
+    apiFormData.append('is_refundable', 'false');
+    apiFormData.append('refundable', 'false');
+    
+    // Set refund_days to 0
+    apiFormData.append('refund_days', '0');
+
+    // Add critical stock if provided
+    if (critical_stock) {
+      apiFormData.append('critical_stock', String(critical_stock));
     }
 
-    // Add dimension fields if provided
-    if (length) apiFormData.append('length', String(length));
-    if (width) apiFormData.append('width', String(width));
-    if (height) apiFormData.append('height', String(height));
-    if (weight) apiFormData.append('weight', String(weight));
-
-    // Add critical threshold if provided
-    if (critical_threshold) {
-      apiFormData.append('critical_threshold', String(critical_threshold));
+    // Handle category
+    if (category_admin_id.trim() && category_admin_id !== "none" && category_admin_id !== "undefined") {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(category_admin_id.trim())) {
+        apiFormData.append('category_admin_id', category_admin_id.trim());
+        console.log("Appending category_admin_id (valid UUID):", category_admin_id.trim());
+      } else {
+        apiFormData.append('category_admin_name', category_admin_id.trim());
+        console.log("Appending category_admin_name (not a UUID):", category_admin_id.trim());
+      }
+    } else if (category_admin_name.trim() && category_admin_name.toLowerCase() !== 'none') {
+      apiFormData.append('category_admin_name', category_admin_name.trim());
+      console.log("Appending category_admin_name:", category_admin_name.trim());
     }
 
     // Append media files
@@ -223,145 +255,39 @@ export async function action({ request }: Route.ActionArgs) {
       }
     });
 
-    // Handle variants - collect all variant data
-    const variantData: any[] = [];
-    
-    // Parse all form data to find variant groups and options
-    const formDataObj: Record<string, any> = {};
-    for (const [key, value] of formData.entries()) {
-      if (key.startsWith('variant_')) {
-        formDataObj[key] = value;
-      }
-    }
-
-    // Extract variant structure from form data
-    const variantGroups: Map<string, any> = new Map();
-    
-    for (const [key, value] of Object.entries(formDataObj)) {
-      const groupMatch = key.match(/^variant_group_([^_]+)_title$/);
-      if (groupMatch) {
-        const groupId = groupMatch[1];
-        if (!variantGroups.has(groupId)) {
-          variantGroups.set(groupId, {
-            title: value,
-            options: []
-          });
-        }
-      }
-
-      const optionMatch = key.match(/^variant_group_([^_]+)_option_([^_]+)_(.+)$/);
-      if (optionMatch) {
-        const groupId = optionMatch[1];
-        const optionId = optionMatch[2];
-        const field = optionMatch[3];
-
-        if (!variantGroups.has(groupId)) {
-          variantGroups.set(groupId, {
-            title: '',
-            options: []
-          });
-        }
-
-        const group = variantGroups.get(groupId);
-        let option = group.options.find((o: any) => o.id === optionId);
-        
-        if (!option) {
-          option = { id: optionId };
-          group.options.push(option);
-        }
-
-        option[field] = value;
-      }
-    }
-
-    // Convert variant groups to array format
-    if (variantGroups.size > 0) {
-      const variantsWithIds = Array.from(variantGroups.entries()).map(([groupId, group]) => ({
-        id: groupId,
-        title: group.title,
-        options: group.options.map((option: any) => ({
-          id: option.id,
-          title: option.title,
-        }))
+    // Handle variants - set price to 0 and refundable to false
+    if (variantsRaw) {
+      const variants = JSON.parse(String(variantsRaw));
+      
+      const processedVariants = variants.map((v: any) => ({
+        ...v,
+        price: 0,
+        compare_price: null,
+        is_refundable: false,
+        refundable: false,
+        refund_days: 0
       }));
-
-      apiFormData.append('variants', JSON.stringify(variantsWithIds));
+      
+      apiFormData.append('variants', JSON.stringify(processedVariants));
     }
 
-    // Forward SKUs payload from the form if provided
-    const skusRaw = formData.get('skus');
-    if (skusRaw) {
-      apiFormData.append('skus', String(skusRaw));
-    }
-
-    // Handle variant images and per-SKU images by forwarding their original keys
+    // Handle variant images
     for (const [key, value] of formData.entries()) {
-      if (key.startsWith('variant_image_') || key.startsWith('sku_image_')) {
+      if (key.startsWith('variant_image_')) {
         const file = value as File;
-        if (file && (file as any).size > 0) {
+        if (file && file.size > 0) {
           apiFormData.append(key, file);
         }
       }
     }
 
-    // Append product-level dimensions/weight unit if available
-    const weightUnitVal = String(formData.get('weight_unit') || 'kg');
-    apiFormData.append('weight_unit', weightUnitVal);
-
-    // Handle shipping zones
-    const shippingZones: any[] = [];
-    const shippingZoneIds = new Set<string>();
-    
-    for (const [key, value] of formData.entries()) {
-      const zoneMatch = key.match(/^shipping_zone_([^_]+)_(.+)$/);
-      if (zoneMatch) {
-        const zoneId = zoneMatch[1];
-        const field = zoneMatch[2];
-        
-        shippingZoneIds.add(zoneId);
-        
-        let zone = shippingZones.find(z => z.id === zoneId);
-        if (!zone) {
-          zone = { id: zoneId };
-          shippingZones.push(zone);
-        }
-        
-        zone[field] = value;
-      }
-    }
-
-    // Format shipping zones for API
-    const formattedShippingZones = shippingZones.map(zone => ({
-      name: zone.name,
-      fee: zone.freeShipping === 'true' ? 0 : parseFloat(zone.fee) || 0,
-      free_shipping: zone.freeShipping === 'true'
-    }));
-
-    if (formattedShippingZones.length > 0) {
-      apiFormData.append('shipping_zones', JSON.stringify(formattedShippingZones));
-    }
-
     console.log("Sending gift data to API with user ID:", userId);
-    console.log("Category admin ID:", category_admin_id);
-    console.log("Variants count:", variantGroups.size);
-    console.log("Shipping zones count:", formattedShippingZones.length);
 
-    // Debug: inspect entries in apiFormData before sending to API
-    try {
-      for (const [k, v] of (apiFormData as any).entries()) {
-        const valPreview = (v && typeof v === 'object' && 'name' in v) ? { name: v.name, size: v.size, type: v.type } : String(v).slice(0, 200);
-        console.log('apiFormData entry ->', k, valPreview);
-      }
-    } catch (err) {
-      console.log('Failed to iterate apiFormData entries for debug:', err);
-    }
-    
-    const response = await AxiosInstance.post('/seller-gift/', apiFormData);
+    const response = await AxiosInstance.post('/seller-products/', apiFormData);
     
     if (response.data.success) {
       console.log("Gift created successfully:", response.data);
       
-      // SSR Redirect to product list page
       return redirect('/seller/gift', {
         headers: {
           "Set-Cookie": await commitSession(session),
@@ -396,24 +322,17 @@ export async function action({ request }: Route.ActionArgs) {
   }
 }
 
-// --- TYPES ---
-
-// Define the errors type
 interface FormErrors {
   message?: string;
   name?: string;
   description?: string;
-  quantity?: string;
   condition?: string;
   shop?: string;
   category_admin_id?: string;
-  variant_title?: string;
-  variant_option_title?: string;
-  variant_option_quantity?: string;
+  variants?: string;
   [key: string]: string | undefined;
 }
 
-// Define category type
 interface Category {
   id: string;
   name: string;
@@ -424,11 +343,8 @@ interface Category {
   };
 }
 
-// Import and use your form component for gifts
-import CreateGiftForm from '~/components/customer/seller-create-gift-form';
-
 export default function CreateGift({ loaderData, actionData }: Route.ComponentProps) {
-  const { user, selectedShop, globalCategories } = loaderData;
+  const { user, selectedShop, globalCategories, modelClasses } = loaderData;
   const errors: FormErrors = actionData?.errors || {};
 
   return (
@@ -439,28 +355,24 @@ export default function CreateGift({ loaderData, actionData }: Route.ComponentPr
         <div className="mb-6">
             <Link to="/seller/gift">
                 <Button variant="outline" className="text-gray-600 hover:text-gray-900 border-gray-300">
-                    <span className="mr-2">←</span> Back to Product List
+                    <span className="mr-2">←</span> Back to Gift List
                 </Button>
             </Link>
         </div>
         
         <h1 className="text-3xl font-bold tracking-tight mb-6">Create New Gift</h1>
         
-        {/* Single Column Layout - All forms visible */}
         <div className="grid grid-cols-12 gap-8">
-          
-          {/* LEFT COLUMN: Form (full width) */}
           <div className="col-span-12">
             <CreateGiftForm 
               selectedShop={selectedShop}
               globalCategories={globalCategories}
+              modelClasses={modelClasses}
               errors={errors}
             />
           </div>
-          
         </div>
       </div>
-  
     </UserProvider>
   );
 }
