@@ -880,6 +880,17 @@ class DisputeRequestSerializer(serializers.ModelSerializer):
             }
         return None
 
+    def to_representation(self, instance):
+        # case_category is stored as JSON (list) in model; ensure response is a list
+        rep = super().to_representation(instance)
+        cc = rep.get('case_category')
+        if cc is None:
+            rep['case_category'] = []
+        elif isinstance(cc, str):
+            # backward compatibility: single string stored
+            rep['case_category'] = [cc]
+        return rep
+
 
 class DisputeRequestCreateSerializer(serializers.ModelSerializer):
     # Accept an optional 'description' in the creation payload (write-only). It's not a model field,
@@ -888,7 +899,8 @@ class DisputeRequestCreateSerializer(serializers.ModelSerializer):
     # reason should be optional/blank when dispute is filed simply via confirmation
     reason = serializers.CharField(required=False, allow_blank=True)
 
-    case_category = serializers.CharField(required=False, allow_blank=True)
+    # Accept either a single string or a list of category keys
+    case_category = serializers.ListField(child=serializers.CharField(), required=False)
 
     class Meta:
         model = DisputeRequest
@@ -902,6 +914,14 @@ class DisputeRequestCreateSerializer(serializers.ModelSerializer):
         refund_obj = validated_data.pop('refund', None)
         if refund_obj is not None:
             validated_data['refund_id'] = refund_obj
+
+        # Normalize case_category: accept list or single string and store as list for JSONField
+        case_cat = validated_data.get('case_category')
+        if isinstance(case_cat, list):
+            validated_data['case_category'] = [str(c).strip() for c in case_cat if c is not None]
+        elif isinstance(case_cat, str):
+            # single string provided
+            validated_data['case_category'] = [case_cat.strip()] if case_cat.strip() else []
 
         filed_by = self.context.get('filed_by')
         if not filed_by:
