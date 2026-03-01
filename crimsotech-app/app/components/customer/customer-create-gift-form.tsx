@@ -8,13 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~
 import { Badge } from "~/components/ui/badge";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Switch } from "~/components/ui/switch";
-import { Separator } from "~/components/ui/separator";
-import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { AlertCircle, Plus, X, Image as ImageIcon, Video, Upload, Package, Loader2, Sparkles, ChevronDown, ChevronUp, Info } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
 import { useFetcher } from "react-router"
-
-// --- INTERFACE DEFINITIONS ---
 
 interface User {
   id: string;
@@ -32,7 +30,6 @@ interface FormErrors {
   message?: string;
   name?: string;
   description?: string;
-  quantity?: string;
   condition?: string;
   category_admin_id?: string;
   [key: string]: string | undefined;
@@ -44,55 +41,52 @@ interface MediaPreview {
   type: 'image' | 'video';
 }
 
-interface ShippingZone {
-  id: string;
-  name: 'Local' | 'Nearby City' | 'Far Province';
-  fee: number | '';
-  freeShipping: boolean;
-}
-interface VariantOption {
+// Variant interface - same as seller gift but without price
+interface Variant {
   id: string;
   title: string;
+  quantity: number | '';
+  sku_code?: string;
   image?: File | null;
   imagePreview?: string;
-} 
-
-interface VariantGroup {
-  id: string;
-  title: string;
-  options: VariantOption[];
+  critical_trigger?: number | '';
+  is_active?: boolean;
 }
 
 interface CreateGiftFormProps {
   globalCategories: Category[];
+  modelClasses: string[];
   errors: FormErrors;
 }
 
-// --- PREDICTION STATE INTERFACE ---
-interface PredictionCategory {
-  category_id: number;
-  category_name: string;
-  confidence: number;
-  category_uuid?: string;
+interface PredictedCategory {
+  id?: string;
+  uuid?: string;
+  name?: string;
+  [key: string]: any;
 }
 
 interface PredictionResult {
-  success: boolean;
-  predicted_category: PredictionCategory;
-  alternative_categories?: PredictionCategory[];
-  all_categories?: string[];
-  feature_insights?: any;
+  success?: boolean;
+  all_categories?: Array<string | PredictedCategory>;
+  error?: string;
+  predicted_category?: {
+    category_name: string;
+    confidence: number;
+    category_uuid?: string | null;
+  };
+  alternative_categories?: Array<{ category_name: string; confidence: number }>;
+  all_predictions?: Record<string, number>;
+  predicted_class?: string;
+  [key: string]: any;
 }
 
-// --- REACT COMPONENT ---
-
-export default function CreateGiftForm({ globalCategories, errors }: CreateGiftFormProps) {
+export default function CreateGiftForm({ globalCategories, modelClasses, errors }: CreateGiftFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const mediaFilesRef = useRef<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fetcher = useFetcher();
 
-  // Generate a simple UUID function
   const generateId = () => {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
   };
@@ -100,219 +94,229 @@ export default function CreateGiftForm({ globalCategories, errors }: CreateGiftF
   // Form state
   const [giftName, setGiftName] = useState('');
   const [giftDescription, setGiftDescription] = useState('');
-  const [giftQuantity, setGiftQuantity] = useState<number | ''>('');
   const [giftCondition, setGiftCondition] = useState('');
 
-  const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
-  const [showVariants, setShowVariants] = useState(false);
-  const [variantGroups, setVariantGroups] = useState<VariantGroup[]>([]);
-  const variantsEnabled = variantGroups.length > 0;
+  // Critical stock trigger
   const [enableCriticalTrigger, setEnableCriticalTrigger] = useState(false);
-  const [criticalThreshold, setCriticalThreshold] = useState<number | ''>('');
+  const [criticalStock, setCriticalStock] = useState<number | ''>('');
 
-  // SKU combinations generated from variant groups (cartesian product)
-  interface SKUCombination {
-    id: string;
-    option_ids: string[];
-    option_map: Record<string, string>;
-    quantity: number | '';
-    length?: number | '';
-    width?: number | '';
-    height?: number | '';
-    weight?: number | '';
-    weight_unit?: 'g' | 'kg' | 'lb' | 'oz' | '';
-    sku_code?: string;
-    image?: File | null;
-    imagePreview?: string;
-    critical_trigger?: number | '';
-    is_active?: boolean;
-  }
-
-  const [skuCombinations, setSkuCombinations] = useState<SKUCombination[]>([]);
-  const [productWeight, setProductWeight] = useState<number | ''>('');
-  const [productWeightUnit, setProductWeightUnit] = useState<'g' | 'kg' | 'lb' | 'oz'>('g');
-  const [productLength, setProductLength] = useState<number | ''>('');
-  const [productWidth, setProductWidth] = useState<number | ''>('');
-  const [productHeight, setProductHeight] = useState<number | ''>('');
-  const [shippingZones, setShippingZones] = useState<ShippingZone[]>([
-    { id: generateId(), name: 'Local', fee: '', freeShipping: false },
-    { id: generateId(), name: 'Nearby City', fee: '', freeShipping: false },
-    { id: generateId(), name: 'Far Province', fee: '', freeShipping: false },
+  const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
+  
+  // Variants - exactly like seller gift but without price
+  const [variants, setVariants] = useState<Variant[]>([
+    {
+      id: generateId(),
+      title: giftName || "Default",
+      quantity: '',
+      sku_code: '',
+      is_active: true,
+      critical_trigger: '',
+    }
   ]);
   
   // Prediction state
   const [isPredicting, setIsPredicting] = useState(false);
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
   const [showPrediction, setShowPrediction] = useState(false);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('none');
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
 
-  // Hardcoded sample category (UI-only helper for demos)
-  const SAMPLE_CATEGORY = { id: 'sample-gift-category', name: 'Sample Gift Category' };
-
-  
-  // Refs for preventing duplicate requests
-  const predictionInProgress = useRef(false);
+  const [predictionError, setPredictionError] = useState<string | null>(null);
+  const [apiResponseError, setApiResponseError] = useState<string | null>(null);
+  const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(null);
   const predictionAbortController = useRef<AbortController | null>(null);
-  const lastPredictionTime = useRef<number>(0);
-  const predictionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Check if all required prediction fields are filled
-  const arePredictionFieldsValid = useCallback(() => {
-    return (
-      giftName.trim().length >= 2 &&
-      giftDescription.trim().length >= 10 &&
-      giftCondition !== '' &&
-      giftQuantity !== '' && giftQuantity >= 0
-    );
-  }, [giftName, giftDescription, giftCondition, giftQuantity]);
+  const [closestMatch, setClosestMatch] = useState<{ name: string; score: number } | null>(null);
 
-  // Handle category selection change
-  const handleCategoryChange = (value: string) => {
-    console.log('Category changed to:', value);
-    setSelectedCategoryId(value);
+  // Update first variant title when gift name changes
+  useEffect(() => {
+    if (variants.length > 0) {
+      setVariants(prev => prev.map((variant, index) => 
+        index === 0 ? { ...variant, title: giftName || "Default" } : variant
+      ));
+    }
+  }, [giftName]);
+
+  const normalizeText = (s: string) => {
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .join(' ');
   };
 
-  // Function to trigger category prediction
-  const predictCategory = useCallback(async (source: string = 'auto') => {
-    console.log(`predictCategory called from: ${source}. Valid:`, arePredictionFieldsValid(), 'In progress:', predictionInProgress.current);
+  const tokenSimilarity = (a: string, b: string) => {
+    const ta = new Set(normalizeText(a).split(' '));
+    const tb = new Set(normalizeText(b).split(' '));
+    if (ta.size === 0 || tb.size === 0) return 0;
+    const inter = [...ta].filter(x => tb.has(x)).length;
+    const union = new Set([...ta, ...tb]).size;
+    return union === 0 ? 0 : inter / union;
+  };
+
+  const findBestCategoryMatch = (predictedName: string) => {
+    const scores = globalCategories.map((gc) => ({
+      category: gc,
+      score: tokenSimilarity(predictedName, gc.name),
+    }));
+    scores.sort((a, b) => b.score - a.score);
+    return scores[0] || null;
+  };
+
+  const handleCategoryChange = (value: string) => {
+    console.log('Category changed to:', value);
     
-    if (!arePredictionFieldsValid()) {
-      console.log('Prediction blocked: fields not valid');
+    setClosestMatch(null);
+
+    const stringValue = String(value).trim();
+    
+    if (stringValue === "none" || stringValue === "") {
+      setSelectedCategoryName("");
       return;
     }
-    
-    // Prevent duplicate requests
-    if (predictionInProgress.current) {
-      console.log('Prediction already in progress, skipping...');
+
+    if (stringValue === 'Others' || stringValue === 'others') {
+      setSelectedCategoryName('others');
       return;
     }
-    
-    // Debounce: Don't make requests too frequently
-    const now = Date.now();
-    if (now - lastPredictionTime.current < 2000) { // 2 second cooldown
-      console.log('Prediction debounced: too soon since last request');
+
+    setSelectedCategoryName(stringValue);
+  };  
+
+  // Prediction function
+  const analyzeImages = async (files: File[]) => {
+    const imageFiles = (files || []).filter(f => f && f.type && f.type.startsWith('image/')) as File[];
+    if (imageFiles.length === 0) {
+      alert('No image files to analyze.');
       return;
     }
-    
-    // Abort any previous request
+
     if (predictionAbortController.current) {
       predictionAbortController.current.abort();
     }
-    
-    // Create new abort controller
     predictionAbortController.current = new AbortController();
-    
+
     setIsPredicting(true);
-    setShowPrediction(true);
-    predictionInProgress.current = true;
-    lastPredictionTime.current = now;
-    
+    setPredictionError(null);
+
     try {
-      // For now: use a hardcoded sample category for gift predictions.
-      const sample = {
+      const requests = imageFiles.map((file) => {
+        const form = new FormData();
+        form.append('image', file);
+        return AxiosInstance.post('/predict/', form, {
+          signal: predictionAbortController.current!.signal,
+        });
+      });
+
+      const settled = await Promise.allSettled(requests);
+      const successful = settled.filter(s => s.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+
+      if (successful.length === 0) {
+        setPredictionError('All image predictions failed');
+        return;
+      }
+
+      const aggregateScores: Record<string, number> = {};
+      let count = 0;
+
+      successful.forEach(res => {
+        const data = res.value?.data;
+        if (!data || !data.success || !data.predictions) return;
+        const p = data.predictions;
+
+        if (p.all_predictions && typeof p.all_predictions === 'object') {
+          Object.entries(p.all_predictions).forEach(([cls, score]) => {
+            aggregateScores[cls] = (aggregateScores[cls] || 0) + Number(score || 0);
+          });
+        } else if (p.predicted_class) {
+          const cls = String(p.predicted_class);
+          const conf = Number(p.confidence || 1);
+          aggregateScores[cls] = (aggregateScores[cls] || 0) + conf;
+        }
+
+        count += 1;
+      });
+
+      if (count === 0) {
+        setPredictionError('No valid predictions received');
+        return;
+      }
+
+      Object.keys(aggregateScores).forEach(k => { aggregateScores[k] = aggregateScores[k] / count; });
+
+      const sorted = Object.entries(aggregateScores).sort((a, b) => b[1] - a[1]);
+      const topClass = sorted[0]?.[0] || 'Unknown';
+      const topConfidence = Number(sorted[0]?.[1] || 0);
+
+      const mapped: PredictionResult = {
         success: true,
         predicted_category: {
-          category_id: -1,
-          category_uuid: SAMPLE_CATEGORY.id,
-          category_name: SAMPLE_CATEGORY.name,
-          confidence: 1.0,
-        },
-        alternative_categories: [],
-        all_categories: [SAMPLE_CATEGORY.name],
-        feature_insights: {}
+          category_name: topClass,
+          confidence: topConfidence,
+          category_uuid: null
+        } as any,
+        alternative_categories: sorted.slice(1, 4).map(s => ({ category_name: s[0], confidence: s[1] })),
+        all_categories: globalCategories ? globalCategories.map((c: Category) => ({ uuid: c.id, name: c.name, id: c.id })) : [],
+        all_predictions: Object.fromEntries(sorted),
+        predicted_class: topClass,
+        analyzed_images_count: count
       };
 
-      console.log('Using sample prediction:', sample);
-      setPredictionResult(sample as any);
+      setPredictionResult(mapped);
       setShowPrediction(true);
-      // Auto-select the predicted (sample) category
-      if (sample.predicted_category?.category_uuid) {
-        setSelectedCategoryId(sample.predicted_category.category_uuid.toString());
+
+      if (mapped.predicted_category?.category_name && globalCategories) {
+        const predictedName = mapped.predicted_category.category_name.toLowerCase();
+        const found = globalCategories.find((gc: any) => gc.name.toLowerCase() === predictedName);
+        if (found) {
+          setSelectedCategoryName(found.name);
+          console.log('Auto-selected category:', found.name);
+        }
       }
 
     } catch (error: any) {
-      console.error('Category prediction failed (sample fallback):', error);
+      if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
+        console.log('Prediction request cancelled');
+        return;
+      }
+
+      let errorMsg = 'Prediction request failed';
+      if (error.response?.status === 404) {
+        errorMsg = 'Prediction endpoint not found.';
+      } else if (error.response?.data?.error) {
+        errorMsg = error.response.data.error;
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+
+      setPredictionError(errorMsg);
+      console.error('Image prediction failed:', error);
     } finally {
       setIsPredicting(false);
-      predictionInProgress.current = false;
       predictionAbortController.current = null;
     }
-  }, [arePredictionFieldsValid, giftQuantity, giftCondition, giftName, giftDescription]);
+  };
 
-  // Clean up on component unmount
+  // Clean up
   useEffect(() => {
     return () => {
-      // Clear any pending timeout
-      if (predictionTimeoutRef.current) {
-        clearTimeout(predictionTimeoutRef.current);
-      }
-      
-      // Abort any pending request
       if (predictionAbortController.current) {
         predictionAbortController.current.abort();
       }
       
-      // Revoke object URLs to prevent memory leaks
       mainMedia.forEach(item => {
         URL.revokeObjectURL(item.preview);
       });
       
-      variantGroups.forEach(group => {
-        group.options.forEach(option => {
-          if (option.imagePreview) {
-            URL.revokeObjectURL(option.imagePreview);
-          }
-        });
+      variants.forEach(variant => {
+        if (variant.imagePreview) {
+          URL.revokeObjectURL(variant.imagePreview);
+        }
       });
     };
   }, []);
 
-  // Auto-predict when all fields are filled - with better debouncing
-  useEffect(() => {
-    if (arePredictionFieldsValid()) {
-      // Clear any existing timeout
-      if (predictionTimeoutRef.current) {
-        clearTimeout(predictionTimeoutRef.current);
-      }
-      
-      // Set new timeout with debounce
-      predictionTimeoutRef.current = setTimeout(() => {
-        predictCategory('auto');
-      }, 1500); // Increased debounce time
-      
-      return () => {
-        if (predictionTimeoutRef.current) {
-          clearTimeout(predictionTimeoutRef.current);
-        }
-      };
-    } else {
-      // Reset prediction when fields are not valid
-      setPredictionResult(null);
-      setShowPrediction(false);
-    }
-  }, [arePredictionFieldsValid, predictCategory]);
-
-  // Manual trigger for prediction
-  const handleManualPredict = () => {
-    console.log('Manual predict button clicked');
-    if (arePredictionFieldsValid() && !isPredicting) {
-      // Clear auto-prediction timeout if exists
-      if (predictionTimeoutRef.current) {
-        clearTimeout(predictionTimeoutRef.current);
-        predictionTimeoutRef.current = null;
-      }
-      
-      predictCategory('manual');
-    }
-  };
-
-  const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
-    setShippingZones(prev => prev.map(zone => 
-      zone.id === zoneId ? { ...zone, fee } : zone
-    ));
-  };
-
-  // --- MAIN MEDIA HANDLERS ---
+  // Media handlers
   const handleMainMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     const maxMedia = 9;
@@ -335,247 +339,89 @@ export default function CreateGiftForm({ globalCategories, errors }: CreateGiftF
       type: file.type.startsWith('image/') ? 'image' : 'video' as 'image' | 'video'
     }));
 
-    // Store files in ref
     mediaFilesRef.current = [...mediaFilesRef.current, ...filesToAdd];
     setMainMedia(prev => [...prev, ...newMedia]);
+
+    const newImageFiles = filesToAdd.filter(f => f.type.startsWith('image/'));
+    if (newImageFiles.length > 0) {
+      analyzeImages(newImageFiles as File[]).catch((err) => console.error('Auto image analysis failed:', err));
+    }
   };
 
   const removeMainMedia = (index: number) => {
-    // Revoke the object URL
     URL.revokeObjectURL(mainMedia[index].preview);
-    
-    // Remove from ref
     mediaFilesRef.current = mediaFilesRef.current.filter((_, i) => i !== index);
     setMainMedia(prev => prev.filter((_, i) => i !== index));
   };
 
-  const toggleZoneFreeShipping = (zoneId: string) => {
-    setShippingZones(prev => prev.map(zone => {
-      if (zone.id === zoneId) {
-        const newFreeShipping = !zone.freeShipping;
-        return {
-          ...zone,
-          freeShipping: newFreeShipping,
-          fee: newFreeShipping ? 0 : ''
-        };
-      }
-      return zone;
-    }));
-  };
-
-  // --- VARIANT HANDLERS ---
-  const addVariantGroup = () => {
-    setVariantGroups(prev => [
+  // Variant handlers
+  const addVariant = () => {
+    setVariants(prev => [
       ...prev,
       {
         id: generateId(),
-        title: "Color",
-        options: [
-          {
-            id: generateId(),
-            title: "Red",
-          },
-        ],
-      },
+        title: `Variant ${prev.length + 1}`,
+        quantity: '',
+        sku_code: '',
+        is_active: true,
+        critical_trigger: '',
+      }
     ]);
   };
 
-  const removeVariantGroup = (groupId: string) => {
-    // Clean up image previews
-    const group = variantGroups.find(g => g.id === groupId);
-    if (group) {
-      group.options.forEach(option => {
-        if (option.imagePreview) {
-          URL.revokeObjectURL(option.imagePreview);
-        }
-      });
-    }
-    
-    setVariantGroups(prev => prev.filter(group => group.id !== groupId));
-  };
-
-  const updateVariantGroupTitle = (groupId: string, newTitle: string) => {
-    setVariantGroups(prev => prev.map(group => 
-      group.id === groupId ? { ...group, title: newTitle } : group
-    ));
-  };
-
-  const addOption = (groupId: string, title: string) => {
-    const newOption: VariantOption = {
-      id: generateId(),
-      title: title.trim(),
-    };
-    
-    setVariantGroups(prev => prev.map(group => 
-      group.id === groupId
-        ? { ...group, options: [...group.options, newOption] }
-        : group
-    ));
-  };
-
-  // Create cartesian product of variant options and preserve existing SKU edits
-  const generateSkuCombinations = useCallback(() => {
-    if (variantGroups.length === 0) {
-      setSkuCombinations([]);
+  const removeVariant = (variantId: string) => {
+    if (variants.length <= 1) {
+      alert("Gifts must have at least one variant. You cannot remove the last variant.");
       return;
     }
-
-    // Build arrays of options per group
-    const arrays = variantGroups.map(g => g.options.map(o => ({ id: o.id, title: o.title })));
-
-    // Cartesian product
-    let combos: any[] = [];
-    arrays.forEach((arr, idx) => {
-      if (idx === 0) {
-        combos = arr.map((a) => ({ option_ids: [a.id], option_map: { [variantGroups[0].id]: a.id }, quantity: giftQuantity || '' }));
-      } else {
-        const groupId = variantGroups[idx].id;
-        const newCombos: any[] = [];
-        combos.forEach(existing => {
-          arr.forEach((a) => {
-            newCombos.push({
-              option_ids: [...existing.option_ids, a.id],
-              option_map: { ...existing.option_map, [groupId]: a.id },
-              quantity: existing.quantity ?? giftQuantity ?? '',
-              length: existing.length ?? productLength ?? '',
-              width: existing.width ?? productWidth ?? '',
-              height: existing.height ?? productHeight ?? '',
-              weight: existing.weight ?? productWeight ?? '',
-              weight_unit: existing.weight_unit ?? productWeightUnit ?? '',
-            });
-          });
-        });
-        combos = newCombos;
-      }
-    });
-
-    // Preserve existing skus where option_ids match (order-independent) by using a functional update
-    setSkuCombinations((prev) => {
-      const preserved = combos.map((c) => {
-        const ids = c.option_ids.slice().sort().join('|');
-        const found = prev.find(s => s.option_ids.slice().sort().join('|') === ids);
-        return {
-          id: found?.id || generateId(),
-          option_ids: c.option_ids,
-          option_map: c.option_map,
-          quantity: found?.quantity ?? c.quantity ?? 0,
-          length: found?.length ?? c.length ?? productLength ?? '',
-          width: found?.width ?? c.width ?? productWidth ?? '',
-          height: found?.height ?? c.height ?? productHeight ?? '',
-          weight: found?.weight ?? c.weight ?? productWeight ?? '',
-          weight_unit: found?.weight_unit ?? c.weight_unit ?? productWeightUnit ?? '',
-          sku_code: found?.sku_code || '',
-          // Preserve per-sku fields if user already edited them
-          image: found?.image ?? undefined,
-          imagePreview: found?.imagePreview ?? undefined,
-          critical_trigger: found?.critical_trigger ?? '',
-          is_active: found?.is_active ?? true,
-        } as SKUCombination;
-      });
-
-      // Avoid unnecessary updates: if arrays are length-equal and every id matches prev, keep prev to prevent rerender loops
-      if (preserved.length === prev.length && preserved.every((p, i) => p.id === prev[i].id && p.quantity === prev[i].quantity && p.sku_code === prev[i].sku_code)) {
-        return prev;
-      }
-
-      return preserved;
-    });
-  }, [variantGroups, giftQuantity]);
-
-  useEffect(() => {
-    generateSkuCombinations();
-  }, [variantGroups, giftQuantity]);
-
-  const removeOption = (groupId: string, optionId: string) => {
-    // Clean up image preview if exists
-    const group = variantGroups.find(g => g.id === groupId);
-    if (group) {
-      const option = group.options.find(o => o.id === optionId);
-      if (option?.imagePreview) {
-        URL.revokeObjectURL(option.imagePreview);
-      }
+    
+    const variant = variants.find(v => v.id === variantId);
+    if (variant?.imagePreview) {
+      URL.revokeObjectURL(variant.imagePreview);
     }
     
-    setVariantGroups(prev => prev.map(group => 
-      group.id === groupId
-        ? { ...group, options: group.options.filter(option => option.id !== optionId) }
-        : group
+    setVariants(prev => prev.filter(v => v.id !== variantId));
+  };
+
+  const updateVariantField = (variantId: string, field: keyof Variant, value: any) => {
+    setVariants(prev => prev.map(v => 
+      v.id === variantId ? { ...v, [field]: value } : v
     ));
   };
 
-  const updateOption = (groupId: string, optionId: string, field: keyof VariantOption, value: string | number | boolean | File | null) => {
-    setVariantGroups(prev => prev.map(group => {
-      if (group.id !== groupId) return group;
-      
-      return {
-        ...group,
-        options: group.options.map(option => {
-          if (option.id !== optionId) return option;
-          
-          let updatedOption = { ...option };
-          
-          if (field === 'title') {
-            updatedOption.title = value as string;
-          } else if (field === 'image') {
-            // Clean up previous image preview
-            if (updatedOption.imagePreview) {
-              URL.revokeObjectURL(updatedOption.imagePreview);
-            }
-            
-            updatedOption.image = value as File | null;
-            if (value instanceof File) {
-              updatedOption.imagePreview = URL.createObjectURL(value);
-            } else if (value === null) {
-              updatedOption.imagePreview = undefined;
-            }
-          }
-          
-          return updatedOption;
-        }),
-      };
-    }));
-
-    // small delay to allow variantGroups to update before regenerating skus
-    setTimeout(() => generateSkuCombinations(), 50);
-  };
-
-  // Update SKU fields (quantity / sku_code)
-  const updateSkuField = (skuId: string, field: keyof SKUCombination, value: any) => {
-    setSkuCombinations(prev => prev.map(sku => sku.id === skuId ? { ...sku, [field]: value } : sku));
-  };
-
-  // Handle SKU image upload (per combination)
-  const handleSkuImageChange = (skuId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVariantImageChange = (variantId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type.startsWith('image/')) {
       const preview = URL.createObjectURL(file);
-      setSkuCombinations(prev => prev.map(sku => sku.id === skuId ? { ...sku, image: file, imagePreview: preview } : sku));
+      setVariants(prev => prev.map(v => 
+        v.id === variantId ? { ...v, image: file, imagePreview: preview } : v
+      ));
     }
     e.target.value = '';
   };
 
-  // Handle variant image upload
-  const handleVariantImageChange = (groupId: string, optionId: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      updateOption(groupId, optionId, 'image', file);
-    }
-    e.target.value = '';
-  };
-
-  // --- FORM SUBMISSION HANDLER ---
+  // Submit handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formRef.current) return;
     
-    // Create FormData
+    if (variants.length === 0) {
+      alert("Gifts must have at least one variant.");
+      return;
+    }
+    
+    const invalidVariants = variants.filter(v => !v.quantity || Number(v.quantity) === 0);
+    if (invalidVariants.length > 0) {
+      alert("All variants must have a quantity set.");
+      return;
+    }
+    
     const formData = new FormData();
     
     // Add basic form fields
     const basicFormData = new FormData(formRef.current);
     for (const [key, value] of basicFormData.entries()) {
-      // Don't add file inputs that we'll handle separately
       if (key !== 'media_files' && !key.startsWith('variant_image_')) {
         if (value instanceof File) {
           formData.append(key, value);
@@ -585,358 +431,237 @@ export default function CreateGiftForm({ globalCategories, errors }: CreateGiftF
       }
     }
     
-    // Add category (if sample selected, attach sample metadata instead of a DB category id)
-    if (selectedCategoryId === SAMPLE_CATEGORY.id) {
-      // Ensure we don't send an invalid category id to backend
-      formData.set('category_admin_id', 'none');
-      formData.append('gift_metadata_sample_category', SAMPLE_CATEGORY.name);
-    } else {
-      formData.set('category_admin_id', selectedCategoryId);
+    // Add critical stock
+    if (enableCriticalTrigger && criticalStock) {
+      formData.append('critical_stock', String(criticalStock));
     }
     
-    // Add media files from ref
+    // Add category
+    if (selectedCategoryName?.trim()) {
+      let match = globalCategories.find(gc => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
+      if (!match) {
+        const best = findBestCategoryMatch(selectedCategoryName);
+        if (best && best.score >= 0.25) {
+          match = best.category;
+        }
+      }
+
+      if (match) {
+        formData.append('category_admin_id', match.id);
+        setSelectedCategoryName(match.name);
+      } else {
+        const nameToSend = (selectedCategoryName && selectedCategoryName.toLowerCase() === 'others') ? 'others' : selectedCategoryName;
+        formData.append('category_admin_name', nameToSend);
+      }
+    }
+    
+    // Add media files
     mediaFilesRef.current.forEach(file => {
       if (file.size > 0) {
         formData.append('media_files', file);
       }
     });
     
-    // Add variant data
-    if (variantGroups.length > 0) {
-      variantGroups.forEach((group) => {
-        formData.append(`variant_group_${group.id}_title`, group.title);
-        group.options.forEach((option) => {
-          formData.append(`variant_group_${group.id}_option_${option.id}_title`, option.title);
+    // Add variants
+    const variantsPayload = variants.map(v => ({
+      id: v.id,
+      title: v.title,
+      quantity: v.quantity,
+      sku_code: v.sku_code,
+      critical_trigger: v.critical_trigger || null,
+      is_active: v.is_active ?? true,
+    }));
 
-          // Add variant image if exists
-          if (option.image) {
-            formData.append(`variant_image_${group.id}_${option.id}`, option.image);
-          }
-        });
-      });
+    formData.append('variants', JSON.stringify(variantsPayload));
 
-      // Add auto-generated SKU combinations (if any)
-      if (skuCombinations.length > 0) {
-        const skusPayload = skuCombinations.map(s => {
-          return {
-              id: s.id,
-            option_ids: s.option_ids,
-            quantity: s.quantity,
-            length: s.length,
-            width: s.width,
-            height: s.height,
-            weight: s.weight,
-            weight_unit: s.weight_unit,
-            sku_code: s.sku_code,
-            critical_trigger: s.critical_trigger || null,
-            is_active: s.is_active ?? true,
-          };
-        });
-        formData.append('skus', JSON.stringify(skusPayload));
-
-        // Append any SKU images as files with keys sku_image_<skuId>
-        skuCombinations.forEach(s => {
-          if (s.image) {
-            formData.append(`sku_image_${s.id}`, s.image);
-          }
-        });
+    // Append variant images
+    variants.forEach(v => {
+      if (v.image) {
+        formData.append(`variant_image_${v.id}`, v.image);
       }
-    }
-    
-    // Add shipping zones
-    shippingZones.forEach((zone) => {
-      formData.append(`shipping_zone_${zone.id}_name`, zone.name);
-      formData.append(`shipping_zone_${zone.id}_fee`, String(zone.fee));
-      formData.append(`shipping_zone_${zone.id}_freeShipping`, String(zone.freeShipping));
     });
     
-    // Submit using fetcher
+    // Submit using fetcher - NO SHOP FIELD
     fetcher.submit(formData, {
       method: 'post',
       encType: 'multipart/form-data',
     });
   };
 
-  // --- RENDER ---
+  useEffect(() => {
+    if (fetcher && (fetcher.data)) {
+      console.log('fetcher.data changed:', fetcher.data);
+      if (fetcher.data.errors) {
+        setApiResponseError(typeof fetcher.data.errors === 'string' ? fetcher.data.errors : JSON.stringify(fetcher.data.errors));
+      } else if (fetcher.data.error) {
+        setApiResponseError(fetcher.data.error);
+      } else if (fetcher.data.success) {
+        setApiResponseError(null);
+        setApiResponseMessage(fetcher.data.message || 'Gift created');
+      }
+    }
+  }, [fetcher.data]);
+
+  useEffect(() => {
+    if (predictionResult && predictionResult.predicted_category) {
+      const predictedName = predictionResult.predicted_category.category_name || '';
+      if (!selectedCategoryName?.trim() || selectedCategoryName === 'others') {
+        setSelectedCategoryName(predictedName);
+      }
+    }
+  }, [predictionResult, selectedCategoryName]);
+
   return (
     <form 
       ref={formRef}
       onSubmit={handleSubmit}
-      className="space-y-8"
+      className="space-y-6"
     >
-      {/* Hidden category field for form submission */}
-      <input type="hidden" name="category_admin_id" value={selectedCategoryId} />
-      
-      {/* STEP 1: AI Category Prediction Section */}
-      <Card id="ai-category-prediction">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-purple-600" />
-            Step 1: AI Category Prediction
-          </CardTitle>
-          <CardDescription>
-            Fill in these basic details first. Our AI will suggest the best category for your gift.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="space-y-6">
-            {/* Model Required Fields Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Gift Name */}
-              <div className="space-y-2">
-                <Label htmlFor="name">Gift Name *</Label>
-                <Input 
-                  type="text" 
-                  id="name" 
-                  name="name" 
-                  required 
-                  placeholder="Enter gift name"
-                  value={giftName}
-                  onChange={(e) => setGiftName(e.target.value)}
-                  className={showPrediction && predictionResult ? 'border-green-500' : ''}
-                />
-                {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
-              </div>
+      {/* Progress Steps */}
+      <div className="flex items-center space-x-2 mb-6">
+        <Badge className="px-3 py-1 bg-purple-500 text-white">1. Basic Info</Badge>
+        <div className="h-0.5 w-8 bg-gray-300"></div>
+        <Badge variant={mainMedia.length > 0 ? "default" : "outline"} 
+          className={`px-3 py-1 ${mainMedia.length > 0 ? 'bg-purple-500 text-white' : 'border-gray-300 text-gray-600'}`}>
+          2. Media
+        </Badge>
+        <div className="h-0.5 w-8 bg-gray-300"></div>
+        <Badge className="px-3 py-1 bg-purple-500 text-white">3. Variants</Badge>
+        <div className="h-0.5 w-8 bg-gray-300"></div>
+        <Badge variant={variants.every(v => v.quantity) ? "default" : "outline"} 
+          className={`px-3 py-1 ${variants.every(v => v.quantity) ? 'bg-purple-500 text-white' : 'border-gray-300 text-gray-600'}`}>
+          4. Stock
+        </Badge>
+      </div>
 
-              {/* Condition */}
-              <div className="space-y-2">
-                <Label htmlFor="condition">Condition *</Label>
-                <Select 
-                  name="condition" 
-                  required
-                  value={giftCondition}
-                  onValueChange={setGiftCondition}
-                >
-                  <SelectTrigger className={showPrediction && predictionResult ? 'border-green-500' : ''}>
-                    <SelectValue placeholder="Select condition" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Like New">Like New</SelectItem>
-                    <SelectItem value="New">New</SelectItem>
-                    <SelectItem value="Refurbished">Refurbished</SelectItem>
-                    <SelectItem value="Used - Excellent">Used - Excellent</SelectItem>
-                    <SelectItem value="Used - Good">Used - Good</SelectItem>
-                  </SelectContent>
-                </Select>
-                {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
-              </div>
+      {/* STEP 1: Basic Information */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100">
+            <Sparkles className="h-4 w-4 text-purple-600" />
+          </div>
+          <div>
+            <h2 className="text-xl font-semibold text-gray-800">Basic Information</h2>
+            <p className="text-sm text-gray-500">Start with gift details. AI will suggest a category when you upload images.</p>
+          </div>
+        </div>
 
-              {/* Quantity */}
-              <div className="space-y-2">
-                <Label htmlFor="quantity">Quantity *</Label>
-                <Input
-                  type="number"
-                  id="quantity"
-                  name="quantity"
-                  required
-                  min="0"
-                  placeholder="0"
-                  value={giftQuantity}
-                  onChange={(e) => setGiftQuantity(parseInt(e.target.value) || '')}
-                  className={showPrediction && predictionResult ? 'border-green-500' : ''}
-                />
-                {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
-              </div>
-              
-              {/* REMOVED: Price field */}
-            </div>
-
-            {/* Description */}
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Gift Name */}
             <div className="space-y-2">
-              <Label htmlFor="description">Description *</Label>
-              <Textarea 
-                id="description" 
-                name="description" 
+              <Label htmlFor="name" className="flex items-center gap-1 text-gray-700">
+                Gift Name *
+                <Info className="h-3 w-3 text-gray-400" />
+              </Label>
+              <Input 
+                type="text" 
+                id="name" 
+                name="name" 
                 required 
-                rows={4} 
-                placeholder="Enter detailed gift description"
-                value={giftDescription}
-                onChange={(e) => setGiftDescription(e.target.value)}
-                className={showPrediction && predictionResult ? 'border-green-500' : ''}
+                placeholder="Enter gift name"
+                value={giftName}
+                onChange={(e) => setGiftName(e.target.value)}
+                className="border-gray-300 focus:border-purple-500 focus:ring-purple-500"
               />
-              {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
+              {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
             </div>
 
-            {/* Manual Predict Button */}
-            <div className="flex justify-end">
+            {/* Condition */}
+            <div className="space-y-2">
+              <Label htmlFor="condition" className="text-gray-700">Condition *</Label>
+              <Select 
+                name="condition" 
+                required
+                value={giftCondition}
+                onValueChange={setGiftCondition}
+              >
+                <SelectTrigger className="border-gray-300 focus:border-purple-500 focus:ring-purple-500">
+                  <SelectValue placeholder="Select condition" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Like New">Like New</SelectItem>
+                  <SelectItem value="New">New</SelectItem>
+                  <SelectItem value="Refurbished">Refurbished</SelectItem>
+                  <SelectItem value="Used - Excellent">Used - Excellent</SelectItem>
+                  <SelectItem value="Used - Good">Used - Good</SelectItem>
+                </SelectContent>
+              </Select>
+              {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
+            </div>
+          </div>
+
+          {/* Description */}
+          <div className="space-y-2">
+            <Label htmlFor="description" className="flex items-center gap-1 text-gray-700">
+              Description *
+              <Info className="h-3 w-3 text-gray-400" />
+            </Label>
+            <Textarea 
+              id="description" 
+              name="description" 
+              required 
+              rows={4} 
+              placeholder="Describe your gift in detail..."
+              value={giftDescription}
+              onChange={(e) => setGiftDescription(e.target.value)}
+              className="border-gray-300 focus:border-purple-500 focus:ring-purple-500"
+            />
+            {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* STEP 2: Gift Media & Category */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100">
+              <ImageIcon className="h-4 w-4 text-purple-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-800">Gift Media</h2>
+              <p className="text-sm text-gray-500">Upload images/videos (max 9). First image is the cover.</p>
+            </div>
+          </div>
+          <Badge variant="outline" className="border-gray-300 text-gray-600">
+            {mainMedia.length}/9
+          </Badge>
+        </div>
+
+        <div className="space-y-6">
+          {/* Media Upload Area */}
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-purple-400 transition-colors">
+            <div className="text-center">
+              <Upload className="h-10 w-10 text-gray-400 mx-auto mb-3" />
+              <div className="text-xs text-gray-500 mb-4">Images or videos (max 9 files, 50MB each)</div>
               <Button
                 type="button"
                 variant="outline"
-                onClick={handleManualPredict}
-                disabled={!arePredictionFieldsValid() || isPredicting}
-                className="flex items-center gap-2"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                className="border-gray-300 text-gray-700 hover:bg-purple-50 hover:text-purple-600 hover:border-purple-300"
               >
-                {isPredicting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4" />
-                    Get AI Category Suggestion
-                  </>
-                )}
+                Choose Files
               </Button>
+              <Input
+                ref={fileInputRef}
+                type="file"
+                id="main-media-upload"
+                name="media_files"
+                multiple
+                accept="image/*,video/*"
+                onChange={handleMainMediaChange}
+                className="hidden"
+              />
             </div>
-
-            {/* AI Prediction Result */}
-            {showPrediction && (
-              <div className="space-y-4 p-4 border rounded-lg bg-gradient-to-r from-purple-50 to-blue-50">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-purple-600" />
-                    AI Category Suggestion
-                  </h3>
-                  {isPredicting && (
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Analyzing...
-                    </div>
-                  )}
-                </div>
-                
-                {predictionResult && predictionResult.predicted_category ? (
-                  <>
-                    {/* Top Prediction */}
-                    <div className="p-4 bg-white border rounded-lg shadow-sm">
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <span className="font-medium text-lg">
-                            {predictionResult.predicted_category.category_name}
-                          </span>
-                          <Badge className="ml-2 bg-green-100 text-green-800 hover:bg-green-100">
-                            {Math.round(predictionResult.predicted_category.confidence * 100)}% confidence
-                          </Badge>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleCategoryChange(predictionResult.predicted_category.category_id.toString())}
-                          className="border-green-500 text-green-700 hover:bg-green-50"
-                        >
-                          Select This Category
-                        </Button>
-                      </div>
-                      <p className="text-sm text-gray-600">
-                        Based on your gift details, this category seems to be the best fit.
-                      </p>
-                    </div>
-
-                    {/* Alternative Categories (Optional) */}
-                    {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
-                      <div className="pt-4 border-t">
-                        <h4 className="text-sm font-medium text-gray-700 mb-2">Alternative Suggestions:</h4>
-                        <div className="space-y-2">
-                          {predictionResult.alternative_categories.map((category, index) => (
-                            <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                              <span className="text-sm">{category.category_name}</span>
-                              <Badge variant="outline" className="text-xs">
-                                {Math.round(category.confidence * 100)}%
-                              </Badge>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Manual Category Selection (Optional) */}
-                    <div className="pt-4 border-t">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium text-gray-700">Prefer a different category?</h4>
-                        <Badge variant="outline" className="text-xs">
-                          Optional
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Select 
-                          value={selectedCategoryId} 
-                          onValueChange={handleCategoryChange}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Choose from available categories" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">No Category (Not Recommended)</SelectItem>
-
-                            {/* Hardcoded sample category for demo/testing */}
-                            <SelectItem value={SAMPLE_CATEGORY.id}>{`Sample: ${SAMPLE_CATEGORY.name}`}</SelectItem>
-
-                            {globalCategories && globalCategories.length > 0 ? (
-                              globalCategories.map((category: Category) => (
-                                <SelectItem key={category.id} value={category.id}>
-                                  {category.name}
-                                </SelectItem>
-                              ))
-                            ) : (
-                              <SelectItem value="none" disabled>
-                                No categories available
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-
-                        {/* Quick action to pick sample category */}
-                        <Button type="button" variant="outline" size="sm" onClick={() => setSelectedCategoryId(SAMPLE_CATEGORY.id)}>
-                          Use Sample
-                        </Button>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        You can override the AI suggestion by selecting a different category here.
-                      </p>
-                    </div>
-                  </>
-                ) : isPredicting ? (
-                  <div className="p-4 bg-white border rounded-lg shadow-sm text-center">
-                    <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
-                    <p className="text-sm text-gray-600">Analyzing your gift details...</p>
-                  </div>
-                ) : (
-                  <div className="p-4 bg-white border rounded-lg shadow-sm text-center">
-                    <p className="text-sm text-gray-600">No prediction available yet. Fill all required fields above.</p>
-                  </div>
-                )}
-                
-                {/* Prediction Status */}
-                <div className="text-xs text-gray-500 flex items-center gap-1">
-                  <div className={`h-2 w-2 rounded-full ${arePredictionFieldsValid() ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                  {arePredictionFieldsValid() 
-                    ? 'All required fields filled ✓' 
-                    : 'Fill all required fields above for AI prediction'}
-                </div>
-              </div>
-            )}
           </div>
-        </CardContent>
-      </Card>
 
-      {/* STEP 2: Gift Media */}
-      <Card id="media">
-        <CardHeader>
-          <CardTitle>Step 2: Gift Media</CardTitle>
-          <CardDescription>
-            Upload main gift images and videos (max 9 files, 50MB each)
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  * First image/video will be used as the cover image
-                </p>
-              </div>
-              <Badge variant="outline" className="text-xs">
-                {mainMedia.length}/9
-              </Badge>
-            </div>
-            
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+          {/* Media Preview Grid */}
+          {mainMedia.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
               {mainMedia.map((item, index) => (
-                <div key={index} className="relative group aspect-square border rounded-md overflow-hidden">
+                <div key={index} className="relative group aspect-square border border-gray-200 rounded-lg overflow-hidden">
                   {item.type === 'image' ? (
                     <img
                       src={item.preview}
@@ -945,11 +670,11 @@ export default function CreateGiftForm({ globalCategories, errors }: CreateGiftF
                     />
                   ) : (
                     <div className="w-full h-full bg-gray-100 flex items-center justify-center">
-                      <Video className="h-6 w-6 text-gray-400" />
+                      <Video className="h-8 w-8 text-gray-400" />
                     </div>
                   )}
                   {index === 0 && (
-                    <Badge className="absolute bottom-0 left-0 rounded-none bg-black/80 text-white px-1.5 py-0.5 text-[10px]">
+                    <Badge className="absolute top-2 left-2 bg-purple-500 text-white px-1.5 py-0.5 text-[10px]">
                       Cover
                     </Badge>
                   )}
@@ -957,475 +682,377 @@ export default function CreateGiftForm({ globalCategories, errors }: CreateGiftF
                     type="button"
                     variant="destructive"
                     size="sm"
-                    className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                    className="absolute top-2 right-2 h-6 w-6 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600"
                     onClick={() => removeMainMedia(index)}
                   >
-                    <X className="h-2.5 w-2.5" />
+                    <X className="h-3 w-3" />
                   </Button>
                 </div>
               ))}
               
               {mainMedia.length < 9 && (
-                <div className="aspect-square">
-                  <Input 
-                    ref={fileInputRef}
-                    type="file" 
-                    id="main-media-upload" 
-                    name="media_files"
-                    multiple 
-                    accept="image/*,video/*" 
-                    onChange={handleMainMediaChange}
-                    className="hidden" 
-                  />
-                  <Label htmlFor="main-media-upload" className="cursor-pointer flex flex-col items-center justify-center aspect-square border-2 border-dashed border-gray-300 rounded-md text-gray-600 hover:border-gray-400 hover:text-gray-800 hover:bg-gray-50 transition-colors h-full w-full p-2">
-                    <Upload className="h-5 w-5 mb-1" />
-                    <span className="text-xs text-center">Add Picture/Video</span>
-                  </Label>
-                </div>
+                <Label htmlFor="main-media-upload" className="cursor-pointer flex flex-col items-center justify-center aspect-square border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-purple-400 hover:text-purple-600 hover:bg-purple-50 transition-colors p-4">
+                  <Plus className="h-6 w-6 mb-2" />
+                  <span className="text-xs text-center">Add More</span>
+                </Label>
               )}
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          )}
 
-      {/* STEP 3: Variations */}
-      <Card id="variations">
-        <CardHeader>
-          <CardTitle>Step 3: Variations (Optional)</CardTitle>
-          <CardDescription>
-            Define gift variants like size or color with individual images and dimensions.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-medium">Enable Gift Variations</h3>
-                <p className="text-sm text-muted-foreground">
-                  Enable this to add variant groups (e.g., Size, Color) with individual images and dimensions.
-                </p>
-              </div>
+          {/* AI Analysis Section */}
+          <Collapsible className="border border-gray-200 rounded-lg">
+            <CollapsibleTrigger className="flex w-full items-center justify-between p-4 hover:bg-purple-50 transition-colors">
               <div className="flex items-center gap-2">
-                <Label htmlFor="variant-toggle">Enable Variations</Label>
-                <Switch
-                  id="variant-toggle"
-                  checked={showVariants}
-                  onCheckedChange={(checked) => {
-                    setShowVariants(checked);
-                    if (checked && variantGroups.length === 0) {
-                      setVariantGroups([
-                        {
-                          id: generateId(),
-                          title: "Size",
-                          options: [
-                            {
-                              id: generateId(),
-                              title: "Small",
-                            },
-                          ],
-                        },
-                      ]);
-                    }
-                  }}
-                />
+                <Sparkles className="h-4 w-4 text-purple-600" />
+                <span className="font-medium text-gray-700">AI Category Prediction</span>
+                {predictionResult && (
+                  <Badge variant="outline" className="ml-2 bg-purple-100 text-purple-700 border-purple-300">
+                    Ready
+                  </Badge>
+                )}
               </div>
-            </div>
-
-            {showVariants ? (
-              <div className="space-y-6 p-4 border rounded-lg bg-gray-50">
-                
-                {/* Variant Options Definition */}
-                <div className="space-y-4">
-                  {variantGroups.map((group) => (
-                    <div key={group.id} className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4 text-sm font-medium text-gray-700">
-                        <div>Option type</div>
-                        <div>Option value</div>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-4 items-start">
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="text"
-                            value={group.title}
-                            onChange={(e) => updateVariantGroupTitle(group.id, e.target.value)}
-                            placeholder="e.g., Size, Color"
-                            className="flex-1"
-                          />
-                          <Button 
-                            type="button" 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => removeVariantGroup(group.id)}
-                            disabled={variantGroups.length === 1}
-                            className="h-8 w-8 p-0 text-gray-500 hover:text-red-500"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                        
-                        <div className="min-h-[2.5rem] px-3 py-2 border rounded-md bg-white flex flex-wrap items-center gap-1">
-                          {group.options.map((option, index) => (
-                            <div key={option.id} className="flex items-center">
-                              <span className="text-sm px-2 py-1 bg-gray-100 rounded">
-                                {option.title}
-                              </span>
-                              {index < group.options.length - 1 && (
-                                <span className="mx-1 text-gray-400">×</span>
-                              )}
-                            </div>
-                          ))}
-                          <input
-                            type="text"
-                            className="flex-1 min-w-[100px] text-sm border-0 focus:outline-none focus:ring-0 px-2 py-1"
-                            placeholder="Type and press Enter..."
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                // Prevent form submission when pressing Enter
-                                e.preventDefault();
-                                if (e.currentTarget.value.trim()) {
-                                  addOption(group.id, e.currentTarget.value.trim());
-                                  e.currentTarget.value = '';
-                                }
-                              } else if (e.key === 'Backspace' && e.currentTarget.value === '' && group.options.length > 0) {
-                                const lastOption = group.options[group.options.length - 1];
-                                removeOption(group.id, lastOption.id);
-                              }
-                            }}
-                            onBlur={(e) => {
-                              if (e.target.value.trim()) {
-                                addOption(group.id, e.target.value.trim());
-                                e.target.value = '';
-                              }
-                            }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+              {predictionResult ? <ChevronUp className="h-4 w-4 text-gray-500" /> : <ChevronDown className="h-4 w-4 text-gray-500" />}
+            </CollapsibleTrigger>
+            <CollapsibleContent className="px-4 pb-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-600">Analyze images to get AI category suggestions</p>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => analyzeImages(mainMedia.map(m => m.file))} 
+                    disabled={mainMedia.length === 0 || isPredicting}
+                    className="border-gray-300 text-gray-700 hover:bg-purple-50 hover:text-purple-600 hover:border-purple-300"
+                  >
+                    {isPredicting ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-2 text-purple-600" />
+                    ) : null}
+                    {isPredicting ? 'Analyzing...' : 'Analyze Images'}
+                  </Button>
                 </div>
 
-                {/* Variant Dimensions */}
-                <div className="space-y-4 pt-4 border-t">
-                  <h4 className="font-medium">Variant Dimensions</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Dimensions and weights are now set per generated combination in the "Generated Combinations" table below.
-                  </p>
-                </div>
-
-                <Button 
-                  type="button" 
-                  onClick={addVariantGroup}
-                  variant="outline"
-                  className="w-full border-dashed mt-4"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add more option type
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {/* Single Gift Dimensions (when variants disabled) */}
-                <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
-                  <h3 className="text-lg font-medium">Gift Dimensions & Weight</h3>
+                {/* Category Selection */}
+                <div className="space-y-2">
+                  <Label htmlFor="category" className="text-gray-700">Category</Label>
+                  <Select value={selectedCategoryName} onValueChange={handleCategoryChange}>
+                    <SelectTrigger className="border-gray-300 focus:border-purple-500 focus:ring-purple-500">
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="others">Others</SelectItem>
+                      {modelClasses && modelClasses.length > 0 ? (
+                        modelClasses.map((name) => (
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="none" disabled>
+                          No categories available
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="length">Length (cm)</Label>
-                      <Input
-                        type="number"
-                        id="length"
-                        name="length"
-                        min="0"
-                        step="0.1"
-                        placeholder="0.0"
-                        value={productLength}
-                        onChange={(e) => setProductLength(parseFloat(e.target.value) || '')}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="width">Width (cm)</Label>
-                      <Input
-                        type="number"
-                        id="width"
-                        name="width"
-                        min="0"
-                        step="0.1"
-                        placeholder="0.0"
-                        value={productWidth}
-                        onChange={(e) => setProductWidth(parseFloat(e.target.value) || '')}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="height">Height (cm)</Label>
-                      <Input
-                        type="number"
-                        id="height"
-                        name="height"
-                        min="0"
-                        step="0.1"
-                        placeholder="0.0"
-                        value={productHeight}
-                        onChange={(e) => setProductHeight(parseFloat(e.target.value) || '')}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="weight">Weight</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          type="number"
-                          id="weight"
-                          name="weight"
-                          min="0"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={productWeight}
-                          onChange={(e) => setProductWeight(parseFloat(e.target.value) || '')}
-                          className="flex-1"
-                        />
-                        <Select value={productWeightUnit} onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => setProductWeightUnit(value)}>
-                          <SelectTrigger className="w-20">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="g">g</SelectItem>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="lb">lb</SelectItem>
-                            <SelectItem value="oz">oz</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        {/* Hidden input to include product weight unit in FormData */}
-                        <input type="hidden" name="weight_unit" value={productWeightUnit} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+                  {selectedCategoryName && (!modelClasses || !modelClasses.includes(selectedCategoryName)) && (
+                    <p className="text-xs text-gray-600">Selected: {selectedCategoryName}</p>
+                  )}
 
-      {/* STEP 4: Stock */}
-      {!showVariants && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Stock Card */}
-        <Card id="stock">
-          <CardHeader>
-            <CardTitle>Step 4: Stock</CardTitle>
-            <CardDescription>
-              Set initial stock quantity and configure low stock alerts.
-            </CardDescription>
-          </CardHeader>
-          
-          <CardContent>
-            <div className="space-y-6">
-              {/* Main Gift Stock (when variants disabled) */}
-              {!showVariants && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label htmlFor="quantity">Quantity *</Label>
-                      <Input
-                        type="number"
-                        id="quantity"
-                        name="quantity"
-                        required
-                        min="0"
-                        placeholder="0"
-                        value={giftQuantity}
-                        onChange={(e) => setGiftQuantity(parseInt(e.target.value) || '')}
-                      />
-                      {errors.quantity && <p className="text-sm text-red-600">{errors.quantity}</p>}
-                    </div>
-                    
-                    <div className="space-y-4 border p-4 rounded-lg bg-red-50/50">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="font-medium">Critical Stock Trigger ⚠️</h4>
-                          <p className="text-sm text-muted-foreground">
-                            Receive notification when stock is low
-                          </p>
-                        </div>
-                        <Switch
-                          checked={enableCriticalTrigger}
-                          onCheckedChange={setEnableCriticalTrigger}
-                        />
+                  {predictionResult && !predictionError && (
+                    <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-md">
+                      <div className="font-medium text-sm text-purple-800 mb-1">AI Suggestion</div>
+                      <div className="text-sm text-purple-700">
+                        <span className="font-medium">{predictionResult.predicted_category?.category_name}</span>
+                        <span className="ml-2 text-purple-600">
+                          ({Math.round((predictionResult.predicted_category?.confidence || 0) * 100)}% confidence)
+                        </span>
                       </div>
-
-                      {enableCriticalTrigger && (
-                        <div className="space-y-2">
-                          <Label htmlFor="critical_threshold">Critical Threshold</Label>
-                          <Input
-                            type="number"
-                            id="critical_threshold"
-                            name="critical_threshold"
-                            min="1"
-                            placeholder="e.g., 5"
-                            value={criticalThreshold}
-                            onChange={(e) => setCriticalThreshold(parseInt(e.target.value) || '')}
-                          />
+                      {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
+                        <div className="text-xs text-purple-600 mt-1">
+                          Also considered: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {predictionError && (
+                    <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                      <div className="text-sm text-red-700">{predictionError}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
+      </div>
+
+      {/* STEP 3: Gift Variants */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100">
+              <Package className="h-4 w-4 text-purple-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-800">Gift Variants</h2>
+              <p className="text-sm text-gray-500">Each gift must have at least one variant with stock</p>
+            </div>
+          </div>
+          <Badge className="bg-purple-100 text-purple-800 border-purple-300">
+            Required
+          </Badge>
+        </div>
+
+        <div className="space-y-6">
+          {/* Variants List */}
+          {variants.map((variant, index) => (
+            <div 
+              key={variant.id} 
+              className="border border-gray-200 rounded-xl p-5 bg-white hover:border-purple-300 transition-colors relative"
+            >
+              {/* Variant Header */}
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-700 font-semibold text-sm">
+                    {index + 1}
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-800">Variant {index + 1}</span>
+                    {index === 0 && (
+                      <Badge className="ml-3 bg-purple-100 text-purple-700 border-0">
+                        Default
+                      </Badge>
+                    )}
                   </div>
                 </div>
-              )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => removeVariant(variant.id)}
+                  disabled={variants.length === 1}
+                  className="h-8 w-8 p-0 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
 
-              {/* Variant Stock (when variants enabled) */}
-              {showVariants && variantGroups.length > 0 && (
-                <div className="space-y-4">
-                  <Label className="text-lg font-medium">Variant Stock</Label>
-                  
-                  {variantGroups.map((group) => (
-                    <div key={group.id} className="space-y-3">
-                      <div className="text-sm font-medium text-gray-700 mb-2">{group.title} Options:</div>
-                      
-                      {group.options.map((option, optionIndex) => (
-                        <div key={option.id} className="flex items-center justify-between gap-3">
-                          {/* Option Label */}
-                          <div>
-                            <span className="text-sm font-medium">{group.title}: {option.title}</span>
-                          </div>
+              {/* Image Preview Section */}
+              <div className="mb-5">
+                <div className="flex items-center gap-4">
+                  {/* Image Upload Area */}
+                  <div 
+                    className={`relative w-24 h-24 border-2 rounded-lg overflow-hidden transition-all ${
+                      variant.imagePreview 
+                        ? 'border-purple-400 shadow-sm' 
+                        : 'border-dashed border-gray-300 hover:border-purple-400 bg-gray-50'
+                    }`}
+                  >
+                    {variant.imagePreview ? (
+                      <>
+                        <img 
+                          src={variant.imagePreview} 
+                          alt={variant.title}
+                          className="w-full h-full object-cover"
+                        />
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600"
+                          onClick={() => {
+                            URL.revokeObjectURL(variant.imagePreview!);
+                            updateVariantField(variant.id, 'image', null);
+                            updateVariantField(variant.id, 'imagePreview', undefined);
+                          }}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </>
+                    ) : (
+                      <label 
+                        htmlFor={`variant-image-${variant.id}`}
+                        className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-purple-100 transition-colors"
+                      >
+                        <ImageIcon className="h-6 w-6 text-gray-400 mb-1" />
+                        <span className="text-[10px] text-gray-500">Upload</span>
+                        <Input
+                          id={`variant-image-${variant.id}`}
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => handleVariantImageChange(variant.id, e)}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
 
-                          {/* Variant Image Uploader */}
-                          <div>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) => handleVariantImageChange(group.id, option.id, e)}
-                              className="text-sm"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-700 mb-1">Variant Image</p>
+                    <p className="text-xs text-gray-500">
+                      Upload a specific image for this variant
+                    </p>
+                  </div>
                 </div>
-              )}
+              </div>
+
+              {/* Main Variant Fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                {/* Variant Title */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                    Title <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    type="text"
+                    value={variant.title}
+                    onChange={(e) => updateVariantField(variant.id, 'title', e.target.value)}
+                    placeholder="e.g., Small, Red, etc."
+                    className={`h-9 text-sm border-gray-300 focus:border-purple-500 focus:ring-purple-500 ${index === 0 ? 'bg-gray-50' : ''}`}
+                    required
+                    readOnly={index === 0}
+                  />
+                </div>
+                
+                {/* Quantity */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                    Stock <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={variant.quantity}
+                    onChange={(e) => updateVariantField(variant.id, 'quantity', parseInt(e.target.value) || '')}
+                    placeholder="0"
+                    className="h-9 text-sm border-gray-300 focus:border-purple-500 focus:ring-purple-500"
+                    required
+                  />
+                </div>
+
+                {/* SKU Code */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700">SKU Code</Label>
+                  <Input
+                    type="text"
+                    value={variant.sku_code || ''}
+                    onChange={(e) => updateVariantField(variant.id, 'sku_code', e.target.value)}
+                    placeholder="Optional"
+                    className="h-9 text-sm border-gray-300 focus:border-purple-500 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Critical Stock Trigger */}
+              <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-sm font-medium text-gray-700">Critical Stock Trigger</span>
+                  <Badge variant="outline" className="text-[10px] bg-white text-gray-700 border-gray-300">
+                    Optional
+                  </Badge>
+                </div>
+                
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium text-gray-700">Alert when stock falls below</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={variant.critical_trigger || ''}
+                    onChange={(e) => updateVariantField(variant.id, 'critical_trigger', parseInt(e.target.value) || '')}
+                    placeholder="e.g., 5"
+                    className="h-8 text-sm border-gray-300 focus:border-purple-500 focus:ring-purple-500 max-w-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Status Toggle */}
+              <div className="flex items-center gap-6 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id={`active-${variant.id}`}
+                    checked={variant.is_active !== false}
+                    onCheckedChange={(checked) => updateVariantField(variant.id, 'is_active', checked)}
+                    className="data-[state=checked]:bg-purple-500"
+                  />
+                  <Label htmlFor={`active-${variant.id}`} className="text-sm text-gray-700 cursor-pointer">
+                    Active
+                  </Label>
+                </div>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          ))}
+
+          {/* Add Variant Button */}
+          <Button 
+            type="button" 
+            onClick={addVariant}
+            variant="outline"
+            className="w-full py-6 border-2 border-dashed border-gray-300 hover:border-purple-500 hover:bg-purple-50 text-gray-700 hover:text-purple-600 transition-colors"
+          >
+            <Plus className="h-5 w-5 mr-2" />
+            Add Another Variant
+          </Button>
+
+          {/* Variants Summary */}
+          <div className="flex items-center justify-between text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-200">
+            <span>Total Variants: {variants.length}</span>
+            <span>Total Stock: {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units</span>
+          </div>
+        </div>
       </div>
-      )}
 
-      {/* Generated Combinations (SKUs) */}
-      {showVariants && variantGroups.length > 0 && (
-        <Card id="generated-combinations">
-          <CardHeader>
-            <CardTitle>Generated Combinations</CardTitle>
-            <CardDescription>
-              All combinations generated from your variant choices. Edit per-combination quantity, dimensions, or SKU code before saving.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="text-left">
-                    <th className="px-2 py-2 font-medium">Image</th>
-                    {variantGroups.map((g) => (
-                      <th key={g.id} className="px-2 py-2 font-medium">{g.title}</th>
-                    ))}
-                    <th className="px-2 py-2 font-medium">Quantity</th>
-                    <th className="px-2 py-2 font-medium">Critical</th>
-                    <th className="px-2 py-2 font-medium">L (cm)</th>
-                    <th className="px-2 py-2 font-medium">W (cm)</th>
-                    <th className="px-2 py-2 font-medium">H (cm)</th>
-                    <th className="px-2 py-2 font-medium">Weight</th>
-                    <th className="px-2 py-2 font-medium">Unit</th>
-                    <th className="px-2 py-2 font-medium">SKU Code</th>
-                    <th className="px-2 py-2 font-medium">Active</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {skuCombinations.map((sku) => (
-                    <tr key={sku.id} className="border-t">
-                      <td className="px-2 py-2 align-top">
-                        <div className="relative w-12 h-12 rounded overflow-hidden bg-gray-100 flex items-center justify-center">
-                          {sku.imagePreview ? (
-                            <img src={sku.imagePreview} alt="sku" className="w-full h-full object-cover" />
-                          ) : (
-                            <ImageIcon className="h-5 w-5 text-gray-400" />
-                          )}
-
-                          <input
-                            type="file"
-                            id={`sku_image_${sku.id}`}
-                            accept="image/*"
-                            onChange={(e) => handleSkuImageChange(sku.id, e)}
-                            className="absolute inset-0 opacity-0 cursor-pointer"
-                          />
-                        </div>
-                        {sku.imagePreview && (
-                          <div className="mt-1">
-                            <Button type="button" variant="ghost" size="sm" onClick={() => updateSkuField(sku.id, 'image', null)}>Remove</Button>
-                          </div>
-                        )}
-                      </td>
-                      {variantGroups.map((g) => (
-                        <td key={g.id} className="px-2 py-2 align-top">
-                          {g.options.find(o => o.id === sku.option_map[g.id])?.title || ''}
-                        </td>
-                      ))}
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" value={sku.quantity || ''} onChange={(e) => updateSkuField(sku.id, 'quantity', parseInt(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="1" placeholder="Threshold" value={sku.critical_trigger || ''} onChange={(e) => updateSkuField(sku.id, 'critical_trigger', parseInt(e.target.value) || '')} className="w-20 text-xs" />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.1" value={sku.length || ''} onChange={(e) => updateSkuField(sku.id, 'length', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.1" value={sku.width || ''} onChange={(e) => updateSkuField(sku.id, 'width', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.1" value={sku.height || ''} onChange={(e) => updateSkuField(sku.id, 'height', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="number" min="0" step="0.01" value={sku.weight || ''} onChange={(e) => updateSkuField(sku.id, 'weight', parseFloat(e.target.value) || '')} />
-                      </td>
-                      <td className="px-2 py-2">
-                        <select className="border rounded p-1 text-sm" value={sku.weight_unit || ''} onChange={(e) => updateSkuField(sku.id, 'weight_unit', e.target.value as any)}>
-                          <option value="">Unit</option>
-                          <option value="g">g</option>
-                          <option value="kg">kg</option>
-                          <option value="lb">lb</option>
-                          <option value="oz">oz</option>
-                        </select>
-                      </td>
-                      <td className="px-2 py-2">
-                        <Input type="text" value={sku.sku_code || ''} onChange={(e) => updateSkuField(sku.id, 'sku_code', e.target.value)} />
-                      </td>
-
-                      <td className="px-2 py-2">
-                        <Switch checked={sku.is_active ?? true} onCheckedChange={(checked) => updateSkuField(sku.id, 'is_active', checked)} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+     
 
       {/* Submit Button */}
-      <div className="pt-6">
-        <Button
-          type="submit"
-          variant="default"
-          size="lg"
-          className="w-full"
-        >
-          Create Gift
-        </Button>
+      <div className="sticky bottom-6 bg-white border border-gray-200 rounded-lg shadow-lg p-6">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="font-medium text-gray-800">Ready to create your gift?</div>
+            <div className="text-sm text-gray-600">
+              Create a personal gift listing (no shop required)
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => window.history.back()}
+              className="border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={fetcher.state === 'submitting' || variants.length === 0 || variants.some(v => !v.quantity)}
+              className="min-w-[140px] bg-purple-500 hover:bg-purple-600 text-white disabled:bg-purple-300"
+              size="lg"
+            >
+              {fetcher.state === 'submitting' ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Creating...
+                </>
+              ) : (
+                'Create Gift'
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {apiResponseError && (
+          <Alert variant="destructive" className="mt-4 border-red-200 bg-red-50">
+            <AlertCircle className="h-4 w-4 text-red-600" />
+            <AlertDescription className="text-red-700">{apiResponseError}</AlertDescription>
+          </Alert>
+        )}
+
+        {apiResponseMessage && (
+          <Alert className="mt-4 bg-purple-50 border-purple-200 text-purple-800">
+            <AlertDescription>{apiResponseMessage}</AlertDescription>
+          </Alert>
+        )}
       </div>
     </form>
   );
