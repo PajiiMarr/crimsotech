@@ -1,17 +1,17 @@
 // app/sessions.server.ts
 import { createCookieSessionStorage } from "react-router";
+import type { User } from "./contexts/user-role";
 
 type SessionData = {
   userId: string;
-  riderId: string;
-  registration_stage: number;
-  isCustomer: boolean;
-  isRider: boolean;
-  isAdmin: boolean;
-  isModerator: boolean;
+  userData: User;
   shopId?: string;
-  
-  // User profile data - store basic info in session
+  riderId?: string;
+  registration_stage?: number;
+  isCustomer?: boolean;
+  isRider?: boolean;
+  isAdmin?: boolean;
+  isModerator?: boolean;
   username?: string;
   email?: string;
   firstName?: string;
@@ -31,10 +31,10 @@ const { getSession, commitSession, destroySession } =
         maxAge: 60 * 60 * 24 * 7, // 1 week
         path: "/",
         sameSite: "lax",
-        secrets: ["s3cret1"],
-        secure: true,
+        secrets: [process.env.SESSION_SECRET || "s3cr3t"],
+        secure: process.env.NODE_ENV === "production",
       },
-    },
+    }
   );
 
 export { getSession, commitSession, destroySession };

@@ -129,6 +129,7 @@ class Landing(viewsets.ViewSet):
         Fetches ALL product images from ProductMedia model.
         Hero products are ACTUAL products with images, not categories.
         ONLY PUBLISHED PRODUCTS ARE FETCHED.
+        NOW FIXED: Uses variants instead of skus for stock calculation
         """
         try:
             # 1. MARKETPLACE STATS (respects model constraints)
@@ -162,8 +163,9 @@ class Landing(viewsets.ViewSet):
             ).order_by('-product_count')[:10]
             
             # 3. FEATURED PRODUCTS with ALL images - ONLY PUBLISHED
+            # FIXED: Using variants instead of skus
             featured_products = Product.objects.annotate(
-                sku_total=Coalesce(Sum('skus__quantity', filter=Q(skus__is_active=True)), 0)
+                variant_total=Coalesce(Sum('variants__quantity', filter=Q(variants__is_active=True)), 0)
             ).filter(
                 upload_status='published',
                 is_removed=False,
@@ -172,7 +174,8 @@ class Landing(viewsets.ViewSet):
                 shop__verified=True,
                 shop__status='Active'
             ).select_related('shop').prefetch_related(
-                'productmedia_set'
+                'productmedia_set',
+                'variants'
             ).order_by('-created_at')[:15]
             
             # 4. TRENDING SHOPS - ONLY WITH PUBLISHED PRODUCTS
@@ -209,7 +212,8 @@ class Landing(viewsets.ViewSet):
                 shop__verified=True,
                 shop__status='Active'
             ).select_related('shop').prefetch_related(
-                'productmedia_set'
+                'productmedia_set',
+                'variants'
             ).distinct().order_by('-created_at')[:12]  # Get 12 products for hero
             
             for product in products_with_images:
@@ -218,13 +222,19 @@ class Landing(viewsets.ViewSet):
                 if media and media.file_data:
                     image_url = request.build_absolute_uri(media.file_data.url)
                     
+                    # Get min price from variants
+                    min_price = None
+                    active_variants = product.variants.filter(is_active=True, price__isnull=False)
+                    if active_variants.exists():
+                        min_price = float(active_variants.aggregate(Min('price'))['price__min'])
+                    
                     hero_products_list.append({
                         'id': str(product.id),
                         'title': product.name,
                         'link': f'/products/{product.id}',
                         'thumbnail': image_url,
                         'description': product.description[:100] + '...' if len(product.description) > 100 else product.description,
-                        'price': float(product.price),
+                        'price': min_price,
                         'shop_name': product.shop.name if product.shop else 'No Shop',
                         'is_product': True  # Flag to identify this is a real product
                     })
@@ -239,7 +249,8 @@ class Landing(viewsets.ViewSet):
                     product__is_removed=False,
                     product__productmedia__isnull=False
                 ).select_related('product', 'product__shop').prefetch_related(
-                    'product__productmedia_set'
+                    'product__productmedia_set',
+                    'product__variants'
                 ).distinct()[:8 - len(hero_products_list)]
                 
                 for boost in boosted_products:
@@ -248,13 +259,20 @@ class Landing(viewsets.ViewSet):
                         media = product.productmedia_set.first()
                         if media and media.file_data:
                             image_url = request.build_absolute_uri(media.file_data.url)
+                            
+                            # Get min price from variants
+                            min_price = None
+                            active_variants = product.variants.filter(is_active=True, price__isnull=False)
+                            if active_variants.exists():
+                                min_price = float(active_variants.aggregate(Min('price'))['price__min'])
+                            
                             hero_products_list.append({
                                 'id': str(product.id),
                                 'title': f"🔥 {product.name}",
                                 'link': f'/products/{product.id}',
                                 'thumbnail': image_url,
                                 'description': f"Boosted • {product.description[:80]}..." if len(product.description) > 80 else f"Boosted • {product.description}",
-                                'price': float(product.price),
+                                'price': min_price,
                                 'shop_name': product.shop.name if product.shop else 'No Shop',
                                 'is_product': True,
                                 'is_boosted': True
@@ -269,20 +287,28 @@ class Landing(viewsets.ViewSet):
                 ).exclude(
                     id__in=[p['id'] for p in hero_products_list if 'id' in p]
                 ).select_related('shop').prefetch_related(
-                    'productmedia_set'
+                    'productmedia_set',
+                    'variants'
                 ).order_by('?')[:6 - len(hero_products_list)]  # Random products
                 
                 for product in any_products:
                     media = product.productmedia_set.first()
                     if media and media.file_data:
                         image_url = request.build_absolute_uri(media.file_data.url)
+                        
+                        # Get min price from variants
+                        min_price = None
+                        active_variants = product.variants.filter(is_active=True, price__isnull=False)
+                        if active_variants.exists():
+                            min_price = float(active_variants.aggregate(Min('price'))['price__min'])
+                        
                         hero_products_list.append({
                             'id': str(product.id),
                             'title': product.name,
                             'link': f'/products/{product.id}',
                             'thumbnail': image_url,
                             'description': product.description[:100] + '...' if len(product.description) > 100 else product.description,
-                            'price': float(product.price),
+                            'price': min_price,
                             'shop_name': product.shop.name if product.shop else 'No Shop',
                             'is_product': True
                         })
@@ -321,8 +347,8 @@ class Landing(viewsets.ViewSet):
             has_deals = Product.objects.filter(
                 upload_status='published',  # ONLY PUBLISHED
                 is_removed=False,
-                compare_price__isnull=False,
-                compare_price__gt=F('price')
+                variants__compare_price__isnull=False,
+                variants__compare_price__gt=F('variants__price')
             ).exists()
             if has_deals:
                 hero_sections.append({
@@ -400,19 +426,38 @@ class Landing(viewsets.ViewSet):
                 
                 primary_image_url = all_images[0]['url'] if all_images else None
                 
+                # FIXED: Using variant_total instead of sku_total
                 try:
-                    sku_total = int(getattr(product, 'sku_total', 0) or 0)
+                    variant_total = int(getattr(product, 'variant_total', 0) or 0)
                 except Exception:
-                    sku_total = 0
+                    variant_total = 0
 
-                stock = sku_total if sku_total > 0 else (product.quantity or 0)
+                stock = variant_total
+
+                # Get min and max prices from variants
+                min_price = None
+                max_price = None
+                compare_price = None
+                
+                active_variants = product.variants.filter(is_active=True, price__isnull=False)
+                if active_variants.exists():
+                    price_stats = active_variants.aggregate(
+                        min_price=Min('price'),
+                        max_price=Max('price'),
+                        sample_compare=Max('compare_price')
+                    )
+                    min_price = float(price_stats['min_price']) if price_stats['min_price'] else None
+                    max_price = float(price_stats['max_price']) if price_stats['max_price'] else None
+                    compare_price = float(price_stats['sample_compare']) if price_stats['sample_compare'] else None
 
                 product_list.append({
                     'id': str(product.id),
                     'title': product.name,
                     'description': product.description[:150] + '...' if len(product.description) > 150 else product.description,
-                    'price': float(product.price),
-                    'compare_price': float(product.compare_price) if product.compare_price else None,
+                    'min_price': min_price,
+                    'max_price': max_price,
+                    'price_range': f"₱{min_price:,.2f}" + (f" - ₱{max_price:,.2f}" if max_price and max_price != min_price else ""),
+                    'compare_price': compare_price,
                     'shop_id': str(product.shop.id) if product.shop else None,
                     'shop_name': product.shop.name if product.shop else 'No Shop',
                     'category_id': str(product.category.id) if product.category else None,
@@ -421,6 +466,7 @@ class Landing(viewsets.ViewSet):
                     'all_images': all_images,
                     'image_count': len(all_images),
                     'stock': stock,
+                    'variant_count': product.total_variants,
                     'is_out_of_stock': stock <= 0,
                     'created_at': product.created_at.isoformat()
                 })
@@ -482,8 +528,8 @@ class Landing(viewsets.ViewSet):
                     'hero_sections': [],
                     'trust_badges': []
                 }
-            }, status=status.HTTP_200_OK)        
-
+            }, status=status.HTTP_200_OK)
+        
 class FetchUser(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'], url_path='profile')

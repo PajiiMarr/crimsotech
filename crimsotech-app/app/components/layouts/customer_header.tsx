@@ -1,3 +1,4 @@
+// app/components/layouts/customer_header.tsx
 "use client";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "~/components/ui/breadcrumb";
 import { Separator } from "~/components/ui/separator";
@@ -6,7 +7,8 @@ import { Bell, User, Home, MessageCircle } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "~/components/ui/dropdown-menu";
 import { Link, useNavigate, useLocation } from "react-router";
 import { useContext, useMemo } from "react";
-import { userContext } from "~/contexts/user-role";
+// Import the correct context from the provider
+import { UserContext } from "~/components/providers/user-role-provider";
 
 interface User {
   isAdmin: boolean;
@@ -89,13 +91,21 @@ const generateBreadcrumbs = (pathname: string) => {
 export default function CustomerHeader() {
   const navigate = useNavigate();
   const location = useLocation();
-  const user = useContext(userContext);
+  // Use the correct context
+  const user = useContext(UserContext);
+
+  // Add this to see what user data is actually coming through
+  console.log("CustomerHeader - user from context:", user);
 
   const breadcrumbs = useMemo(() => generateBreadcrumbs(location.pathname), [location.pathname]);
 
-  // Only explicitly hide Shop when we KNOW the user is an admin
-  // If user is null (context not loaded yet), still show Shop
-  const showShop = !user?.isAdmin;
+  // Check if user is admin OR moderator with proper null checking
+  const isAdmin = user?.isAdmin === true;
+  const isModerator = user?.isModerator === true;
+  
+  // Shop should be hidden for both admin AND moderator
+  // Only show for customers (when user exists and is a customer)
+  const showShop = user !== null && !isAdmin && !isModerator;
 
   return (
     <>
@@ -123,6 +133,7 @@ export default function CustomerHeader() {
                 Profile
               </DropdownMenuItem>
 
+              {/* Shop link - only show for customers */}
               {showShop && (
                 <DropdownMenuItem onClick={() => navigate("/shop-list")}>
                   Shop

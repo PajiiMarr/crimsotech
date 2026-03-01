@@ -4,7 +4,6 @@ import uuid
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.utils import timezone
-from .models import User, Message, Conversation, ConversationParticipant
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -84,7 +83,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'conversation_id': self.conversation_id
             }))
             
-            await self.send_conversation_history()
+            # Get history and then send it
+            history = await self.get_conversation_history()
+            await self.send(text_data=json.dumps({
+                'type': 'conversation_history',
+                'messages': history
+            }))
         else:
             await self.send(text_data=json.dumps({
                 'type': 'authenticated',
@@ -94,7 +98,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
     
     @database_sync_to_async
     def get_user(self, user_id):
-        """Get user by ID"""
+        """Get user by ID - lazy import"""
+        from .models import User
         try:
             return User.objects.get(id=user_id)
         except User.DoesNotExist:
@@ -215,7 +220,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
     
     @database_sync_to_async
     def save_message_to_db(self, receiver_id, content, message_type, conversation_id):
-        """Save message to database"""
+        """Save message to database - lazy imports"""
+        from .models import User, Message
         try:
             receiver = User.objects.get(id=receiver_id)
             
@@ -224,7 +230,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 receiver=receiver,
                 content=content,
                 message_type=message_type,
-                conversation_id=conversation_id,  # This must not be null
+                conversation_id=conversation_id,
                 status='sent'
             )
             return message
@@ -234,16 +240,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
     
     @database_sync_to_async
     def mark_message_read(self, message_id):
-        """Mark message as read in database"""
+        """Mark message as read in database - lazy import"""
+        from .models import Message
         message = Message.objects.get(id=message_id, receiver=self.user)
         message.mark_as_read()
         return message
     
     @database_sync_to_async
-    def send_conversation_history(self):
-        """Send last 50 messages from database"""
+    def get_conversation_history(self):
+        """Get conversation history from database - NO AWAIT HERE"""
+        from .models import Message
         if not self.conversation_id:
-            return
+            return []
             
         messages = Message.objects.filter(
             conversation_id=self.conversation_id
@@ -261,10 +269,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'message_type': msg.message_type
             })
         
-        self.send(text_data=json.dumps({
-            'type': 'conversation_history',
-            'messages': history
-        }))
+        return history
     
     def get_conversation_id(self, user1_id, user2_id):
         """Generate consistent conversation ID"""

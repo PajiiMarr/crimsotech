@@ -876,168 +876,166 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   };
 
   return (
-    <UserProvider user={safeUser}>
-      <SidebarLayout>
-        <div className="w-full min-h-screen">
-          <div className="w-full">
-            {/* Header */}
-            <div className="mb-6 w-full">
-              <div className="flex items-center justify-between w-full">
-                <div>
-                  <h1 className="text-xl lg:text-2xl font-bold flex items-center gap-2">
-                    <ShoppingCart className="h-5 w-5 lg:h-6 lg:w-6 text-orange-500" />
-                    Shopping Cart ({cartItems.length})
-                  </h1>
-                  <p className="text-sm text-gray-500 mt-1">
-                    {selectedItems.length} items selected • ₱{subtotal.toFixed(2)}{" "}
-                    • {shopCount} shops
-                  </p>
+    <SidebarLayout>
+      <div className="w-full min-h-screen">
+        <div className="w-full">
+          {/* Header */}
+          <div className="mb-6 w-full">
+            <div className="flex items-center justify-between w-full">
+              <div>
+                <h1 className="text-xl lg:text-2xl font-bold flex items-center gap-2">
+                  <ShoppingCart className="h-5 w-5 lg:h-6 lg:w-6 text-orange-500" />
+                  Shopping Cart ({cartItems.length})
+                </h1>
+                <p className="text-sm text-gray-500 mt-1">
+                  {selectedItems.length} items selected • ₱{subtotal.toFixed(2)}{" "}
+                  • {shopCount} shops
+                </p>
+              </div>
+              {cartItems.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate("/")}
+                  className="hidden lg:flex items-center gap-1 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Continue Shopping
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {cartItems.length === 0 ? (
+            <div className="w-full max-w-2xl mx-auto text-center py-12 lg:py-16">
+              <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-orange-50 flex items-center justify-center">
+                <ShoppingCart className="h-10 w-10 text-orange-400" />
+              </div>
+              <h3 className="text-lg lg:text-xl font-medium mb-2">
+                Your cart is empty
+              </h3>
+              <p className="text-gray-500 mb-6 max-w-md mx-auto">
+                Add items from your favorite shops to get started
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Button
+                  onClick={() => navigate("/")}
+                  className="bg-orange-500 hover:bg-orange-600 px-6"
+                >
+                  Start Shopping
+                </Button>
+                <Button 
+                  onClick={() => navigate(-1)} 
+                  variant="outline"
+                  className="border-orange-200 text-orange-600 hover:bg-orange-50"
+                >
+                  Go Back
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col lg:flex-row gap-6 w-full">
+              {/* Left Column - Cart Items */}
+              <div className="lg:w-2/3">
+                {/* Selection Bar */}
+                <div className="bg-white rounded-lg p-3 mb-4 flex items-center justify-between border shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={
+                        cartItems.length > 0 &&
+                        cartItems.every((item) => item.selected)
+                      }
+                      onCheckedChange={handleSelectAll}
+                      className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
+                    />
+                    <span className="text-sm font-medium">
+                      Select All Items ({cartItems.length})
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">
+                      {shopCount} {shopCount === 1 ? "shop" : "shops"}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={removeSelectedItems}
+                      disabled={selectedItems.length === 0}
+                      className="text-sm text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Remove Selected ({selectedItems.length})
+                    </Button>
+                  </div>
                 </div>
+
+                {/* Shop Sections */}
+                {Object.entries(groupedItems).map(([shopName, items]) => (
+                  <ShopSection
+                    key={shopName}
+                    shopName={shopName}
+                    items={items}
+                    onUpdateQuantity={updateQuantity}
+                    onRemove={removeItem}
+                    onSelectItem={handleSelectItem}
+                    onSelectShop={handleSelectShop}
+                  />
+                ))}
+
+                {/* Mobile Continue Button */}
                 {cartItems.length > 0 && (
                   <Button
-                    variant="ghost"
-                    size="sm"
+                    variant="outline"
                     onClick={() => navigate("/")}
-                    className="hidden lg:flex items-center gap-1 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                    className="w-full mt-4 lg:hidden border-orange-200 text-orange-600 hover:bg-orange-50"
                   >
-                    <ArrowLeft className="h-4 w-4" />
+                    <ArrowLeft className="h-4 w-4 mr-2" />
                     Continue Shopping
                   </Button>
                 )}
               </div>
+
+              {/* Right Column - Order Summary */}
+              <div className="lg:w-1/3">
+                <div className="sticky top-6 space-y-4">
+                  <SimpleCouponSection onApplyCoupon={handleApplyCoupon} />
+                  <SimpleOrderSummary
+                    subtotal={subtotal}
+                    discount={discount}
+                    delivery={delivery}
+                    onProceedToCheckout={handleCheckout}
+                    itemCount={selectedItems.length}
+                    shopCount={selectedShops}
+                  />
+
+                  {/* Additional Info */}
+                  <div className="border rounded-lg p-4 bg-white">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Package className="h-4 w-4 text-orange-600" />
+                      <h4 className="text-sm font-medium">Multi-Shop Order</h4>
+                    </div>
+                    <p className="text-xs text-gray-600 mb-3">
+                      Items from different shops will be delivered separately.
+                      Each shop may have different delivery times.
+                    </p>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Shops in order:</span>
+                        <span className="font-medium text-orange-700">{selectedShops}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Total items:</span>
+                        <span className="font-medium text-orange-700">{selectedItems.length}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-
-            {cartItems.length === 0 ? (
-              <div className="w-full max-w-2xl mx-auto text-center py-12 lg:py-16">
-                <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-orange-50 flex items-center justify-center">
-                  <ShoppingCart className="h-10 w-10 text-orange-400" />
-                </div>
-                <h3 className="text-lg lg:text-xl font-medium mb-2">
-                  Your cart is empty
-                </h3>
-                <p className="text-gray-500 mb-6 max-w-md mx-auto">
-                  Add items from your favorite shops to get started
-                </p>
-                <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                  <Button
-                    onClick={() => navigate("/")}
-                    className="bg-orange-500 hover:bg-orange-600 px-6"
-                  >
-                    Start Shopping
-                  </Button>
-                  <Button 
-                    onClick={() => navigate(-1)} 
-                    variant="outline"
-                    className="border-orange-200 text-orange-600 hover:bg-orange-50"
-                  >
-                    Go Back
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col lg:flex-row gap-6 w-full">
-                {/* Left Column - Cart Items */}
-                <div className="lg:w-2/3">
-                  {/* Selection Bar */}
-                  <div className="bg-white rounded-lg p-3 mb-4 flex items-center justify-between border shadow-sm">
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        checked={
-                          cartItems.length > 0 &&
-                          cartItems.every((item) => item.selected)
-                        }
-                        onCheckedChange={handleSelectAll}
-                        className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
-                      />
-                      <span className="text-sm font-medium">
-                        Select All Items ({cartItems.length})
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-500">
-                        {shopCount} {shopCount === 1 ? "shop" : "shops"}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={removeSelectedItems}
-                        disabled={selectedItems.length === 0}
-                        className="text-sm text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                      >
-                        <X className="h-4 w-4 mr-1" />
-                        Remove Selected ({selectedItems.length})
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Shop Sections */}
-                  {Object.entries(groupedItems).map(([shopName, items]) => (
-                    <ShopSection
-                      key={shopName}
-                      shopName={shopName}
-                      items={items}
-                      onUpdateQuantity={updateQuantity}
-                      onRemove={removeItem}
-                      onSelectItem={handleSelectItem}
-                      onSelectShop={handleSelectShop}
-                    />
-                  ))}
-
-                  {/* Mobile Continue Button */}
-                  {cartItems.length > 0 && (
-                    <Button
-                      variant="outline"
-                      onClick={() => navigate("/")}
-                      className="w-full mt-4 lg:hidden border-orange-200 text-orange-600 hover:bg-orange-50"
-                    >
-                      <ArrowLeft className="h-4 w-4 mr-2" />
-                      Continue Shopping
-                    </Button>
-                  )}
-                </div>
-
-                {/* Right Column - Order Summary */}
-                <div className="lg:w-1/3">
-                  <div className="sticky top-6 space-y-4">
-                    <SimpleCouponSection onApplyCoupon={handleApplyCoupon} />
-                    <SimpleOrderSummary
-                      subtotal={subtotal}
-                      discount={discount}
-                      delivery={delivery}
-                      onProceedToCheckout={handleCheckout}
-                      itemCount={selectedItems.length}
-                      shopCount={selectedShops}
-                    />
-
-                    {/* Additional Info */}
-                    <div className="border rounded-lg p-4 bg-white">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Package className="h-4 w-4 text-orange-600" />
-                        <h4 className="text-sm font-medium">Multi-Shop Order</h4>
-                      </div>
-                      <p className="text-xs text-gray-600 mb-3">
-                        Items from different shops will be delivered separately.
-                        Each shop may have different delivery times.
-                      </p>
-                      <div className="space-y-1 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Shops in order:</span>
-                          <span className="font-medium text-orange-700">{selectedShops}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Total items:</span>
-                          <span className="font-medium text-orange-700">{selectedItems.length}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          )}
         </div>
-      </SidebarLayout>
-    </UserProvider>
+      </div>
+    </SidebarLayout>
   );
 }
