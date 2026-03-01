@@ -79,6 +79,15 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "https://crimsotech.vercel.app",  # 
 ]
+
+# WebSocket CORS settings
+CORS_ALLOWED_ORIGINS_WEBSOCKETS = [
+    "ws://localhost:3000",
+    "ws://localhost:5173",
+    "ws://127.0.0.1:5173",
+    "wss://crimsotech.vercel.app",
+]
+
 CORS_ALLOW_CREDENTIALS = True
 
 # Allow the frontend to send the custom X-User-Id header in preflight
@@ -106,7 +115,9 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
+ASGI_APPLICATION = 'backend.asgi.application'
 
+# Database Configuration
 db_url = env.str("DATABASE_URL", default="")
 if db_url:
     # Parse database URL with SSL requirements for Supabase/cloud databases
@@ -132,6 +143,31 @@ else:
             "CONN_MAX_AGE": 600,
         }
     }
+
+# Redis Configuration for Channels
+REDIS_URL = env.str("REDIS_URL", default="redis://localhost:6379")
+
+# Channel Layers for WebSocket (Production ready)
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [REDIS_URL],
+            "capacity": 1500,  # Default capacity for messages
+            "expiry": 60,  # Message expiry in seconds
+            "symmetric_encryption_keys": [SECRET_KEY],  # Optional: encrypt WebSocket messages
+        },
+    },
+}
+
+# For development, you can use in-memory layer (not for production!)
+if DEBUG and not REDIS_URL:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        },
+    }
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -189,6 +225,11 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False,
         },
+        "channels": {  # Add Channels logging
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
 }
 
@@ -214,4 +255,13 @@ STORAGES = {
 
 MEDIA_URL = f"{env.str('SUPABASE_ENDPOINT')}/{env.str('SUPABASE_STORAGE_BUCKET')}/"
 
-ASGI_APPLICATION = "backend.asgi.application"
+# Chat/WebSocket specific settings
+CHAT_MESSAGE_HISTORY_DAYS = env.int("CHAT_MESSAGE_HISTORY_DAYS", default=30)  # How long to keep message history
+MAX_UPLOAD_SIZE = env.int("MAX_UPLOAD_SIZE", default=10485760)  # 10MB max file upload for chat
+ALLOWED_CHAT_FILE_TYPES = ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.doc', '.docx', '.txt']
+
+# Session settings for WebSocket authentication
+SESSION_COOKIE_SECURE = not DEBUG  # Use secure cookies in production
+SESSION_COOKIE_SAMESITE = 'Lax'  # Required for WebSocket to work with sessions
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = 'Lax'

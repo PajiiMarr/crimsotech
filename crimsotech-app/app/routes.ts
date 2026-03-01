@@ -64,11 +64,8 @@ export default [
     route('payment', 'routes/customer/pay-order.tsx'),
     route('order-successful/:orderId', 'components/customer/order-successful.tsx'),
     
-    
-    
+    route('messages', 'routes/user/messages.tsx'),
    
-    
-    
     ...prefix("seller", [
         route("dashboard", "routes/seller/dashboard.tsx"), 
         route("seller-product-list", "routes/seller/seller-product-list.tsx"), 
