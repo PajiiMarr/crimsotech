@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -67,6 +68,10 @@ export default function RiderHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState({
+    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+    end: new Date(),
+  });
 
   const fetchHistory = useCallback(
     async (status: "active" | "completed" | "cancelled") => {
@@ -178,6 +183,50 @@ export default function RiderHistoryPage() {
           ))}
         </View>
 
+        <View style={styles.dateFilterWrapper}>
+          <TouchableOpacity
+            style={styles.dateFilterButton}
+            onPress={() => {
+              const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+              const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+              Alert.alert(
+                "Filter by Date",
+                "",
+                [
+                  {
+                    text: "Last 7 Days",
+                    onPress: () =>
+                      setDateRange({
+                        start: oneWeekAgo,
+                        end: new Date(),
+                      }),
+                  },
+                  {
+                    text: "Last 30 Days",
+                    onPress: () =>
+                      setDateRange({
+                        start: thirtyDaysAgo,
+                        end: new Date(),
+                      }),
+                  },
+                  {
+                    text: "All Time",
+                    onPress: () =>
+                      setDateRange({
+                        start: new Date(0),
+                        end: new Date(),
+                      }),
+                  },
+                  { text: "Cancel", style: "cancel" },
+                ]
+              );
+            }}
+          >
+            <Feather name="calendar" size={14} color={COLORS.primary} />
+            <Text style={styles.dateFilterText}>Filter by Date</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.filterWrapper}>
           {[
             { id: "active", label: "Active" },
@@ -229,8 +278,7 @@ export default function RiderHistoryPage() {
                       { backgroundColor: `${getStatusColor(item.status)}1A` },
                     ]}
                   >
-                    <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}
-                    >
+                    <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
                       {item.status.replace("_", " ").toUpperCase()}
                     </Text>
                   </View>
@@ -337,6 +385,29 @@ const styles = StyleSheet.create({
   },
   filterTextActive: {
     color: "#FFFFFF",
+  },
+  
+  // Date Filter
+  dateFilterWrapper: {
+    paddingHorizontal: 14,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  dateFilterButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    backgroundColor: "#F3F4F6",
+    gap: 6,
+  },
+  dateFilterText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.primary,
   },
   listSection: {
     paddingHorizontal: 14,

@@ -8,6 +8,7 @@ import {
   ScrollView,
   FlatList,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import {
   Feather,
@@ -142,6 +143,10 @@ export default function EarningsPage() {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState({
+    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+    end: new Date(),
+  });
 
   // Initialize with dummy data as fallback
   const [earnings, setEarnings] = useState(DUMMY_EARNINGS);
@@ -402,6 +407,51 @@ export default function EarningsPage() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
+        {/* Date Filter Button */}
+        <View style={styles.dateFilterWrapper}>
+          <TouchableOpacity
+            style={styles.dateFilterButton}
+            onPress={() => {
+              const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+              const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+              Alert.alert(
+                "Filter by Date",
+                "",
+                [
+                  {
+                    text: "Last 7 Days",
+                    onPress: () =>
+                      setDateRange({
+                        start: oneWeekAgo,
+                        end: new Date(),
+                      }),
+                  },
+                  {
+                    text: "Last 30 Days",
+                    onPress: () =>
+                      setDateRange({
+                        start: thirtyDaysAgo,
+                        end: new Date(),
+                      }),
+                  },
+                  {
+                    text: "All Time",
+                    onPress: () =>
+                      setDateRange({
+                        start: new Date(0),
+                        end: new Date(),
+                      }),
+                  },
+                  { text: "Cancel", style: "cancel" },
+                ]
+              );
+            }}
+          >
+            <Feather name="calendar" size={14} color={COLORS.primary} />
+            <Text style={styles.dateFilterText}>Filter by Date</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* 1️⃣ Earnings Summary Section */}
         <View style={styles.summaryCard}>
           <View style={styles.mainEarning}>
@@ -702,6 +752,28 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 110,
+  },
+
+  // Date Filter
+  dateFilterWrapper: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  dateFilterButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    backgroundColor: "#F3F4F6",
+    gap: 6,
+  },
+  dateFilterText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.primary,
   },
 
   // Header

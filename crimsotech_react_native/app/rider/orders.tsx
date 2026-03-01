@@ -10,6 +10,8 @@ import {
   FlatList,
   ActivityIndicator,
   RefreshControl,
+  TextInput,
+  Alert,
 } from "react-native";
 import { MaterialIcons, Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -134,6 +136,11 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [dateRange, setDateRange] = useState({
+    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
+    end: new Date(),
+  });
 
   const statuses = [
     { id: "all", label: "All Orders" },
@@ -204,8 +211,21 @@ export default function OrdersPage() {
     await fetchOrdersData();
   };
 
-  // Filter logic
-  const filteredOrders = orders;
+  // Filter logic - Filter by search term, date range, and status
+  const filteredOrders = orders.filter((order) => {
+    // Search filter
+    const searchMatch =
+      searchTerm === "" ||
+      order.order_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.store?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.itemName?.toLowerCase().includes(searchTerm.toLowerCase());
+
+    // Date range filter
+    const orderDate = order.created_at ? new Date(order.created_at) : null;
+    const dateMatch = !orderDate || (orderDate >= dateRange.start && orderDate <= dateRange.end);
+
+    return searchMatch && dateMatch;
+  });
 
   // Count pending orders for badge
   const pendingCount = orders.filter(
@@ -290,6 +310,66 @@ export default function OrdersPage() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        {/* --- Search and Filter Section --- */}
+        <View style={styles.searchFilterSection}>
+          <View style={styles.searchContainer}>
+            <Feather name="search" size={16} color={COLORS.muted} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search order ID or customer..."
+              placeholderTextColor={COLORS.muted}
+              value={searchTerm}
+              onChangeText={setSearchTerm}
+            />
+            {searchTerm && (
+              <TouchableOpacity onPress={() => setSearchTerm("")}>
+                <Feather name="x" size={16} color={COLORS.muted} />
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity
+            style={styles.filterButton}
+            onPress={() => {
+              // Date range selector - simplified for mobile
+              const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+              const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+              Alert.alert(
+                "Filter by Date",
+                "",
+                [
+                  {
+                    text: "Last 7 Days",
+                    onPress: () =>
+                      setDateRange({
+                        start: oneWeekAgo,
+                        end: new Date(),
+                      }),
+                  },
+                  {
+                    text: "Last 30 Days",
+                    onPress: () =>
+                      setDateRange({
+                        start: thirtyDaysAgo,
+                        end: new Date(),
+                      }),
+                  },
+                  {
+                    text: "All Time",
+                    onPress: () =>
+                      setDateRange({
+                        start: new Date(0),
+                        end: new Date(),
+                      }),
+                  },
+                  { text: "Cancel", style: "cancel" },
+                ]
+              );
+            }}
+          >
+            <Feather name="calendar" size={16} color={COLORS.primary} />
+          </TouchableOpacity>
+        </View>
+
         {/* --- Top Nav Card --- */}
         <View style={styles.section}>
           <TouchableOpacity
@@ -619,6 +699,43 @@ const styles = StyleSheet.create({
   },
   filterTextActive: {
     color: "#FFFFFF",
+  },
+
+  // Search and Filter Section
+  searchFilterSection: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: COLORS.lightGray,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+  searchContainer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    height: 36,
+    gap: 6,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 12,
+    color: COLORS.secondary,
+  },
+  filterButton: {
+    width: 36,
+    height: 36,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    justifyContent: "center",
+    alignItems: "center",
   },
 
   // List Section

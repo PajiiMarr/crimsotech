@@ -56,6 +56,7 @@ export default function DeliveryDetailsScreen() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [deliveryProof, setDeliveryProof] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"overview" | "items" | "actions">("overview");
   const deliveryId = deliveryData?.id || deliveryIdParam;
 
   useEffect(() => {
@@ -385,32 +386,61 @@ export default function DeliveryDetailsScreen() {
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <View style={styles.statusBar}>
-          <View>
-            <Text style={styles.cardLabel}>Order ID</Text>
-            <Text style={styles.orderId}>
-              {deliveryData.order_id || deliveryData.id}
-            </Text>
-            <Text style={styles.statusLabel}>Status</Text>
-          </View>
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: getStatusColor(deliveryData.status) + "20" },
-            ]}
+        {/* Tab Navigation */}
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === "overview" && styles.tabActive]}
+            onPress={() => setActiveTab("overview")}
           >
-            <Text
-              style={[
-                styles.statusBadgeText,
-                { color: getStatusColor(deliveryData.status) },
-              ]}
-            >
-              {getStatusText(deliveryData.status)}
+            <Text style={[styles.tabText, activeTab === "overview" && styles.tabTextActive]}>
+              Overview
             </Text>
-          </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === "items" && styles.tabActive]}
+            onPress={() => setActiveTab("items")}
+          >
+            <Text style={[styles.tabText, activeTab === "items" && styles.tabTextActive]}>
+              Items
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === "actions" && styles.tabActive]}
+            onPress={() => setActiveTab("actions")}
+          >
+            <Text style={[styles.tabText, activeTab === "actions" && styles.tabTextActive]}>
+              Actions
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.infoSection}>
+        {/* Overview Tab */}
+        {activeTab === "overview" && (
+          <>
+            <View>
+              <Text style={styles.cardLabel}>Order ID</Text>
+              <Text style={styles.orderId}>
+                {deliveryData.order_id || deliveryData.id}
+              </Text>
+              <Text style={styles.statusLabel}>Status</Text>
+            </View>
+            <View
+              style={[
+                styles.statusBadge,
+                { backgroundColor: getStatusColor(deliveryData.status) + "20" },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  { color: getStatusColor(deliveryData.status) },
+                ]}
+              >
+                {getStatusText(deliveryData.status)}
+              </Text>
+            </View>
+
+            <View style={styles.infoSection}>
           <View style={styles.infoRow}>
             <Text style={styles.label}>Customer</Text>
             <Text style={styles.value} numberOfLines={1}>
@@ -448,334 +478,130 @@ export default function DeliveryDetailsScreen() {
               </Text>
             </View>
           )}
-        </View>
+            </View>
+          </>
+        )}
 
-        {(deliveryData.status === "pending" ||
-          deliveryData.status === "pending_offer" ||
-          deliveryData.status === "accepted" ||
-          deliveryData.status === "picked_up" ||
-          deliveryData.status === "in_progress") && (
-          <View style={styles.actionContainer}>
+        {/* Items Tab */}
+        {activeTab === "items" && (
+          <>
+            <Text style={styles.sectionTitle}>Order Items</Text>
+            {deliveryData.order?.items && deliveryData.order.items.length > 0 ? (
+              <View style={styles.itemsList}>
+                {deliveryData.order.items.map((item: any, index: number) => (
+                  <View key={index} style={styles.itemCard}>
+                    <View style={styles.itemInfo}>
+                      <Text style={styles.itemName} numberOfLines={2}>
+                        {item.product_name || item.product || "Item"}
+                      </Text>
+                      <Text style={styles.itemQuantity}>
+                        Qty: {item.quantity || 1}
+                      </Text>
+                    </View>
+                    <Text style={styles.itemPrice}>
+                      ₱{typeof item.price === "string" ? parseFloat(item.price) : item.price || 0}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <MaterialIcons name="inbox" size={40} color={COLORS.secondary} />
+                <Text style={styles.emptyStateText}>No items in this order</Text>
+              </View>
+            )}
+          </>
+        )}
+
+        {/* Actions Tab */}
+        {activeTab === "actions" && (
+          <>
+            <Text style={styles.sectionTitle}>Delivery Actions</Text>
             {(deliveryData.status === "pending" ||
               deliveryData.status === "pending_offer" ||
-              deliveryData.status === "accepted") && (
-              <View style={styles.stepSection}>
-                <View style={styles.stepBadge}>
-                  <Text style={styles.stepBadgeText}>📦 PICKUP</Text>
-                </View>
-                <Text style={styles.stepTitle}>Mark as Picked Up</Text>
-                <Text style={styles.stepDescription}>
-                  Confirm that you have picked up the item from the sender and
-                  are ready to deliver
-                </Text>
-
-                <TouchableOpacity
-                  style={[styles.submitButton, loading && { opacity: 0.6 }]}
-                  onPress={handleMarkPickup}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <MaterialIcons
-                        name="check-circle"
-                        size={24}
-                        color="#FFFFFF"
-                      />
-                      <Text style={styles.submitButtonText}>
-                        Confirm Pickup
+              deliveryData.status === "accepted" ||
+              deliveryData.status === "picked_up" ||
+              deliveryData.status === "in_progress") && (
+              <View style={styles.actionsList}>
+                {(deliveryData.status === "pending" ||
+                  deliveryData.status === "pending_offer" ||
+                  deliveryData.status === "accepted") && (
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={handleMarkPickup}
+                    disabled={loading}
+                  >
+                    <MaterialIcons name="check-circle" size={24} color={COLORS.success} />
+                    <View style={styles.actionTextContainer}>
+                      <Text style={styles.actionTitle}>Mark as Picked Up</Text>
+                      <Text style={styles.actionDescription}>
+                        Confirm pickup and proceed to delivery
                       </Text>
-                    </>
-                  )}
-                </TouchableOpacity>
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                {(deliveryData.status === "picked_up" || deliveryData.status === "in_progress") && (
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => setActiveTab("overview")}
+                    disabled={loading}
+                  >
+                    <MaterialIcons name="camera-alt" size={24} color={COLORS.info} />
+                    <View style={styles.actionTextContainer}>
+                      <Text style={styles.actionTitle}>Take Proof Photo</Text>
+                      <Text style={styles.actionDescription}>
+                        Take photo and mark delivery complete
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
 
                 {deliveryData.status === "accepted" && (
                   <TouchableOpacity
-                    style={[
-                      styles.submitButton,
-                      styles.submitButtonDanger,
-                      loading && { opacity: 0.6 },
-                    ]}
+                    style={[styles.actionButton, styles.actionButtonDanger]}
                     onPress={handleMarkFailed}
                     disabled={loading}
                   >
-                    <MaterialIcons name="cancel" size={22} color="#FFFFFF" />
-                    <Text style={styles.submitButtonText}>Mark Failed</Text>
+                    <MaterialIcons name="cancel" size={24} color="#EF4444" />
+                    <View style={styles.actionTextContainer}>
+                      <Text style={[styles.actionTitle, { color: "#EF4444" }]}>
+                        Mark as Failed
+                      </Text>
+                      <Text style={styles.actionDescription}>
+                        Report delivery failure
+                      </Text>
+                    </View>
                   </TouchableOpacity>
                 )}
               </View>
             )}
 
-            {deliveryData.status === "picked_up" && (
-              <View style={{ gap: 16 }}>
-                <View style={styles.stepSection}>
-                  <View style={styles.stepBadge}>
-                    <Text style={styles.stepBadgeText}>📸 STEP 1</Text>
-                  </View>
-                  <Text style={styles.stepTitle}>
-                    Take Delivery Proof Photo
-                  </Text>
-                  <Text style={styles.stepDescription}>
-                    Take a photo at the delivery location as proof of successful
-                    delivery
-                  </Text>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.cameraButton,
-                      deliveryProof && styles.cameraDone,
-                    ]}
-                    onPress={takeDeliveryPhoto}
-                  >
-                    <MaterialIcons
-                      name={deliveryProof ? "check-circle" : "camera-alt"}
-                      size={40}
-                      color={deliveryProof ? COLORS.success : COLORS.primary}
-                    />
-                    <Text
-                      style={[
-                        styles.cameraButtonText,
-                        deliveryProof && styles.cameraDoneText,
-                      ]}
-                    >
-                      {deliveryProof ? "✓ Photo Captured" : "Open Camera"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {deliveryProof && (
-                  <View>
-                    <Text style={styles.previewLabel}>📷 Photo Preview:</Text>
-                    <Image
-                      source={{ uri: deliveryProof }}
-                      style={styles.previewImage}
-                    />
-                  </View>
-                )}
-
-                <View style={styles.stepSection}>
-                  <View style={styles.stepBadge}>
-                    <Text style={styles.stepBadgeText}>✓ STEP 2</Text>
-                  </View>
-                  <Text style={styles.stepTitle}>Complete & Submit</Text>
-                  <Text style={styles.stepDescription}>
-                    {deliveryProof
-                      ? "Submit the delivery photo to complete the order"
-                      : "Complete the order now. You can add proof photos later."}
-                  </Text>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.submitButton,
-                      styles.submitButtonSuccess,
-                      loading && { opacity: 0.6 },
-                    ]}
-                    onPress={handleMarkDelivered}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <MaterialIcons
-                          name="check-circle"
-                          size={24}
-                          color="#FFFFFF"
-                        />
-                        <Text style={styles.submitButtonText}>
-                          Complete Delivery
-                        </Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                {!deliveryProof && (
-                  <View style={styles.waitingBox}>
-                    <MaterialIcons
-                      name="info"
-                      size={24}
-                      color={COLORS.warning}
-                    />
-                    <Text style={styles.waitingText}>
-                      👉 Take a photo to proceed
-                    </Text>
-                  </View>
-                )}
+            {deliveryData.status === "delivered" && (
+              <View style={styles.completedCard}>
+                <MaterialIcons name="check-circle" size={48} color={COLORS.success} />
+                <Text style={styles.completedTitle}>✓ Delivery Completed!</Text>
+                <Text style={styles.completedSubtitle}>
+                  All actions have been completed
+                </Text>
               </View>
             )}
 
-            {deliveryData.status === "in_progress" && (
-              <View style={{ gap: 16 }}>
-                <View style={styles.stepSection}>
-                  <View style={styles.stepBadge}>
-                    <Text style={styles.stepBadgeText}>📸 STEP 1</Text>
-                  </View>
-                  <Text style={styles.stepTitle}>
-                    Take Delivery Proof Photo
+            {deliveryData.status !== "pending" &&
+              deliveryData.status !== "pending_offer" &&
+              deliveryData.status !== "picked_up" &&
+              deliveryData.status !== "in_progress" &&
+              deliveryData.status !== "accepted" &&
+              deliveryData.status !== "delivered" && (
+                <View style={styles.noActionsBox}>
+                  <MaterialIcons name="info" size={24} color={COLORS.warning} />
+                  <Text style={styles.noActionsText}>
+                    No actions available for {deliveryData.status} status
                   </Text>
-                  <Text style={styles.stepDescription}>
-                    Take a photo at the delivery location as proof of successful
-                    delivery
-                  </Text>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.cameraButton,
-                      deliveryProof && styles.cameraDone,
-                    ]}
-                    onPress={takeDeliveryPhoto}
-                  >
-                    <MaterialIcons
-                      name={deliveryProof ? "check-circle" : "camera-alt"}
-                      size={40}
-                      color={deliveryProof ? COLORS.success : COLORS.primary}
-                    />
-                    <Text
-                      style={[
-                        styles.cameraButtonText,
-                        deliveryProof && styles.cameraDoneText,
-                      ]}
-                    >
-                      {deliveryProof ? "✓ Photo Captured" : "Open Camera"}
-                    </Text>
-                  </TouchableOpacity>
                 </View>
-
-                {deliveryProof && (
-                  <View>
-                    <Text style={styles.previewLabel}>📷 Photo Preview:</Text>
-                    <Image
-                      source={{ uri: deliveryProof }}
-                      style={styles.previewImage}
-                    />
-                  </View>
-                )}
-
-                <View style={styles.stepSection}>
-                  <View style={styles.stepBadge}>
-                    <Text style={styles.stepBadgeText}>✓ STEP 2</Text>
-                  </View>
-                  <Text style={styles.stepTitle}>Complete & Submit</Text>
-                  <Text style={styles.stepDescription}>
-                    {deliveryProof
-                      ? "Submit the delivery photo to complete the order"
-                      : "Complete the order now. You can add proof photos later."}
-                  </Text>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.submitButton,
-                      styles.submitButtonSuccess,
-                      loading && { opacity: 0.6 },
-                    ]}
-                    onPress={handleMarkDelivered}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <MaterialIcons
-                          name="check-circle"
-                          size={24}
-                          color="#FFFFFF"
-                        />
-                        <Text style={styles.submitButtonText}>
-                          Complete Delivery
-                        </Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                {!deliveryProof && (
-                  <View style={styles.waitingBox}>
-                    <MaterialIcons
-                      name="info"
-                      size={24}
-                      color={COLORS.warning}
-                    />
-                    <Text style={styles.waitingText}>
-                      👉 Take a photo to proceed
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
-          </View>
+              )}
+          </>
         )}
-
-        {deliveryData.status === "delivered" && (
-          <View style={styles.completedCard}>
-            <MaterialIcons
-              name="check-circle"
-              size={48}
-              color={COLORS.success}
-            />
-            <Text style={styles.completedTitle}>✓ Delivery Completed!</Text>
-            <Text style={styles.completedSubtitle}>
-              Package successfully delivered
-            </Text>
-            <View style={styles.earningsBox}>
-              <Text style={styles.earningsLabel}>You earned</Text>
-              <Text style={styles.earningsAmount}>
-                {formatCurrency(Number(deliveryData.delivery_fee || 0))}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.proofManageButton}
-              onPress={() =>
-                router.push({
-                  pathname: "/rider/add-delivery-media",
-                  params: { deliveryId: String(deliveryId || "") },
-                })
-              }
-            >
-              <MaterialIcons name="photo-library" size={20} color={COLORS.info} />
-              <Text style={styles.proofManageText}>View / Upload Proofs</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.proofManageButton}
-              onPress={() =>
-                router.push({
-                  pathname: "/rider/add-proof",
-                  params: { deliveryId: String(deliveryId || "") },
-                })
-              }
-            >
-              <MaterialIcons name="add-a-photo" size={20} color={COLORS.info} />
-              <Text style={styles.proofManageText}>Add Proof (Single)</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {deliveryData.status !== "pending" &&
-          deliveryData.status !== "pending_offer" &&
-          deliveryData.status !== "picked_up" &&
-          deliveryData.status !== "in_progress" &&
-          deliveryData.status !== "delivered" && (
-            <View
-              style={{
-                backgroundColor: "#FEF3C7",
-                padding: 12,
-                borderRadius: 8,
-                marginHorizontal: 12,
-                marginVertical: 16,
-              }}
-            >
-              <Text
-                style={{
-                  color: "#92400E",
-                  fontWeight: "600",
-                  textAlign: "center",
-                }}
-              >
-                No actions available for status: {deliveryData.status}
-              </Text>
-            </View>
-          )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -1459,5 +1285,118 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: COLORS.primary,
     marginLeft: 10,
+  },
+
+  // Tab Navigation
+  tabContainer: {
+    flexDirection: "row",
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 1 },
+      },
+      android: {
+        elevation: 1,
+      },
+    }),
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabActive: {
+    backgroundColor: COLORS.primary,
+  },
+  tabText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.muted,
+  },
+  tabTextActive: {
+    color: "#FFFFFF",
+  },
+  itemsList: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  itemCard: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: COLORS.cardBg,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  itemInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  itemName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.secondary,
+    marginBottom: 4,
+  },
+  itemQuantity: {
+    fontSize: 11,
+    color: COLORS.muted,
+  },
+  itemPrice: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: 24,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  emptyStateText: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 8,
+  },
+  actionsList: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  actionTextContainer: {
+    flex: 1,
+  },
+  actionButtonDanger: {
+    backgroundColor: "#FEE2E2",
+  },
+  noActionsBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#FEF3C7",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  noActionsText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#92400E",
+    flex: 1,
   },
 });
