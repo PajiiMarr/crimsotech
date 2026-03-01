@@ -1,83 +1,114 @@
 // app/components/providers/user-role-provider.tsx
 "use client";
-import { createContext, useContext, useState, useEffect, useRef } from "react";
+import { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import type { User } from "~/contexts/user-role";
 import AxiosInstance from "~/components/axios/Axios";
+import { useNavigate } from "react-router";
 
-export const ClientUserContext = createContext<User | null>(null);
+// Export this context so it can be imported elsewhere
+export const UserContext = createContext<User | null>(null);
+
+interface UserContextType {
+  user: User | null;
+  setUser: (user: User | null) => void;
+  logout: () => Promise<void>;
+  isLoading: boolean;
+}
+
+// Keep this for the provider internal use
+const ClientUserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({ 
   children, 
-  user: initialUser 
+  user: initialUser = null 
 }: { 
   children: React.ReactNode;
-  user: User | null;
+  user?: User | null;
 }) {
   const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const initialLoadDone = useRef(false);
+  const navigate = useNavigate();
 
-  // Initialize user only once on first load
-  useEffect(() => {
-    if (!initialLoadDone.current && initialUser) {
-      setUser(initialUser);
-      initialLoadDone.current = true;
-    }
-  }, []); // Empty dependency array - only runs once on mount
-
-  // Load from session storage on mount (overrides initialUser if exists)
-  useEffect(() => {
-    const cached = sessionStorage.getItem('user_profile');
-    if (cached) {
-      try {
-        const parsedUser = JSON.parse(cached);
-        setUser(parsedUser);
-        initialLoadDone.current = true;
-      } catch (e) {
-        console.error('Failed to parse cached user');
-        sessionStorage.removeItem('user_profile');
-      }
-    }
+  // Clear all user data
+  const clearUserData = useCallback(() => {
+    setUser(null);
+    sessionStorage.removeItem('user_profile');
+    localStorage.removeItem('user');
+    delete AxiosInstance.defaults.headers.common['Authorization'];
   }, []);
 
-  // Fetch full profile if we have user_id but missing profile data
+  // Logout function
+  const logout = useCallback(async () => {
+    try {
+      clearUserData();
+      await navigate('/logout', { replace: true });
+    } catch (error) {
+      console.error('Logout error:', error);
+      window.location.href = '/login';
+    }
+  }, [clearUserData, navigate]);
+
+  // Initialize user on mount or when initialUser changes
   useEffect(() => {
-    const fetchProfile = async () => {
-      if (!user?.user_id) return;
-      
-      // Check if we already have full profile data
-      if (user?.first_name || user?.username) {
+    const initializeUser = async () => {
+      // If we have initialUser from the server, use it
+      if (initialUser) {
+        console.log("Setting user from initialUser:", initialUser);
+        setUser(initialUser);
+        sessionStorage.setItem('user_profile', JSON.stringify(initialUser));
+        setIsLoading(false);
+        initialLoadDone.current = true;
         return;
       }
 
-      try {
-        const response = await AxiosInstance.get('/user/profile/', {
-          headers: { 'X-User-Id': user.user_id }
-        });
-        
-        if (response.data) {
-          setUser(currentUser => ({ 
-            ...currentUser, 
-            ...response.data 
-          }));
+      // Otherwise check session storage
+      const cached = sessionStorage.getItem('user_profile');
+      if (cached) {
+        try {
+          const parsedUser = JSON.parse(cached);
+          console.log("Setting user from cache:", parsedUser);
+          setUser(parsedUser);
+          setIsLoading(false);
+          initialLoadDone.current = true;
+          return;
+        } catch (e) {
+          sessionStorage.removeItem('user_profile');
         }
-      } catch (error) {
-        console.error('Failed to fetch user profile:', error);
+      }
+
+      // No user found
+      setIsLoading(false);
+    };
+
+    initializeUser();
+  }, [initialUser]);
+
+  // Listen for storage events (for multi-tab logout)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'user_profile' && !e.newValue) {
+        setUser(null);
       }
     };
 
-    fetchProfile();
-  }, [user?.user_id]);
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
-  // Save to session storage whenever user changes
-  useEffect(() => {
-    if (user) {
-      sessionStorage.setItem('user_profile', JSON.stringify(user));
-    }
-  }, [user]);
+  const value = {
+    user,
+    setUser,
+    logout,
+    isLoading
+  };
 
   return (
-    <ClientUserContext.Provider value={user}>
-      {children}
+    <ClientUserContext.Provider value={value}>
+      {/* Also provide the user directly through the exported context */}
+      <UserContext.Provider value={user}>
+        {children}
+      </UserContext.Provider>
     </ClientUserContext.Provider>
   );
 }

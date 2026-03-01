@@ -5,11 +5,11 @@ import {
   Store, CreditCard, List, MessageSquare, Users, 
   Shield, AlertCircle, FileText, Settings, Bell,
   BarChart, Bike, MapPin, Calendar, ClipboardList,
-  PhilippinePeso, RotateCcw, Heart, LogOut, User, Receipt,
+  PhilippinePeso, RotateCcw, Heart, User, Receipt,
   Truck, ShieldCheck, Activity, Flag, Megaphone, FolderKanban,
   Clock, Repeat, ArrowLeftRight, Sparkles, Tag, BadgePercent
 } from "lucide-react"
-import { Link, useLocation, useNavigate } from 'react-router'
+import { Link, useLocation } from 'react-router'
 import { useUser } from '~/components/providers/user-role-provider';
 import {
   Sidebar,
@@ -23,31 +23,16 @@ import {
   SidebarHeader,
   useSidebar,
 } from "~/components/ui/sidebar"
-import { Skeleton } from "../ui/skeleton";
-import AxiosInstance from "../axios/Axios";
 
-// Helper functions for user display
-const getUserDisplayName = (user: any): string => {
-  if (user?.first_name && user?.last_name) {
-    return `${user.first_name} ${user.last_name}`;
-  }
-  if (user?.first_name) {
-    return user.first_name;
-  }
-  if (user?.username) {
-    return user.username;
-  }
-  if (user?.email) {
-    return user.email;
-  }
-  return "User";
-};
-
+// Helper function to get user role only
 const getUserRole = (user: any): string => {
-  if (user?.isAdmin) return "Admin";
-  if (user?.isModerator) return "Moderator";
-  if (user?.isRider) return "Rider";
-  if (user?.isCustomer) return "Customer";
+  if (!user) return "User";
+  
+  // Check both camelCase and snake_case
+  if (user?.isAdmin || user?.is_admin) return "Admin";
+  if (user?.isModerator || user?.is_moderator) return "Moderator";
+  if (user?.isRider || user?.is_rider) return "Rider";
+  if (user?.isCustomer || user?.is_customer) return "Customer";
   return "User";
 };
 
@@ -198,50 +183,53 @@ const menuItems = [
   },
 ];
 
+// Helper function to check user role (handles both camelCase and snake_case)
+const hasRole = (user: any, role: string): boolean => {
+  if (!user) return false;
+  
+  switch(role) {
+    case 'admin':
+      return !!(user?.isAdmin || user?.is_admin);
+    case 'moderator':
+      return !!(user?.isModerator || user?.is_moderator);
+    case 'rider':
+      return !!(user?.isRider || user?.is_rider);
+    case 'customer':
+      return !!(user?.isCustomer || user?.is_customer);
+    default:
+      return false;
+  }
+};
+
 function getAccessibleItems(
   list: typeof menuItems, 
-  user: { isAdmin: boolean; isCustomer: boolean; isRider: boolean; isModerator: boolean; }
+  user: any | null
 ) {
+  if (!user) return [];
+  
   return list.map(group => ({
     ...group,
     children: group.children.filter(item => {
-      if (user.isAdmin && item.roles.includes("admin")) return true;
-      if (user.isCustomer && item.roles.includes("customer")) return true;
-      if (user.isRider && item.roles.includes("rider")) return true;
-      if (user.isModerator && item.roles.includes("moderator")) return true;
+      if (item.roles.includes("admin") && hasRole(user, 'admin')) return true;
+      if (item.roles.includes("moderator") && hasRole(user, 'moderator')) return true;
+      if (item.roles.includes("rider") && hasRole(user, 'rider')) return true;
+      if (item.roles.includes("customer") && hasRole(user, 'customer')) return true;
       return false;
     })
   })).filter(group => group.children.length > 0);
 }
 
 export function AppSidebar() {
-  const user = useUser();
+  const { user } = useUser();
   const location = useLocation();
-  const navigate = useNavigate();
-  const { state } = useSidebar(); // Get sidebar state
-
+  const { state } = useSidebar();
   
+  // If no user, don't render sidebar
   if (!user) {
-    return (
-      <Sidebar variant="floating" collapsible="icon">
-        <SidebarHeader className="p-4">
-          <Skeleton className="h-6 w-32" />
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <Skeleton className="w-full h-10"/>
-              <Skeleton className="w-full h-10"/>
-              <Skeleton className="w-full h-10"/>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-      </Sidebar>
-    );
+    return null;
   }
 
   const accessibleMenuItems = getAccessibleItems(menuItems, user);
-  const displayName = getUserDisplayName(user);
   const userRole = getUserRole(user);
   
   // Check if sidebar is collapsed
@@ -252,12 +240,9 @@ export function AppSidebar() {
       <SidebarHeader className="p-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
           {!isCollapsed ? (
-            // Show full user info when expanded
+            // Show welcome message without username
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Welcome back,</p>
-              <p className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
-                Hi, {displayName}
-              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Welcome back!</p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                 {userRole}
               </p>
@@ -270,7 +255,6 @@ export function AppSidebar() {
               </div>
             </div>
           )}
-          
         </div>
       </SidebarHeader>
 

@@ -1,3 +1,4 @@
+// app/root.tsx
 import {
   isRouteErrorResponse,
   Links,
@@ -19,6 +20,7 @@ import NProgress from "nprogress";
 import "nprogress/nprogress.css";
 import { useEffect, useRef, useCallback } from "react";
 import { UserProvider } from "./components/providers/user-role-provider";
+import type { User } from "./contexts/user-role";
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -93,15 +95,44 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Define loader return type
+type LoaderData = {
+  user: User | null;
+};
+
+// ✅ Add loader to get user from session
+export async function loader({ request }: Route.LoaderArgs): Promise<LoaderData> {
+  const { getSession } = await import("./sessions.server");
+  const session = await getSession(request.headers.get("Cookie"));
+  
+  const userId = session.get("userId");
+  const userData = session.get("userData");
+  
+  if (userId && userData) {
+    // Ensure userData matches the User interface
+    const user: User = {
+      ...userData,
+      id: userId,
+      user_id: userId,
+      isAdmin: userData.isAdmin || false,
+      isCustomer: userData.isCustomer || false,
+      isRider: userData.isRider || false,
+      isModerator: userData.isModerator || false,
+    };
+    return { user };
+  }
+  
+  return { user: null };
+}
+
 // ✅ Enhanced NProgress Wrapper that catches all navigation types
 function RouteChangeProgress() {
   const location = useLocation();
-  const navigation = useNavigation(); // React Router's navigation state
+  const navigation = useNavigation();
   const progressStarted = useRef(false);
   const navigationStartTime = useRef<number | null>(null);
   
   useEffect(() => {
-    // Configure NProgress for faster, smoother animations
     NProgress.configure({
       showSpinner: false,
       trickleSpeed: 100,
@@ -112,24 +143,19 @@ function RouteChangeProgress() {
     });
   }, []);
 
-  // Track React Router's navigation state
   useEffect(() => {
     if (navigation.state === "loading" || navigation.state === "submitting") {
       if (!progressStarted.current) {
         NProgress.start();
         progressStarted.current = true;
         navigationStartTime.current = Date.now();
-        
-        // Bump progress slightly for immediate feedback
         setTimeout(() => NProgress.inc(0.2), 50);
       }
     } else if (navigation.state === "idle" && progressStarted.current) {
-      // Navigation completed
       const navigationTime = navigationStartTime.current 
         ? Date.now() - navigationStartTime.current 
         : 0;
       
-      // Smooth completion with delay based on navigation duration
       const delay = Math.max(100, Math.min(300, navigationTime / 3));
       
       setTimeout(() => {
@@ -140,7 +166,6 @@ function RouteChangeProgress() {
     }
   }, [navigation.state]);
 
-  // Handle browser back/forward buttons
   useEffect(() => {
     const handlePopState = () => {
       if (!progressStarted.current) {
@@ -155,23 +180,18 @@ function RouteChangeProgress() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Handle click events on all navigation elements
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       
-      // Check for any clickable element that might trigger navigation
       const clickable = target.closest('a, button, [role="button"], [data-navigate], [onClick]');
       if (!clickable) return;
 
-      // Skip excluded elements
       if (clickable.closest('[data-no-progress]')) return;
 
-      // Handle anchor tags
       if (clickable.tagName === 'A') {
         const anchor = clickable as HTMLAnchorElement;
         
-        // Skip external links and non-navigating anchors
         if (anchor.target === '_blank' || 
             !anchor.href || 
             anchor.href === '#' || 
@@ -179,7 +199,6 @@ function RouteChangeProgress() {
           return;
         }
 
-        // Check if same-origin navigation
         try {
           const targetUrl = new URL(anchor.href);
           const currentUrl = new URL(window.location.href);
@@ -200,7 +219,6 @@ function RouteChangeProgress() {
         }
       }
       
-      // Handle React Router Link components (they have data attributes)
       if (clickable.closest('[data-discover="true"]')) {
         if (!progressStarted.current) {
           NProgress.start();
@@ -218,7 +236,6 @@ function RouteChangeProgress() {
   return null;
 }
 
-// ✅ Enhanced hook for programmatic navigation with progress
 export function useNavigationWithProgress() {
   const navigate = useNavigate();
   
@@ -226,10 +243,8 @@ export function useNavigationWithProgress() {
     to: string | number,
     options?: { replace?: boolean; state?: any }
   ) => {
-    // Start progress immediately
     NProgress.start();
     
-    // Navigate with a tiny delay to ensure progress is visible
     setTimeout(() => {
       if (typeof to === 'number') {
         navigate(to);
@@ -242,7 +257,6 @@ export function useNavigationWithProgress() {
   return navigateWithProgress;
 }
 
-// ✅ Enhanced Link component that triggers progress
 export function ProgressLink({ 
   to, 
   children, 
@@ -252,7 +266,6 @@ export function ProgressLink({
   const location = useLocation();
   
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    // Check if it's actually navigating to a different route
     if (typeof to === 'string') {
       try {
         const targetUrl = new URL(to, window.location.origin);
@@ -264,7 +277,6 @@ export function ProgressLink({
           setTimeout(() => NProgress.inc(0.2), 10);
         }
       } catch (e) {
-        // Handle relative paths
         if (to !== location.pathname + location.search) {
           NProgress.start();
           setTimeout(() => NProgress.inc(0.2), 10);
@@ -272,7 +284,6 @@ export function ProgressLink({
       }
     }
     
-    // Call original onClick if provided
     onClick?.(e);
   };
 
@@ -283,56 +294,17 @@ export function ProgressLink({
   );
 }
 
-export default function App() {
+// ✅ Wrap the entire app with UserProvider - SINGLE SOURCE OF TRUTH
+export default function App({ loaderData }: Route.ComponentProps) {
+  const { user } = loaderData as LoaderData;
+  
   return (
     <>
-      <UserProvider user={null}> {/* Start with null, let session storage populate */}
-          <RouteChangeProgress />
-          <Outlet />
+      <UserProvider user={user}>
+        <RouteChangeProgress />
+        <Outlet />
       </UserProvider>
     </>
-  );
-}
-
-// ✅ Example usage component showing different navigation methods
-export function NavigationExample() {
-  const navigate = useNavigate();
-  const navigateWithProgress = useNavigationWithProgress();
-
-  return (
-    <div>
-      {/* Regular Link - automatically tracked */}
-      <Link to="/about">About (Regular Link)</Link>
-
-      {/* Progress Link - enhanced version */}
-      <ProgressLink to="/contact">Contact (Progress Link)</ProgressLink>
-
-      {/* Regular button with useNavigate - NOT automatically tracked */}
-      <button onClick={() => navigate('/dashboard')}>
-        Go to Dashboard (No Progress)
-      </button>
-
-      {/* Button with useNavigationWithProgress - tracked */}
-      <button onClick={() => navigateWithProgress('/settings')}>
-        Go to Settings (With Progress)
-      </button>
-
-      {/* Button with manual progress trigger */}
-      <button 
-        onClick={() => {
-          NProgress.start();
-          navigate('/profile');
-        }}
-      >
-        Go to Profile (Manual Progress)
-      </button>
-
-      {/* Form submission - automatically tracked via navigation.state */}
-      <form action="/search" method="get">
-        <input type="text" name="q" />
-        <button type="submit">Search</button>
-      </form>
-    </div>
   );
 }
 
