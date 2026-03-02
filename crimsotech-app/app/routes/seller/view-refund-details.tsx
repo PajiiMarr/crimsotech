@@ -2788,11 +2788,9 @@ function CounterOfferModal({ show, setShow, refund, userId, shopId, setRefund, f
       <div className="mt-4 space-y-3">
         <div>
           <Label className="text-sm">Offer Type</Label>
-          <select aria-label="Choose refund type" className="mt-1 block w-full rounded-md border p-2" value={methodWithType} onChange={(e) => setMethodWithType(e.target.value)}>
-            {allowedOfferTypes.map((opt) => (
-              <option key={opt.id} value={opt.id}>{opt.label}</option>
-            ))}
-          </select>
+            <div className="mt-1 block w-full rounded-md border bg-gray-50 p-2 text-sm">
+              {allowedOfferTypes.find(opt => opt.id === methodWithType)?.label || methodWithType}
+            </div>
           {buyerRequestedType && (
             <p className="text-xs text-gray-500 mt-1">Buyer requested <span className="font-medium">{String(buyerRequestedType).replace('_', ' ')}</span>; you can only propose the opposite option here.</p>
           )}

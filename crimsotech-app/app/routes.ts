@@ -40,6 +40,8 @@ export default [
     route("customer-create-product", "routes/customer/customer-create-product.tsx"),
     route("customer-create-gift", "routes/customer/customer-create-gift.tsx"), 
     route('customer-arrange-shipment', 'components/customer/customer-arrange-shipment.tsx'),
+    route('profile', 'routes/customer/profile.tsx'),  
+    
 
     //customer-buyer
     route('return-refund', 'routes/customer/return-refund.tsx'),  

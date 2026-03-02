@@ -3,6 +3,36 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
 import { Button } from '~/components/ui/button';
+
+// ===== TYPE DEFINITIONS =====
+interface RefundFlat {
+  refund: string;
+  refund_id?: string;
+  status?: string;
+  reason?: string;
+  requested_by_username?: string;
+  requested_by_email?: string;
+  order_id?: string;
+  order_total_amount?: number | string;
+  total_refund_amount?: number | string;
+  approved_refund_amount?: number | string;
+  preferred_refund_method?: string;
+  final_refund_method?: string;
+  refund_method?: string;
+  refund_payment_status?: string;
+  payment_refund_status?: string;
+  payment_status?: string;
+  paymentRefundStatus?: string;
+  requested_at?: string;
+  processed_at?: string;
+  processed_by_username?: string;
+  dispute_reason?: string;
+  logistic_service?: string;
+  tracking_number?: string;
+  has_media?: boolean;
+  media_count?: number;
+  [key: string]: any;
+}
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '~/components/ui/card';
 import { Badge } from '~/components/ui/badge';
 import { Input } from '~/components/ui/input';
@@ -10,6 +40,7 @@ import { Checkbox } from '~/components/ui/checkbox';
 import { Label } from '~/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '~/components/ui/dialog';
 import { Alert, AlertTitle, AlertDescription } from '~/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
 import { useToast } from '~/hooks/use-toast';
 import AxiosInstance from '~/components/axios/Axios';
 import { 
@@ -17,70 +48,10 @@ import {
   PackageCheck, Truck, Clock, MessageCircle, User, Wallet, 
   Calendar, RefreshCw, CheckSquare, ShieldAlert, Ban, 
   FileText, ShoppingBag, CreditCard, DollarSign, Shield, Camera, Upload,
-  Scale, Gavel, Search, Loader2, Send, AlertCircle
+  Scale, Gavel, Search, Loader2, Send, AlertCircle, Info,
+  MapPin, Phone, Mail, Store, Bike, Package as PackageIcon,
+  Image as ImageIcon, File as FileIcon, Download, ExternalLink
 } from 'lucide-react';
-
-// Minimal shape matching what `/admin-refunds/refund_list/` returns
-interface RefundFlat {
-  refund: string;
-  order_id?: string;
-  order_total_amount?: number;
-  requested_by_username?: string;
-  requested_by_email?: string;
-  processed_by_username?: string | null;
-  processed_by_email?: string | null;
-  reason?: string | null;
-  requested_refund_amount?: number | null;
-  refund_fee?: number | null;
-  total_refund_amount?: number | null;
-  status?: string;
-  requested_at?: string | null;
-  processed_at?: string | null;
-  logistic_service?: string | null;
-  tracking_number?: string | null;
-  preferred_refund_method?: string | null;
-  final_refund_method?: string | null;
-  final_refund_type?: string | null;
-  refund_type?: string | null;
-  refund_category?: string | null;
-  refund_payment_status?: string | null;
-  customer_note?: string | null;
-  notes?: string | null;
-  has_media?: boolean;
-  media_count?: number;
-  negotiation_offers?: any[];
-  dispute_reason?: string | null;
-  cancelled_reason?: string | null;
-  dispute_details?: any;
-  dispute_request?: {
-    id?: string;
-    status?: string;
-    reason?: string;
-    case_category?: string | string[];
-    case_liability?: string | string[];
-    admin_notes?: string;
-  } | null;
-  // Return request details (optional) — serialized from admin refund_list
-  return_request?: {
-    id?: string | null;
-    status?: string | null;
-    tracking_number?: string | null;
-    tracking_url?: string | null;
-    logistic_service?: string | null;
-    shipped_at?: string | null;
-    received_at?: string | null;
-    return_deadline?: string | null;
-    notes?: string | null;
-    // compatibility aliases used in UI
-    medias?: any[];
-    media?: any[];
-    estimated_delivery?: string | null;
-    receipt_notes?: string | null;
-    inspection_deadline?: string | null;
-    inspection_result?: string | null;
-    inspection_notes?: string | null;
-  } | null;
-} 
 
 // ===== LIABILITY LABELS MAPPING =====
 const liabilityLabels: Record<string, string> = {
@@ -94,24 +65,50 @@ const liabilityLabels: Record<string, string> = {
 // Helper to format case categories
 function formatCaseCategory(category: any): string {
   if (!category) return '';
+  
   if (Array.isArray(category)) {
     return category.map(c => {
       if (typeof c === 'object' && c !== null) {
         return liabilityLabels[c.id] || c.label || c.id || '';
       }
-      return liabilityLabels[c] || c.split('_').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+      if (typeof c === 'string') {
+        return liabilityLabels[c] || c.split('_').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+      }
+      return String(c);
     }).filter(Boolean).join(', ');
   }
+  
   if (typeof category === 'string') {
     if (category.includes(',')) {
-      return category.split(',').map(c => c.trim()).filter(Boolean).map(c => liabilityLabels[c] || c.split('_').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')).join(', ');
+      return category.split(',').map(c => c.trim()).filter(Boolean).map(c => {
+        const cleanC = c.replace(/[\[\]"]/g, '').trim();
+        return liabilityLabels[cleanC] || cleanC.split('_').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+      }).join(', ');
     }
-    return liabilityLabels[category] || category.split('_').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    const cleanCategory = category.replace(/[\[\]"]/g, '').trim();
+    return liabilityLabels[cleanCategory] || cleanCategory.split('_').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   }
+  
   return '';
 }
 
-// ===== SIMPLIFIED STATUS CONFIGURATION =====
+// Helper to get active dispute from refund object
+function getActiveDispute(refund: RefundFlat & { [key: string]: any }) {
+  if (refund.dispute_request && Object.keys(refund.dispute_request).length > 0) {
+    return refund.dispute_request;
+  }
+  if (refund.dispute_details && Object.keys(refund.dispute_details).length > 0) {
+    return refund.dispute_details;
+  }
+  if (Array.isArray(refund.disputes) && refund.disputes.length > 0) {
+    return refund.disputes.sort((a: any, b: any) => 
+      new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    )[0];
+  }
+  return null;
+}
+
+// ===== STATUS CONFIGURATION =====
 const statusConfig = {
   pending: {
     label: 'Pending',
@@ -199,8 +196,6 @@ const statusConfig = {
   }
 };
 
-// ===== SIMPLIFIED STATUS UI COMPONENTS =====
-
 function StatusBadge({ status }: { status: string }) {
   const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending;
   const Icon = config.icon;
@@ -213,168 +208,604 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// Base component for all status displays
-function BaseStatusUI({ 
-  status, 
-  refund 
-}: { 
-  status: keyof typeof statusConfig, 
-  refund: RefundFlat & { [key: string]: any } 
-}) {
-  const config = statusConfig[status];
-  const Icon = config.icon;
+// ===== MEDIA GALLERY COMPONENT =====
+function MediaGallery({ files, title }: { files: any[], title: string }) {
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  
+  if (!files || files.length === 0) return null;
   
   return (
-    <div className={`${config.color} border rounded-md p-3`}>
-      <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4" />
-        <span className="text-sm font-medium">{config.label}</span>
-        <span className="text-xs text-muted-foreground mx-1">•</span>
-        <span className="text-xs">{config.description}</span>
+    <div className="space-y-2">
+      <p className="text-xs font-medium flex items-center gap-1">
+        <ImageIcon className="h-3 w-3" />
+        {title} ({files.length})
+      </p>
+      <div className="grid grid-cols-4 gap-2">
+        {files.map((file, index) => (
+          <div 
+            key={file.id || index} 
+            className="relative aspect-square rounded-md overflow-hidden border cursor-pointer hover:opacity-90 transition-opacity"
+            onClick={() => setSelectedImage(file.file_url)}
+          >
+            {file.file_url && file.file_url.match(/\.(jpeg|jpg|png|gif|webp)$/i) ? (
+              <img 
+                src={file.file_url} 
+                alt={`Media ${index + 1}`}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                <FileIcon className="h-6 w-6 text-gray-400" />
+              </div>
+            )}
+          </div>
+        ))}
       </div>
       
-      {/* Optional: Show additional context for specific statuses */}
-      {status === 'pending' && refund.requested_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-yellow-200 pt-2">
-          Requested: {new Date(refund.requested_at).toLocaleDateString()}
-        </div>
-      )}
-      
-      {status === 'dispute' && refund.dispute_reason && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-orange-200 pt-2">
-          Reason: {refund.dispute_reason}
-        </div>
-      )}
-      
-      {status === 'under_review' && refund.dispute_reason && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-purple-200 pt-2">
-          Dispute Reason: {refund.dispute_reason}
-        </div>
-      )}
-      
-      {status === 'waiting' && refund.return_request?.tracking_number && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-indigo-200 pt-2">
-          Tracking: {refund.return_request.tracking_number}
-        </div>
-      )}
-      
-      {status === 'shipped' && refund.return_request?.shipped_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-blue-200 pt-2">
-          Shipped: {new Date(refund.return_request.shipped_at).toLocaleDateString()}
-        </div>
-      )}
-      
-      {status === 'received' && refund.return_request?.received_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-green-200 pt-2">
-          Received: {new Date(refund.return_request.received_at).toLocaleDateString()}
-        </div>
-      )}
-      
-      {status === 'to_process' && refund.total_refund_amount && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-purple-200 pt-2">
-          Amount: ₱{Number(refund.total_refund_amount).toLocaleString()}
-        </div>
-      )}
-      
-      {status === 'completed' && refund.processed_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-emerald-200 pt-2">
-          Completed: {new Date(refund.processed_at).toLocaleDateString()}
-        </div>
-      )}
+      {/* Image Preview Modal */}
+      <Dialog open={!!selectedImage} onOpenChange={() => setSelectedImage(null)}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Image Preview</DialogTitle>
+          </DialogHeader>
+          <div className="mt-2 flex justify-center">
+            <img 
+              src={selectedImage || ''} 
+              alt="Preview" 
+              className="max-h-[70vh] object-contain rounded"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => window.open(selectedImage || '', '_blank')}>
+              <ExternalLink className="h-4 w-4 mr-2" />
+              Open in new tab
+            </Button>
+            <Button onClick={() => setSelectedImage(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-// Individual status components (using the base component)
-function PendingStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="pending" refund={refund} />;
-}
-
-function NegotiationStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="negotiation" refund={refund} />;
-}
-function ApprovedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  const hasDispute = refund.dispute_request || refund.dispute_details;
+// ===== BUYER DETAILS COMPONENT =====
+function BuyerDetails({ refund }: { refund: any }) {
+  const buyer = refund.order?.customer || refund.order?.user || refund.requested_by;
   
   return (
-    <div className="space-y-3">
-      <BaseStatusUI status="approved" refund={refund} />
-      
-      {/* Show liability info if there was a dispute */}
-      {hasDispute && refund.dispute_request?.case_category && (
-        <div className="bg-purple-50 border border-purple-200 rounded-md p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <Shield className="h-4 w-4 text-purple-600" />
-            <span className="text-sm font-medium text-purple-700">Liability Determination</span>
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <User className="h-4 w-4" />
+          Buyer Information
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <span className="text-xs text-muted-foreground block">Name</span>
+            <p className="font-medium">
+              {buyer?.username || buyer?.first_name + ' ' + buyer?.last_name || refund.requested_by_username || 'N/A'}
+            </p>
           </div>
-          <div className="text-xs text-purple-600">
-            <span className="font-medium">Case Category:</span>{' '}
-            {Array.isArray(refund.dispute_request.case_category)
-              ? refund.dispute_request.case_category.map((cc: string) => (
-                  liabilityLabels[cc] || cc.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-                )).join(', ')
-              : (refund.dispute_request.case_category?.split('_').map((word: string) => 
-                  word.charAt(0).toUpperCase() + word.slice(1)
-                ).join(' '))}
+          <div>
+            <span className="text-xs text-muted-foreground block">Email</span>
+            <p className="font-medium flex items-center gap-1">
+              <Mail className="h-3 w-3" />
+              {buyer?.email || refund.requested_by_email || 'N/A'}
+            </p>
           </div>
-          {refund.dispute_request.admin_notes && (
-            <div className="text-xs text-purple-600 mt-1">
-              <span className="font-medium">Notes:</span> {refund.dispute_request.admin_notes}
+          <div>
+            <span className="text-xs text-muted-foreground block">Phone</span>
+            <p className="font-medium flex items-center gap-1">
+              <Phone className="h-3 w-3" />
+              {buyer?.contact_number || buyer?.phone || 'N/A'}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Member Since</span>
+            <p className="font-medium">
+              {buyer?.date_joined ? new Date(buyer.date_joined).toLocaleDateString() : 'N/A'}
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===== SELLER DETAILS COMPONENT =====
+function SellerDetails({ refund, shop }: { refund: any, shop?: any }) {
+  const sellerShop = shop || refund.shop || refund.order?.items?.[0]?.shop;
+  const seller = sellerShop?.customer?.customer || sellerShop?.owner;
+  
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Store className="h-4 w-4" />
+          Seller Information
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <span className="text-xs text-muted-foreground block">Shop Name</span>
+            <p className="font-medium">{sellerShop?.name || 'N/A'}</p>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Seller Name</span>
+            <p className="font-medium">{seller?.username || seller?.first_name + ' ' + seller?.last_name || 'N/A'}</p>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Email</span>
+            <p className="font-medium flex items-center gap-1">
+              <Mail className="h-3 w-3" />
+              {seller?.email || 'N/A'}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Phone</span>
+            <p className="font-medium flex items-center gap-1">
+              <Phone className="h-3 w-3" />
+              {seller?.contact_number || sellerShop?.contact_number || 'N/A'}
+            </p>
+          </div>
+        </div>
+        
+        {/* Shop Address */}
+        {sellerShop && (
+          <div className="border-t pt-2">
+            <span className="text-xs text-muted-foreground block mb-1">Shop Address</span>
+            <p className="text-sm flex items-start gap-1">
+              <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+              <span>
+                {[
+                  sellerShop.street,
+                  sellerShop.barangay,
+                  sellerShop.city,
+                  sellerShop.province,
+                  sellerShop.zip_code
+                ].filter(Boolean).join(', ')}
+              </span>
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===== RIDER DETAILS COMPONENT =====
+function RiderDetails({ delivery }: { delivery?: any }) {
+  if (!delivery || !delivery.rider) return null;
+  
+  const rider = delivery.rider;
+  const riderUser = rider.rider || rider.user;
+  
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Bike className="h-4 w-4" />
+          Rider Information
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <span className="text-xs text-muted-foreground block">Name</span>
+            <p className="font-medium">
+              {riderUser?.first_name} {riderUser?.last_name}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Phone</span>
+            <p className="font-medium flex items-center gap-1">
+              <Phone className="h-3 w-3" />
+              {riderUser?.contact_number || 'N/A'}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Vehicle</span>
+            <p className="font-medium">
+              {rider.vehicle_type || 'Motorcycle'} {rider.vehicle_brand && rider.vehicle_model ? `(${rider.vehicle_brand} ${rider.vehicle_model})` : ''}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Plate Number</span>
+            <p className="font-medium">{rider.plate_number || 'N/A'}</p>
+          </div>
+        </div>
+        
+        {/* Delivery Timeline */}
+        <div className="border-t pt-2">
+          <span className="text-xs text-muted-foreground block mb-2">Delivery Timeline</span>
+          <div className="space-y-2">
+            {delivery.created_at && (
+              <div className="flex justify-between text-xs">
+                <span>Assigned:</span>
+                <span className="font-medium">{new Date(delivery.created_at).toLocaleString()}</span>
+              </div>
+            )}
+            {delivery.picked_at && (
+              <div className="flex justify-between text-xs">
+                <span>Picked Up:</span>
+                <span className="font-medium">{new Date(delivery.picked_at).toLocaleString()}</span>
+              </div>
+            )}
+            {delivery.delivered_at && (
+              <div className="flex justify-between text-xs">
+                <span>Delivered:</span>
+                <span className="font-medium">{new Date(delivery.delivered_at).toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===== DELIVERY DETAILS COMPONENT =====
+function DeliveryDetails({ order }: { order?: any }) {
+  if (!order) return null;
+  
+  const delivery = order.delivery || order.delivery_info;
+  const shippingAddress = order.shipping_address || order.shippingAddress;
+  
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Truck className="h-4 w-4" />
+          Delivery Information
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {/* Shipping Address */}
+        {shippingAddress && (
+          <div>
+            <span className="text-xs text-muted-foreground block mb-1">Shipping Address</span>
+            <p className="text-sm flex items-start gap-1">
+              <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+              <span>
+                {typeof shippingAddress === 'string' 
+                  ? shippingAddress 
+                  : shippingAddress.full_address || 
+                    [
+                      shippingAddress.street,
+                      shippingAddress.barangay,
+                      shippingAddress.city,
+                      shippingAddress.province,
+                      shippingAddress.zip_code
+                    ].filter(Boolean).join(', ')}
+              </span>
+            </p>
+            {shippingAddress.recipient_name && (
+              <p className="text-xs mt-1">
+                Recipient: {shippingAddress.recipient_name} {shippingAddress.recipient_phone && `(${shippingAddress.recipient_phone})`}
+              </p>
+            )}
+          </div>
+        )}
+        
+        {/* Delivery Status */}
+        {delivery && (
+          <div className="border-t pt-2">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-muted-foreground">Status:</span>
+                <p className="font-medium capitalize">{delivery.status}</p>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Delivery Fee:</span>
+                <p className="font-medium">₱{Number(delivery.delivery_fee || 0).toLocaleString()}</p>
+              </div>
+              {delivery.tracking_number && (
+                <div className="col-span-2">
+                  <span className="text-muted-foreground">Tracking #:</span>
+                  <p className="font-medium">{delivery.tracking_number}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {/* Proof of Delivery */}
+        {delivery?.proofs && delivery.proofs.length > 0 && (
+          <div className="border-t pt-2">
+            <MediaGallery files={delivery.proofs} title="Proof of Delivery" />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===== ORDER ITEMS COMPONENT =====
+function OrderItems({ items }: { items?: any[] }) {
+  if (!items || items.length === 0) return null;
+  
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <PackageIcon className="h-4 w-4" />
+          Order Items ({items.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {items.map((item, index) => (
+          <div key={item.id || index} className="border rounded-md p-2">
+            <div className="flex gap-3">
+              {/* Product Image */}
+              {(item.product_image || item.product?.image || item.image) && (
+                <div className="w-16 h-16 flex-shrink-0 rounded-md overflow-hidden border">
+                  <img 
+                    src={item.product_image || item.product?.image || item.image}
+                    alt={item.product_name || item.name}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+              
+              {/* Product Details */}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">
+                  {item.product_name || item.name}
+                </p>
+                
+                {/* Variant Info */}
+                {item.variant && (
+                  <p className="text-xs text-muted-foreground">
+                    Variant: {item.variant.title || item.variant}
+                  </p>
+                )}
+                
+                {/* Price & Quantity */}
+                <div className="flex justify-between mt-1 text-xs">
+                  <span>Qty: {item.quantity}</span>
+                  <span className="font-medium">
+                    ₱{Number(item.price || item.total_amount / item.quantity).toLocaleString()}
+                  </span>
+                </div>
+                
+                {/* Total */}
+                <div className="flex justify-between mt-1 pt-1 border-t text-xs">
+                  <span className="text-muted-foreground">Subtotal:</span>
+                  <span className="font-medium">₱{Number(item.total_amount || item.price * item.quantity).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Return/Refund Status for this item */}
+            {item.return_status && (
+              <div className="mt-2 pt-2 border-t text-xs">
+                <Badge variant="outline" className={
+                  item.return_status === 'returned' ? 'bg-green-50 text-green-700' :
+                  item.return_status === 'pending' ? 'bg-yellow-50 text-yellow-700' :
+                  'bg-gray-50 text-gray-700'
+                }>
+                  {item.return_status}
+                </Badge>
+              </div>
+            )}
+          </div>
+        ))}
+        
+        {/* Order Totals */}
+        <div className="border-t pt-2 space-y-1 text-sm">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Subtotal:</span>
+            <span>₱{Number(items.reduce((sum, item) => sum + (item.total_amount || item.price * item.quantity), 0)).toLocaleString()}</span>
+          </div>
+          {items[0]?.order?.delivery_fee && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Delivery Fee:</span>
+              <span>₱{Number(items[0].order.delivery_fee).toLocaleString()}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-medium pt-1 border-t">
+            <span>Total:</span>
+            <span>₱{Number(items[0]?.order?.total_amount || items.reduce((sum, item) => sum + (item.total_amount || item.price * item.quantity), 0)).toLocaleString()}</span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===== RETURN REQUEST DETAILS COMPONENT =====
+function ReturnRequestDetails({ returnRequest }: { returnRequest?: any }) {
+  if (!returnRequest) return null;
+  
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Package className="h-4 w-4" />
+          Return Request Details
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <span className="text-xs text-muted-foreground block">Status</span>
+            <Badge variant="outline" className={
+              returnRequest.status === 'approved' ? 'bg-green-50 text-green-700' :
+              returnRequest.status === 'shipped' ? 'bg-blue-50 text-blue-700' :
+              returnRequest.status === 'received' ? 'bg-purple-50 text-purple-700' :
+              'bg-gray-50 text-gray-700'
+            }>
+              {returnRequest.status}
+            </Badge>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground block">Return Method</span>
+            <p className="font-medium">{returnRequest.return_method || 'N/A'}</p>
+          </div>
+          {returnRequest.logistic_service && (
+            <div>
+              <span className="text-xs text-muted-foreground block">Logistics</span>
+              <p className="font-medium">{returnRequest.logistic_service}</p>
+            </div>
+          )}
+          {returnRequest.tracking_number && (
+            <div>
+              <span className="text-xs text-muted-foreground block">Tracking #</span>
+              <p className="font-medium">{returnRequest.tracking_number}</p>
             </div>
           )}
         </div>
-      )}
-    </div>
+        
+        {/* Timeline */}
+        <div className="border-t pt-2">
+          <span className="text-xs text-muted-foreground block mb-2">Timeline</span>
+          <div className="space-y-2">
+            {returnRequest.shipped_at && (
+              <div className="flex justify-between text-xs">
+                <span>Shipped:</span>
+                <span className="font-medium">{new Date(returnRequest.shipped_at).toLocaleString()}</span>
+              </div>
+            )}
+            {returnRequest.received_at && (
+              <div className="flex justify-between text-xs">
+                <span>Received:</span>
+                <span className="font-medium">{new Date(returnRequest.received_at).toLocaleString()}</span>
+              </div>
+            )}
+            {returnRequest.return_deadline && (
+              <div className="flex justify-between text-xs">
+                <span>Return Deadline:</span>
+                <span className="font-medium">{new Date(returnRequest.return_deadline).toLocaleDateString()}</span>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        {/* Return Media */}
+        {returnRequest.media && returnRequest.media.length > 0 && (
+          <div className="border-t pt-2">
+            <MediaGallery files={returnRequest.media} title="Return Photos" />
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
-function WaitingStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="waiting" refund={refund} />;
+// ===== DISPUTE DETAILS COMPONENT =====
+function DisputeDetailsCard({ dispute }: { dispute: any }) {
+  if (!dispute) return null;
+
+  const disputeStatus = dispute.status || 'filed';
+  const statusColors: Record<string, string> = {
+    filed: 'bg-yellow-50 text-yellow-700',
+    under_review: 'bg-purple-50 text-purple-700',
+    investigating: 'bg-purple-50 text-purple-700',
+    in_review: 'bg-purple-50 text-purple-700',
+    approved: 'bg-green-50 text-green-700',
+    rejected: 'bg-red-50 text-red-700',
+    resolved: 'bg-emerald-50 text-emerald-700',
+    partial: 'bg-blue-50 text-blue-700'
+  };
+
+  return (
+    <Card className="border-orange-200 bg-orange-50/30">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2 text-orange-700">
+          <ShieldAlert className="h-4 w-4" />
+          Dispute Information
+          <Badge className={`${statusColors[disputeStatus] || 'bg-gray-50'} text-xs ml-2`}>
+            {disputeStatus.replace('_', ' ').toUpperCase()}
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Dispute Reason */}
+        {dispute.reason && (
+          <div className="text-sm">
+            <span className="text-xs text-muted-foreground block">Dispute Reason</span>
+            <p className="mt-1 p-2 bg-white rounded border text-sm">{dispute.reason}</p>
+          </div>
+        )}
+
+        {/* Case Category / Liability */}
+        {dispute.case_category && (
+          <div className="text-sm">
+            <span className="text-xs text-muted-foreground block">Liability / Case Category</span>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {Array.isArray(dispute.case_category) ? (
+                dispute.case_category.map((cat: string, idx: number) => (
+                  <Badge key={idx} variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                    {liabilityLabels[cat] || cat.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                  </Badge>
+                ))
+              ) : (
+                <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                  {formatCaseCategory(dispute.case_category)}
+                </Badge>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Admin Notes */}
+        {dispute.admin_notes && (
+          <div className="text-sm">
+            <span className="text-xs text-muted-foreground block">Admin Notes</span>
+            <p className="mt-1 p-2 bg-white rounded border text-sm italic">{dispute.admin_notes}</p>
+          </div>
+        )}
+
+        {/* Filed By */}
+        {dispute.requested_by && (
+          <div className="grid grid-cols-2 gap-3 text-xs border-t pt-2">
+            <div>
+              <span className="text-muted-foreground">Filed By:</span>
+              <p className="font-medium">{dispute.requested_by.username || 'N/A'}</p>
+              {dispute.requested_by.email && (
+                <p className="text-[10px] text-muted-foreground">{dispute.requested_by.email}</p>
+              )}
+            </div>
+            {dispute.created_at && (
+              <div>
+                <span className="text-muted-foreground">Filed At:</span>
+                <p className="font-medium">{new Date(dispute.created_at).toLocaleString()}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Resolved By */}
+        {dispute.processed_by && (
+          <div className="grid grid-cols-2 gap-3 text-xs border-t pt-2">
+            <div>
+              <span className="text-muted-foreground">Resolved By:</span>
+              <p className="font-medium">{dispute.processed_by.username || 'N/A'}</p>
+            </div>
+            {dispute.resolved_at && (
+              <div>
+                <span className="text-muted-foreground">Resolved At:</span>
+                <p className="font-medium">{new Date(dispute.resolved_at).toLocaleString()}</p>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Dispute Evidence */}
+        {dispute.evidence && dispute.evidence.length > 0 && (
+          <div className="border-t pt-2">
+            <MediaGallery files={dispute.evidence} title="Dispute Evidence" />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
-function ShippedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="shipped" refund={refund} />;
-}
-
-function ReceivedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="received" refund={refund} />;
-}
-
-function ToVerifyStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="to_verify" refund={refund} />;
-}
-
-function InspectedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="inspected" refund={refund} />;
-}
-
-function ToProcessStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="to_process" refund={refund} />;
-}
-
-function DisputeStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="dispute" refund={refund} />;
-}
-
-function UnderReviewStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="under_review" refund={refund} />;
-}
-
-function CompletedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="completed" refund={refund} />;
-}
-
-function RejectedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="rejected" refund={refund} />;
-}
-
-function CancelledStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
-  return <BaseStatusUI status="cancelled" refund={refund} />;
-}
-
-// ===== PROCESSING UI COMPONENT (Split options removed) =====
-// ===== PROCESSING UI COMPONENT (Shows buyer's payment details) =====
-// ===== PROCESSING UI COMPONENT (Shows buyer's payment details if available) =====
+// ===== PROCESSING UI COMPONENT =====
 function ProcessingUI({ 
   refund, 
   onComplete, 
@@ -598,7 +1029,7 @@ function ProcessingUI({
     );
   };
 
-  // Render payment details based on method and available data (support multiple field names)
+  // Render payment details based on method
   const renderPaymentDetails = () => {
     const methodRaw = refund.final_refund_method || refund.preferred_refund_method || refund.buyer_preferred_refund_method || refund.refund_method || '';
     const method = String(methodRaw).toLowerCase();
@@ -608,7 +1039,6 @@ function ProcessingUI({
     if (method === 'remittance' && hasRemittanceDetails()) return renderRemittanceDetails();
     if (method === 'gcash' && (refund.gcash_details || refund.gcash || refund.refundgcash || refund.refund_gcash)) return renderGCashDetails();
 
-    // Fallback: if no method-specific details but any payment data exists, try to render any available block
     if (hasWalletDetails()) return renderWalletDetails();
     if (hasBankDetails()) return renderBankDetails();
     if (hasRemittanceDetails()) return renderRemittanceDetails();
@@ -767,7 +1197,7 @@ function ProcessingUI({
       if (adminNotes) formData.append('customer_note', adminNotes);
 
       const response = await AxiosInstance.post(
-        `/return-refund/${encodeURIComponent(String(idToUse))}/process_refund/`,
+        `/return-refund/${encodeURIComponent(String(idToUse))}/admin_process_refund/`,
         formData,
         {
           headers: { 
@@ -819,7 +1249,7 @@ function ProcessingUI({
       if (adminNotes) formData.append('customer_note', adminNotes);
 
       const response = await AxiosInstance.post(
-        `/return-refund/${encodeURIComponent(String(idToUse))}/process_refund/`,
+        `/return-refund/${encodeURIComponent(String(idToUse))}/admin_process_refund/`,
         formData,
         {
           headers: { 
@@ -1092,6 +1522,324 @@ function ProcessingUI({
   );
 }
 
+// ===== UNDER REVIEW DETAILS TAB =====
+function UnderReviewDetailsTab({ refund, order, returnRequest, delivery }: { 
+  refund: any, 
+  order?: any,
+  returnRequest?: any,
+  delivery?: any 
+}) {
+  return (
+    <div className="space-y-4">
+      {/* Order Items */}
+      {order?.items && <OrderItems items={order.items} />}
+      
+      {/* Return Request Details */}
+      {returnRequest && <ReturnRequestDetails returnRequest={returnRequest} />}
+      
+      {/* Buyer Information */}
+      <BuyerDetails refund={refund} />
+      
+      {/* Seller Information */}
+      <SellerDetails refund={refund} shop={order?.items?.[0]?.shop} />
+      
+      {/* Delivery Information */}
+      {delivery && <DeliveryDetails order={{ delivery, shipping_address: order?.shipping_address }} />}
+      
+      {/* Rider Information */}
+      {delivery?.rider && <RiderDetails delivery={delivery} />}
+      
+      {/* Dispute Evidence */}
+      {refund.dispute_request?.evidence && refund.dispute_request.evidence.length > 0 && (
+        <MediaGallery files={refund.dispute_request.evidence} title="Dispute Evidence" />
+      )}
+      
+      {/* Seller Proofs */}
+      {refund.seller_delivery_proofs && refund.seller_delivery_proofs.length > 0 && (
+        <MediaGallery files={refund.seller_delivery_proofs} title="Seller Delivery Proofs" />
+      )}
+      
+      {/* Return Media */}
+      {returnRequest?.media && returnRequest.media.length > 0 && (
+        <MediaGallery files={returnRequest.media} title="Return Photos" />
+      )}
+      
+      {/* Timeline */}
+      {refund.timeline && refund.timeline.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Calendar className="h-4 w-4" />
+              Activity Timeline
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {refund.timeline.map((event: any, index: number) => (
+                <div key={index} className="flex gap-3 text-xs">
+                  <div className="w-24 flex-shrink-0 text-muted-foreground">
+                    {new Date(event.timestamp).toLocaleString()}
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium">{event.details}</p>
+                    {event.user && (
+                      <p className="text-muted-foreground">by {event.user}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// Base status UI components remain the same...
+function PendingStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="pending" refund={refund} />;
+}
+
+function NegotiationStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="negotiation" refund={refund} />;
+}
+
+function ApprovedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  const activeDispute = getActiveDispute(refund);
+  
+  return (
+    <div className="space-y-3">
+      <BaseStatusUI status="approved" refund={refund} />
+      {activeDispute && <DisputeDetailsCard dispute={activeDispute} />}
+    </div>
+  );
+}
+
+function WaitingStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="waiting" refund={refund} />;
+}
+
+function ShippedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="shipped" refund={refund} />;
+}
+
+function ReceivedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="received" refund={refund} />;
+}
+
+function ToVerifyStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="to_verify" refund={refund} />;
+}
+
+function InspectedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="inspected" refund={refund} />;
+}
+
+function ToProcessStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  return <BaseStatusUI status="to_process" refund={refund} />;
+}
+
+function DisputeStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  const activeDispute = getActiveDispute(refund);
+  
+  return (
+    <div className="space-y-3">
+      <BaseStatusUI status="dispute" refund={refund} />
+      {activeDispute && <DisputeDetailsCard dispute={activeDispute} />}
+    </div>
+  );
+}
+
+function UnderReviewStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  const activeDispute = getActiveDispute(refund);
+  const order = refund.order;
+  const returnRequest = refund.return_request;
+  const delivery = order?.delivery || refund.delivery;
+  
+  return (
+    <div className="space-y-4">
+      <BaseStatusUI status="under_review" refund={refund} />
+      {activeDispute && <DisputeDetailsCard dispute={activeDispute} />}
+      
+      <Tabs defaultValue="details" className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="details">Case Details</TabsTrigger>
+          <TabsTrigger value="evidence">Evidence & Timeline</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="details" className="mt-4">
+          <UnderReviewDetailsTab 
+            refund={refund}
+            order={order}
+            returnRequest={returnRequest}
+            delivery={delivery}
+          />
+        </TabsContent>
+        
+        <TabsContent value="evidence" className="mt-4 space-y-4">
+          {/* Dispute Evidence */}
+          {activeDispute?.evidence && activeDispute.evidence.length > 0 && (
+            <MediaGallery files={activeDispute.evidence} title="Dispute Evidence" />
+          )}
+          
+          {/* Return Photos */}
+          {returnRequest?.media && returnRequest.media.length > 0 && (
+            <MediaGallery files={returnRequest.media} title="Return Photos" />
+          )}
+          
+          {/* Seller Proofs */}
+          {refund.seller_delivery_proofs && refund.seller_delivery_proofs.length > 0 && (
+            <MediaGallery files={refund.seller_delivery_proofs} title="Seller Delivery Proofs" />
+          )}
+          
+          {/* Refund Proofs */}
+          {refund.proofs && refund.proofs.length > 0 && (
+            <MediaGallery files={refund.proofs} title="Refund Proofs" />
+          )}
+          
+          {/* Timeline */}
+          {refund.timeline && refund.timeline.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Calendar className="h-4 w-4" />
+                  Activity Timeline
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {refund.timeline.map((event: any, index: number) => (
+                    <div key={index} className="flex gap-3 text-xs border-b pb-2 last:border-0">
+                      <div className="w-24 flex-shrink-0 text-muted-foreground">
+                        {new Date(event.timestamp).toLocaleString()}
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium">{event.details}</p>
+                        {event.user && (
+                          <p className="text-muted-foreground text-[10px]">by {event.user}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function CompletedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  const activeDispute = getActiveDispute(refund);
+  
+  return (
+    <div className="space-y-3">
+      <BaseStatusUI status="completed" refund={refund} />
+      {activeDispute && activeDispute.status === 'resolved' && (
+        <DisputeDetailsCard dispute={activeDispute} />
+      )}
+    </div>
+  );
+}
+
+function RejectedStatusUI({ refund }: { refund: RefundFlat & { [key: string]: any } }) {
+  const activeDispute = getActiveDispute(refund);
+  
+  return (
+    <div className="space-y-3">
+      <BaseStatusUI status="rejected" refund={refund} />
+      {activeDispute && activeDispute.status === 'rejected' && (
+        <DisputeDetailsCard dispute={activeDispute} />
+      )}
+    </div>
+  );
+}
+
+function CancelledStatusUI({ refund }: { refund: RefundFlat & { [key:string]: any } }) {
+  return <BaseStatusUI status="cancelled" refund={refund} />;
+}
+
+function BaseStatusUI({ 
+  status, 
+  refund 
+}: { 
+  status: keyof typeof statusConfig, 
+  refund: RefundFlat & { [key: string]: any } 
+}) {
+  const config = statusConfig[status];
+  const Icon = config.icon;
+  const activeDispute = getActiveDispute(refund);
+  
+  return (
+    <div className="space-y-3">
+      <div className={`${config.color} border rounded-md p-3`}>
+        <div className="flex items-center gap-2">
+          <Icon className="h-4 w-4" />
+          <span className="text-sm font-medium">{config.label}</span>
+          <span className="text-xs text-muted-foreground mx-1">•</span>
+          <span className="text-xs">{config.description}</span>
+        </div>
+        
+        {status === 'pending' && refund.requested_at && (
+          <div className="mt-2 text-xs text-muted-foreground border-t border-yellow-200 pt-2">
+            Requested: {new Date(refund.requested_at).toLocaleDateString()}
+          </div>
+        )}
+        
+        {status === 'dispute' && refund.dispute_reason && (
+          <div className="mt-2 text-xs text-muted-foreground border-t border-orange-200 pt-2">
+            Reason: {refund.dispute_reason}
+          </div>
+        )}
+        
+        {status === 'under_review' && refund.dispute_reason && (
+          <div className="mt-2 text-xs text-muted-foreground border-t border-purple-200 pt-2">
+            Dispute Reason: {refund.dispute_reason}
+          </div>
+        )}
+        
+        {status === 'waiting' && refund.return_request?.tracking_number && (
+          <div className="mt-2 text-xs text-muted-foreground border-t border-indigo-200 pt-2">
+            Tracking: {refund.return_request.tracking_number}
+          </div>
+        )}
+        
+        {status === 'shipped' && refund.return_request?.shipped_at && (
+          <div className="mt-2 text-xs text-muted-foreground border-t border-blue-200 pt-2">
+            Shipped: {new Date(refund.return_request.shipped_at).toLocaleDateString()}
+          </div>
+        )}
+        
+        {status === 'received' && refund.return_request?.received_at && (
+          <div className="mt-2 text-xs text-muted-foreground border-t border-green-200 pt-2">
+            Received: {new Date(refund.return_request.received_at).toLocaleDateString()}
+          </div>
+        )}
+        
+        {status === 'to_process' && refund.total_refund_amount && (
+          <div className="mt-2 text-xs text-muted-foreground border-t border-purple-200 pt-2">
+            Amount: ₱{Number(refund.total_refund_amount).toLocaleString()}
+          </div>
+        )}
+        
+        {status === 'completed' && refund.processed_at && (
+          <div className="mt-2 text-xs text-muted-foreground border-t border-emerald-200 pt-2">
+            Completed: {new Date(refund.processed_at).toLocaleDateString()}
+          </div>
+        )}
+      </div>
+
+      {activeDispute && status !== 'dispute' && status !== 'under_review' && (
+        <DisputeDetailsCard dispute={activeDispute} />
+      )}
+    </div>
+  );
+}
+
+// [Loader function remains the same...]
 export async function loader({ request, context, params }: any) {
   // Basic admin auth middleware
   try {
@@ -1161,7 +1909,6 @@ export async function loader({ request, context, params }: any) {
           if (activeDispute) {
             const disputeStatus = String(activeDispute.status).toLowerCase();
             
-            // Only override the refund status if the dispute is under review
             if (disputeStatus === 'under_review' || disputeStatus === 'investigating' || disputeStatus === 'in_review') {
               enrichedRefund = { 
                 ...enrichedRefund, 
@@ -1171,7 +1918,6 @@ export async function loader({ request, context, params }: any) {
                 dispute_request: activeDispute
               };
             } else {
-              // For pending or approved disputes, just attach the dispute info without overriding status
               enrichedRefund = {
                 ...enrichedRefund,
                 dispute_request: activeDispute,
@@ -1235,7 +1981,6 @@ export async function loader({ request, context, params }: any) {
       const disputes = Array.isArray(disputesData) ? disputesData : 
                       Array.isArray(disputesData?.data) ? disputesData.data : [];
       
-      // Find active dispute for this refund
       const activeDispute = disputes.find((d: any) => 
         String(d.refund) === String(refund.refund) || 
         String(d.refund_id) === String(refund.refund)
@@ -1244,7 +1989,6 @@ export async function loader({ request, context, params }: any) {
       if (activeDispute) {
         const disputeStatus = String(activeDispute.status).toLowerCase();
         
-        // Only override the refund status if the dispute is under review
         if (disputeStatus === 'under_review' || disputeStatus === 'investigating' || disputeStatus === 'in_review') {
           enrichedRefund = { 
             ...enrichedRefund, 
@@ -1254,7 +1998,6 @@ export async function loader({ request, context, params }: any) {
             dispute_request: activeDispute
           };
         } else {
-          // For pending or approved disputes, just attach the dispute info without overriding status
           enrichedRefund = {
             ...enrichedRefund,
             dispute_request: activeDispute,
@@ -1283,21 +2026,17 @@ export default function AdminViewRefundDetails() {
   const [searchParams] = useSearchParams();
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   
-  // State for refund decision (these will be used in Under Review section)
+  // State for refund decision
   const [refundType, setRefundType] = useState<'full' | 'partial' | ''>('');
-  const [refundAmount, setRefundAmount] = useState<number>(initialRefund.total_refund_amount || 0);
+  const [refundAmount, setRefundAmount] = useState<number>(Number(initialRefund.total_refund_amount ?? 0));
   const [selectedLiabilities, setSelectedLiabilities] = useState<string[]>([]);
-  
-  // Split options state for Under Review section
   const [splitType, setSplitType] = useState<'equal' | '70_30' | '30_70' | 'custom'>('equal');
   const [customSplits, setCustomSplits] = useState<Record<string, number>>({});
-  
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authAction, setAuthAction] = useState<'reject' | 'confirm' | null>(null);
   const [modalAuthChecked, setModalAuthChecked] = useState(false);
 
-  // Map liability IDs to backend case_type values
   const liabilityOptions = [
     { id: 'merchant_fulfillment_issue', label: 'Merchant Fulfillment Issue (Seller)' },
     { id: 'logistics_delivery_issue', label: 'Logistics / Delivery Issue (Delivery Partner)' },
@@ -1378,7 +2117,7 @@ export default function AdminViewRefundDetails() {
     setIsSubmitting(true);
 
     try {
-      // First, find the active dispute for this refund
+      // Find the active dispute for this refund
       const disputesRes = await AxiosInstance.get('/disputes/', {
         params: { refund_id: String(refund.refund) },
         headers: { 'X-User-Id': String(user?.id || '') }
@@ -1402,10 +2141,9 @@ export default function AdminViewRefundDetails() {
         return;
       }
 
-      // Build admin notes with split information if applicable
+      // Build admin notes with split information
       let adminNotes = `Case resolved with liabilities: ${selectedLiabilities.map(id => liabilityOptions.find(opt => opt.id === id)?.label).join(', ')}. Refund decision: ${refundType} refund of ₱${refundAmount.toFixed(2)}.`;
       
-      // Add split details if multiple liabilities
       if (selectedLiabilities.length > 1) {
         let splitDetails = '';
         if (splitType === 'equal') {
@@ -1422,7 +2160,6 @@ export default function AdminViewRefundDetails() {
         adminNotes += ` Liability split: ${splitDetails}`;
       }
 
-      // 1. First update the dispute with case category(s) and refund type/amount
       const caseCategoryValue = selectedLiabilities.length > 0 ? selectedLiabilities : [];
 
       await AxiosInstance.patch(`/disputes/${activeDispute.id}/`, {
@@ -1432,7 +2169,6 @@ export default function AdminViewRefundDetails() {
         headers: { 'X-User-Id': String(user?.id || '') }
       });
 
-      // 2. Then call the accept endpoint to approve the dispute with the approved amount
       await AxiosInstance.post(`/disputes/${activeDispute.id}/accept/`, {
         admin_notes: adminNotes,
         approved_amount: refundAmount
@@ -1445,7 +2181,6 @@ export default function AdminViewRefundDetails() {
         description: `Refund has been approved with ${refundType} refund of ₱${refundAmount.toFixed(2)}.` 
       });
 
-      // Update local state
       setRefund(prev => ({ 
         ...prev, 
         status: 'approved',
@@ -1459,14 +2194,12 @@ export default function AdminViewRefundDetails() {
         }
       }));
 
-      // Clear selections
       setSelectedLiabilities([]);
       setRefundType('');
-      setRefundAmount(refund.total_refund_amount || 0);
+      setRefundAmount(Number(refund.total_refund_amount ?? 0));
       setSplitType('equal');
       setCustomSplits({});
 
-      // Force a refresh of the refund data
       try {
         const refreshRes = await AxiosInstance.get(`/admin-refunds/${encodeURIComponent(String(refund.refund))}/get_admin_refund_details/`, {
           headers: { 'X-User-Id': String(user?.id || '') }
@@ -1635,7 +2368,6 @@ export default function AdminViewRefundDetails() {
     const rr = refund.return_request;
     const paymentCompleted = String(refund.refund_payment_status || refund.payment_refund_status || refund.payment_status || refund.paymentRefundStatus || '').toLowerCase() === 'completed';
 
-    // Derive dispute status from possible locations
     const disputeStatus = String(
       refund.dispute?.status ||
       (Array.isArray(refund.disputes) && refund.disputes[0]?.status) ||
@@ -1644,17 +2376,14 @@ export default function AdminViewRefundDetails() {
       ''
     ).toLowerCase();
 
-    // Only force under_review if dispute is under review AND refund status is dispute
     const disputeUnderReviewStates = ['under_review', 'investigating', 'in_review'];
     const shouldForceUnderReview = disputeUnderReviewStates.includes(disputeStatus) && status === 'dispute';
     const displayedStatus = shouldForceUnderReview ? 'under_review' : status;
 
-    // If payment is completed, show completed UI
     if (paymentCompleted && displayedStatus === 'approved') {
       return <CompletedStatusUI refund={refund} />;
     }
 
-    // Map status to appropriate UI component
     switch (displayedStatus) {
       case 'pending':
         return <PendingStatusUI refund={refund} />;
@@ -1685,7 +2414,6 @@ export default function AdminViewRefundDetails() {
       case 'cancelled':
         return <CancelledStatusUI refund={refund} />;
       default:
-        // Handle return_request status if main status doesn't match
         if (rr?.status) {
           const rrStatus = String(rr.status).toLowerCase();
           if (rrStatus === 'shipped') return <ShippedStatusUI refund={refund} />;
@@ -1696,7 +2424,6 @@ export default function AdminViewRefundDetails() {
     }
   };
 
-  // Compute the status to display on badges and action gating
   const st = (() => {
     const s = String(refund.status || '').toLowerCase();
     const disputeStatus = String(
@@ -1707,7 +2434,6 @@ export default function AdminViewRefundDetails() {
       ''
     ).toLowerCase();
     
-    // Only force under_review if dispute is under review AND refund status is dispute
     const disputeUnderReviewStates = ['under_review', 'investigating', 'in_review'];
     if (disputeUnderReviewStates.includes(disputeStatus) && s === 'dispute') {
       return 'under_review';
@@ -1715,13 +2441,12 @@ export default function AdminViewRefundDetails() {
     return s;
   })();
 
-  // Normalize payment status (support alternate field names)
   const getPaymentStatusLower = () => String(
     refund.refund_payment_status || refund.payment_refund_status || refund.payment_status || refund.paymentRefundStatus || ''
   ).toLowerCase();
 
-  // Check if we're in processing state: refund must be approved and payment status set to processing
   const isProcessing = getPaymentStatusLower() === 'processing' && String(refund.status || '').toLowerCase() === 'approved';
+  const activeDispute = getActiveDispute(refund);
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
@@ -1735,12 +2460,28 @@ export default function AdminViewRefundDetails() {
           <CardContent>
             <div className="text-xs">
               <pre className="whitespace-pre-wrap text-[11px]">
-{JSON.stringify({ dispute_request: refund.dispute_request, dispute_details: refund.dispute_details, disputes: refund.disputes, dispute: refund.dispute }, null, 2)}
+{JSON.stringify({ 
+  dispute_request: refund.dispute_request, 
+  dispute_details: refund.dispute_details, 
+  disputes: refund.disputes, 
+  dispute: refund.dispute 
+}, null, 2)}
               </pre>
             </div>
           </CardContent>
         </Card>
       )}
+
+      {activeDispute && activeDispute.status === 'filed' && (
+        <Alert className="mb-4 border-orange-200 bg-orange-50">
+          <AlertTriangle className="h-4 w-4 text-orange-600" />
+          <AlertTitle className="text-orange-800 text-sm">Dispute Filed</AlertTitle>
+          <AlertDescription className="text-xs text-orange-700">
+            A dispute has been filed for this refund. Please review all evidence below and take action.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Button variant="ghost" className="mb-4" onClick={() => navigate(-1)}>
         <ArrowLeft className="w-4 h-4 mr-2" /> Back
       </Button>
@@ -1752,6 +2493,12 @@ export default function AdminViewRefundDetails() {
               <CardTitle className="text-lg flex items-center gap-2">
                 <Eye className="w-4 h-4" /> Refund {refund.refund}
                 <StatusBadge status={st} />
+                {activeDispute && activeDispute.status === 'under_review' && (
+                  <Badge variant="outline" className="bg-purple-100 text-purple-700 border-purple-300 ml-2">
+                    <Scale className="h-3 w-3 mr-1" />
+                    Under Review
+                  </Badge>
+                )}
               </CardTitle>
               <CardDescription className="text-xs">Admin view — details and actions</CardDescription>
             </div>
@@ -1766,7 +2513,6 @@ export default function AdminViewRefundDetails() {
 
         <CardContent>
           {isProcessing ? (
-            // Show Processing UI with all necessary props (split options removed)
             <ProcessingUI 
               refund={refund}
               onComplete={handleCompleteRefund}
@@ -1775,10 +2521,8 @@ export default function AdminViewRefundDetails() {
               setRefund={setRefund}
             />
           ) : (
-            // Show normal refund details UI
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2 space-y-3">
-                {/* Status-specific UI */}
                 {renderStatusUI()}
 
                 {/* Basic Information */}
@@ -1874,14 +2618,12 @@ export default function AdminViewRefundDetails() {
                                 return;
                               }
 
-                              // Start the review
                               await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, {
                                 headers: { 'X-User-Id': String(user?.id || '') }
                               });
 
                               toast({ title: 'Review started', description: 'Dispute marked under review.' });
 
-                              // Update local state
                               setRefund(prev => ({ 
                                 ...prev, 
                                 status: 'under_review',
@@ -1897,7 +2639,6 @@ export default function AdminViewRefundDetails() {
                             return;
                           }
 
-                          // If refund is already approved, run the Process Refund flow
                           if (st === 'approved') {
                             try {
                               await handleProcessRefund();
@@ -1942,7 +2683,7 @@ export default function AdminViewRefundDetails() {
                                 onChange={(e) => {
                                   setRefundType(e.target.value as 'full');
                                   if (e.target.value === 'full') {
-                                    setRefundAmount(refund.total_refund_amount || 0);
+                                    setRefundAmount(Number(refund.total_refund_amount) || 0);
                                   }
                                 }}
                                 className="h-3 w-3"
@@ -2012,7 +2753,7 @@ export default function AdminViewRefundDetails() {
                           </div>
                         </div>
 
-                        {/* Split Options - Only when multiple liabilities selected */}
+                        {/* Split Options */}
                         {selectedLiabilities.length > 1 && (
                           <div className="border-t pt-2 mt-1 mb-3">
                             <p className="text-xs font-medium mb-2 flex items-center gap-1">
@@ -2021,7 +2762,6 @@ export default function AdminViewRefundDetails() {
                             </p>
                             
                             <div className="space-y-2">
-                              {/* Split Type Selection */}
                               <div className="flex flex-wrap gap-2">
                                 <label className="flex items-center gap-1 text-xs">
                                   <input
@@ -2071,7 +2811,6 @@ export default function AdminViewRefundDetails() {
                                 </label>
                               </div>
 
-                              {/* Custom Split Inputs */}
                               {splitType === 'custom' && (
                                 <div className="space-y-1 mt-1">
                                   {selectedLiabilities.map((liabilityId) => {
@@ -2106,7 +2845,6 @@ export default function AdminViewRefundDetails() {
                                 </div>
                               )}
 
-                              {/* Split Preview for non-custom */}
                               {splitType !== 'custom' && selectedLiabilities.length > 0 && (
                                 <div className="bg-purple-50 rounded p-1.5 text-[10px] mt-1">
                                   <p className="font-medium text-purple-700 mb-0.5">Preview:</p>
@@ -2203,7 +2941,7 @@ export default function AdminViewRefundDetails() {
                   </CardContent>
                 </Card>
 
-                {/* Authorization modal used for Reject / Confirm actions */}
+                {/* Authorization modal */}
                 <Dialog open={showAuthModal} onOpenChange={setShowAuthModal}>
                   <DialogContent className="sm:max-w-md">
                     <DialogHeader>
@@ -2278,7 +3016,7 @@ export default function AdminViewRefundDetails() {
         </CardContent>
       </Card>
 
-      {/* Confirmation dialog when admin overrides active negotiation */}
+      {/* Confirmation dialog */}
       <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

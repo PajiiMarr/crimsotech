@@ -232,18 +232,7 @@
             </CardHeader>
             <CardContent className="space-y-2">
               {/* Per-order refund (keeps existing behavior) */}
-              {(order.can_request_refund ?? order.items.some((item: any) => item.is_refundable)) && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start h-8 text-xs"
-                  onClick={() => onRequestRefund({ orderId: order.id })}
-                >
-                  <CreditCard className="h-3 w-3 mr-1.5" />
-                  Request Refund (Order)
-                </Button>
-              )}
-
+              
               {/* Item-level refunds shown in Delivery Actions */}
               {order.items && order.items.some((i: any) => i.is_refundable) && (
                 <div className="space-y-1">

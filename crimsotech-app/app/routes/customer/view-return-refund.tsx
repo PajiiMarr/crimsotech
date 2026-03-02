@@ -649,6 +649,7 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
   const payStatus = String(refund.refund_payment_status || '').toLowerCase();
   const rrTracking = String(refund.return_request?.tracking_number || '').trim();
   const hasShippingInfo = Boolean(rrTracking) || rrStatus === 'shipped' || rrStatus === 'received';
+  
   // Processing applies to:
   // - Return items: when return_request.status is 'approved' and payment is 'processing'
   // - Keep items: when refund.status is 'approved' and payment is 'processing'
@@ -662,9 +663,11 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
     (dr && String((dr.status || '').trim()).toLowerCase() === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'processing')
   );
 
+  // compute return deadline based on processed_at + 7 days
+  const returnDeadline = refund.processed_at ? new Date(new Date(refund.processed_at).getTime() + 7 * 24 * 60 * 60 * 1000) : null;
+
   const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
   const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
-  const canProvideShipping = !isReturnAcceptedWaitingModeration;
   
   return (
     <div className="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -672,6 +675,20 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
         <CheckCircle className="h-5 w-5 text-green-600" />
         <div className="flex-1">
           <p className="font-medium text-green-800">Request Approved</p>
+          {/* return address & deadline */}
+          {refund.return_address && (
+            <div className="mt-1 text-sm text-gray-700">
+              <div>Return address:</div>
+              <div>{refund.return_address.recipient_name} — {refund.return_address.contact_number}</div>
+              <div>{refund.return_address.street}, {refund.return_address.barangay}, {refund.return_address.city}, {refund.return_address.province} {refund.return_address.zip_code}, {refund.return_address.country}</div>
+              {refund.return_address.notes && <div className="mt-1">{refund.return_address.notes}</div>}
+            </div>
+          )}
+          {returnDeadline && (
+            <div className="mt-1 text-sm text-gray-700">
+              Return deadline: {returnDeadline.toLocaleDateString()}
+            </div>
+          )}
           {isProcessing ? (
             <div className="mt-3">
               <ToProcessStatusUI refund={refund} formatCurrency={formatCurrency} />
@@ -695,12 +712,14 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
           )}
 
           {/* Return deadline and address for return refunds */}
-          {isReturnItem && !hasShippingInfo && (
+          {isReturnItem && (
             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
               <div>
                 <div className="text-xs text-gray-500">Return Deadline</div>
                 <div className="font-medium">
-                  {refund.return_request?.return_deadline || refund.return_deadline ? formatDate(refund.return_request?.return_deadline || refund.return_deadline || '') : 'Not set'}
+                  {refund.return_request?.return_deadline || refund.return_deadline
+                    ? formatDate(refund.return_request?.return_deadline || refund.return_deadline || '')
+                    : (returnDeadline ? returnDeadline.toLocaleDateString() : 'Not set')}
                 </div>
                 {refund.return_request?.return_deadline && (() => {
                   try {
@@ -725,66 +744,6 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
                   <div className="font-medium">Not provided</div>
                 )}
               </div>
-            </div>
-          )}
-
-          {isReturnItem && refund.return_request?.status === 'shipped' && (
-            <div className="mt-3 p-3 rounded bg-blue-50 border border-blue-200 text-blue-800">
-              <p className="font-medium">Item has been shipped</p>
-              <p className="text-sm">Waiting for the seller to receive the item.</p>
-
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {refund.return_request?.tracking_number && (
-                  <div>
-                    <p className="text-xs text-gray-600">Tracking Number</p>
-                    <p className="font-medium">{refund.return_request.tracking_number}</p>
-                  </div>
-                )}
-
-                {refund.return_request?.logistic_service && (
-                  <div>
-                    <p className="text-xs text-gray-600">Shipping Service</p>
-                    <p className="font-medium">{refund.return_request.logistic_service}</p>
-                  </div>
-                )}
-
-                {refund.return_request?.shipped_at && (
-                  <div>
-                    <p className="text-xs text-gray-600">Shipped At</p>
-                    <p className="font-medium">{formatDate(refund.return_request.shipped_at)}</p>
-                  </div>
-                )}
-
-                {refund.return_request?.notes && (
-                  <div className="sm:col-span-2">
-                    <p className="text-xs text-gray-600">Notes</p>
-                    <p className="text-sm text-gray-700">{refund.return_request.notes}</p>
-                  </div>
-                )}
-              </div>
-
-              {refund.return_request?.media && refund.return_request.media.length > 0 && (
-                <div className="mt-3">
-                  <p className="text-xs text-gray-600">Uploaded files</p>
-                  <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
-                    {refund.return_request.media.map((m: any, idx: number) => (
-                      <a key={m.id || idx} href={m.file_url || '#'} target="_blank" rel="noreferrer" className="block rounded overflow-hidden bg-gray-100 border">
-                        {m.file_type && m.file_type.startsWith('image/') ? (
-                          <img src={m.file_url} alt={`Return media ${idx + 1}`} className="w-full h-20 object-cover" />
-                        ) : (
-                          <div className="w-full h-20 flex items-center justify-center text-gray-500">{m.file_type?.split('/')[1]?.toUpperCase() || 'FILE'}</div>
-                        )}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {canProvideShipping && (
-                <div className="mt-3">
-                  <Button variant="ghost" size="sm" onClick={() => onOpenTrackingDialog && onOpenTrackingDialog()} className="h-8">Update shipping info</Button>
-                </div>
-              )}
             </div>
           )}
 
@@ -875,9 +834,7 @@ function ApprovedStatusUI({ refund, onOpenTrackingDialog, formatCurrency }: { re
               </div>
             </div>
           )}
-
         </div>
-
       </div>
     </div>
   );
@@ -2477,6 +2434,12 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
       }
     });
 
+    const data = response.data;
+    // ensure refund_id exists for frontend logic
+    if (data && !data.refund_id && data.refund) {
+      data.refund_id = data.refund;
+    }
+
     return {
       user: user || {
         isAdmin: false,
@@ -2485,7 +2448,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
         isModerator: false,
         user_id: ''
       },
-      refund: response.data
+      refund: data
     };
   } catch (error) {
     console.error('Error fetching refund details:', error);
@@ -2508,6 +2471,18 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
   const { refundId } = useParams();
   const { toast } = useToast();
   const [refund, setRefund] = useState<RefundDetail | null>(initialRefund);
+
+  // debug if backend returned object without expected order_items or refund_id
+  useEffect(() => {
+    if (refund) {
+      if (!refund.refund_id) {
+        console.debug('Loader refund missing refund_id, data:', refund);
+      }
+      if (!refund.order_items) {
+        console.debug('Loader refund missing order_items, data:', refund);
+      }
+    }
+  }, [refund]);
   const [loading, setLoading] = useState(!initialRefund);
   const [actionLoading, setActionLoading] = useState(false);
   const [showRejectDialog, setShowRejectDialog] = useState(false);
@@ -3093,86 +3068,216 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
     };
   }, [refund?.refund_id, refund?.status]);
 
-  const renderStatusUI = () => {
-    if (!refund) return null;
+const renderStatusUI = () => {
+  if (!refund) return null;
 
-    const submitReturnInfo = async (formData: FormData) => {
-      if (!refund?.refund_id) return false;
-      try {
-        setActionLoading(true);
+  // ===== PRIORITY 1: Return Request Status Checks =====
+  // These take precedence over the main refund status
 
-        if (!refund.return_request) {
-          await AxiosInstance.post(`/return-refund/${refund.refund_id}/start_return_process/`, {}, {
-            headers: { 'X-User-Id': user?.user_id || '' }
-          });
-        }
+  // SHIPPED - When buyer has shipped the item
+  if (refund.return_request?.status === 'shipped') {
+    const rr = refund.return_request;
+    const medias = rr?.media || [];
+    
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <Truck className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-blue-800">Item has been shipped</p>
+            <p className="text-sm text-blue-700">Waiting for the seller to receive the item.</p>
 
-        await AxiosInstance.post(`/return-refund/${refund.refund_id}/update_tracking/`, formData, {
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {rr?.tracking_number && (
+                <div>
+                  <p className="text-xs text-gray-600">Tracking Number</p>
+                  <p className="font-medium">{rr.tracking_number}</p>
+                </div>
+              )}
+
+              {rr?.logistic_service && (
+                <div>
+                  <p className="text-xs text-gray-600">Shipping Service</p>
+                  <p className="font-medium">{rr.logistic_service}</p>
+                </div>
+              )}
+
+              {rr?.shipped_at && (
+                <div>
+                  <p className="text-xs text-gray-600">Shipped At</p>
+                  <p className="font-medium">{formatDate(rr.shipped_at)}</p>
+                </div>
+              )}
+
+              {rr?.notes && (
+                <div className="sm:col-span-2">
+                  <p className="text-xs text-gray-600">Notes</p>
+                  <p className="text-sm text-gray-700">{rr.notes}</p>
+                </div>
+              )}
+            </div>
+
+            {medias && medias.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs text-gray-600">Uploaded files</p>
+                <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {medias.map((m: any, idx: number) => (
+                    <a key={m.id || idx} href={m.file_url || '#'} target="_blank" rel="noreferrer" className="block rounded overflow-hidden bg-gray-100 border">
+                      {m.file_type && m.file_type.startsWith('image/') ? (
+                        <img src={m.file_url} alt={`Return media ${idx + 1}`} className="w-full h-20 object-cover" />
+                      ) : (
+                        <div className="w-full h-20 flex items-center justify-center text-gray-500">{m.file_type?.split('/')[1]?.toUpperCase() || 'FILE'}</div>
+                      )}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => setShowTrackingDialog(true)}
+                className="h-8"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Update Shipping Info
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // RECEIVED - When seller has received the item
+  if (refund.return_request?.status === 'received') {
+    return (
+      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <Package className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-green-800">Item Received</p>
+            <p className="text-sm text-green-700">The seller has received your returned item and will inspect it soon.</p>
+            
+            {refund.return_request?.received_at && (
+              <p className="text-xs text-gray-500 mt-2">Received at: {formatDate(refund.return_request.received_at)}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // INSPECTED - When seller has inspected the item
+  if (refund.return_request?.status === 'inspected') {
+    return (
+      <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <PackageCheck className="h-5 w-5 text-purple-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-purple-800">Item Inspected</p>
+            <p className="text-sm text-purple-700">The seller has inspected your returned item and is processing your refund.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // APPROVED (return request) - When seller has approved the return
+  if (refund.return_request?.status === 'approved') {
+    return (
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <CheckCircle className="h-5 w-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-indigo-800">Return Approved</p>
+            <p className="text-sm text-indigo-700">The seller has approved your return. Your refund is being processed.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ===== Helper function for submitting return info =====
+  const submitReturnInfo = async (formData: FormData) => {
+    if (!refund?.refund_id) return false;
+    try {
+      setActionLoading(true);
+
+      if (!refund.return_request) {
+        await AxiosInstance.post(`/return-refund/${refund.refund_id}/start_return_process/`, {}, {
           headers: { 'X-User-Id': user?.user_id || '' }
         });
-
-        await fetchRefundDetails();
-
-        // transient UI confirmation
-        setDetailsSubmittedMessage('Details submitted');
-        setTimeout(() => setDetailsSubmittedMessage(null), 5000);
-
-        return true;
-      } catch (error: any) {
-        console.error('Failed to submit return info', error);
-        return false;
-      } finally {
-        setActionLoading(false);
       }
-    };
 
-    // Special-case: pickup returns (Cash on Pickup + Pickup from Store) on completed orders
-    const orderInfoForCheck = refund.order_info || {};
-    const orderStatusForCheck = String(orderInfoForCheck.status || orderInfoForCheck.status_display || orderInfoForCheck.current_status || (refund as any).order_status || (refund as any).order?.status || '').toLowerCase();
-    const paymentMethodForCheck = String(orderInfoForCheck.payment_method || (refund as any).order?.payment_method || '').toLowerCase();
-    const deliveryMethodForCheck = String(orderInfoForCheck.delivery_method || (refund as any).order?.delivery_method || '').toLowerCase();
-    // Be tolerant: check substrings so different representations still match
-    const isPickupCashCompleted = orderStatusForCheck.includes('completed') && paymentMethodForCheck.includes('cash') && deliveryMethodForCheck.includes('pickup');
-    // debug to help trace mismatches
-    console.debug('pickup check:', { orderStatusForCheck, paymentMethodForCheck, deliveryMethodForCheck, isPickupCashCompleted });
-    const refundTypeLower = String(refund.refund_type || '').toLowerCase();
-    const isReturnType = refundTypeLower === 'return' || refundTypeLower === 'return_item';
+      await AxiosInstance.post(`/return-refund/${refund.refund_id}/update_tracking/`, formData, {
+        headers: { 'X-User-Id': user?.user_id || '' }
+      });
 
-    if ((status === 'approved' || status === 'waiting') && isReturnType && isPickupCashCompleted) {
-      return <ApprovedPickupStatusUI />;
-    }
+      await fetchRefundDetails();
+      setDetailsSubmittedMessage('Details submitted');
+      setTimeout(() => setDetailsSubmittedMessage(null), 5000);
 
-    if (isWaitingDerived) return <WaitingStatusUI refund={refund} onOpenTrackingDialog={() => setShowTrackingDialog(true)} actionLoading={actionLoading} onSubmitReturn={submitReturnInfo} detailsSubmittedMessage={detailsSubmittedMessage} />;
-
-    switch (status) {
-      case 'pending':
-        return <PendingStatusUI refund={refund} />;
-      case 'negotiation':
-        return <NegotiationStatusUI refund={refund} formatDate={formatDate} formatCurrency={formatCurrency} />;
-      case 'approved':
-        return <ApprovedStatusUI refund={refund} onOpenTrackingDialog={() => setShowTrackingDialog(true)} formatCurrency={formatCurrency} />;
-      case 'to_verify':
-        return <ToVerifyStatusUI />;
-      case 'to_process':
-        return <ToProcessStatusUI refund={refund} formatCurrency={formatCurrency} />;
-      case 'dispute':
-        return <DisputeStatusUI refund={refund} formatCurrency={formatCurrency} user={user} />;
-      case 'completed':
-        // Only show completed UI if there is no active dispute, or the dispute has been resolved
-        const drCompleted = (refund as any).dispute || (refund as any).dispute_request || null;
-        if (drCompleted && String((drCompleted.status || '').trim()).toLowerCase() !== 'resolved') {
-          // If a dispute exists and isn't resolved, show dispute UI instead of completed
-          return <DisputeStatusUI refund={refund} formatCurrency={formatCurrency} user={user} />;
-        }
-        return <CompletedStatusUI refund={refund} formatCurrency={formatCurrency} />;
-      case 'rejected':
-        return <RejectedStatusUI refund={refund} formatCurrency={formatCurrency} />;
-      case 'cancelled':
-        return <CancelledStatusUI />;
-      default:
-        return <PendingStatusUI refund={refund} />;
+      return true;
+    } catch (error: any) {
+      console.error('Failed to submit return info', error);
+      return false;
+    } finally {
+      setActionLoading(false);
     }
   };
+
+  // ===== PRIORITY 2: Special Cases =====
+  
+  // Special-case: pickup returns (Cash on Pickup + Pickup from Store) on completed orders
+  const orderInfoForCheck = refund.order_info || {};
+  const orderStatusForCheck = String(orderInfoForCheck.status || orderInfoForCheck.status_display || orderInfoForCheck.current_status || (refund as any).order_status || (refund as any).order?.status || '').toLowerCase();
+  const paymentMethodForCheck = String(orderInfoForCheck.payment_method || (refund as any).order?.payment_method || '').toLowerCase();
+  const deliveryMethodForCheck = String(orderInfoForCheck.delivery_method || (refund as any).order?.delivery_method || '').toLowerCase();
+  const isPickupCashCompleted = orderStatusForCheck.includes('completed') && paymentMethodForCheck.includes('cash') && deliveryMethodForCheck.includes('pickup');
+  
+  const refundTypeLower = String(refund.refund_type || '').toLowerCase();
+  const isReturnType = refundTypeLower === 'return' || refundTypeLower === 'return_item';
+
+  if ((status === 'approved' || status === 'waiting') && isReturnType && isPickupCashCompleted) {
+    return <ApprovedPickupStatusUI />;
+  }
+
+  // Check for waiting status
+  if (isWaitingDerived) {
+    return <WaitingStatusUI refund={refund} onOpenTrackingDialog={() => setShowTrackingDialog(true)} actionLoading={actionLoading} onSubmitReturn={submitReturnInfo} detailsSubmittedMessage={detailsSubmittedMessage} />;
+  }
+
+  // ===== PRIORITY 3: Main Refund Status =====
+  switch (status) {
+    case 'pending':
+      return <PendingStatusUI refund={refund} />;
+    case 'negotiation':
+      return <NegotiationStatusUI refund={refund} formatDate={formatDate} formatCurrency={formatCurrency} />;
+    case 'approved':
+      return <ApprovedStatusUI refund={refund} onOpenTrackingDialog={() => setShowTrackingDialog(true)} formatCurrency={formatCurrency} />;
+    case 'to_verify':
+      return <ToVerifyStatusUI />;
+    case 'to_process':
+      return <ToProcessStatusUI refund={refund} formatCurrency={formatCurrency} />;
+    case 'dispute':
+      return <DisputeStatusUI refund={refund} formatCurrency={formatCurrency} user={user} />;
+    case 'completed':
+      const drCompleted = (refund as any).dispute || (refund as any).dispute_request || null;
+      if (drCompleted && String((drCompleted.status || '').trim()).toLowerCase() !== 'resolved') {
+        return <DisputeStatusUI refund={refund} formatCurrency={formatCurrency} user={user} />;
+      }
+      return <CompletedStatusUI refund={refund} formatCurrency={formatCurrency} />;
+    case 'rejected':
+      return <RejectedStatusUI refund={refund} formatCurrency={formatCurrency} />;
+    case 'cancelled':
+      return <CancelledStatusUI />;
+    default:
+      return <PendingStatusUI refund={refund} />;
+  }
+};
 
   const renderStatusActions = () => {
     if (!refund) return null;
@@ -3187,6 +3292,7 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
     // Also hide the action when the return is approved but the refund payment is processing or already completed
     const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
     const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && String(refund.status || '').toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
+    const hasReturnTracking = Boolean(refund?.return_request?.tracking_number || refund?.tracking_number);
     const showAddTrackingAction = ((status === 'approved' && (refund?.refund_category === 'return_item' || (refund as any)?.refund_type === 'return') && !['shipped','received','inspected'].includes(rrStatus) && !(rrStatus === 'approved' && ['processing','completed'].includes(payStatus)) && !(dr && String(dr.status || '').toLowerCase() === 'approved') && !isReturnAcceptedWaitingModeration)) || isWaitingDerived;
 
     if (showAddTrackingAction) {
@@ -3195,7 +3301,7 @@ export default function ViewReturnRefund({ loaderData }: Route.ComponentProps) {
           <Button
             className="w-full bg-blue-600 hover:bg-blue-700"
             onClick={() => setShowTrackingDialog(true)}
-            disabled={actionLoading}
+            disabled={actionLoading || hasReturnTracking}
             size="sm"
           >
             <Upload className="h-4 w-4 mr-2" />

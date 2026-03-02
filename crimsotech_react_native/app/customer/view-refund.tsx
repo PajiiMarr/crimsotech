@@ -280,6 +280,9 @@ const ApprovedStatusUI = ({ refund, onOpenTrackingDialog, formatCurrency, format
   const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
   const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
 
+  // compute return deadline based on processed_at + 7 days (same logic as web)
+  const returnDeadline = refund.processed_at ? new Date(new Date(refund.processed_at).getTime() + 7 * 24 * 60 * 60 * 1000) : null;
+
   if (isProcessing) {
     return (
       <ProcessingStatusUI refund={refund} formatCurrency={formatCurrency} />
@@ -316,9 +319,9 @@ const ApprovedStatusUI = ({ refund, onOpenTrackingDialog, formatCurrency, format
           <View style={styles.returnDetailRow}>
             <Text style={styles.returnDetailLabel}>Return Deadline:</Text>
             <Text style={styles.returnDetailValue}>
-              {rr.return_deadline || refund.return_deadline ? 
-                formatDate(rr.return_deadline || refund.return_deadline) : 
-                'Not set'}
+              {rr.return_deadline || refund.return_deadline
+                ? formatDate(rr.return_deadline || refund.return_deadline)
+                : (returnDeadline ? formatDate(returnDeadline.toISOString()) : 'Not set')}
             </Text>
           </View>
           
