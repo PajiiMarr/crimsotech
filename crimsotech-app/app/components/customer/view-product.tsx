@@ -10,9 +10,11 @@ import {
   ShoppingBagIcon,
   MapPin,
   Store,
+  User,
   RefreshCw,
   ShieldCheck,
-  ShieldOff
+  ShieldOff,
+  Gift
 } from "lucide-react";
 
 import { useEffect, useState } from "react";
@@ -108,6 +110,41 @@ interface Shop {
   customer: string;
 }
 
+interface SellerInfo {
+  type: 'shop' | 'seller';
+  id: string;
+  username?: string;
+  email?: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  contact_number?: string;
+  profile_picture?: string | null;
+  created_at?: string;
+  is_suspended?: boolean;
+  // Shop fields
+  name?: string;
+  address?: string;
+  avg_rating?: number | null;
+  shop_picture?: string | null;
+  description?: string;
+  verified?: boolean;
+  total_sales?: string;
+}
+
+interface Customer {
+  id: string;
+  username: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  profile_picture?: string | null;
+  contact_number?: string;
+  avg_rating?: number | null;
+  total_sales?: number;
+  created_at?: string;
+}
+
 interface Category {
   id: string;
   name: string;
@@ -127,6 +164,7 @@ interface Product {
   created_at: string;
   updated_at: string;
   shop: Shop | null;
+  customer?: Customer | null;
   category: Category | null;
   category_admin: Category | null;
   variants: Variant[];
@@ -134,7 +172,7 @@ interface Product {
   primary_image: PrimaryImage | null;
   total_stock: number;
   price_display: string;
-  price_range: PriceRange;
+  price_range?: PriceRange | null;
   variant_count: number;
   default_variant: Variant | null;
 }
@@ -235,18 +273,75 @@ function extractVariantGroups(product: Product): { groups: any[], optionTitles: 
     return { groups, optionTitles };
   }
 
-  // For now, since option_ids are empty in this product, we'll create a simple structure
-  // If you have actual option data structure, you'd parse it here
-  
-  // Since this product has no option_ids, we'll treat it as a simple product with one variant
-  // You might want to enhance this based on your actual option structure
-  
   return { groups, optionTitles };
 }
+
+// Helper function to check if product is a gift
+const isProductGift = (product: Product | null): boolean => {
+  if (!product) return false;
+  
+  // Check by name
+  if (product.name.toLowerCase().includes('gift')) {
+    return true;
+  }
+  
+  // Check price_display
+  if (product.price_display === "FREE GIFT" || 
+      product.price_display === "₱0" || 
+      product.price_display === "₱0.00" ||
+      product.price_display === "Price unavailable" ||
+      product.price_display === "Price not available") {
+    
+    // If price_display is unavailable but it's a gift product, treat as gift
+    if (product.name.toLowerCase().includes('gift')) {
+      return true;
+    }
+    
+    // Check if all variants have zero price
+    if (product.variants && product.variants.length > 0) {
+      const allZeroPrices = product.variants.every(v => safeToNumber(v.price) === 0);
+      if (allZeroPrices) {
+        return true;
+      }
+    }
+  }
+  
+  // Check if price_range has min and max both 0
+  if (product.price_range) {
+    if (product.price_range.min === 0 && product.price_range.max === 0) {
+      return true;
+    }
+  }
+  
+  // Check if any variant has price 0
+  if (product.variants && product.variants.length > 0) {
+    const hasZeroPriceVariant = product.variants.some(v => safeToNumber(v.price) === 0);
+    if (hasZeroPriceVariant) {
+      return true;
+    }
+  }
+  
+  return false;
+};
+
+// Helper function to get display price for gift products
+const getProductDisplayPrice = (product: Product | null): string => {
+  if (!product) return "Price unavailable";
+  
+  // If it's a gift product, return FREE GIFT
+  if (isProductGift(product)) {
+    return "FREE GIFT";
+  }
+  
+  // Otherwise return the price_display from backend
+  return product.price_display || "Price unavailable";
+};
 
 export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const { id } = useParams<{ id: string }>();
   const [product, setProduct] = useState<Product | null>(loaderData?.product || null);
+  const [sellerInfo, setSellerInfo] = useState<SellerInfo | null>(null);
+  const [loadingSeller, setLoadingSeller] = useState(false);
   const [loading, setLoading] = useState(!loaderData?.product);
   const [quantity, setQuantity] = useState(1);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
@@ -262,8 +357,35 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
   const user = loaderData?.user;
 
+  // Determine if this is a gift product
+  const isGift = isProductGift(product);
+  const displayPrice = getProductDisplayPrice(product);
+
+  // Determine if this is a personal listing (no shop)
+  const isPersonalListing = !product?.shop;
+
   // Safely determine if product has variants
   const hasVariants = !!(product?.variants && Array.isArray(product.variants) && product.variants.length > 0);
+
+  // Fetch seller information for personal listings
+  useEffect(() => {
+    const fetchSellerInfo = async () => {
+      if (product?.id && isPersonalListing) {
+        setLoadingSeller(true);
+        try {
+          const response = await AxiosInstance.get(`/public-products/${product.id}/seller/`);
+          setSellerInfo(response.data);
+          console.log("Seller info loaded:", response.data);
+        } catch (err) {
+          console.error("Error fetching seller info:", err);
+        } finally {
+          setLoadingSeller(false);
+        }
+      }
+    };
+
+    fetchSellerInfo();
+  }, [product?.id, isPersonalListing]);
 
   // Extract variant groups from variants data
   useEffect(() => {
@@ -289,7 +411,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
           const response = await AxiosInstance.get("/cart/count/", {
             params: { user_id: user.id }
           });
-          // Check the response structure
           if (response.data && typeof response.data.count === 'number') {
             setCartItemCount(response.data.count);
           } else if (response.data && typeof response.data === 'number') {
@@ -326,7 +447,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
           const response = await AxiosInstance.get(`/public-products/${id}/`);
           setProduct(response.data);
           
-          // Set current variant to default if available
           if (response.data.default_variant) {
             setCurrentVariant(response.data.default_variant);
           }
@@ -351,7 +471,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   };
 
   // Get display values from current variant or product defaults
-  const displayPrice = currentVariant
+  const displayVariantPrice = currentVariant
     ? safeToNumber(currentVariant.price, 0)
     : (product?.price_range?.min || 0);
   
@@ -397,7 +517,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   if (product?.primary_image?.url) {
     const full = resolveImageUrl(product.primary_image.url);
     if (full && !seen.has(full)) {
-      thumbnailUrls.unshift({ url: full, type: 'product' }); // Add to front
+      thumbnailUrls.unshift({ url: full, type: 'product' });
       seen.add(full);
     }
   }
@@ -418,7 +538,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
       return;
     }
 
-    // Make sure we have a variant selected
     if (!currentVariant) {
       toast.error("Please select a variant");
       return;
@@ -438,7 +557,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
       const response = await AxiosInstance.post("/cart/add/", payload);
 
       if (response.data.success) {
-        // Show different messages based on what happened
         switch (response.data.action) {
           case 'updated':
             toast.success(`Cart updated! Quantity is now ${response.data.new_quantity}`);
@@ -452,7 +570,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
             break;
         }
         
-        // Update cart count after adding
         try {
           const countResponse = await AxiosInstance.get("/cart/count/", {
             params: { user_id: user.id }
@@ -470,7 +587,6 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
       }
     } catch (err: any) {
       console.error(err);
-      // Check if the error response contains a message
       let errorMsg = "An error occurred while adding to cart";
       if (err.response?.data?.error) {
         errorMsg = err.response.data.error;
@@ -532,6 +648,38 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const shopPic = product.shop?.shop_picture ? 
     `${MEDIA_URL}${product.shop.shop_picture}` : 
     '/appliances.jpg';
+
+  // Get seller display name from sellerInfo
+  const getSellerDisplayName = () => {
+    if (!sellerInfo) return 'Unknown Seller';
+    
+    if (sellerInfo.full_name) return sellerInfo.full_name;
+    if (sellerInfo.first_name || sellerInfo.last_name) {
+      return `${sellerInfo.first_name || ''} ${sellerInfo.last_name || ''}`.trim();
+    }
+    if (sellerInfo.username) return sellerInfo.username;
+    if (sellerInfo.name) return sellerInfo.name; // For shops
+    return 'Unknown Seller';
+  };
+
+  // Get seller contact from sellerInfo
+  const getSellerContact = () => {
+    return sellerInfo?.contact_number || null;
+  };
+
+  // Get seller email from sellerInfo
+  const getSellerEmail = () => {
+    return sellerInfo?.email || null;
+  };
+
+  // Get seller profile picture
+  const getSellerPicture = () => {
+    if (sellerInfo?.type === 'shop') {
+      return sellerInfo.shop_picture ? `${MEDIA_URL}${sellerInfo.shop_picture}` : '/appliances.jpg';
+    } else {
+      return sellerInfo?.profile_picture ? `${MEDIA_URL}${sellerInfo.profile_picture}` : '/default-avatar.png';
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto p-3 md:p-4">
@@ -609,8 +757,14 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         <div className="space-y-4">
           <div className="space-y-2">
             <div className="flex items-start justify-between">
-              <h1 className="text-xl font-bold text-gray-900 md:text-2xl">
+              <h1 className="text-xl font-bold text-gray-900 md:text-2xl flex items-center gap-2">
                 {product.name}
+                {isGift && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded-full">
+                    <Gift className="h-3 w-3" />
+                    FREE GIFT
+                  </span>
+                )}
               </h1>
               <div className="flex gap-1">
                 <button className="p-1.5 rounded hover:bg-gray-100">
@@ -667,10 +821,10 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
             </div>
 
             <div className="flex items-center gap-3">
-              <div className="text-2xl font-bold text-orange-600">
-                {product.price_display}
+              <div className={`text-2xl font-bold ${isGift ? 'text-orange-600' : 'text-orange-600'}`}>
+                {displayPrice}
               </div>
-              {displayComparePrice && displayComparePrice > displayPrice && (
+              {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
                 <div className="text-lg text-gray-500 line-through">
                   ₱{displayComparePrice.toFixed(2)}
                 </div>
@@ -679,7 +833,8 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
             <div className="flex items-center justify-between text-sm text-gray-600">
               <div>Stock: {displayStock} {displayStock <= 0 ? "(Out of Stock)" : ""}</div>
-              {product.price_range.is_range && (
+              {/* Safely check if price_range exists before accessing is_range */}
+              {!isGift && product.price_range && product.price_range.is_range && (
                 <div className="text-sm text-gray-700 ml-4">
                   <span className="font-medium">Price range: </span>
                   ₱{product.price_range.min.toFixed(2)} - ₱{product.price_range.max.toFixed(2)}
@@ -693,7 +848,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
           </div>
 
           {/* Show variant info if multiple variants exist */}
-          {product.variant_count > 1 && (
+          {!isGift && product.variant_count > 1 && (
             <div className="p-3 bg-blue-50 rounded-md">
               <p className="text-sm text-blue-800">
                 This product has {product.variant_count} variants available. Please select your preferred variant.
@@ -701,7 +856,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
-          {/* Quantity */}
+          {/* Quantity - Only show for non-gift products or if gift has stock */}
           <div className="space-y-1.5">
             <Label className="text-sm font-semibold">Quantity</Label>
             <div className="flex items-center gap-1.5">
@@ -737,7 +892,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               onClick={handleAddToCart}
               disabled={displayStock <= 0}
             >
-              {displayStock <= 0 ? "Out of Stock" : "Buy Now"}
+              {displayStock <= 0 ? "Out of Stock" : isGift ? "Claim Free Gift" : "Buy Now"}
             </Button>
             
             <Button
@@ -748,10 +903,10 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               disabled={addingToCart || displayStock <= 0}
             >
               <ShoppingBagIcon className="h-4 w-4 mr-1.5" />
-              {addingToCart ? "Adding..." : displayStock <= 0 ? "Out of Stock" : "Add to Cart"}
+              {addingToCart ? "Adding..." : displayStock <= 0 ? "Out of Stock" : isGift ? "Add to Cart (Free)" : "Add to Cart"}
             </Button>
 
-            {isAvailableForSwap && (
+            {!isGift && isAvailableForSwap && (
               <Button
                 variant="outline"
                 size="sm"
@@ -767,55 +922,120 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         </div>
       </div>
 
-      {/* Shop Information */}
-      {product.shop && (
+      {/* Conditional Seller Information - Shows Shop for store products, Seller for personal listings */}
+      {isPersonalListing ? (
+        /* Personal Listing - Show Seller Information from API */
         <div className="mt-6 border-t pt-4">
-          <h2 className="text-lg font-semibold mb-3">Shop Information</h2>
-          <div className="text-sm text-gray-700">
-            <div className="flex items-start gap-3">
-              <img
-                src={shopPic}
-                alt="Shop"
-                className="h-10 w-10 rounded-full object-cover border"
-              />
-              <div className="flex-1 min-w-0">
-                <h3 className="font-medium text-sm text-gray-900 truncate">
-                  {product.shop.name || "Unknown Shop"}
-                </h3>
-                {product.shop.address && (
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <MapPin className="h-3 w-3 text-gray-400" />
-                    <p className="text-xs text-gray-500 truncate">{product.shop.address}</p>
-                  </div>
-                )}
-                {product.shop.avg_rating !== undefined && product.shop.avg_rating !== null && (
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <div className="flex">
-                      {Array.from({ length: 5 }).map((_, idx) => (
-                        <Star
-                          key={idx}
-                          className={`h-3 w-3 ${idx < Math.floor(product.shop?.avg_rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-300"}`}
-                        />
-                      ))}
+          <h2 className="text-lg font-semibold mb-3">Seller Information</h2>
+          {loadingSeller ? (
+            <div className="text-center py-4">
+              <div className="animate-spin h-6 w-6 border-2 border-purple-500 border-t-transparent rounded-full mx-auto"></div>
+              <p className="text-sm text-gray-500 mt-2">Loading seller information...</p>
+            </div>
+          ) : sellerInfo ? (
+            <div className="text-sm text-gray-700">
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center overflow-hidden">
+                  {sellerInfo.profile_picture ? (
+                    <img
+                      src={getSellerPicture()}
+                      alt="Seller"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <User className="h-5 w-5 text-purple-600" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium text-sm text-gray-900 truncate">
+                    {getSellerDisplayName()}
+                  </h3>
+                  {getSellerEmail() && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-xs text-gray-500">{getSellerEmail()}</span>
                     </div>
-                    <span className="text-xs text-gray-600 ml-1">
-                      {product.shop.avg_rating?.toFixed(1) || "N/A"}
+                  )}
+                  {getSellerContact() && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-xs text-gray-500">Contact: {getSellerContact()}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                      Personal Listing
                     </span>
                   </div>
-                )}
+                  {sellerInfo.created_at && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      Member since {new Date(sellerInfo.created_at).toLocaleDateString()}
+                    </div>
+                  )}
+                </div>
+                {/* Could add a link to seller profile if available */}
+                {/* <Link to={`/seller/${sellerInfo.id}`}>
+                  <Button size="sm" className="h-7 text-xs px-3 bg-purple-600 hover:bg-purple-700">
+                    View Profile
+                  </Button>
+                </Link> */}
               </div>
-              <Link to={`/shop/${product.shop.id}`}>
-                <Button size="sm" className="h-7 text-xs px-3 bg-gray-800 hover:bg-gray-900">
-                  Visit
-                </Button>
-              </Link>
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500 py-2">
+              Seller information not available
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Shop Product - Show Shop Information */
+        product.shop && (
+          <div className="mt-6 border-t pt-4">
+            <h2 className="text-lg font-semibold mb-3">Shop Information</h2>
+            <div className="text-sm text-gray-700">
+              <div className="flex items-start gap-3">
+                <img
+                  src={shopPic}
+                  alt="Shop"
+                  className="h-10 w-10 rounded-full object-cover border"
+                />
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium text-sm text-gray-900 truncate">
+                    {product.shop.name || "Unknown Shop"}
+                  </h3>
+                  {product.shop.address && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <MapPin className="h-3 w-3 text-gray-400" />
+                      <p className="text-xs text-gray-500 truncate">{product.shop.address}</p>
+                    </div>
+                  )}
+                  {product.shop.avg_rating !== undefined && product.shop.avg_rating !== null && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <div className="flex">
+                        {Array.from({ length: 5 }).map((_, idx) => (
+                          <Star
+                            key={idx}
+                            className={`h-3 w-3 ${idx < Math.floor(product.shop?.avg_rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-300"}`}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-xs text-gray-600 ml-1">
+                        {product.shop.avg_rating?.toFixed(1) || "N/A"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <Link to={`/shop/${product.shop.id}`}>
+                  <Button size="sm" className="h-7 text-xs px-3 bg-gray-800 hover:bg-gray-900">
+                    Visit
+                  </Button>
+                </Link>
+              </div>
             </div>
           </div>
-        </div>
+        )
       )}
 
-      {/* Variant Details */}
-      {currentVariant && (
+      {/* Variant Details - Only show for non-gift products or if gift has details */}
+      {currentVariant && !isGift && (
         <div className="mt-6 border-t pt-4">
           <h2 className="text-lg font-semibold mb-3">Product Details</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -872,8 +1092,8 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         </div>
       )}
 
-      {/* Swap Options */}
-      {currentVariant && currentVariant.allow_swap && (
+      {/* Swap Options - Only show for non-gift products */}
+      {currentVariant && !isGift && currentVariant.allow_swap && (
         <div className="mt-6 border-t pt-4">
           <h2 className="text-lg font-semibold mb-3">Swap Options</h2>
           <div className="text-sm text-gray-700 space-y-2">

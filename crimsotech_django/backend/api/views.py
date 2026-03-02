@@ -34304,3 +34304,1466 @@ class ConversationViewSet(viewsets.ViewSet):
         participant.save(update_fields=['is_muted', 'muted_until'])
         
         return Response({'status': 'conversation unmuted'})
+
+
+
+
+class CustomerOrderList(viewsets.ViewSet):
+    
+    def _prepare_order_response(self, order, seller_user_id):
+        """
+        Helper method to prepare order response data for customer (personal listings)
+        Returns the same structure as seller-order-list but for personal listings
+        """
+        # Get latest delivery for this order
+        latest_delivery = Delivery.objects.filter(order=order).select_related(
+            'rider__rider'
+        ).order_by('-created_at').first()
+        
+        # Get delivery info from latest delivery
+        delivery_info = None
+        if latest_delivery:
+            is_pending_offer = latest_delivery.status == 'pending_offer'
+            
+            delivery_info = {
+                "delivery_id": str(latest_delivery.id),
+                "status": latest_delivery.status,
+                "rider_name": f"{latest_delivery.rider.rider.first_name} {latest_delivery.rider.rider.last_name}" if latest_delivery.rider else None,
+                "tracking_number": f"TRK-{str(latest_delivery.id)[:10]}" if not is_pending_offer else None,
+                "estimated_delivery": self._get_estimated_delivery(latest_delivery),
+                "submitted_at": latest_delivery.created_at.isoformat(),
+                "is_pending_offer": is_pending_offer
+            }
+        
+        # Get shipping status
+        shipping_status = self._get_shipping_status(
+            order.status, 
+            latest_delivery.status if latest_delivery else None
+        )
+        
+        # Check if this is a pickup order
+        is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
+                                                 for keyword in ['pickup', 'store', 'collect'])
+        
+        # Get checkouts for this order that belong to this seller's personal listings
+        seller_checkouts = Checkout.objects.filter(
+            order=order,
+            cart_item__product__customer_id=seller_user_id,  # This is the Customer ID
+            cart_item__product__shop__isnull=True  # Only personal listings (no shop)
+        ).select_related(
+            'cart_item__product',
+            'cart_item__product__customer__customer',  # This gets the User from Customer
+            'cart_item__variant'
+        )
+        
+        # Prepare order items
+        order_items = []
+        total_amount = 0
+        
+        for checkout in seller_checkouts:
+            cart_item = checkout.cart_item
+            if not cart_item or not cart_item.product:
+                continue
+            
+            product = cart_item.product
+            variant = cart_item.variant
+            
+            # Get price from variant if available
+            price = 0
+            if variant and variant.price:
+                price = float(variant.price)
+            
+            # Get variant title/condition for display
+            variant_title = variant.title if variant else product.condition
+            
+            # Get tracking info
+            tracking_number = None
+            shipping_method = None
+            estimated_delivery = None
+            
+            if latest_delivery:
+                tracking_number = f"TRK-{str(latest_delivery.id)[:10]}" if not latest_delivery.status == 'pending_offer' else None
+                shipping_method = "Standard Shipping" if not is_pickup else "Store Pickup"
+                estimated_delivery = self._get_estimated_delivery(latest_delivery)
+            
+            # Get seller information from the Customer model
+            seller_user = None
+            if product.customer and hasattr(product.customer, 'customer'):
+                seller_user = product.customer.customer
+            
+            order_items.append({
+                "id": str(checkout.id),
+                "cart_item": {
+                    "id": str(cart_item.id),
+                    "product": {
+                        "id": str(product.id),
+                        "name": product.name,
+                        "price": price,
+                        "variant": variant_title,
+                        "seller": {
+                            "id": str(seller_user.id) if seller_user else None,
+                            "username": seller_user.username if seller_user else "Unknown Seller",
+                            "first_name": seller_user.first_name if seller_user else "",
+                            "last_name": seller_user.last_name if seller_user else ""
+                        } if seller_user else None
+                    },
+                    "quantity": cart_item.quantity,
+                    "variant_id": str(variant.id) if variant else None
+                },
+                "quantity": checkout.quantity,
+                "total_amount": float(checkout.total_amount),
+                "status": shipping_status,
+                "created_at": checkout.created_at.isoformat(),
+                "shipping_status": shipping_status,
+                "is_shipped": shipping_status in ['shipped', 'in_transit', 'out_for_delivery', 'completed'],
+                "is_processed": shipping_status not in ['pending_shipment'],
+                "tracking_number": tracking_number,
+                "shipping_method": shipping_method,
+                "estimated_delivery": estimated_delivery
+            })
+            
+            total_amount += float(checkout.total_amount)
+        
+        # Get delivery address
+        delivery_address = None
+        if order.shipping_address:
+            delivery_address = order.shipping_address.get_full_address()
+        elif order.delivery_address_text:
+            delivery_address = order.delivery_address_text
+        
+        # Build order data - matching seller-order-list structure but with seller info instead of shop
+        order_data = {
+            "order_id": str(order.order),
+            "buyer": {  # The person who bought the item
+                "id": str(order.user.id),
+                "username": order.user.username,
+                "email": order.user.email,
+                "first_name": order.user.first_name,
+                "last_name": order.user.last_name,
+                "phone": order.user.contact_number or None
+            },
+            "status": shipping_status,
+            "total_amount": total_amount,
+            "payment_method": order.payment_method,
+            "delivery_method": order.delivery_method,
+            "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
+            "delivery_address": delivery_address,
+            "created_at": order.created_at.isoformat(),
+            "updated_at": order.updated_at.isoformat(),
+            "items": order_items,
+            "is_pickup": is_pickup,
+            "is_personal_listing": True
+        }
+        
+        # Add delivery info if exists
+        if delivery_info:
+            order_data["delivery_info"] = delivery_info
+        
+        return order_data
+    
+    @action(detail=False, methods=['get'])
+    def order_list(self, request):
+        """
+        Get orders for seller's personal listings (no shop)
+        Query param: user_id - Required seller user ID (the person who listed the items)
+        """
+        try:
+            # Get seller user_id from query parameters (this is the User ID)
+            seller_user_id = request.GET.get('user_id')
+            if not seller_user_id:
+                return Response({
+                    "success": False,
+                    "message": "User ID is required",
+                    "data": []
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get seller
+            try:
+                seller = User.objects.get(id=seller_user_id)
+            except User.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "User not found",
+                    "data": []
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get the Customer instance for this user
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": True,
+                    "message": "No customer profile found",
+                    "data": [],
+                    "count": 0
+                }, status=status.HTTP_200_OK)
+            
+            # Get all personal listing products from this seller (no shop)
+            seller_products = Product.objects.filter(
+                customer=customer,  # This is the Customer instance
+                shop__isnull=True  # Only personal listings (no shop)
+            ).values_list('id', flat=True)
+            
+            if not seller_products:
+                return Response({
+                    "success": True,
+                    "message": "No personal listing products found",
+                    "data": [],
+                    "count": 0
+                }, status=status.HTTP_200_OK)
+            
+            # Get all orders that contain these products
+            orders = Order.objects.filter(
+                checkout__cart_item__product__id__in=seller_products
+            ).select_related(
+                'user',  # This is the buyer
+                'shipping_address'
+            ).prefetch_related(
+                Prefetch(
+                    'delivery_set',
+                    queryset=Delivery.objects.select_related('rider__rider'),
+                    to_attr='deliveries'
+                ),
+                Prefetch(
+                    'checkout_set',
+                    queryset=Checkout.objects.filter(
+                        cart_item__product__id__in=seller_products
+                    ).select_related(
+                        'cart_item__product',
+                        'cart_item__product__customer__customer',  # This gets the User from Customer
+                        'cart_item__variant'
+                    ),
+                    to_attr='seller_checkouts'
+                )
+            ).distinct().order_by('-created_at')
+            
+            # Prepare response data
+            orders_data = []
+            
+            for order in orders:
+                order_data = self._prepare_order_response(order, customer.customer_id)  # Pass the User ID
+                if order_data:  # Only add if there are items for this seller
+                    orders_data.append(order_data)
+            
+            return Response({
+                "success": True,
+                "message": "Personal listing orders retrieved successfully",
+                "data": orders_data,
+                "data_source": "database",
+                "count": len(orders_data)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving personal listing orders: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": f"Error retrieving orders: {str(e)}",
+                "data": []
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_shipping_status(self, order_status, delivery_status=None):
+        """
+        Map order status to UI status
+        """
+        # Status mapping for UI - matching seller-order-list
+        status_mapping = {
+            'pending': 'pending_shipment',
+            'processing': 'to_ship',
+            'ready_for_pickup': 'ready_for_pickup',
+            'shipped': 'shipped',
+            'out_for_delivery': 'out_for_delivery',
+            'completed': 'completed',
+            'cancelled': 'cancelled',
+            'picked_up': 'completed',
+            'arrange_shipment': 'arrange_shipment'
+        }
+        
+        # Handle pending offers
+        if delivery_status == 'pending_offer':
+            return 'arrange_shipment'
+        
+        # Handle delivery-specific statuses
+        if delivery_status:
+            delivery_map = {
+                'pending': 'to_ship',
+                'accepted': 'to_ship',
+                'picked_up': 'in_transit',
+                'delivered': 'completed'
+            }
+            return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
+        
+        return status_mapping.get(order_status, 'pending_shipment')
+    
+    def _get_estimated_delivery(self, delivery):
+        """
+        Calculate estimated delivery date
+        """
+        if delivery.delivered_at:
+            return delivery.delivered_at.strftime('%Y-%m-%d')
+        elif delivery.picked_at:
+            return (delivery.picked_at + timedelta(days=2)).strftime('%Y-%m-%d')
+        else:
+            return (timezone.now() + timedelta(days=3)).strftime('%Y-%m-%d')
+
+    @action(detail=True, methods=['get'])
+    def available_actions(self, request, pk=None):
+        """
+        Get available actions for a personal listing order
+        GET /customer-order-list/{order_id}/available_actions/?user_id={seller_user_id}
+        """
+        try:
+            # Get seller user_id from query parameters
+            seller_user_id = request.GET.get('user_id')
+            if not seller_user_id:
+                return Response({
+                    "success": False,
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get order
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Check if order has personal listing items from this seller
+            has_seller_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,  # Use Customer instance
+                cart_item__product__shop__isnull=True
+            ).exists()
+            
+            if not has_seller_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain your personal listing items"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Check if there's a pending delivery offer
+            has_pending_offer = Delivery.objects.filter(
+                order=order,
+                status='pending_offer'
+            ).exists()
+
+            # Determine if it's a pickup order
+            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
+                                                     for keyword in ['pickup', 'store', 'collect'])
+            
+            # Get current shipping status
+            latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+            current_shipping_status = self._get_shipping_status(
+                order.status, 
+                latest_delivery.status if latest_delivery else None
+            )
+            
+            # Get available actions based on current shipping status - matching seller-order-list
+            available_actions = []
+            
+            if current_shipping_status == 'pending_shipment':
+                if is_pickup:
+                    available_actions = ['confirm']
+                else:
+                    available_actions = ['confirm', 'prepare_shipment']
+            
+            elif current_shipping_status == 'to_ship':
+                if is_pickup:
+                    available_actions = ['ready_for_pickup']
+                else:
+                    available_actions = ['arrange_shipment']
+                    if has_pending_offer:
+                        available_actions.append('view_offer')
+            
+            elif current_shipping_status == 'arrange_shipment':
+                if has_pending_offer:
+                    available_actions = ['view_offer']
+                else:
+                    available_actions = ['arrange_shipment_nav']
+            
+            elif current_shipping_status == 'ready_for_pickup':
+                available_actions = ['picked_up']
+            
+            elif current_shipping_status == 'shipped':
+                available_actions = ['out_for_delivery', 'complete']
+            
+            elif current_shipping_status == 'out_for_delivery':
+                available_actions = ['complete']
+            
+            elif current_shipping_status == 'in_transit':
+                available_actions = ['complete']
+            
+            # Always allow cancellation if not completed or cancelled
+            if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
+                available_actions.append('cancel')
+            
+            # Always allow view details
+            available_actions.append('view_details')
+            
+            return Response({
+                "success": True,
+                "data": {
+                    "order_id": str(order.order),
+                    "current_status": current_shipping_status,
+                    "is_pickup": is_pickup,
+                    "has_pending_offer": has_pending_offer,
+                    "available_actions": available_actions
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error getting available actions: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['patch'])
+    def update_status(self, request, pk=None):
+        """
+        Update personal listing order status
+        PATCH /customer-order-list/{order_id}/update_status/?user_id={seller_user_id}
+        """
+        try:
+            # Get seller user_id from query parameters
+            seller_user_id = request.GET.get('user_id')
+            if not seller_user_id:
+                return Response({
+                    "success": False,
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get action type from request
+            action_type = request.data.get('action_type')
+            if not action_type:
+                return Response({
+                    "success": False,
+                    "message": "action_type is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Validate order exists
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Check if order has personal listing items from this seller
+            has_seller_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,  # Use Customer instance
+                cart_item__product__shop__isnull=True
+            ).exists()
+            
+            if not has_seller_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain your personal listing items"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Determine if it's a pickup order
+            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
+                                                     for keyword in ['pickup', 'store', 'collect'])
+            
+            # Handle different action types - matching seller-order-list
+            original_status = order.status
+            
+            if action_type == 'confirm':
+                if is_pickup:
+                    order.status = 'processing'
+                    message = "Pickup order confirmed"
+                else:
+                    order.status = 'processing'
+                    message = "Delivery order confirmed"
+                
+            elif action_type == 'ready_for_pickup':
+                if not is_pickup:
+                    return Response({
+                        "success": False,
+                        "message": "This action is only for pickup orders"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                order.status = 'ready_for_pickup'
+                message = "Order marked as ready for pickup"
+                
+            elif action_type == 'picked_up':
+                if not is_pickup:
+                    return Response({
+                        "success": False,
+                        "message": "This action is only for pickup orders"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                order.status = 'picked_up'
+                Delivery.objects.filter(order=order).update(
+                    status='picked_up',
+                    picked_at=timezone.now()
+                )
+                order.completed_at = timezone.now()
+                message = "Order marked as picked up"
+                
+            elif action_type == 'shipped':
+                order.status = 'shipped'
+                Delivery.objects.filter(order=order).update(status='picked_up')
+                message = "Order marked as shipped"
+                
+            elif action_type == 'out_for_delivery':
+                order.status = 'out_for_delivery'
+                message = "Order marked as out for delivery"
+                
+            elif action_type == 'complete':
+                order.status = 'completed'
+                Delivery.objects.filter(order=order).update(
+                    status='delivered',
+                    delivered_at=timezone.now()
+                )
+                message = "Order marked as delivered"
+                
+            elif action_type == 'cancel':
+                order.status = 'cancelled'
+                message = "Order cancelled"
+                
+            else:
+                return Response({
+                    "success": False,
+                    "message": f"Invalid action_type: {action_type}"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Update order
+            order.updated_at = timezone.now()
+            order.save()
+            
+            # Refresh the order object to get latest data
+            order.refresh_from_db()
+            
+            # Create notification for the buyer
+            Notification.objects.create(
+                user=order.user,
+                title=f'Order {order.order} Updated',
+                type='order_update',
+                message=f'Your order status has been updated to: {order.status}',
+                is_read=False
+            )
+
+            # Prepare updated order data for immediate frontend update
+            updated_order_data = self._prepare_order_response(order, seller_user_id)
+            
+            # Get updated available actions
+            latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+            current_shipping_status = self._get_shipping_status(
+                order.status, 
+                latest_delivery.status if latest_delivery else None
+            )
+            
+            has_pending_offer = Delivery.objects.filter(
+                order=order,
+                status='pending_offer'
+            ).exists()
+            
+            # Get updated available actions - matching seller-order-list
+            updated_available_actions = []
+            
+            if current_shipping_status == 'pending_shipment':
+                if is_pickup:
+                    updated_available_actions = ['confirm']
+                else:
+                    updated_available_actions = ['confirm', 'prepare_shipment']
+            
+            elif current_shipping_status == 'to_ship':
+                if is_pickup:
+                    updated_available_actions = ['ready_for_pickup']
+                else:
+                    updated_available_actions = ['arrange_shipment']
+                    if has_pending_offer:
+                        updated_available_actions.append('view_offer')
+            
+            elif current_shipping_status == 'arrange_shipment':
+                if has_pending_offer:
+                    updated_available_actions = ['view_offer']
+                else:
+                    updated_available_actions = ['arrange_shipment_nav']
+            
+            elif current_shipping_status == 'ready_for_pickup':
+                updated_available_actions = ['picked_up']
+            
+            elif current_shipping_status == 'shipped':
+                updated_available_actions = ['out_for_delivery', 'complete']
+            
+            elif current_shipping_status == 'out_for_delivery':
+                updated_available_actions = ['complete']
+            
+            elif current_shipping_status == 'in_transit':
+                updated_available_actions = ['complete']
+            
+            if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
+                updated_available_actions.append('cancel')
+            
+            updated_available_actions.append('view_details')
+
+            return Response({
+                "success": True,
+                "message": message,
+                "data": {
+                    "order_id": str(order.order),
+                    "status": order.status,
+                    "updated_at": order.updated_at.isoformat(),
+                    "original_status": original_status,
+                    "new_status": order.status,
+                    "updated_order": updated_order_data,
+                    "updated_available_actions": updated_available_actions
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error updating order: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": f"Error updating order: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def prepare_shipment(self, request, pk=None):
+        """
+        Prepare personal listing order for shipment
+        POST /customer-order-list/{order_id}/prepare_shipment/?user_id={seller_user_id}
+        """
+        try:
+            # Get seller user_id from query parameters
+            seller_user_id = request.GET.get('user_id')
+            if not seller_user_id:
+                return Response({
+                    "success": False,
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get order
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Check if order has personal listing items from this seller
+            has_seller_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,  # Use Customer instance
+                cart_item__product__shop__isnull=True
+            ).exists()
+            
+            if not has_seller_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain your personal listing items"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Check if order is in pending_shipment status
+            current_shipping_status = self._get_shipping_status(order.status)
+            if current_shipping_status != 'pending_shipment':
+                return Response({
+                    "success": False,
+                    "message": "Order is not in pending shipment status"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if order is for delivery (not pickup)
+            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
+                                                     for keyword in ['pickup', 'store', 'collect'])
+            if is_pickup:
+                return Response({
+                    "success": False,
+                    "message": "This order is for pickup, not delivery"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Update order status to 'processing' (maps to 'to_ship' in UI)
+            original_status = order.status
+            order.status = 'processing'
+            order.updated_at = timezone.now()
+            order.save()
+            
+            order.refresh_from_db()
+
+            # Create notification for the buyer
+            Notification.objects.create(
+                user=order.user,
+                title='Order Being Prepared',
+                type='order_update',
+                message=f'Your order {pk} is being prepared for shipment.',
+                is_read=False
+            )
+
+            # Prepare updated order data
+            updated_order_data = self._prepare_order_response(order, seller_user_id)
+            
+            # Updated available actions for to_ship status
+            updated_available_actions = ['arrange_shipment', 'cancel', 'view_details']
+
+            return Response({
+                "success": True,
+                "message": "Order prepared for shipment successfully",
+                "data": {
+                    "order_id": pk,
+                    "original_status": original_status,
+                    "new_status": "to_ship",
+                    "updated_order": updated_order_data,
+                    "updated_available_actions": updated_available_actions
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error preparing shipment: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": f"Error preparing shipment: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'])
+    def seller_view_order(self, request):
+        """
+        Get order details for seller view order page (personal listings)
+        GET /customer-order-list/seller_view_order/?order_id={order_id}&user_id={seller_user_id}
+        """
+        order_id = request.GET.get('order_id')
+        seller_user_id = request.GET.get('user_id')
+        
+        if not order_id or not seller_user_id:
+            return Response({
+                'success': False,
+                'message': 'Missing order_id or user_id'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Customer profile not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get the order
+            order = Order.objects.select_related('user', 'shipping_address').get(order=order_id)
+            
+            # Get checkouts for this order that belong to this seller's personal listings
+            checkouts = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,  # Use Customer instance
+                cart_item__product__shop__isnull=True
+            ).select_related(
+                'cart_item__product',
+                'cart_item__product__customer__customer',  # This gets the User from Customer
+                'cart_item__variant'
+            )
+            
+            if not checkouts.exists():
+                return Response({
+                    'success': False,
+                    'message': 'No items found for your personal listings in this order'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get delivery info if exists
+            delivery_info = None
+            try:
+                delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+                if delivery:
+                    delivery_info = {
+                        'delivery_id': str(delivery.id),
+                        'rider_name': f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
+                        'status': delivery.status,
+                        'estimated_delivery': self._get_estimated_delivery(delivery),
+                        'submitted_at': delivery.created_at.isoformat(),
+                        'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status not in ['pending_offer'] else None
+                    }
+            except Delivery.DoesNotExist:
+                pass
+
+            # Build items list
+            items = []
+            total_amount = 0
+            
+            for checkout in checkouts:
+                cart_item = checkout.cart_item
+                if not cart_item or not cart_item.product:
+                    continue
+                
+                product = cart_item.product
+                variant = cart_item.variant
+                
+                # Get price from variant
+                price = float(variant.price) if variant and variant.price else 0
+                variant_title = variant.title if variant else product.condition
+                
+                item_total = price * checkout.quantity
+                total_amount += item_total
+                
+                # Get seller information from the Customer model
+                seller_user = None
+                if product.customer and hasattr(product.customer, 'customer'):
+                    seller_user = product.customer.customer
+                
+                items.append({
+                    'id': str(checkout.id),
+                    'cart_item': {
+                        'id': str(cart_item.id),
+                        'product': {
+                            'id': str(product.id),
+                            'name': product.name,
+                            'price': price,
+                            'variant': variant_title,
+                            'seller': {
+                                'id': str(seller_user.id) if seller_user else None,
+                                'username': seller_user.username if seller_user else "Unknown Seller",
+                                'first_name': seller_user.first_name if seller_user else "",
+                                'last_name': seller_user.last_name if seller_user else ""
+                            } if seller_user else None
+                        },
+                        'quantity': cart_item.quantity,
+                        'variant_id': str(variant.id) if variant else None
+                    },
+                    'quantity': checkout.quantity,
+                    'total_amount': item_total,
+                    'status': checkout.status if hasattr(checkout, 'status') else 'pending',
+                })
+
+            # Get shipping status
+            latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+            shipping_status = self._get_shipping_status(
+                order.status, 
+                latest_delivery.status if latest_delivery else None
+            )
+
+            # Build response - matching seller-order-list structure
+            response_data = {
+                'success': True,
+                'data': {
+                    'order_id': str(order.order),
+                    'buyer': {
+                        'id': str(order.user.id),
+                        'username': order.user.username,
+                        'email': order.user.email,
+                        'first_name': order.user.first_name,
+                        'last_name': order.user.last_name,
+                        'phone': order.user.contact_number,
+                    },
+                    'status': shipping_status,
+                    'total_amount': total_amount,
+                    'payment_method': order.payment_method,
+                    'delivery_method': order.delivery_method,
+                    'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
+                    'created_at': order.created_at.isoformat(),
+                    'updated_at': order.updated_at.isoformat(),
+                    'items': items,
+                    'delivery_info': delivery_info,
+                    'is_personal_listing': True
+                }
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except Order.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Order not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error retrieving order: {str(e)}", exc_info=True)
+            return Response({
+                'success': False,
+                'message': f'Error retrieving order: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+class CustomerArrangeShipment(viewsets.ViewSet):
+    @action(detail=True, methods=['get'])
+    def get_order_details(self, request, pk=None):
+        """
+        Get order details for shipment arrangement (personal listings)
+        GET /customer-arrange-shipment/{order_id}/get_order_details/?user_id={seller_user_id}
+        """
+        try:
+            # Get seller user_id for verification
+            seller_user_id = request.GET.get('user_id')
+            if not seller_user_id:
+                return Response({
+                    "success": False,
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get order
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Verify order has items from this seller's personal listings
+            has_seller_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,  # Use Customer instance
+                cart_item__product__shop__isnull=True  # Only personal listings
+            ).exists()
+            
+            if not has_seller_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain items from your personal listings"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Get seller info
+            seller_user = User.objects.get(id=seller_user_id)
+
+            # Optimized query for order items from this seller's personal listings
+            seller_checkouts = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,  # Use Customer instance
+                cart_item__product__shop__isnull=True
+            ).select_related(
+                'cart_item__product',
+                'cart_item__variant'
+            ).prefetch_related('cart_item__product')
+
+            # Prepare response data
+            order_items = []
+            total_amount = 0
+
+            for checkout in seller_checkouts:
+                cart_item = checkout.cart_item
+                if not cart_item or not cart_item.product:
+                    continue
+
+                product = cart_item.product
+                variant = cart_item.variant
+                
+                # Get price from variant
+                price = 0
+                if variant and variant.price is not None:
+                    price = float(variant.price)
+                
+                # Get weight from variant if available
+                weight = None
+                if variant and variant.weight is not None:
+                    weight = float(variant.weight)
+                
+                # Get variant title for display
+                variant_title = variant.title if variant else "Default"
+                
+                order_items.append({
+                    "id": str(checkout.id),
+                    "product": {
+                        "id": str(product.id),
+                        "name": product.name,
+                        "price": price,
+                        "variant_title": variant_title,
+                        "variant_id": str(variant.id) if variant else None,
+                        "weight": weight,
+                        "dimensions": None,
+                        "seller": {
+                            "id": str(seller_user.id),
+                            "username": seller_user.username,
+                            "first_name": seller_user.first_name,
+                            "last_name": seller_user.last_name,
+                            "phone": seller_user.contact_number or "",
+                            "address": f"{seller_user.street}, {seller_user.barangay}, {seller_user.city}, {seller_user.province}" if seller_user.street else "Address not provided"
+                        }
+                    },
+                    "quantity": checkout.quantity,
+                    "total_amount": float(checkout.total_amount)
+                })
+                
+                total_amount += float(checkout.total_amount)
+
+            # Get delivery address
+            delivery_address = None
+            address_details = {}
+
+            if order.shipping_address:
+                shipping_address = order.shipping_address
+                delivery_address = shipping_address.get_full_address()
+                address_details = {
+                    "street": shipping_address.street,
+                    "city": shipping_address.city,
+                    "province": shipping_address.province,
+                    "postal_code": shipping_address.zip_code,
+                    "country": shipping_address.country,
+                    "contact_person": shipping_address.recipient_name,
+                    "contact_phone": shipping_address.recipient_phone,
+                    "notes": shipping_address.instructions
+                }
+            elif order.delivery_address_text:
+                delivery_address = order.delivery_address_text
+                address_details = {"notes": "Address provided as text"}
+
+            # Format response
+            response_data = {
+                "success": True,
+                "message": "Order details retrieved successfully",
+                "data": {
+                    "order_id": str(order.order),
+                    "buyer": {
+                        "id": str(order.user.id),
+                        "username": order.user.username,
+                        "email": order.user.email,
+                        "first_name": order.user.first_name,
+                        "last_name": order.user.last_name,
+                        "phone": order.user.contact_number or None
+                    },
+                    "delivery_address": delivery_address,
+                    "address_details": address_details,
+                    "items": order_items,
+                    "total_amount": total_amount,
+                    "payment_method": order.payment_method,
+                    "created_at": order.created_at.isoformat(),
+                    "current_status": order.status,
+                    "seller_info": {
+                        "id": str(seller_user.id),
+                        "name": f"{seller_user.first_name} {seller_user.last_name}".strip() or seller_user.username,
+                        "address": f"{seller_user.street}, {seller_user.barangay}, {seller_user.city}, {seller_user.province}" if seller_user.street else "Address not provided",
+                        "phone": seller_user.contact_number or ""
+                    }
+                }
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error retrieving order details: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": f"Error retrieving order details: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def get_available_riders(self, request, pk=None):
+        """
+        Get available riders for an order
+        GET /customer-arrange-shipment/{order_id}/get_available_riders/?user_id={seller_user_id}
+        """
+        try:
+            # Get seller user_id for verification
+            seller_user_id = request.GET.get('user_id')
+            if not seller_user_id:
+                return Response({
+                    "success": False,
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Verify order exists and belongs to seller's personal listings
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Verify order has items from this seller's personal listings
+            has_seller_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,
+                cart_item__product__shop__isnull=True
+            ).exists()
+            
+            if not has_seller_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain items from your personal listings"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Get available riders
+            riders = Rider.objects.filter(
+                verified=True,
+                rider__is_suspended=False
+            ).select_related('rider')
+
+            # Prepare rider data
+            riders_data = []
+            for rider in riders:
+                riders_data.append({
+                    "id": str(rider.rider.id),
+                    "rider_id": str(rider.rider.id),
+                    "user": {
+                        "id": str(rider.rider.id),
+                        "first_name": rider.rider.first_name,
+                        "last_name": rider.rider.last_name,
+                        "phone": rider.rider.contact_number or ""
+                    },
+                    "vehicle_type": rider.vehicle_type or "Motorcycle",
+                    "vehicle_brand": rider.vehicle_brand or "",
+                    "vehicle_model": rider.vehicle_model or "",
+                    "plate_number": rider.plate_number or "",
+                    "verified": rider.verified,
+                    "rating": 4.5,
+                    "total_deliveries": 100,
+                    "delivery_success_rate": 95.0,
+                    "response_time": "15-30 mins",
+                    "current_location": f"{rider.rider.city or 'Unknown'}, {rider.rider.province or 'Unknown'}",
+                    "base_fee": 100,
+                    "accepts_custom_offers": True
+                })
+
+            return Response({
+                "success": True,
+                "message": "Available riders retrieved",
+                "data": riders_data
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error retrieving riders: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": f"Error retrieving riders: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def submit_shipment_offer(self, request, pk=None):
+        """
+        Submit shipment offer to rider for personal listing
+        POST /customer-arrange-shipment/{order_id}/submit_shipment_offer/
+        """
+        try:
+            # Get required data
+            seller_user_id = request.data.get('user_id')
+            rider_id = request.data.get('rider_id')
+            offer_amount = request.data.get('offer_amount')
+            offer_type = request.data.get('offer_type', 'custom')
+            delivery_notes = request.data.get('delivery_notes', '')
+
+            # Validate required fields
+            if not all([seller_user_id, rider_id, offer_amount]):
+                return Response({
+                    "success": False,
+                    "message": "Missing required fields: user_id, rider_id, offer_amount"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate offer amount (minimum ₱50)
+            try:
+                offer_amount = float(offer_amount)
+                if offer_amount < 50:
+                    return Response({
+                        "success": False,
+                        "message": "Offer amount must be at least ₱50"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            except (ValueError, TypeError):
+                return Response({
+                    "success": False,
+                    "message": "Invalid offer amount"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Verify order exists and belongs to seller's personal listings
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Verify order has items from this seller's personal listings
+            has_seller_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,
+                cart_item__product__shop__isnull=True
+            ).exists()
+            
+            if not has_seller_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain items from your personal listings"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Verify rider exists and is verified
+            try:
+                rider = Rider.objects.get(rider_id=rider_id, verified=True)
+            except Rider.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Rider not found or not verified"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Check if there's already a pending offer for this order
+            existing_delivery = Delivery.objects.filter(
+                order=order,
+                status='pending'
+            ).first()
+            
+            if existing_delivery:
+                return Response({
+                    "success": False,
+                    "message": "There is already a pending offer for this order"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create delivery record with offer
+            delivery = Delivery.objects.create(
+                order=order,
+                rider=rider,
+                status='pending',
+                delivery_fee=offer_amount,
+                notes=delivery_notes,
+                created_at=timezone.now(),
+                updated_at=timezone.now()
+            )
+
+            # Update order status if needed
+            if order.status not in ['processing', 'pending']:
+                order.status = 'processing'
+                order.save()
+
+            # Get seller user for response
+            seller_user = User.objects.get(id=seller_user_id)
+
+            return Response({
+                "success": True,
+                "message": "Shipment offer submitted successfully",
+                "data": {
+                    "order_id": str(order.order),
+                    "delivery_id": str(delivery.id),
+                    "rider_name": f"{rider.rider.first_name} {rider.rider.last_name}",
+                    "rider_id": str(rider.rider.id),
+                    "offer_amount": offer_amount,
+                    "offer_type": offer_type,
+                    "delivery_notes": delivery_notes,
+                    "status": "pending",
+                    "submitted_at": timezone.now().isoformat(),
+                    "seller_info": {
+                        "id": str(seller_user.id),
+                        "name": f"{seller_user.first_name} {seller_user.last_name}".strip() or seller_user.username
+                    }
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error submitting offer: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": f"Error submitting offer: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def check_delivery_status(self, request, pk=None):
+        """
+        Check delivery status for an order
+        GET /customer-arrange-shipment/{order_id}/check_delivery_status/?user_id={seller_user_id}
+        """
+        try:
+            # Get seller user_id from query parameters
+            seller_user_id = request.GET.get('user_id')
+            if not seller_user_id:
+                return Response({
+                    "success": False,
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Validate order exists
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Verify order has items from this seller's personal listings
+            has_seller_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,
+                cart_item__product__shop__isnull=True
+            ).exists()
+            
+            if not has_seller_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain items from your personal listings"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Get latest delivery
+            latest_delivery = Delivery.objects.filter(
+                order=order
+            ).select_related('rider__rider').order_by('-created_at').first()
+            
+            if not latest_delivery:
+                return Response({
+                    "success": False,
+                    "message": "No delivery information found for this order"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Prepare response
+            response_data = {
+                "success": True,
+                "message": "Delivery status retrieved successfully",
+                "data": {
+                    "delivery_id": str(latest_delivery.id),
+                    "order_id": str(order.order),
+                    "status": latest_delivery.status,
+                    "rider_name": f"{latest_delivery.rider.rider.first_name} {latest_delivery.rider.rider.last_name}" if latest_delivery.rider else None,
+                    "submitted_at": latest_delivery.created_at.isoformat(),
+                    "delivery_fee": float(latest_delivery.delivery_fee) if latest_delivery.delivery_fee else None,
+                    "notes": latest_delivery.notes
+                }
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error checking delivery status: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": f"Error checking delivery status: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def view_offer(self, request, pk=None):
+        """
+        View shipment offer details for an order
+        GET /customer-arrange-shipment/{order_id}/view_offer/?user_id={seller_user_id}
+        """
+        try:
+            # Get seller user_id from query parameters
+            seller_user_id = request.GET.get('user_id')
+            if not seller_user_id:
+                return Response({
+                    "success": False,
+                    "message": "User ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the Customer instance
+            try:
+                customer = Customer.objects.get(customer_id=seller_user_id)
+            except Customer.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Customer profile not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Validate order exists
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Verify order has items from this seller's personal listings
+            has_seller_items = Checkout.objects.filter(
+                order=order,
+                cart_item__product__customer=customer,
+                cart_item__product__shop__isnull=True
+            ).exists()
+            
+            if not has_seller_items:
+                return Response({
+                    "success": False,
+                    "message": "Order does not contain items from your personal listings"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Get pending offer
+            pending_offer = Delivery.objects.filter(
+                order=order,
+                status='pending_offer'
+            ).select_related('rider__rider').first()
+            
+            if not pending_offer:
+                return Response({
+                    "success": False,
+                    "message": "No pending offer found for this order"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Prepare offer details
+            offer_details = {
+                "order_id": str(order.order),
+                "delivery_id": str(pending_offer.id),
+                "offer_amount": float(pending_offer.delivery_fee) if pending_offer.delivery_fee else None,
+                "rider": {
+                    "name": f"{pending_offer.rider.rider.first_name} {pending_offer.rider.rider.last_name}",
+                    "phone": pending_offer.rider.rider.contact_number,
+                    "rating": 4.5,
+                    "vehicle_type": pending_offer.rider.vehicle_type,
+                    "plate_number": pending_offer.rider.plate_number,
+                    "total_deliveries": 100
+                } if pending_offer.rider else None,
+                "notes": pending_offer.notes,
+                "submitted_at": pending_offer.created_at.isoformat(),
+                "expires_at": (pending_offer.created_at + timedelta(hours=24)).isoformat()
+            }
+
+            return Response({
+                "success": True,
+                "message": "Offer details retrieved successfully",
+                "data": offer_details
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error viewing offer: {str(e)}", exc_info=True)
+            return Response({
+                "success": False,
+                "message": f"Error viewing offer: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
