@@ -100,7 +100,6 @@ const menuItems = [
       { title: "Purchases", url: "/purchases", icon: Receipt, roles: ["customer"] },
       { title: "Product Return & Cancelled", url: "/return-refund", icon: RotateCcw, roles: ["customer"] },
       { title: "Favorites", url: "/favorites", icon: Heart, roles: ["customer"] },
-      { title: "Trade", url: "/trade", icon: ArrowLeftRight, roles: ["customer"] },
     ]
   },
   {
