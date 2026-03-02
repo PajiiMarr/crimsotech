@@ -2095,3 +2095,98 @@ class ConversationParticipant(models.Model):
             created_at__gt=self.last_read_message.created_at,
             read_at__isnull=True
         ).exclude(sender=self.user).count()
+    
+
+# -----------------------------
+# User Wallet
+# -----------------------------
+class UserWallet(models.Model):
+    wallet_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='wallets')
+    available_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    pending_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Wallet {self.wallet_id} for {self.user.username}"
+
+
+# -----------------------------
+# Wallet Transactions
+# -----------------------------
+class WalletTransaction(models.Model):
+    TRANSACTION_TYPES = [
+        ('credit', 'Credit'),
+        ('debit', 'Debit')
+    ]
+    SOURCE_TYPES = [
+        ('personal_sale', 'Personal Sale'),
+        ('shop_sale', 'Shop Sale'),
+        ('refund', 'Refund'),
+        ('dispute', 'Dispute'),
+        ('withdrawal', 'Withdrawal')
+    ]
+
+    transaction_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(UserWallet, on_delete=models.CASCADE, related_name='transactions')
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
+    source_type = models.CharField(max_length=20, choices=SOURCE_TYPES)
+    status = models.CharField(max_length=30, default='completed')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Transaction {self.transaction_id} - {self.transaction_type}"
+
+
+# -----------------------------
+# User Payment Details
+# -----------------------------
+class UserPaymentDetail(models.Model):
+    payment_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='payment_details')
+    payment_method = models.CharField(max_length=50)  # bank, gcash, paypal, etc.
+    bank_name = models.CharField(max_length=150, blank=True, null=True)
+    account_name = models.CharField(max_length=150)
+    account_number = models.CharField(max_length=100)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    verified_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='verified_payment_details'
+    )
+
+    def __str__(self):
+        return f"{self.payment_method} for {self.user.username}"
+
+
+# -----------------------------
+# Withdrawal Requests
+# -----------------------------
+class WithdrawalRequest(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed')
+    ]
+
+    withdrawal_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='withdrawal_requests')
+    wallet = models.ForeignKey(UserWallet, on_delete=models.CASCADE, related_name='withdrawals')
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='pending')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='approved_withdrawals'
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    # Admin can upload proof that money was sent
+    admin_proof = models.FileField(upload_to='withdrawal_admin_proofs/', blank=True, null=True)
+
+    def __str__(self):
+        return f"Withdrawal {self.withdrawal_id} - {self.amount} for {self.user.username}"
