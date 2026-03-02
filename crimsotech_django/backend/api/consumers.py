@@ -64,7 +64,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if data.get('conversation_id'):
             self.conversation_id = data.get('conversation_id')
         elif not self.conversation_id and self.other_user_id:
-            self.conversation_id = self.get_conversation_id(
+            self.conversation_id = await self.get_conversation_id(
                 str(self.user.id), 
                 self.other_user_id
             )
@@ -83,12 +83,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'conversation_id': self.conversation_id
             }))
             
-            # Get history and then send it
-            history = await self.get_conversation_history()
-            await self.send(text_data=json.dumps({
-                'type': 'conversation_history',
-                'messages': history
-            }))
+            # Send conversation history - now properly awaited
+            await self.send_conversation_history()
         else:
             await self.send(text_data=json.dumps({
                 'type': 'authenticated',
@@ -99,7 +95,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_user(self, user_id):
         """Get user by ID - lazy import"""
-        from .models import User
+        from .models import User  # Import inside method
         try:
             return User.objects.get(id=user_id)
         except User.DoesNotExist:
@@ -221,7 +217,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def save_message_to_db(self, receiver_id, content, message_type, conversation_id):
         """Save message to database - lazy imports"""
-        from .models import User, Message
+        from .models import User, Message  # Import inside method
         try:
             receiver = User.objects.get(id=receiver_id)
             
@@ -241,28 +237,50 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def mark_message_read(self, message_id):
         """Mark message as read in database - lazy import"""
-        from .models import Message
-        message = Message.objects.get(id=message_id, receiver=self.user)
-        message.mark_as_read()
-        return message
+        from .models import Message  # Import inside method
+        try:
+            message = Message.objects.get(id=message_id, receiver=self.user)
+            message.mark_as_read()
+            return message
+        except Message.DoesNotExist:
+            return None
+    
+    async def send_conversation_history(self):
+        """Send last 50 messages from database - now properly async"""
+        if not self.conversation_id:
+            return
+        
+        # Use database_sync_to_async to get messages
+        messages = await self.get_conversation_messages()
+        
+        if messages:
+            await self.send(text_data=json.dumps({
+                'type': 'conversation_history',
+                'messages': messages
+            }))
     
     @database_sync_to_async
-    def get_conversation_history(self):
-        """Get conversation history from database - NO AWAIT HERE"""
-        from .models import Message
+    def get_conversation_messages(self):
+        """Get conversation messages from database - lazy imports"""
+        from .models import Message  # Import inside method
         if not self.conversation_id:
             return []
-            
+        
         messages = Message.objects.filter(
             conversation_id=self.conversation_id
         ).select_related('sender', 'receiver').order_by('-created_at')[:50]
         
         history = []
         for msg in reversed(messages):
+            # Skip if message is deleted for this user
+            if (msg.sender == self.user and msg.is_deleted_for_sender) or \
+               (msg.receiver == self.user and msg.is_deleted_for_receiver):
+                continue
+                
             history.append({
                 'id': str(msg.id),
-                'sender_id': str(msg.sender.id),
-                'sender_name': msg.sender.username,
+                'sender_id': str(msg.sender.id) if msg.sender else None,
+                'sender_name': msg.sender.username if msg.sender else 'Unknown',
                 'content': msg.content,
                 'timestamp': str(msg.created_at),
                 'status': msg.status,
@@ -271,7 +289,26 @@ class ChatConsumer(AsyncWebsocketConsumer):
         
         return history
     
+    @database_sync_to_async
     def get_conversation_id(self, user1_id, user2_id):
         """Generate consistent conversation ID"""
+        from .models import Conversation  # Import inside method
+        
         ids = sorted([str(user1_id), str(user2_id)])
+        
+        # Check if conversation already exists
+        try:
+            user1 = self.user.__class__.objects.get(id=user1_id)
+            user2 = self.user.__class__.objects.get(id=user2_id)
+            
+            conversation = Conversation.objects.filter(
+                participants=user1
+            ).filter(participants=user2).first()
+            
+            if conversation:
+                return str(conversation.id)
+        except:
+            pass
+        
+        # If not found, generate UUID based on user IDs
         return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{ids[0]}_{ids[1]}"))

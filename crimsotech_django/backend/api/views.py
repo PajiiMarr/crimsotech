@@ -33633,113 +33633,674 @@ class RiderProofViewSet(viewsets.ViewSet):
         return Response(proof_data, status=status.HTTP_201_CREATED)
 
 class ConversationViewSet(viewsets.ViewSet):
+    """
+    ViewSet for handling conversations and messages between users
+    """
     
     def list(self, request):
-        """GET /api/conversations/"""
+        """
+        GET /api/conversation/messages/{conv_id}/
+        Note: This endpoint is actually for getting messages in a conversation
+        The URL pattern maps to: /api/conversation/messages/<conv_id>/
+        """
+        # Extract conversation ID from the URL
+        # Since this is the list method and the URL includes the conv_id,
+        # we need to get it from the kwargs or path
+        conv_id = self.kwargs.get('conv_id') or request.GET.get('conv_id')
+        
+        if not conv_id:
+            return Response(
+                {'error': 'Conversation ID required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({'error': 'X-User-Id header required'}, status=401)
-            
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
         try:
+            # Verify user exists
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=404)
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
         
-        conversations = Conversation.objects.filter(participants=user)
+        try:
+            # Verify conversation exists and user is a participant
+            conversation = Conversation.objects.get(id=conv_id)
+            if not conversation.participants.filter(id=user_id).exists():
+                return Response(
+                    {'error': 'User not in this conversation'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except Conversation.DoesNotExist:
+            return Response(
+                {'error': 'Conversation not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get messages for the conversation
+        messages = Message.objects.filter(
+            conversation_id=conv_id
+        ).select_related('sender', 'receiver').order_by('created_at')
+        
+        # Mark messages as read for this user
+        messages.filter(
+            receiver=user,
+            read_at__isnull=True
+        ).update(
+            status='read',
+            read_at=timezone.now()
+        )
+        
+        # Prepare response data
         data = []
-        for conv in conversations:
-            other = conv.participants.exclude(id=user.id).first()
-            last_msg = Message.objects.filter(conversation_id=conv.id).last()
-            data.append({
-                'id': str(conv.id),
-                'participant_id': str(other.id) if other else '',
-                'participant_name': other.username if other else '',
-                'last_message': last_msg.content if last_msg else '',
-                'last_message_time': last_msg.created_at.isoformat() if last_msg else '',
-                'unread_count': 0,
-            })
-        return Response(data)
-    
-    @action(detail=False, methods=['get'], url_path='messages/(?P<conv_id>[^/]+)')
-    def messages(self, request, conv_id=None):
-        """GET /api/conversations/messages/{conv_id}/"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({'error': 'X-User-Id header required'}, status=401)
+        for msg in messages:
+            # Skip if deleted for this user
+            if (msg.sender == user and msg.is_deleted_for_sender) or \
+               (msg.receiver == user and msg.is_deleted_for_receiver):
+                continue
+                
+            message_data = {
+                'id': str(msg.id),
+                'sender_id': str(msg.sender.id) if msg.sender else None,
+                'sender_name': msg.sender.username if msg.sender else 'Unknown',
+                'receiver_id': str(msg.receiver.id) if msg.receiver else None,
+                'receiver_name': msg.receiver.username if msg.receiver else 'Unknown',
+                'content': msg.content,
+                'message_type': msg.message_type,
+                'status': msg.status,
+                'timestamp': msg.created_at.isoformat(),
+                'delivered_at': msg.delivered_at.isoformat() if msg.delivered_at else None,
+                'read_at': msg.read_at.isoformat() if msg.read_at else None,
+                'is_edited': msg.is_edited,
+                'edited_at': msg.edited_at.isoformat() if msg.edited_at else None,
+            }
             
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=404)
+            # Add attachment info if present
+            if msg.attachment:
+                message_data['attachment'] = {
+                    'url': msg.attachment.url if msg.attachment else None,
+                    'name': msg.attachment_name,
+                    'size': msg.attachment_size,
+                    'mime_type': msg.attachment_mime_type,
+                }
+            
+            # Add reply info if present
+            if msg.reply_to:
+                message_data['reply_to'] = {
+                    'id': str(msg.reply_to.id),
+                    'content': msg.reply_to.content[:100] if msg.reply_to.content else '',
+                    'sender_name': msg.reply_to.sender.username if msg.reply_to.sender else 'Unknown',
+                }
+            
+            data.append(message_data)
         
-        messages = Message.objects.filter(conversation_id=conv_id).order_by('created_at')
-        data = [{
-            'id': str(m.id),
-            'sender_id': str(m.sender.id),
-            'sender_name': m.sender.username,
-            'content': m.content,
-            'timestamp': m.created_at.isoformat(),
-            'status': m.status,
-            'message_type': m.message_type,
-        } for m in messages]
         return Response(data)
     
-    @action(detail=False, methods=['post'])
-    def start(self, request):
-        """POST /api/conversation/start/ - Start a new conversation"""
+    @action(detail=False, methods=['post'], url_path='send')
+    def send_message(self, request):
+        """
+        POST /api/conversation/send/ - Send a new message
+        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({'error': 'X-User-Id header required'}, status=401)
-            
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            sender = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get required fields
+        conversation_id = request.data.get('conversation_id')
+        receiver_id = request.data.get('receiver_id')
+        content = request.data.get('content', '')
+        message_type = request.data.get('message_type', 'text')
+        
+        if not conversation_id and not receiver_id:
+            return Response(
+                {'error': 'Either conversation_id or receiver_id is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Handle conversation
+        conversation = None
+        receiver = None
+        
+        if conversation_id:
+            try:
+                conversation = Conversation.objects.get(id=conversation_id)
+                if not conversation.participants.filter(id=user_id).exists():
+                    return Response(
+                        {'error': 'User not in this conversation'}, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                # Get the other participant
+                receiver = conversation.participants.exclude(id=user_id).first()
+            except Conversation.DoesNotExist:
+                return Response(
+                    {'error': 'Conversation not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        elif receiver_id:
+            try:
+                receiver = User.objects.get(id=receiver_id)
+                # Check if conversation already exists
+                conversation = Conversation.objects.filter(
+                    participants=sender
+                ).filter(participants=receiver).first()
+                
+                if not conversation:
+                    # Create new conversation
+                    conversation = Conversation.objects.create()
+                    conversation.participants.add(sender, receiver)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'Receiver not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        if not receiver:
+            return Response(
+                {'error': 'Could not determine message recipient'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create the message
+        message = Message.objects.create(
+            sender=sender,
+            receiver=receiver,
+            conversation_id=conversation.id,
+            content=content,
+            message_type=message_type,
+            status='sent',
+            created_at=timezone.now()
+        )
+        
+        # Update conversation's last message
+        conversation.last_message = message
+        conversation.last_message_at = message.created_at
+        conversation.save(update_fields=['last_message', 'last_message_at'])
+        
+        # Update participant's last read
+        participant = ConversationParticipant.objects.filter(
+            conversation=conversation,
+            user=sender
+        ).first()
+        if participant:
+            participant.mark_as_read(up_to_message=message)
+        
+        return Response({
+            'id': str(message.id),
+            'conversation_id': str(conversation.id),
+            'status': 'sent',
+            'timestamp': message.created_at.isoformat()
+        }, status=status.HTTP_201_CREATED)
+    
+    @action(detail=False, methods=['post'], url_path='start')
+    def start_conversation(self, request):
+        """
+        POST /api/conversation/start/ - Start a new conversation
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=404)
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
         
         other_id = request.data.get('user_id')
         if not other_id:
-            return Response({'error': 'user_id required'}, status=400)
-            
+            return Response(
+                {'error': 'user_id required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         try:
             other = User.objects.get(id=other_id)
         except User.DoesNotExist:
-            return Response({'error': 'Other user not found'}, status=404)
+            return Response(
+                {'error': 'Other user not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
         
-        # Check if conversation already exists between these two users
-        conv = Conversation.objects.filter(participants=user).filter(participants=other).first()
+        # Check if conversation already exists
+        conversation = Conversation.objects.filter(
+            participants=user
+        ).filter(participants=other).first()
         
-        if not conv:
+        if not conversation:
             # Create new conversation
-            conv = Conversation.objects.create()
-            conv.participants.add(user, other)
+            conversation = Conversation.objects.create()
+            conversation.participants.add(user, other)
             
-            # Create participant entries only if they don't exist
-            # The through model will handle the creation automatically when adding participants
-            # You don't need to manually create ConversationParticipant objects
-        else:
-            # Check if participants already have entries (they should)
-            pass
+            # Create participant entries
+            ConversationParticipant.objects.get_or_create(
+                conversation=conversation,
+                user=user,
+                defaults={'last_read_at': timezone.now()}
+            )
+            ConversationParticipant.objects.get_or_create(
+                conversation=conversation,
+                user=other
+            )
         
-        return Response({'id': str(conv.id)})
+        return Response({
+            'id': str(conversation.id),
+            'created': not bool(conversation.last_message_at)
+        })
     
-    @action(detail=False, methods=['get'])
-    def search(self, request):
-        """GET /api/conversations/search/?q=term"""
+    @action(detail=False, methods=['get'], url_path='list')
+    def list_conversations(self, request):
+        """
+        GET /api/conversation/list/ - List all conversations for the user
+        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({'error': 'X-User-Id header required'}, status=401)
-            
-        q = request.GET.get('q', '')
-        if len(q) < 2:
-            return Response([])
-            
-        users = User.objects.filter(
-            Q(username__icontains=q) | Q(email__icontains=q)
-        ).exclude(id=user_id)[:10]
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         
-        data = [{
-            'id': str(u.id),
-            'username': u.username,
-            'email': u.email,
-        } for u in users]
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get all conversations for user
+        conversations = Conversation.objects.filter(
+            participants=user
+        ).select_related('last_message').order_by('-last_message_at', '-created_at')
+        
+        data = []
+        for conv in conversations:
+            # Get the other participant
+            other = conv.participants.exclude(id=user.id).first()
+            
+            # Get participant info
+            participant = ConversationParticipant.objects.filter(
+                conversation=conv,
+                user=user
+            ).first()
+            
+            # Get unread count
+            unread_count = 0
+            if participant:
+                if participant.last_read_message:
+                    unread_count = Message.objects.filter(
+                        conversation_id=conv.id,
+                        receiver=user,
+                        created_at__gt=participant.last_read_message.created_at,
+                        read_at__isnull=True
+                    ).exclude(sender=user).count()
+                else:
+                    unread_count = Message.objects.filter(
+                        conversation_id=conv.id,
+                        receiver=user,
+                        read_at__isnull=True
+                    ).exclude(sender=user).count()
+            
+            # Get last message
+            last_message = conv.last_message
+            last_message_content = None
+            last_message_time = None
+            
+            if last_message:
+                # Check if message is deleted for this user
+                if not ((last_message.sender == user and last_message.is_deleted_for_sender) or
+                        (last_message.receiver == user and last_message.is_deleted_for_receiver)):
+                    last_message_content = last_message.content
+                    last_message_time = last_message.created_at.isoformat()
+            
+            data.append({
+                'id': str(conv.id),
+                'participant_id': str(other.id) if other else None,
+                'participant_name': other.username if other else 'Unknown',
+                'participant_email': other.email if other else None,
+                'last_message': last_message_content,
+                'last_message_time': last_message_time,
+                'unread_count': unread_count,
+                'is_archived': participant.is_archived if participant else False,
+                'is_muted': participant.is_muted if participant else False,
+            })
+        
         return Response(data)
+    
+    @action(detail=False, methods=['get'], url_path='unread/count')
+    def unread_count(self, request):
+        """
+        GET /api/conversation/unread/count/ - Get total unread messages count
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        unread_count = Message.get_unread_count(user_id)
+        
+        return Response({
+            'unread_count': unread_count
+        })
+    
+    @action(detail=False, methods=['get'], url_path='search')
+    def search_users(self, request):
+        """
+        GET /api/conversation/search/?q=term - Search for users to start conversation
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        search_term = request.GET.get('q', '')
+        if len(search_term) < 2:
+            return Response([])
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Search for users
+        users = User.objects.filter(
+            Q(username__icontains=search_term) |
+            Q(email__icontains=search_term) |
+            Q(first_name__icontains=search_term) |
+            Q(last_name__icontains=search_term)
+        ).exclude(id=user_id)[:20]
+        
+        data = []
+        for u in users:
+            # Check if conversation already exists
+            existing_conv = Conversation.objects.filter(
+                participants=user
+            ).filter(participants=u).first()
+            
+            data.append({
+                'id': str(u.id),
+                'username': u.username,
+                'email': u.email,
+                'first_name': u.first_name,
+                'last_name': u.last_name,
+                'existing_conversation_id': str(existing_conv.id) if existing_conv else None,
+            })
+        
+        return Response(data)
+    
+    @action(detail=False, methods=['post'], url_path='messages/(?P<message_id>[^/]+)/read')
+    def mark_as_read(self, request, message_id=None):
+        """
+        POST /api/conversation/messages/{message_id}/read/ - Mark a message as read
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            message = Message.objects.get(id=message_id)
+        except Message.DoesNotExist:
+            return Response(
+                {'error': 'Message not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify user is the receiver
+        if message.receiver.id != user.id:
+            return Response(
+                {'error': 'Not authorized to mark this message as read'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        message.mark_as_read()
+        
+        # Update participant's last read
+        participant = ConversationParticipant.objects.filter(
+            conversation_id=message.conversation_id,
+            user=user
+        ).first()
+        if participant:
+            participant.mark_as_read(up_to_message=message)
+        
+        return Response({'status': 'marked as read'})
+    
+    @action(detail=False, methods=['delete'], url_path='messages/(?P<message_id>[^/]+)')
+    def delete_message(self, request, message_id=None):
+        """
+        DELETE /api/conversation/messages/{message_id}/ - Soft delete a message
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            message = Message.objects.get(id=message_id)
+        except Message.DoesNotExist:
+            return Response(
+                {'error': 'Message not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify user is either sender or receiver
+        if message.sender.id != user.id and message.receiver.id != user.id:
+            return Response(
+                {'error': 'Not authorized to delete this message'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        message.soft_delete_for_user(user)
+        
+        return Response({'status': 'message deleted'})
+    
+    @action(detail=False, methods=['post'], url_path='archive/(?P<conv_id>[^/]+)')
+    def archive_conversation(self, request, conv_id=None):
+        """
+        POST /api/conversation/archive/{conv_id}/ - Archive a conversation
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            participant = ConversationParticipant.objects.get(
+                conversation_id=conv_id,
+                user=user
+            )
+        except ConversationParticipant.DoesNotExist:
+            return Response(
+                {'error': 'Conversation not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        participant.is_archived = True
+        participant.archived_at = timezone.now()
+        participant.save(update_fields=['is_archived', 'archived_at'])
+        
+        return Response({'status': 'conversation archived'})
+    
+    @action(detail=False, methods=['post'], url_path='unarchive/(?P<conv_id>[^/]+)')
+    def unarchive_conversation(self, request, conv_id=None):
+        """
+        POST /api/conversation/unarchive/{conv_id}/ - Unarchive a conversation
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            participant = ConversationParticipant.objects.get(
+                conversation_id=conv_id,
+                user=user
+            )
+        except ConversationParticipant.DoesNotExist:
+            return Response(
+                {'error': 'Conversation not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        participant.is_archived = False
+        participant.archived_at = None
+        participant.save(update_fields=['is_archived', 'archived_at'])
+        
+        return Response({'status': 'conversation unarchived'})
+    
+    @action(detail=False, methods=['post'], url_path='mute/(?P<conv_id>[^/]+)')
+    def mute_conversation(self, request, conv_id=None):
+        """
+        POST /api/conversation/mute/{conv_id}/ - Mute a conversation
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        mute_duration = request.data.get('duration', 24)  # Default 24 hours
+        mute_until = timezone.now() + timezone.timedelta(hours=mute_duration)
+        
+        try:
+            participant = ConversationParticipant.objects.get(
+                conversation_id=conv_id,
+                user=user
+            )
+        except ConversationParticipant.DoesNotExist:
+            return Response(
+                {'error': 'Conversation not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        participant.is_muted = True
+        participant.muted_until = mute_until
+        participant.save(update_fields=['is_muted', 'muted_until'])
+        
+        return Response({
+            'status': 'conversation muted',
+            'muted_until': mute_until.isoformat()
+        })
+    
+    @action(detail=False, methods=['post'], url_path='unmute/(?P<conv_id>[^/]+)')
+    def unmute_conversation(self, request, conv_id=None):
+        """
+        POST /api/conversation/unmute/{conv_id}/ - Unmute a conversation
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {'error': 'X-User-Id header required'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            participant = ConversationParticipant.objects.get(
+                conversation_id=conv_id,
+                user=user
+            )
+        except ConversationParticipant.DoesNotExist:
+            return Response(
+                {'error': 'Conversation not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        participant.is_muted = False
+        participant.muted_until = None
+        participant.save(update_fields=['is_muted', 'muted_until'])
+        
+        return Response({'status': 'conversation unmuted'})
