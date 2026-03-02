@@ -581,7 +581,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     }
     
     // Validate that each variant has price (from depreciation) and quantity
-    const invalidVariants = variants.filter(v => !v.price || v.price === '' || !v.quantity || v.quantity === '' || v.quantity === 0);
+    const invalidVariants = variants.filter(v => v.price === '' || !v.quantity || Number(v.quantity) === 0);
     if (invalidVariants.length > 0) {
       alert("All variants must have a price (from depreciation calculation) and quantity set.");
       return;

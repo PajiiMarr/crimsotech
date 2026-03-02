@@ -1,29 +1,13 @@
-"use client";
-
-import type { Route } from './+types/home'
+import type { Route } from './+types/comgift'
 import SidebarLayout from '~/components/layouts/sidebar'
-import SearchForm from '~/components/customer/search-bar'
 import { UserProvider } from '~/components/providers/user-role-provider'
-import { Search, X, Gift, Zap, Clock, MapPin, CheckCircle, MoreHorizontal, Plus, RefreshCw, Loader2, AlertCircle, InfoIcon, ShoppingBag, Edit, Trash2, Upload } from 'lucide-react'
-import { Input } from '~/components/ui/input'
-import { Button } from '~/components/ui/button'
-import { Badge } from '~/components/ui/badge'
-import { Alert, AlertDescription } from '~/components/ui/alert' 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardDescription,
-  CardTitle,
-} from "~/components/ui/card"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table"
+import { Link, useLoaderData } from "react-router"
+import { useEffect, useState } from 'react'
+import { data } from "react-router"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card"
+import { Button } from "~/components/ui/button"
+import { Badge } from "~/components/ui/badge"
+import { Input } from "~/components/ui/input"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,382 +16,210 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu"
-import { Eye } from 'lucide-react'
+import { Search, Plus, Edit, Trash2, Eye, Gift, Tag, MoreHorizontal, Package, Award, RefreshCw, Loader2, AlertCircle } from "lucide-react"
+import { DataTable } from "~/components/ui/data-table"
+import { type ColumnDef } from "@tanstack/react-table"
 import AxiosInstance from '~/components/axios/Axios'
-import { useState, useEffect } from "react"
-import { useNavigate, Link } from 'react-router'
 
 export function meta(): Route.MetaDescriptors {
   return [
     {
       title: "My Gifts",
     },
-  ];
+  ]
 }
 
-export async function loader({ request, context }: Route.LoaderArgs) {
-  const { registrationMiddleware } = await import("~/middleware/registration.server");
-  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
-
-  const { requireAuth } = await import("~/middleware/auth.server");
-  const { requireRole } = await import("~/middleware/role-require.server");
-  const { fetchUserRole } = await import("~/middleware/role.server");
-
-  let user = (context as any).user;
-  if (!user) {
-    user = await fetchUserRole({ request, context });
-  }
-
-  await requireRole(request, context, ["isCustomer"]);
-
-  return user;
-}
-
-// Gift Product type
-interface GiftProduct {
+interface Gift {
   id: string
   name: string
   description: string
-  price?: string | number
-  category: string
-  condition: 'New' | 'Like New' | 'Good' | 'Fair' | 'Poor'
-  seller: {
+  total_stock: number
+  condition: string
+  status: 'active' | 'inactive' | 'draft'
+  upload_status: 'draft' | 'published' | 'archived'
+  category: {
     id: string
     name: string
-    rating: number
-    location: string
+  } | null
+  category_admin: {
+    id: string
+    name: string
+  } | null
+  variants: Array<{
+    id: string
+    title: string
+    quantity: number
+    sku_code?: string
+    critical_trigger?: number
+    is_active: boolean
+    image?: string | null
+  }>
+  created_at: string
+  updated_at: string
+  is_removed?: boolean
+  removal_reason?: string
+}
+
+interface ProductLimitInfo {
+  current_count: number
+  limit: number
+  remaining: number
+}
+
+// Loader function to get session data
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { registrationMiddleware } = await import("~/middleware/registration.server")
+  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any)
+  const { requireRole } = await import("~/middleware/role-require.server")
+  const { fetchUserRole } = await import("~/middleware/role.server")
+
+  let user = (context as any).user
+  if (!user) {
+      user = await fetchUserRole({ request, context })
   }
-  image: string
-  claimed: boolean
-  claimExpiry?: string // When claim expires
-  pickupLocation: string
-  postedTime: string // e.g., "2 hours ago"
-  views: number
-  claims: number
 
-  // Additional optional fields returned by various APIs / mapped in loadGifts
-  total_sku_quantity?: number
-  stock?: number
-  stock_status?: string
-  status?: string
-  is_draft?: boolean
-  created_at?: string
-  is_shop_visible?: boolean
-  raw?: any
+  await requireRole(request, context, ["isCustomer"])
+
+  const { getSession } = await import('~/sessions.server')
+  const session = await getSession(request.headers.get("Cookie"))
+  
+  const userId = session.get("userId")
+
+  return { userId }
 }
 
-// ----------------------------
-// Compact Search Bar Component
-// ----------------------------
-const CompactSearchBar = ({ 
-  searchTerm, 
-  setSearchTerm 
-}: { 
-  searchTerm: string
-  setSearchTerm: (term: string) => void 
-}) => {
-  return (
-    <div className="mb-4">
-      <div className="relative w-full max-w-xs">
-        <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-        <Input
-          type="text"
-          placeholder="Search free electronics..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-8 pr-8 py-1.5 h-8 text-sm border-gray-300 rounded-md"
-        />
-        {searchTerm && (
-          <button
-            onClick={() => setSearchTerm("")}
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
+export default function Comgift() {
+  const { userId } = useLoaderData<typeof loader>()
+  const [gifts, setGifts] = useState<Gift[]>([])
+  const [giftLimitInfo, setGiftLimitInfo] = useState<ProductLimitInfo | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
 
-// ----------------------------
-// Compact Gift Card
-// ----------------------------
-const CompactGiftCard = ({ gift }: { gift: GiftProduct }) => {
-  const navigate = useNavigate();
-  
-  const handleClick = () => {
-    navigate(`/gift/${gift.id}`);
-  };
+  const handleEditGift = (giftId: string) => {
+    console.log('Edit gift:', giftId)
+    // Navigate to edit page
+  }
 
-  const handleClaim = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    console.log("Claim gift:", gift.id);
-    // API call to claim gift
-  };
+  const handleViewGift = (giftId: string) => {
+    console.log('View gift:', giftId)
+    // Navigate to gift detail page
+  }
 
-  // Condition badge color
-  const getConditionColor = (condition: string) => {
-    switch(condition) {
-      case 'New': return 'bg-green-100 text-green-800';
-      case 'Like New': return 'bg-blue-100 text-blue-800';
-      case 'Good': return 'bg-yellow-100 text-yellow-800';
-      case 'Fair': return 'bg-orange-100 text-orange-800';
-      case 'Poor': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  return (
-    <div 
-      onClick={handleClick}
-      className="bg-white border border-gray-200 rounded-md overflow-hidden hover:shadow-sm transition-all cursor-pointer active:scale-[0.98] h-full flex flex-col relative group"
-    >
-      {/* FREE badge */}
-      <div className="absolute top-1 left-1 bg-gradient-to-r from-green-500 to-emerald-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded z-10 flex items-center gap-0.5">
-        <Gift className="h-2.5 w-2.5" />
-        FREE
-      </div>
-      
-      {/* Condition badge */}
-      <div className={`absolute top-1 right-1 ${getConditionColor(gift.condition)} text-[10px] font-medium px-1.5 py-0.5 rounded z-10`}>
-        {gift.condition}
-      </div>
-      
-      {/* Image */}
-      <div className="aspect-square w-full overflow-hidden bg-gray-100">
-        <img
-          src={gift.image}
-          alt={gift.name}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-        />
-        {/* Overlay if claimed */}
-        {gift.claimed && (
-          <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center">
-            <div className="text-center">
-              <CheckCircle className="h-8 w-8 text-white mx-auto mb-2" />
-              <span className="text-white text-sm font-semibold">Claimed</span>
-            </div>
-          </div>
-        )}
-      </div>
-      
-      {/* Content */}
-      <div className="p-2 flex flex-col flex-1">
-        <h3 className="text-xs font-medium text-gray-900 mb-1 line-clamp-2 min-h-[32px]">
-          {gift.name}
-        </h3>
-        
-        {/* Description snippet */}
-        <p className="text-[10px] text-gray-500 mb-2 line-clamp-1">
-          {gift.description.substring(0, 50)}...
-        </p>
-        
-        {/* Seller info */}
-        <div className="flex items-center gap-1 mb-2">
-          <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center">
-            <span className="text-[8px] font-medium">{gift.seller.name.charAt(0)}</span>
-          </div>
-          <span className="text-[10px] text-gray-600">{gift.seller.name}</span>
-          <span className="text-[8px] text-gray-400">• {gift.seller.rating}⭐</span>
-        </div>
-        
-        {/* Location & Time */}
-        <div className="flex items-center justify-between text-[10px] text-gray-500 mb-2">
-          <div className="flex items-center gap-0.5">
-            <MapPin className="h-2.5 w-2.5" />
-            <span>{gift.pickupLocation.split(',')[0]}</span>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <Clock className="h-2.5 w-2.5" />
-            <span>{gift.postedTime}</span>
-          </div>
-        </div>
-        
-        {/* Stats & Claim Button */}
-        <div className="mt-auto pt-1">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-gray-500">
-                👁 {gift.views} views
-              </span>
-              <span className="text-[10px] text-gray-500">
-                ✋ {gift.claims} claims
-              </span>
-            </div>
-            
-            <Button
-              onClick={handleClaim}
-              disabled={gift.claimed}
-              size="sm"
-              className="h-6 px-2 text-xs bg-green-600 hover:bg-green-700 text-white"
-            >
-              {gift.claimed ? 'Claimed' : 'Claim'}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-
-
-// ----------------------------
-// Comgift Component
-// ----------------------------
-export default function Comgift({ loaderData }: Route.ComponentProps) {
-  const user = loaderData;
-  const [searchTerm, setSearchTerm] = useState("");
-  const [gifts, setGifts] = useState<GiftProduct[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Helper: convert ISO date to simple relative string
-    const timeAgo = (iso?: string) => {
-      if (!iso) return ''
-      const diff = Date.now() - new Date(iso).getTime()
-      const mins = Math.floor(diff / (1000 * 60))
-      if (mins < 1) return 'Just now'
-      if (mins < 60) return `${mins}m ago`
-      const hrs = Math.floor(mins / 60)
-      if (hrs < 24) return `${hrs}h ago`
-      const days = Math.floor(hrs / 24)
-      return `${days}d ago`
-    }
-  
-    // Render a badge for stock status
-    const getStockStatusBadge = (stock_status?: string) => {
-      if (!stock_status) return <Badge variant="outline">Unknown</Badge>
-      const s = String(stock_status).toLowerCase()
-      switch (s) {
-        case 'in_stock':
-        case 'instock':
-        case 'available':
-          return <Badge variant="secondary">In Stock</Badge>
-        case 'out_of_stock':
-        case 'outofstock':
-        case 'out-of-stock':
-          return <Badge variant="destructive">Out of Stock</Badge>
-        case 'low_stock':
-        case 'lowstock':
-          return <Badge variant="outline" className="text-orange-600">Low Stock</Badge>
-        default:
-          return <Badge variant="outline" className="capitalize">{stock_status}</Badge>
-      }
-    }
-  
-    // Render a badge for listing status
-    const getStatusBadge = (status?: string) => {
-      if (!status) return <Badge variant="outline">Unknown</Badge>
-      const s = status.toLowerCase()
-      if (s === 'active') return <Badge variant="secondary">Active</Badge>
-      if (s === 'inactive' || s === 'archived') return <Badge variant="outline">Inactive</Badge>
-      if (s === 'draft') return <Badge variant="outline">Draft</Badge>
-      return <Badge variant="outline" className="capitalize">{status}</Badge>
-    }
-  
-    // Format date or fall back to relative time
-    const formatDate = (iso?: string) => {
-      if (!iso) return ''
-      try {
-        const d = new Date(iso)
-        if (isNaN(d.getTime())) return timeAgo(iso)
-        return d.toLocaleDateString()
-      } catch {
-        return timeAgo(iso)
-      }
+  const handleDeleteGift = async (giftId: string) => {
+    if (!confirm('Are you sure you want to delete this gift?')) {
+      return
     }
 
-    // Format price as PHP currency (shows ₱0.00 for zero)
-    const formatPrice = (price?: string | number) => {
-      try {
-        const n = parseFloat(String(price ?? '0')) || 0
-        return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n)
-      } catch (e) {
-        return '₱0.00'
-      }
-    }
-
-  // Fetch customer-owned gifts (zero-priced customer products)
-  const loadGifts = async () => {
-    setLoading(true)
-    setRefreshing(true)
-    setError(null)
     try {
-      const headers: any = {}
-      const userId = user && (user as any).user_id
-      if (userId) headers['X-User-Id'] = userId
+      // Add your delete API call here
+      console.log('Delete gift:', giftId)
+      // await AxiosInstance.delete(`/customer-products-viewset/${giftId}/`)
+      
+      // Remove gift from local state
+      setGifts(prev => prev.filter(g => g.id !== giftId))
+      
+      // Update gift limit info
+      if (giftLimitInfo) {
+        setGiftLimitInfo({
+          ...giftLimitInfo,
+          current_count: giftLimitInfo.current_count - 1,
+          remaining: giftLimitInfo.remaining + 1
+        })
+      }
+    } catch (error) {
+      console.error('Error deleting gift:', error)
+      alert('Failed to delete gift')
+    }
+  }
 
-      const endpoints = [
-        '/customer-product-list/products_list/',
-      ];
+  // Fetch zero-priced products (gifts) from customer products endpoint
+  const fetchGifts = async () => {
+    if (!userId) {
+      setLoading(false)
+      return
+    }
 
-      let res: any = null;
-      for (const ep of endpoints) {
-        try {
-          const r = await AxiosInstance.get(ep, { headers });
-          if (r && r.status === 200 && r.data) {
-            res = r;
-            break;
+    setRefreshing(true)
+    try {
+      console.log('Fetching gifts for user:', userId)
+      const response = await AxiosInstance.get('/customer-products/', {
+        params: { customer_id: userId }
+      })
+
+      console.log('API Full Response:', response.data)
+
+      if (response.data && response.data.success) {
+        console.log('Products received:', response.data.products)
+        
+        // Filter products with price = 0 (gifts)
+        const zeroPriced = (response.data.products || []).filter((p: any) => {
+          // Check different possible price fields
+          const price = parseFloat(p.price || p.starting_price || '0')
+          console.log(`Product ${p.name}: price=${price}, starting_price=${p.starting_price}`)
+          return !isNaN(price) && price === 0
+        }).map((p: any) => {
+          console.log('Processing gift:', p)
+          
+          // Calculate total stock from variants
+          let totalStock = 0
+          if (p.variants && Array.isArray(p.variants)) {
+            totalStock = p.variants.reduce((sum: number, v: any) => {
+              return sum + (parseInt(v.quantity) || 0)
+            }, 0)
+          } else if (p.total_stock) {
+            totalStock = parseInt(p.total_stock) || 0
+          } else if (p.quantity) {
+            totalStock = parseInt(p.quantity) || 0
           }
-        } catch (e) {
-          // try next
+          
+          return {
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            total_stock: totalStock,
+            condition: p.condition || 'New',
+            status: p.status || 'active',
+            upload_status: p.upload_status || 'draft',
+            category: p.category || null,
+            category_admin: p.category_admin || null,
+            variants: p.variants || [],
+            created_at: p.created_at,
+            updated_at: p.updated_at,
+            is_removed: p.is_removed,
+            removal_reason: p.removal_reason
+          }
+        })
+
+        console.log('Final filtered gifts:', zeroPriced)
+        setGifts(zeroPriced)
+        
+        // Set gift limit info if available
+        if (response.data.product_limit_info) {
+          setGiftLimitInfo(response.data.product_limit_info)
+        } else {
+          setGiftLimitInfo({
+            current_count: zeroPriced.length,
+            limit: 500,
+            remaining: 500 - zeroPriced.length
+          })
         }
-      }
-
-      if (!res || !res.data) {
+      } else {
+        console.log('API returned success false or no products')
         setGifts([])
-        setError('Failed to fetch gifts')
-        return
+        setGiftLimitInfo({
+          current_count: 0,
+          limit: 500,
+          remaining: 500
+        })
       }
-
-      const body = res.data
-      const items: any[] = Array.isArray(body.products) ? body.products : (Array.isArray(body) ? body : (body.results || []))
-
-      const zeroPriced = items.filter((p: any) => {
-        // Price may be number or string; default to 0
-        const price = parseFloat(String(p.price ?? '0'));
-        // Some APIs mark gifts explicitly
-        const isGiftFlag = p.is_gift === true || p.is_gift === 'true' || p.price === 0 || p.price === '0'
-        // Show any item that's explicitly marked as gift or whose price equals 0
-        return (isGiftFlag || (!isNaN(price) && price === 0))
-      }).map((p: any) => ({
-        id: String(p.id),
-        name: p.name,
-        description: p.description || p.short_description || '',
-        category: (p.category && p.category.name) || (p.category_admin && p.category_admin.name) || '',
-        price: p.price ?? '0',
-        total_sku_quantity: p.total_sku_quantity ?? p.quantity ?? p.stock ?? 0,
-        stock: p.quantity ?? p.total_sku_quantity ?? p.stock ?? 0,
-        stock_status: p.stock_status || (Number(p.quantity ?? p.total_sku_quantity ?? p.stock ?? 0) === 0 ? 'out_of_stock' : 'in_stock'),
-        status: p.status || p.upload_status || 'unknown',
-        is_draft: (p.is_draft === true) || (p.upload_status === 'draft') || (p.status === 'draft'),
-        created_at: p.created_at || p.created_date || p.created_at_iso || '',
-        condition: (p.condition || 'Good').charAt(0).toUpperCase() + (p.condition || 'Good').slice(1),
-        seller: {
-          id: (p.customer && (p.customer.id || p.customer)) || (p.user && p.user.id) || (p.user_id) || '',
-          name: (p.shop && p.shop.name) || (p.customer && (p.customer.username || p.customer.name)) || 'Seller',
-          rating: 0,
-          location: ''
-        },
-        image: (
-          p.primary_image && (typeof p.primary_image === 'string' ? p.primary_image : (p.primary_image.url || p.primary_image.file_url))
-        ) || (p.media_files && p.media_files[0] && (p.media_files[0].file_url || p.media_files[0].file)) || p.image || '/api/placeholder/300/300',
-        claimed: !!p.claimed || false,
-        pickupLocation: p.pickup_location || (p.shop && (p.shop.city || p.shop.address)) || '',
-        postedTime: timeAgo(p.created_at || p.created_at_iso || p.created_date),
-        views: p.views || 0,
-        claims: p.claims || 0,
-        raw: p
-      }))
-
-      setGifts(zeroPriced)
-    } catch (err: any) {
-      console.error('Failed to fetch customer gifts', err)
+    } catch (error) {
+      console.error('Error fetching gifts:', error)
       setGifts([])
-      setError(err.response?.data?.message || err.message || 'Failed to fetch gifts')
+      setGiftLimitInfo({
+        current_count: 0,
+        limit: 500,
+        remaining: 500
+      })
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -415,391 +227,438 @@ export default function Comgift({ loaderData }: Route.ComponentProps) {
   }
 
   useEffect(() => {
-    loadGifts()
-  }, [user])
-
-  // Filter gifts based on search
-  const filteredGifts = gifts.filter(gift =>
-    searchTerm === "" ||
-    gift.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    gift.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    gift.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    gift.seller.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const availableGifts = gifts.filter(gift => !gift.claimed).length;
-
-  // Handlers for actions
-  const navigate = useNavigate();
-  const handleView = (giftId: string) => navigate(`/listings/${giftId}`);
-  const handleEditListing = (productId: string) => {
-    navigate(`/personal-listings/edit/${productId}`);
-  };
-
-  const handleDeleteListing = async (productId: string) => {
-    if (!confirm('Are you sure you want to delete this listing? This action cannot be undone.')) return;
-    try {
-      await AxiosInstance.delete(`/customer-products/${productId}/`);
-      setGifts(prev => prev.filter(p => p.id !== productId));
-      alert('Listing deleted');
-    } catch (err: any) {
-      console.error('Failed to delete listing:', err);
-      alert(err.response?.data?.message || 'Failed to delete listing');
-    }
-  };
-
-  const handleAddToShop = async (productId: string) => {
-    try {
-      await AxiosInstance.post(`/customer-products/${productId}/add-to-shop/`);
-      setGifts(prev => prev.map(p => p.id === productId ? { ...p, is_shop_visible: true } : p));
-      alert('Listing added to your shop successfully');
-    } catch (err: any) {
-      console.error('Failed to add to shop:', err);
-      alert(err.response?.data?.message || 'Failed to add to shop');
-    }
-  };
-
-  const handleToggleStatus = async (productId: string, currentStatus?: string) => {
-    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-    try {
-      await AxiosInstance.patch(`/customer-products/${productId}/`, { status: newStatus });
-      setGifts(prev => prev.map(p => p.id === productId ? { ...p, status: newStatus } : p));
-      alert(`Listing ${newStatus === 'active' ? 'activated' : 'deactivated'} successfully`);
-    } catch (err: any) {
-      console.error('Failed to update status:', err);
-      alert(err.response?.data?.message || 'Failed to update status');
-    }
-  };
-
-  const handleClaim = (giftId: string) => {
-    setGifts(prev => prev.map(g => g.id === giftId ? { ...g, claimed: true } : g));
-  }
+    fetchGifts()
+  }, [userId])
 
   const handleRefresh = () => {
-    // Re-run fetch effect by toggling user or simply calling fetch logic - call fetch via setting refreshing
-    // We'll reuse fetch by calling the effect's function via a small trick: invoke the fetch inside here
-    (async () => {
-      setRefreshing(true)
-      setError(null)
-      try {
-        const headers: any = {}
-        const userId = user && (user as any).user_id
-        if (userId) headers['X-User-Id'] = userId
-
-        const res = await AxiosInstance.get('/customer-product-list/products_list/', { headers })
-        if (res.status === 200 && res.data) {
-          const body = res.data
-          const items: any[] = Array.isArray(body.products) ? body.products : (Array.isArray(body) ? body : (body.results || []))
-
-          const zeroPriced = items.filter((p: any) => {
-            const price = parseFloat(String(p.price ?? '0'));
-            const isGiftFlag = p.is_gift === true || p.is_gift === 'true' || price === 0;
-            return (isGiftFlag || (!isNaN(price) && price === 0));
-          }).map((p: any) => ({
-            id: String(p.id),
-            name: p.name,
-            description: p.description || p.short_description || '',
-            category: (p.category && p.category.name) || (p.category_admin && p.category_admin.name) || '',
-            condition: (p.condition || 'Good').charAt(0).toUpperCase() + (p.condition || 'Good').slice(1),
-            seller: {
-              id: userId || '',
-              name: (p.shop && p.shop.name) || (p.customer && (p.customer.username || p.customer.name)) || 'Seller',
-              rating: 0,
-              location: ''
-            },
-            image: (
-              p.primary_image && (typeof p.primary_image === 'string' ? p.primary_image : (p.primary_image.url || p.primary_image.file_url))
-            ) || (p.media_files && p.media_files[0] && (p.media_files[0].file_url || p.media_files[0].file)) || p.image || '/api/placeholder/300/300',
-            claimed: !!p.claimed || false,
-            pickupLocation: p.pickup_location || (p.shop && (p.shop.city || p.shop.address)) || '',
-            postedTime: timeAgo(p.created_at || p.created_at_iso || p.created_date),
-            views: p.views || 0,
-            claims: p.claims || 0
-          }))
-
-          setGifts(zeroPriced)
-        } else {
-          setGifts([])
-          setError(res.data?.message || 'Failed to fetch gifts')
-        }
-      } catch (err: any) {
-        console.error('Failed to fetch customer gifts', err)
-        setGifts([])
-        setError(err.response?.data?.message || err.message || 'Failed to fetch gifts')
-      } finally {
-        setRefreshing(false)
-      }
-    })()
+    fetchGifts()
   }
 
-  // Table layout similar to Personal Listings
-  const renderTable = () => (
-    <Card>
-      <CardHeader>
-        <CardTitle>Gifts</CardTitle>
-        <CardDescription>
-          {gifts.length} gift{gifts.length !== 1 ? 's' : ''}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Gift</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>Condition</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Posted</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredGifts.map(gift => (
-              <TableRow key={gift.id}>
-                <TableCell>
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center overflow-hidden">
-                      <img src={gift.image} alt={gift.name} className="h-full w-full object-cover" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{gift.name}</div>
-                      <div className="text-xs text-muted-foreground truncate max-w-xs">{gift.description}</div>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell><Badge variant="outline">{gift.category || 'No Category'}</Badge></TableCell>
-                <TableCell>{gift.seller.name}</TableCell>
-                <TableCell><Badge variant="outline" className="capitalize">{gift.condition}</Badge></TableCell>
-                <TableCell><Badge variant={gift.claimed ? 'secondary' : 'default'}>{gift.claimed ? 'Claimed' : 'Available'}</Badge></TableCell>
-                <TableCell>{gift.postedTime}</TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" className="h-8 w-8 p-0">
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                      <DropdownMenuItem onClick={() => handleView(gift.id)}>
-                        <Eye className="h-4 w-4 mr-2 inline" />
-                        View Gift
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleClaim(gift.id)}>
-                        Claim
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
-  );
+  const handleToggleStatus = async (giftId: string, currentStatus: string) => {
+    try {
+      const newStatus = currentStatus === 'active' ? 'inactive' : 'active'
+      // Add your status update API call here
+      console.log('Toggle status:', giftId, newStatus)
+      // await AxiosInstance.patch(`/customer-products-viewset/${giftId}/`, { status: newStatus })
+      
+      // Update local state
+      setGifts(prev => prev.map(g => 
+        g.id === giftId ? { ...g, status: newStatus as Gift['status'] } : g
+      ))
+    } catch (error) {
+      console.error('Error updating gift status:', error)
+      alert('Failed to update gift status')
+    }
+  }
 
-  return (
-    <UserProvider user={user as any}>
-      <SidebarLayout>
-        <section className="w-full p-3">
-          {/* Compact Search bar */}
-          <div className="mb-4">
-            <CompactSearchBar searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
-          </div>
+  const handleToggleUploadStatus = async (giftId: string, currentStatus: string) => {
+    try {
+      const newStatus = currentStatus === 'published' ? 'draft' : 'published'
+      // Add your status update API call here
+      console.log('Toggle upload status:', giftId, newStatus)
+      // await AxiosInstance.patch(`/customer-products-viewset/${giftId}/`, { upload_status: newStatus })
+      
+      // Update local state
+      setGifts(prev => prev.map(g => 
+        g.id === giftId ? { ...g, upload_status: newStatus as Gift['upload_status'] } : g
+      ))
+    } catch (error) {
+      console.error('Error updating gift upload status:', error)
+      alert('Failed to update gift upload status')
+    }
+  }
 
-          {/* Header */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">My Gifts</h1>
-              <p className="text-gray-600 mt-1">Manage your gifted items</p>
-            </div>
-            <div className="flex gap-3">
-              <Button 
-                onClick={handleRefresh} 
-                variant="outline" 
-                disabled={refreshing}
-                className="flex items-center gap-2"
-                size="default"
-              >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
-              <Button 
-                asChild 
-                className="bg-primary hover:bg-primary/90 flex items-center gap-2"
-                size="default"
-              >
-                <Link to="/customer-create-gift">
-                  <Plus className="w-4 h-4" />
-                  Gift Item
-                </Link>
-              </Button>
-            </div>
-          </div>
+  const getStockStatusBadge = (stock: number) => {
+    if (stock === 0) return <Badge variant="destructive">Out of Stock</Badge>
+    if (stock < 10) return <Badge variant="outline" className="text-purple-600 border-purple-200 bg-purple-50">Low Stock ({stock})</Badge>
+    return <Badge variant="default" className="bg-green-600">In Stock ({stock})</Badge>
+  }
 
-          {/* Error Alert */}
-          {error && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+  const formatDate = (dateString: string) => {
+    if (!dateString) return 'N/A'
+    return new Date(dateString).toLocaleDateString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    })
+  }
 
-          {/* Info Alert */}
-          <Alert>
-            <InfoIcon className="h-4 w-4" />
-            <AlertDescription>
-              You have {gifts.length} gifted item{gifts.length !== 1 ? 's' : ''}.
-            </AlertDescription>
-          </Alert>
+  const getStatusBadge = (status: string) => {
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
+      active: { variant: "default", label: "Active" },
+      inactive: { variant: "secondary", label: "Inactive" },
+      draft: { variant: "outline", label: "Draft" }
+    }
 
-          {/* Stats Summary */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2 mb-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-2xl font-bold">{gifts.length}</div>
-                <div className="text-sm text-muted-foreground">Total Gifts</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-2xl font-bold text-green-600">{availableGifts}</div>
-                <div className="text-sm text-muted-foreground">Available</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-2xl font-bold text-amber-600">{gifts.length - availableGifts}</div>
-                <div className="text-sm text-muted-foreground">Claimed</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-2xl font-bold text-blue-600">{gifts.length}</div>
-                <div className="text-sm text-muted-foreground">Recent Gifts</div>
-              </CardContent>
-            </Card>
-          </div>
-          {/* Gifts Data Table */}
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-700">{searchTerm ? `Search results for "${searchTerm}"` : "Available Electronics"}</h2>
-            <span className="text-xs text-gray-500">{filteredGifts.length} items</span>
-          </div>
+    const config = statusConfig[status] || { variant: "outline", label: status }
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Your Gifts</CardTitle>
-              <CardDescription>
-                {filteredGifts.length} gift{filteredGifts.length !== 1 ? 's' : ''}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {filteredGifts.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  {gifts.length === 0 ? (
-                    <div className="space-y-4 max-w-md mx-auto">
-                      <div className="p-3 bg-muted rounded-full w-16 h-16 mx-auto flex items-center justify-center">
-                        <ShoppingBag className="w-8 h-8 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2">No gifts yet</h3>
-                        <p className="text-muted-foreground text-sm mb-6">Create your first gift to share with others.</p>
-                      </div>
-                      <Button 
-                        asChild 
-                        className="bg-primary hover:bg-primary/90 flex items-center gap-2"
-                        size="lg"
-                      >
-                        <Link to="/customer-create-gift">
-                          <Plus className="w-4 h-4" />
-                          Create Your First Gift
-                        </Link>
-                      </Button>
-                    </div>
-                  ) : (
-                    'No gifts match your search.'
-                  )}
-                </div>
+    return (
+      <Badge variant={config.variant} className="capitalize">
+        {config.label}
+      </Badge>
+    )
+  }
+
+  const getUploadStatusBadge = (status: string) => {
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
+      published: { variant: "default", label: "Published" },
+      draft: { variant: "secondary", label: "Draft" },
+      archived: { variant: "outline", label: "Archived" }
+    }
+
+    const config = statusConfig[status] || { variant: "outline", label: status }
+
+    return (
+      <Badge variant={config.variant} className="capitalize">
+        {config.label}
+      </Badge>
+    )
+  }
+
+  const getConditionBadge = (condition: string) => {
+    const conditionLower = condition.toLowerCase()
+    
+    if (conditionLower.includes('new')) {
+      return <Badge variant="default" className="bg-blue-600">New</Badge>
+    }
+    if (conditionLower.includes('like new')) {
+      return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Like New</Badge>
+    }
+    if (conditionLower.includes('refurbished')) {
+      return <Badge variant="secondary">Refurbished</Badge>
+    }
+    if (conditionLower.includes('excellent')) {
+      return <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50">Excellent</Badge>
+    }
+    if (conditionLower.includes('good')) {
+      return <Badge variant="outline" className="text-yellow-600 border-yellow-200 bg-yellow-50">Good</Badge>
+    }
+    
+    return <Badge variant="outline">{condition}</Badge>
+  }
+
+  const getCategoryName = (gift: Gift) => {
+    return gift.category?.name || gift.category_admin?.name || 'No Category'
+  }
+
+  const getVariantSummary = (variants: any[]) => {
+    if (!variants || variants.length === 0) return 'No variants'
+    const activeVariants = variants.filter(v => v.is_active !== false).length
+    return `${activeVariants} variant${activeVariants !== 1 ? 's' : ''}`
+  }
+
+  // Define columns for the data table - exactly as requested
+  const columns: ColumnDef<Gift>[] = [
+    {
+      accessorKey: "name",
+      header: "Gift",
+      cell: ({ row }) => {
+        const gift = row.original
+        // Get first variant image if available
+        const variantImage = gift.variants?.find(v => v.image)?.image
+        return (
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center overflow-hidden">
+              {variantImage ? (
+                <img 
+                  src={variantImage} 
+                  alt={gift.name}
+                  className="h-full w-full object-cover"
+                />
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Item</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead className="text-right">Price</TableHead>
-                        <TableHead className="text-right">Stock</TableHead>
-                        <TableHead>Stock Status</TableHead>
-                        <TableHead>List Status</TableHead>
-                        <TableHead>Date Added</TableHead>
-                        <TableHead className="text-right">Actions</TableHead> --
-
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredGifts.map(gift => (
-                        <TableRow key={gift.id}>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center overflow-hidden">
-                                <img src={gift.image} alt={gift.name} className="h-full w-full object-cover" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-medium truncate">{gift.name}</div>
-                                <div className="text-xs text-muted-foreground truncate max-w-xs">{gift.description}</div>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell><Badge variant="outline">{gift.category || 'No Category'}</Badge></TableCell>
-                          <TableCell className="text-right font-medium">{formatPrice(gift.price)}</TableCell>
-                          <TableCell className="text-right"><span className={gift.total_sku_quantity === 0 ? 'text-red-600 font-medium' : ''}>{gift.total_sku_quantity}</span></TableCell>
-                          <TableCell>{getStockStatusBadge(gift.stock_status)}</TableCell>
-                          <TableCell>{getStatusBadge(gift.status)}{gift.is_draft && <Badge variant="outline" className="ml-1">Draft</Badge>}</TableCell>
-                          <TableCell>{formatDate(gift.created_at)}</TableCell>
-                          <TableCell className="text-right">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" className="h-8 w-8 p-0">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                <DropdownMenuItem onClick={() => handleView(gift.id)}>
-                                  <Eye className="h-4 w-4 mr-2 inline" />
-                                  View Listing
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleEditListing(gift.id)}>
-                                  <Edit className="h-4 w-4 mr-2" />
-                                  Edit Listing
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleAddToShop(gift.id)}>
-                                  <Upload className="h-4 w-4 mr-2" />
-                                  Add to Shop
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleToggleStatus(gift.id, gift.status)}>
-                                  {gift.status === 'active' ? 'Deactivate' : 'Activate'}
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem onClick={() => handleDeleteListing(gift.id)} className="text-red-600 focus:text-red-600">
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Delete Listing
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <Gift className="h-5 w-5 text-muted-foreground" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium truncate">{gift.name}</div>
+              <div className="text-xs text-muted-foreground truncate max-w-xs">
+                {gift.description?.substring(0, 60)}{gift.description?.length > 60 ? '...' : ''}
+              </div>
+              {getVariantSummary(gift.variants) !== 'No variants' && (
+                <div className="text-xs text-muted-foreground mt-1">
+                  {getVariantSummary(gift.variants)}
                 </div>
               )}
+            </div>
+          </div>
+        )
+      },
+    },
+    {
+      accessorKey: "category.name",
+      header: "Category",
+      cell: ({ row }) => {
+        const gift = row.original
+        return (
+          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+            {getCategoryName(gift)}
+          </Badge>
+        )
+      },
+    },
+    {
+      accessorKey: "condition",
+      header: "Condition",
+      cell: ({ row }) => {
+        return getConditionBadge(row.original.condition)
+      },
+    },
+    {
+      accessorKey: "total_stock",
+      header: "Total Stock",
+      cell: ({ row }) => {
+        const stock = row.original.total_stock
+        return (
+          <div className={`text-center font-medium ${stock === 0 ? 'text-red-600' : ''}`}>
+            {stock}
+          </div>
+        )
+      },
+    },
+    {
+      accessorKey: "status",
+      header: "List Status",
+      cell: ({ row }) => {
+        return getStatusBadge(row.original.status)
+      },
+    },
+    {
+      accessorKey: "upload_status",
+      header: "Upload Status",
+      cell: ({ row }) => {
+        return getUploadStatusBadge(row.original.upload_status)
+      },
+    },
+    {
+      accessorKey: "created_at",
+      header: "Date Added",
+      cell: ({ row }) => {
+        return formatDate(row.original.created_at)
+      },
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => {
+        const gift = row.original
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="h-8 w-8 p-0">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => handleViewGift(gift.id)}>
+                <Eye className="h-4 w-4 mr-2" />
+                View Gift
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleEditGift(gift.id)}>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Gift
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => handleToggleUploadStatus(gift.id, gift.upload_status)}
+              >
+                {gift.upload_status === 'published' ? 'Unpublish' : 'Publish'}
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => handleToggleStatus(gift.id, gift.status)}
+              >
+                {gift.status === 'active' ? 'Deactivate' : 'Activate'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                onClick={() => handleDeleteGift(gift.id)}
+                className="text-red-600 focus:text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Gift
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      },
+    },
+  ]
+
+  // Configuration for filters
+  const filterConfig = {
+    upload_status: {
+      options: ["published", "draft", "archived"],
+      placeholder: "Upload Status"
+    },
+    status: {
+      options: ["active", "inactive", "draft"],
+      placeholder: "List Status"
+    },
+    condition: {
+      options: ["New", "Like New", "Refurbished", "Used - Excellent", "Used - Good"],
+      placeholder: "Condition"
+    }
+  }
+
+  if (loading) {
+    return (
+      <SidebarLayout>
+        <div className="p-6">
+          <Card>
+            <CardContent className="p-6">
+              <div className="text-center py-8">
+                <div className="animate-spin h-8 w-8 border-4 border-purple-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Loading your gifts...</p>
+              </div>
             </CardContent>
           </Card>
-        </section>
+        </div>
       </SidebarLayout>
-    </UserProvider>
-  );
+    )
+  }
+
+  return (
+    <SidebarLayout>
+      <div className="p-6 space-y-6">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">My Gifts</h1>
+            <p className="text-muted-foreground">
+              Manage your gifted items 
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <Button 
+              onClick={handleRefresh} 
+              variant="outline" 
+              disabled={refreshing}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+            <Button asChild className="bg-purple-600 hover:bg-purple-700">
+              <Link to="/customer-create-gift">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Gift
+              </Link>
+            </Button>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold">{gifts.length}</div>
+                  <div className="text-sm text-muted-foreground">Total Gifts</div>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
+                  <Gift className="h-5 w-5 text-purple-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-green-600">
+                    {gifts.filter(g => g.status === 'active').length}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Active</div>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center">
+                  <Award className="h-5 w-5 text-green-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-blue-600">
+                    {gifts.filter(g => g.upload_status === 'published').length}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Published</div>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                  <Eye className="h-5 w-5 text-blue-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-orange-600">
+                    {gifts.filter(g => g.total_stock === 0).length}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Out of Stock</div>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-orange-100 flex items-center justify-center">
+                  <Package className="h-5 w-5 text-orange-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Gifts Data Table */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Your Gifts</CardTitle>
+            <CardDescription>
+              {gifts.length} gift{gifts.length !== 1 ? 's' : ''} found
+              {giftLimitInfo && ` • ${giftLimitInfo.remaining} slots remaining`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {!userId ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <div className="mb-4">User authentication required</div>
+                <Button asChild>
+                  <Link to="/login">Please log in</Link>
+                </Button>
+              </div>
+            ) : gifts.length === 0 ? (
+              <div className="text-center py-12">
+                <Gift className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-medium mb-2">No gifts found</h3>
+                <p className="text-muted-foreground mb-4">
+                  You haven't created any gifts yet. Gifts are products with price set to 0.
+                </p>
+                <Button asChild className="bg-purple-600 hover:bg-purple-700">
+                  <Link to="/customer-create-gift">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Your First Gift
+                  </Link>
+                </Button>
+              </div>
+            ) : (
+              <DataTable
+                columns={columns}
+                data={gifts}
+                searchConfig={{
+                  column: "name",
+                  placeholder: "Search gifts by name..."
+                }}
+                filterConfig={filterConfig}
+                defaultSorting={[
+                  {
+                    id: "created_at",
+                    desc: true,
+                  },
+                ]}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </SidebarLayout>
+  )
 }

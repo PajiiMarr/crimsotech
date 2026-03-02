@@ -16791,7 +16791,8 @@ class SellerProducts(viewsets.ModelViewSet):
                 'success': False,
                 'error': f'Image prediction failed: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
+
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
@@ -16810,7 +16811,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                 category_data = {
                     "id": str(category.id),
                     "name": category.name,
-                    "shop": None,  # Explicitly set to null since we're filtering for null shop
+                    "shop": None,
                     "user": {
                         "id": str(category.user.id),
                         "username": category.user.username
@@ -16827,32 +16828,381 @@ class CustomerProducts(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
+            logger.error(f"Error fetching global categories: {str(e)}")
             return Response({
                 "success": False,
                 "error": "Failed to fetch global categories",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def get_queryset(self):
-        user_id = self.request.query_params.get('customer_id')
-        if user_id:
+    @action(detail=False, methods=['post'], url_path='global-categories/predict')    
+    def predict_category(self, request):
+        """
+        Predict category for a product using ML model
+        """
+        try:
+            import pandas as pd
+            import numpy as np
+            import tensorflow as tf
+            import joblib
+            import os
+            
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+            MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+            
+            logger.info(f"Looking for models in: {MODEL_DIR}")
+
+            # Load the trained models
             try:
-                seller = Customer.objects.get(customer_id=user_id)
-                return Product.objects.filter(customer=seller).order_by('-created_at')
-            except Customer.DoesNotExist:
-                return Product.objects.none()
-        return Product.objects.none()
+                category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+                scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+                model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
+                feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
+                
+                logger.info(f"Models loaded successfully! Model expects {len(feature_columns)} features")
+                
+            except FileNotFoundError as e:
+                logger.error(f"Model file not found: {str(e)}")
+                return Response(
+                    {'success': False, 'error': 'Model files not found. Please train the model first.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Extract and validate data from request
+            data = request.data
+            
+            required_fields = ['name', 'description', 'quantity', 'price', 'condition']
+            for field in required_fields:
+                if field not in data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Validate data types
+            try:
+                item_data = {
+                    'name': str(data['name']),
+                    'description': str(data['description']),
+                    'quantity': int(data['quantity']),
+                    'price': float(data['price']),
+                    'condition': str(data['condition'])
+                }
+                
+                if item_data['quantity'] < 0:
+                    return Response(
+                        {'success': False, 'error': 'Quantity cannot be negative'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                    
+                if item_data['price'] < 0:
+                    return Response(
+                        {'success': False, 'error': 'Price cannot be negative'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                    
+            except (ValueError, TypeError) as e:
+                return Response(
+                    {'success': False, 'error': f'Invalid data format: {str(e)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            logger.info(f"Prediction started for product: {item_data['name']}")
+            
+            # Create features exactly as during training
+            features = {col: 0 for col in feature_columns}
+            price = item_data['price']
+            quantity = item_data['quantity']
+            
+            # Set numeric features
+            numeric_features = {
+                'price': price,
+                'quantity': quantity,
+                'price_quantity_interaction': price * np.log1p(quantity + 1),
+                'log_price': np.log1p(price),
+                'price_per_unit': price / (quantity + 1),
+                'price_to_quantity_ratio': price / (quantity + 1e-5),
+                'price_scaled': price / 10000,
+                'quantity_scaled': quantity / 100
+            }
+            
+            for feat_name, feat_value in numeric_features.items():
+                if feat_name in feature_columns:
+                    features[feat_name] = feat_value
+            
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            
+            condition_scores = {
+                'new': 3, 'like new': 2, 'refurbished': 1,
+                'excellent': 0, 'good': -1, 'fair': -2
+            }
+            
+            if 'condition_score' in feature_columns:
+                features['condition_score'] = next(
+                    (score for keyword, score in condition_scores.items() 
+                     if keyword in condition_lower), 0
+                )
+            
+            if 'is_refurbished' in feature_columns:
+                features['is_refurbished'] = 1 if 'refurbished' in condition_lower else 0
+            
+            # Text features
+            name_lower = item_data['name'].lower()
+            desc_lower = item_data['description'].lower()
+            all_text = f"{name_lower} {desc_lower}"
+            
+            if 'name_length' in feature_columns:
+                features['name_length'] = len(item_data['name'])
+            if 'desc_length' in feature_columns:
+                features['desc_length'] = len(item_data['description'])
+            if 'name_desc_ratio' in feature_columns:
+                desc_len = len(item_data['description'])
+                features['name_desc_ratio'] = len(item_data['name']) / desc_len if desc_len > 0 else len(item_data['name'])
+            
+            # Keyword features
+            for feature in feature_columns:
+                if feature.startswith('has_'):
+                    keyword = feature[4:]
+                    features[feature] = 1 if keyword in all_text else 0
+            
+            # Price bins
+            price_bins = [
+                (price < 100, 'price_bin_0'),
+                (100 <= price < 500, 'price_bin_1'),
+                (500 <= price < 1000, 'price_bin_2'),
+                (1000 <= price < 2000, 'price_bin_3'),
+                (price >= 2000, 'price_bin_4')
+            ]
+            
+            for condition, bin_name in price_bins:
+                if bin_name in feature_columns and condition:
+                    features[bin_name] = 1
+            
+            # Category-specific features (set defaults for prediction)
+            for feat in ['price_category_zscore', 'quantity_category_zscore']:
+                if feat in feature_columns:
+                    features[feat] = 0
+            
+            if 'price_category_quartile' in feature_columns:
+                features['price_category_quartile'] = 2
+            
+            # Word count features
+            if 'name_word_count' in feature_columns:
+                features['name_word_count'] = len(item_data['name'].split())
+            if 'desc_word_count' in feature_columns:
+                features['desc_word_count'] = len(item_data['description'].split())
+            
+            # Keyword count
+            keyword_features = [f for f in feature_columns if f.startswith('has_')]
+            if 'keyword_count' in feature_columns:
+                features['keyword_count'] = sum(1 for f in keyword_features if features.get(f, 0) == 1)
+            if 'unique_keywords' in feature_columns:
+                features['unique_keywords'] = sum(1 for f in keyword_features if features.get(f, 0) == 1)
+            
+            # Brand mentions
+            brands = ['iphone', 'samsung', 'apple', 'sony']
+            for brand in brands:
+                brand_feature = f'has_{brand}'
+                if brand_feature in feature_columns:
+                    features[brand_feature] = 1 if brand in all_text else 0
+            
+            # New/Used flags
+            if 'is_new' in feature_columns:
+                features['is_new'] = 1 if 'new' in condition_lower else 0
+            if 'is_used' in feature_columns:
+                features['is_used'] = 1 if 'used' in condition_lower else 0
+            
+            # Create DataFrame with exactly the expected features
+            X_item = pd.DataFrame([features])
+            
+            # Ensure all expected columns exist
+            for col in feature_columns:
+                if col not in X_item.columns:
+                    X_item[col] = 0
+            
+            # Remove any extra columns
+            X_item = X_item[[col for col in feature_columns if col in X_item.columns]]
+            
+            # Reorder columns to match training order
+            X_item = X_item[feature_columns]
+            
+            logger.info(f"Feature creation complete. Shape: {X_item.shape}")
+            
+            # Scale and predict
+            try:
+                X_scaled = scaler.transform(X_item)
+            except Exception as e:
+                logger.error(f"Scaling error: {e}, using raw features")
+                X_scaled = X_item.values.astype(np.float32)
+            
+            prediction_probs = model.predict(X_scaled, verbose=0)
+            predicted_class = np.argmax(prediction_probs, axis=1)[0]
+            confidence = float(np.max(prediction_probs, axis=1)[0])
+            
+            # Convert predicted class to category label
+            predicted_label = category_le.inverse_transform([predicted_class])[0]
+            
+            logger.info(f"Prediction successful: {predicted_label} with confidence {confidence:.2%}")
+            
+            # Get UUID from database
+            try:
+                category_obj = Category.objects.filter(
+                    name__iexact=predicted_label,
+                    shop__isnull=True
+                ).first()
+                
+                if category_obj:
+                    category_uuid = str(category_obj.id)
+                    category_name = category_obj.name
+                else:
+                    # Try partial match
+                    similar_category = Category.objects.filter(
+                        name__icontains=predicted_label,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if similar_category:
+                        category_uuid = str(similar_category.id)
+                        category_name = similar_category.name
+                    else:
+                        category_uuid = None
+                        category_name = predicted_label
+                        
+            except Exception as db_error:
+                logger.error(f"Database lookup error: {db_error}")
+                category_uuid = None
+                category_name = predicted_label
+            
+            # Get all categories from database
+            try:
+                all_categories_objs = Category.objects.filter(shop__isnull=True)
+                all_categories_list = [
+                    {'uuid': str(cat.id), 'name': cat.name, 'id': str(cat.id)}
+                    for cat in all_categories_objs
+                ]
+                logger.info(f"Found {len(all_categories_list)} categories in database")
+            except Exception as e:
+                logger.error(f"Error fetching categories from DB: {e}")
+                all_categories_list = [
+                    {'uuid': f"model_{i}", 'name': class_name, 'id': f"model_{i}"}
+                    for i, class_name in enumerate(category_le.classes_)
+                ]
+            
+            # Prepare top 3 categories
+            top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
+            top_categories = []
+            
+            for idx in top_3_indices:
+                category_label = category_le.inverse_transform([idx])[0]
+                
+                try:
+                    cat_obj = Category.objects.filter(
+                        name__iexact=category_label,
+                        shop__isnull=True
+                    ).first()
+                    
+                    if cat_obj:
+                        category_uuid_for_alt = str(cat_obj.id)
+                        category_name_for_alt = cat_obj.name
+                    else:
+                        category_uuid_for_alt = None
+                        category_name_for_alt = category_label
+                        
+                except Exception:
+                    category_uuid_for_alt = None
+                    category_name_for_alt = category_label
+                
+                top_categories.append({
+                    'category_id': int(idx),
+                    'category_uuid': category_uuid_for_alt,
+                    'category_name': category_name_for_alt,
+                    'confidence': float(prediction_probs[0][idx])
+                })
+            
+            # Get keywords found
+            keyword_cols = [col for col in feature_columns if col.startswith('has_')]
+            keywords_found = [
+                col.replace('has_', '') 
+                for col in keyword_cols 
+                if features.get(col, 0) == 1
+            ]
+            
+            # Determine price range
+            if price < 100:
+                price_range = 'Ultra Budget'
+            elif price < 500:
+                price_range = 'Budget'
+            elif price < 1000:
+                price_range = 'Mid-range'
+            elif price < 2000:
+                price_range = 'Premium'
+            else:
+                price_range = 'Luxury'
+            
+            result = {
+                'success': True,
+                'predicted_category': {
+                    'category_id': int(predicted_class),
+                    'category_uuid': category_uuid,
+                    'category_name': predicted_label,
+                    'confidence': confidence
+                },
+                'alternative_categories': top_categories[1:] if len(top_categories) > 1 else [],
+                'all_categories': all_categories_list,
+                'feature_insights': {
+                    'keywords_found': keywords_found,
+                    'price_range': price_range,
+                    'price': float(price),
+                    'quantity': int(quantity),
+                    'condition': item_data['condition']
+                }
+            }
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Prediction error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            return Response(
+                {'success': False, 'error': f'Prediction failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def get_queryset(self):
+        """
+        Get queryset for customer's personal listings
+        """
+        user_id = self.request.data.get('customer_id') or self.request.query_params.get('customer_id')
+        
+        if not user_id:
+            return Product.objects.none()
+            
+        try:
+            # Validate UUID format
+            uuid.UUID(str(user_id))
+            customer = Customer.objects.select_related('customer').get(customer_id=user_id)
+            # Only get personal listings (no shop)
+            return Product.objects.filter(
+                customer=customer,
+                shop__isnull=True
+            ).select_related(
+                'category_admin', 'category'
+            ).prefetch_related(
+                'variants'
+            ).order_by('-created_at')
+            
+        except (ValueError, Customer.DoesNotExist):
+            return Product.objects.none()
 
     def create(self, request):
-        print("Request FILES:", request.FILES)
-        print("Request data keys:", request.data.keys())
-        media_files = request.FILES.getlist('media_files')
-        print(f"Number of media files: {len(media_files)}")
-        
-        for file in media_files:
-            print(f"File: {file.name}, Size: {file.size}, Type: {file.content_type}")
-            
-        required_fields = ["name", "description", "quantity", "price", "condition", "customer_id"]
+        """
+        Create a new personal listing with variants and media (no shop)
+        """
+        # Validate required fields - NO SHOP REQUIRED
+        required_fields = ["name", "description", "condition", "customer_id"]
         missing_fields = [f for f in required_fields if f not in request.data]
 
         if missing_fields:
@@ -16861,251 +17211,482 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "missing_fields": missing_fields
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Get the user ID from session (sent from frontend)
+        # Get and validate customer
         user_id = request.data.get("customer_id")
         if not user_id:
             return Response({"error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Get customer using the user_id from session
         try:
-            customer = Customer.objects.get(customer_id=user_id)
-        except Customer.DoesNotExist:
+            # Validate UUID format
+            uuid.UUID(str(user_id))
+            customer = Customer.objects.select_related('customer').get(customer_id=user_id)
+        except (ValueError, Customer.DoesNotExist):
             return Response({"error": "Customer not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Check if customer can add more personal listings
+        # Check product limit
         if not customer.can_add_product():
             return Response({
                 "error": f"Cannot add more than {customer.product_limit} personal listings. Current count: {customer.current_product_count}"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Prepare data with the customer from session user_id
-        product_data = request.data.copy()
-        product_data['customer'] = customer.customer_id
-        # Default: personal listings are refundable unless customer disables it
-        if 'is_refundable' not in product_data and 'refundable' not in product_data:
-            product_data['is_refundable'] = True
+        # Check if variants are provided and not empty
+        variants_raw = request.data.get('variants')
+        if not variants_raw:
+            return Response({
+                "error": "At least one variant is required for each personal listing"
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        # For personal listings, ensure no shop is attached
-        product_data['shop'] = None
-        
-        # Handle category_admin_id for global categories
-        category_admin_id = request.data.get('category_admin_id')
-        if category_admin_id and category_admin_id != "none":
-            try:
-                category_admin = Category.objects.get(id=category_admin_id, shop__isnull=True)
-                product_data['category_admin'] = category_admin_id
-            except Category.DoesNotExist:
-                return Response({
-                    "error": "Invalid global category selected"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        # If accepted_categories was sent as a JSON string, parse it into a list for the serializer
+        # Validate that variants is a non-empty list
         try:
             import json
-            accepted_raw = product_data.get('accepted_categories')
-            if accepted_raw and isinstance(accepted_raw, str):
-                accepted_list = json.loads(accepted_raw)
-                try:
-                    product_data.setlist('accepted_categories', accepted_list)
-                except Exception:
-                    product_data['accepted_categories'] = accepted_list
-        except Exception as e:
-            print('Failed to parse accepted_categories:', e)
+            variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+            if not isinstance(variants_list, list) or len(variants_list) == 0:
+                return Response({
+                    "error": "Personal listings must have at least one variant"
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except:
+            return Response({
+                "error": "Invalid variants format"
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer = ProductCreateSerializer(data=product_data, context={'request': request})
-        if serializer.is_valid():
-            with transaction.atomic():
-                try:
-                    product = serializer.save()
-                    # Ensure product-level refund_days default when is_refundable set
-                    try:
-                        if product.is_refundable and not getattr(product, 'refund_days', 0):
-                            product.refund_days = 30
-                            product.save(update_fields=['refund_days'])
-                    except Exception as e:
-                        print(f"Warning: failed to set product refund_days: {e}")
-                    
-                    # Handle media files if any
-                    media_files = request.FILES.getlist('media_files')
-                    for media_file in media_files:
-                        ProductMedia.objects.create(
-                            product=product,
-                            file_data=media_file,
-                            file_type=media_file.content_type
-                        )
-                    
-                    # Handle variants if any - using the new Variants model
-                    variants_raw = request.data.get('variants')
-                    if variants_raw:
-                        try:
-                            import json
-                            variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
-                        except Exception as e:
-                            print('Failed to parse variants payload:', e)
-                            variants_list = []
+        # Prepare product data
+        product_data = {}
+        for key, value in request.data.items():
+            if not hasattr(value, 'file'):
+                product_data[key] = value
+        
+        # Set defaults
+        product_data['status'] = product_data.get('status', 'active')
+        product_data['upload_status'] = 'draft'
+        
+        # Handle refundable flag
+        if 'refundable' in product_data:
+            product_data['is_refundable'] = str(product_data['refundable']).lower() in ('true', '1')
+        elif 'is_refundable' not in product_data:
+            product_data['is_refundable'] = True
+            
+        product_data['customer'] = customer.customer_id
+        product_data['shop'] = None  # No shop for personal listings
+        
+        # Handle category_admin for global categories (accepts id or name)
+        category_admin_id = request.data.get('category_admin_id')
+        category_admin_name = request.data.get('category_admin_name') or request.data.get('category_name')
 
-                        # Create variants directly (VariantOptions model no longer exists)
-                        for variant_data in variants_list:
-                            variant = Variants.objects.create(
-                                product=product,
-                                shop=None,
-                                title=variant_data.get('title') or '',
-                                option_title=variant_data.get('option_title') or '',
-                                option_ids=variant_data.get('option_ids'),
-                                option_map=variant_data.get('option_map'),
-                                sku_code=variant_data.get('sku_code') or '',
-                                price=variant_data.get('price'),
-                                compare_price=variant_data.get('compare_price'),
-                                quantity=int(variant_data.get('quantity') or 0),
-                                length=variant_data.get('length'),
-                                width=variant_data.get('width'),
-                                height=variant_data.get('height'),
-                                weight=variant_data.get('weight'),
-                                weight_unit=variant_data.get('weight_unit') or 'g',
-                                critical_trigger=variant_data.get('critical_trigger'),
-                                is_refundable=variant_data.get('is_refundable', product.is_refundable),
-                                refund_days=variant_data.get('refund_days', product.refund_days),
-                                allow_swap=bool(variant_data.get('allow_swap', False)),
-                                swap_type=variant_data.get('swap_type', 'direct_swap'),
-                                minimum_additional_payment=variant_data.get('minimum_additional_payment', Decimal('0.00')),
-                                maximum_additional_payment=variant_data.get('maximum_additional_payment', Decimal('0.00')),
-                                swap_description=variant_data.get('swap_description', '')
-                            )
-                            
-                            # Handle variant image if present
-                            file_key = f"variant_image_{variant_data.get('id')}"
-                            if file_key in request.FILES:
-                                try:
-                                    variant.image = request.FILES[file_key]
-                                    variant.save()
-                                except Exception as e:
-                                    print('Failed to save variant image', e)
-                    else:
-                        # Backwards-compatible simple variant handling - create a single variant
-                        variant_title = request.data.get('variant_title', 'Default')
-                        variant_option_title = request.data.get('variant_option_title', 'Default')
-                        
-                        if variant_title:
-                            Variants.objects.create(
-                                product=product,
-                                shop=None,
-                                title=variant_title,
-                                option_title=variant_option_title,
-                                price=product.price,
-                                quantity=product.quantity,
-                                is_refundable=product.is_refundable,
-                                refund_days=product.refund_days
-                            )
-
-                    # Return same format as get_product_list
+        if category_admin_id and category_admin_id != "none" and category_admin_id != "undefined":
+            try:
+                # Validate it's a proper UUID
+                uuid.UUID(str(category_admin_id))
+                # Verify the category exists
+                if Category.objects.filter(id=category_admin_id, shop__isnull=True).exists():
+                    product_data['category_admin'] = category_admin_id
+                    logger.info(f"Using provided category ID: {category_admin_id}")
+                else:
+                    logger.warning(f"Category ID {category_admin_id} not found in database")
                     return Response({
-                        "success": True,
-                        "products": [
-                            {
-                                "id": str(product.id),
-                                "name": product.name,
-                                "description": product.description,
-                                "quantity": product.quantity,
-                                "price": str(product.price),
-                                "status": product.status,
-                                "condition": product.condition,
-                                "customer": {
-                                    "id": str(customer.customer_id),
-                                    "username": customer.username
-                                } if customer else None,
-                                "category_admin": {
-                                    "id": str(product.category_admin.id),
-                                    "name": product.category_admin.name
-                                } if product.category_admin else None,
-                                "category": {
-                                    "id": str(product.category.id),
-                                    "name": product.category.name
-                                } if product.category else None,
-                                "created_at": product.created_at.isoformat() if product.created_at else None,
-                                "updated_at": product.updated_at.isoformat() if product.updated_at else None,
-                            }
-                        ],
-                        "message": "Personal listing created successfully",
-                        "data_source": "database",
-                        "product_limit_info": {
-                            "current_count": customer.current_product_count,
-                            "limit": customer.product_limit,
-                            "remaining": customer.product_limit - customer.current_product_count
-                        }
-                    }, status=status.HTTP_201_CREATED)
-                except ValidationError as e:
-                    return Response({
-                        "error": "Validation failed",
-                        "details": str(e)
+                        "error": "Invalid global category selected - ID not found"
                     }, status=status.HTTP_400_BAD_REQUEST)
-        else:
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid UUID format for category_admin_id: {category_admin_id}")
+                return Response({
+                    "error": "Invalid global category ID format"
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        elif category_admin_name and str(category_admin_name).strip().lower() not in ('none', 'null', 'undefined'):
+            cat_candidate = str(category_admin_name).strip()
+            try:
+                # Try to find existing category by name
+                category_obj = Category.objects.filter(
+                    name__iexact=cat_candidate, 
+                    shop__isnull=True
+                ).first()
+                
+                if not category_obj:
+                    # Create new global category
+                    category_obj = Category.objects.create(
+                        name=cat_candidate,
+                        shop=None,
+                        user=None
+                    )
+                    logger.info(f"Created new global Category: {category_obj.id} - {category_obj.name}")
+                    
+                product_data['category_admin'] = str(category_obj.id)
+                logger.info(f"Using category ID from name: {category_obj.id}")
+                    
+            except Exception as e:
+                logger.error(f"Error handling category_admin_name: {e}")
+                return Response({
+                    "error": "Invalid global category name provided",
+                    "details": str(e)
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create product with transaction
+        serializer = ProductCreateSerializer(data=product_data, context={'request': request})
+        
+        if not serializer.is_valid():
+            logger.error(f"Serializer errors: {serializer.errors}")
             return Response({
                 "error": "Validation failed",
                 "details": serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        try:
+            with transaction.atomic():
+                # Save product
+                product = serializer.save()
+                
+                # Set default refund_days if needed
+                if product.is_refundable and not product.refund_days:
+                    product.refund_days = 30
+                    product.save(update_fields=['refund_days'])
+
+                # Handle media files
+                media_files = request.FILES.getlist('media_files')
+                for media_file in media_files:
+                    try:
+                        ProductMedia.objects.create(
+                            product=product,
+                            file_data=media_file,
+                            file_type=media_file.content_type or 'image/jpeg'
+                        )
+                    except Exception as e:
+                        logger.error(f"Error creating ProductMedia: {e}")
+
+                # Process variants with depreciation data (shop=None for personal listings)
+                created_variants = self._process_variants(variants_raw, request.FILES, product, None)
+                
+                # Verify at least one variant was created
+                if not created_variants or len(created_variants) == 0:
+                    raise ValidationError("Failed to create variants for the personal listing")
+                
+                # Build response
+                return self._build_product_response(product, customer, status.HTTP_201_CREATED)
+                    
+        except ValidationError as e:
+            return Response({
+                "error": "Validation failed",
+                "details": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error creating personal listing: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                "error": "Failed to create personal listing",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+    def _process_variants(self, variants_raw, files, product, shop):
+        """
+        Process variants for a personal listing
+        shop parameter is kept for compatibility but will be None for personal listings
+        """
+        created_variants = []
+        try:
+            import json
+            from decimal import Decimal
+            
+            variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
+            
+            if not isinstance(variants_list, list):
+                logger.error("Variants data is not a list")
+                return created_variants
+            
+            # Process each variant/SKU directly
+            for variant_data in variants_list:
+                if not isinstance(variant_data, dict):
+                    continue
+                
+                # Prepare variant fields based on the Variants model
+                variant_fields = {
+                    'product': product,
+                    'shop': None,  # No shop for personal listings
+                    'title': variant_data.get('title', ''),
+                    'option_title': variant_data.get('option_title', ''),
+                    'option_ids': variant_data.get('option_ids', []),
+                    'option_map': variant_data.get('option_map', {}),
+                    'sku_code': variant_data.get('sku_code', ''),
+                    'is_active': variant_data.get('is_active', True),
+                    'weight_unit': variant_data.get('weight_unit', 'g'),
+                    'allow_swap': variant_data.get('allow_swap', False),
+                    'swap_type': variant_data.get('swap_type', 'direct_swap'),
+                    'swap_description': variant_data.get('swap_description', ''),
+                    'critical_stock': variant_data.get('critical_stock'),
+                }
+                
+                # Handle refundable flag
+                ref_flag = variant_data.get('is_refundable', variant_data.get('refundable', False))
+                if isinstance(ref_flag, bool):
+                    variant_fields['is_refundable'] = ref_flag
+                else:
+                    variant_fields['is_refundable'] = str(ref_flag).strip().lower() in ('true', '1', 'yes', 'y')
+                
+                # Handle refund_days
+                if variant_fields['is_refundable']:
+                    refund_days = variant_data.get('refund_days')
+                    if refund_days not in (None, ''):
+                        try:
+                            variant_fields['refund_days'] = int(refund_days)
+                        except (ValueError, TypeError):
+                            variant_fields['refund_days'] = 30
+                    else:
+                        variant_fields['refund_days'] = 30
+                else:
+                    variant_fields['refund_days'] = 0
+                
+                # Handle decimal fields
+                decimal_fields = ['price', 'compare_price', 'weight',
+                                'minimum_additional_payment', 'maximum_additional_payment']
+                
+                for field in decimal_fields:
+                    value = variant_data.get(field)
+                    if value not in (None, ''):
+                        try:
+                            variant_fields[field] = Decimal(str(value))
+                        except (ValueError, TypeError, Decimal.InvalidOperation):
+                            logger.warning(f"Invalid decimal value for {field}: {value}")
+                            if 'payment' in field:
+                                variant_fields[field] = Decimal('0.00')
+                    elif 'payment' in field:
+                        variant_fields[field] = Decimal('0.00')
+                
+                # Handle integer fields
+                quantity_val = variant_data.get('quantity')
+                if quantity_val not in (None, ''):
+                    try:
+                        variant_fields['quantity'] = int(quantity_val)
+                    except (ValueError, TypeError):
+                        variant_fields['quantity'] = 0
+                else:
+                    variant_fields['quantity'] = 0
+                
+                # Handle critical_trigger
+                trigger_val = variant_data.get('critical_trigger')
+                if trigger_val not in (None, ''):
+                    try:
+                        variant_fields['critical_trigger'] = int(trigger_val)
+                    except (ValueError, TypeError):
+                        variant_fields['critical_trigger'] = None
+                
+                # Handle depreciation fields
+                # Original Price
+                original_price = variant_data.get('original_price')
+                if original_price not in (None, ''):
+                    try:
+                        variant_fields['original_price'] = Decimal(str(original_price))
+                    except (ValueError, TypeError, Decimal.InvalidOperation):
+                        logger.warning(f"Invalid original_price value: {original_price}")
+                
+                # Usage Period
+                usage_period = variant_data.get('usage_period')
+                if usage_period not in (None, ''):
+                    try:
+                        variant_fields['usage_period'] = float(usage_period)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid usage_period value: {usage_period}")
+                
+                # Usage Unit
+                usage_unit = variant_data.get('usage_unit')
+                if usage_unit in ['weeks', 'months', 'years']:
+                    variant_fields['usage_unit'] = usage_unit
+                
+                # Depreciation Rate
+                depreciation_rate = variant_data.get('depreciation_rate')
+                if depreciation_rate not in (None, ''):
+                    try:
+                        variant_fields['depreciation_rate'] = float(depreciation_rate)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid depreciation_rate value: {depreciation_rate}")
+                
+                # Handle variant image
+                provided_id = variant_data.get('id')
+                file_key = f"variant_image_{provided_id}" if provided_id else None
+                
+                # Create the variant
+                variant = Variants.objects.create(**variant_fields)
+                created_variants.append(variant)
+                
+                # Handle variant image after creation
+                if file_key and file_key in files:
+                    try:
+                        variant.image = files[file_key]
+                        variant.save(update_fields=['image'])
+                    except Exception as e:
+                        logger.error(f'Failed to save variant image: {e}')
+                
+                logger.info(f"Created variant: {variant.id} for personal listing: {product.id}")
+            
+            return created_variants
+                    
+        except Exception as e:
+            logger.error(f"Failed to process variants payload: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    
+    def _build_product_response(self, product, customer, status_code):
+        """
+        Build standardized product response with variant data for personal listings
+        """
+        variants_data = []
+        for variant in product.variants.all():
+            variant_data = {
+                "id": str(variant.id),
+                "title": variant.title,
+                "option_title": variant.option_title,
+                "option_ids": variant.option_ids,
+                "option_map": variant.option_map,
+                "sku_code": variant.sku_code,
+                "price": str(variant.price) if variant.price else None,
+                "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                "quantity": variant.quantity,
+                "is_active": variant.is_active,
+                "is_refundable": variant.is_refundable,
+                "refund_days": variant.refund_days,
+                "allow_swap": variant.allow_swap,
+                "swap_type": variant.swap_type,
+                "swap_description": variant.swap_description,
+                "minimum_additional_payment": str(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
+                "maximum_additional_payment": str(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
+                "weight": str(variant.weight) if variant.weight else None,
+                "weight_unit": variant.weight_unit,
+                "critical_trigger": variant.critical_trigger,
+                "critical_stock": variant.critical_stock,
+                "image": variant.image.url if variant.image and hasattr(variant.image, 'url') else None,
+                "original_price": str(variant.original_price) if variant.original_price else None,
+                "usage_period": variant.usage_period,
+                "usage_unit": variant.usage_unit,
+                "depreciation_rate": variant.depreciation_rate,
+                "created_at": variant.created_at.isoformat() if variant.created_at else None,
+                "updated_at": variant.updated_at.isoformat() if variant.updated_at else None,
+            }
+            variants_data.append(variant_data)
+
+        # Calculate aggregate values from variants for display purposes
+        total_quantity = sum(v.quantity for v in product.variants.all())
+        min_price = None
+        if product.variants.exists():
+            min_price = str(product.variants.filter(price__isnull=False).order_by('price').first().price) if product.variants.filter(price__isnull=False).exists() else None
+
+        response_data = {
+            "success": True,
+            "products": [
+                {
+                    "id": str(product.id),
+                    "name": product.name,
+                    "description": product.description,
+                    "total_stock": total_quantity,
+                    "starting_price": min_price,
+                    "status": product.status,
+                    "upload_status": product.upload_status,
+                    "condition": product.condition,
+                    "is_refundable": product.is_refundable,
+                    "refund_days": product.refund_days,
+                    "shop": None,  # No shop for personal listings
+                    "category_admin": {
+                        "id": str(product.category_admin.id),
+                        "name": product.category_admin.name
+                    } if product.category_admin else None,
+                    "category": {
+                        "id": str(product.category.id),
+                        "name": product.category.name
+                    } if product.category else None,
+                    "variants": variants_data,
+                    "created_at": product.created_at.isoformat() if product.created_at else None,
+                    "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                }
+            ],
+            "message": "Personal listing created successfully",
+            "data_source": "database",
+            "product_limit_info": {
+                "current_count": customer.current_product_count,
+                "limit": customer.product_limit,
+                "remaining": customer.product_limit - customer.current_product_count
+            }
+        }
+        
+        return Response(response_data, status=status_code)
+
     def list(self, request):
-        # For listing, we need to get user_id from request data or query params
+        """
+        List all personal listings for a customer
+        """
         user_id = request.data.get('customer_id') or request.query_params.get('customer_id')
         
         if not user_id:
             return Response({
                 "error": "User ID is required"
             }, status=status.HTTP_400_BAD_REQUEST)
-            
+        
         try:
-            customer = Customer.objects.get(customer_id=user_id)
-            # Prefetch variants to avoid N+1 queries
+            # Validate UUID format
+            uuid.UUID(str(user_id))
+            customer = Customer.objects.select_related('customer').get(customer_id=user_id)
+            
             # Only get personal listings (no shop)
             queryset = Product.objects.filter(customer=customer, shop__isnull=True)\
+                .select_related('category_admin', 'category')\
                 .prefetch_related('variants')\
                 .order_by('-created_at')
             
-            # Build response manually like in create method
             products_data = []
             for product in queryset:
-                # Build variants data
                 variants_data = []
                 for variant in product.variants.all():
                     variant_data = {
                         "id": str(variant.id),
                         "title": variant.title,
                         "option_title": variant.option_title,
+                        "option_ids": variant.option_ids,
+                        "option_map": variant.option_map,
                         "sku_code": variant.sku_code,
                         "price": str(variant.price) if variant.price else None,
                         "compare_price": str(variant.compare_price) if variant.compare_price else None,
                         "quantity": variant.quantity,
-                        "length": str(variant.length) if variant.length else None,
-                        "width": str(variant.width) if variant.width else None,
-                        "height": str(variant.height) if variant.height else None,
-                        "weight": str(variant.weight) if variant.weight else None,
-                        "weight_unit": variant.weight_unit,
-                        "critical_trigger": variant.critical_trigger,
+                        "is_active": variant.is_active,
                         "is_refundable": variant.is_refundable,
                         "refund_days": variant.refund_days,
                         "allow_swap": variant.allow_swap,
                         "swap_type": variant.swap_type,
-                        "minimum_additional_payment": str(variant.minimum_additional_payment),
-                        "maximum_additional_payment": str(variant.maximum_additional_payment),
                         "swap_description": variant.swap_description,
-                        "image": variant.image.url if variant.image else None,
+                        "minimum_additional_payment": str(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
+                        "maximum_additional_payment": str(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
+                        "weight": str(variant.weight) if variant.weight else None,
+                        "weight_unit": variant.weight_unit,
+                        "critical_trigger": variant.critical_trigger,
+                        "critical_stock": variant.critical_stock,
+                        "image": variant.image.url if variant.image and hasattr(variant.image, 'url') else None,
+                        "original_price": str(variant.original_price) if variant.original_price else None,
+                        "usage_period": variant.usage_period,
+                        "usage_unit": variant.usage_unit,
+                        "depreciation_rate": variant.depreciation_rate,
                         "created_at": variant.created_at.isoformat() if variant.created_at else None,
+                        "updated_at": variant.updated_at.isoformat() if variant.updated_at else None,
                     }
                     variants_data.append(variant_data)
+                
+                # Calculate aggregate values from variants
+                total_quantity = sum(v.quantity for v in product.variants.all())
+                min_price = None
+                if product.variants.exists():
+                    min_price_variant = product.variants.filter(price__isnull=False).order_by('price').first()
+                    min_price = str(min_price_variant.price) if min_price_variant else None
                 
                 product_data = {
                     "id": str(product.id),
                     "name": product.name,
                     "description": product.description,
-                    "quantity": product.quantity,
-                    "price": str(product.price),
+                    "total_stock": total_quantity,
+                    "starting_price": min_price,
                     "status": product.status,
                     "upload_status": product.upload_status,
                     "condition": product.condition,
-                    "customer": {
-                        "id": str(customer.customer_id),
-                        "username": customer.username
-                    } if customer else None,
+                    "is_refundable": product.is_refundable,
+                    "is_removed": product.is_removed,
+                    "removal_reason": product.removal_reason,
+                    "refund_days": product.refund_days,
+                    "shop": None,  # No shop for personal listings
                     "category_admin": {
                         "id": str(product.category_admin.id),
                         "name": product.category_admin.name
@@ -17126,6 +17707,14 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "message": "Personal listings retrieved successfully",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
+            
+        except ValueError:
+            return Response({
+                "success": True,
+                "products": [],
+                "message": "Invalid user ID format",
+                "data_source": "database"
+            }, status=status.HTTP_200_OK)
         except Customer.DoesNotExist:
             return Response({
                 "success": True,
@@ -17133,7 +17722,166 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "message": "No customer found for this user",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-
+        
+    @csrf_exempt
+    @action(detail=False, methods=['post'], url_path='predict-from-image')
+    def predict_category_from_image(self, request):
+        """
+        Predict category from product image using trained model
+        """
+        try:
+            import tensorflow as tf
+            import numpy as np
+            from keras.utils import load_img, img_to_array
+            import os
+            import tempfile
+            
+            # Get the uploaded image
+            if 'image' not in request.FILES:
+                return Response({
+                    'success': False,
+                    'error': 'No image provided'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            image_file = request.FILES['image']
+            
+            # Validate file type
+            if not image_file.content_type.startswith('image/'):
+                return Response({
+                    'success': False,
+                    'error': 'File must be an image'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate file size (max 10MB)
+            if image_file.size > 10 * 1024 * 1024:
+                return Response({
+                    'success': False,
+                    'error': 'Image size must be less than 10MB'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                for chunk in image_file.chunks():
+                    tmp_file.write(chunk)
+                tmp_file_path = tmp_file.name
+            
+            try:
+                # Fetch categories from database
+                category_objects = Category.objects.filter(shop__isnull=True).order_by('name')
+                class_names = [cat.name for cat in category_objects]
+                
+                if not class_names:
+                    return Response({
+                        'success': False,
+                        'error': 'No categories found in database. Please add categories first.'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+                # Create mapping from category name to object
+                category_name_to_obj = {cat.name: cat for cat in category_objects}
+                
+                # Load model
+                CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+                MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+                MODEL_PATH = os.path.join(MODEL_DIR, 'electronics_classifier3.keras')
+                
+                if not os.path.exists(MODEL_PATH):
+                    MODEL_PATH = 'model/electronics_classifier3.keras'
+                    if not os.path.exists(MODEL_PATH):
+                        return Response({
+                            'success': False,
+                            'error': f'Model file not found. Looked at: {os.path.join(MODEL_DIR, "electronics_classifier3.keras")}'
+                        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+                model = tf.keras.models.load_model(MODEL_PATH)
+                
+                # Preprocess image
+                IMG_SIZE = (256, 256)
+                img = load_img(tmp_file_path, target_size=IMG_SIZE)
+                img_array = img_to_array(img)
+                img_array = np.expand_dims(img_array, axis=0)
+                img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
+                
+                # Make prediction
+                predictions = model.predict(img_array, verbose=0)
+                
+                # Get top predictions
+                class_idx = np.argmax(predictions[0])
+                confidence = float(predictions[0][class_idx])
+                
+                # Ensure valid index
+                if class_idx < len(class_names):
+                    predicted_class_name = class_names[class_idx]
+                else:
+                    predicted_class_name = class_names[0] if class_names else "Unknown"
+                
+                # Get top 3 predictions
+                top_3_indices = np.argsort(predictions[0])[-3:][::-1]
+                top_predictions = []
+                
+                for idx in top_3_indices:
+                    if idx < len(class_names):
+                        category_name = class_names[idx]
+                        category_confidence = float(predictions[0][idx])
+                        
+                        category_obj = category_name_to_obj.get(category_name)
+                        category_uuid = str(category_obj.id) if category_obj else None
+                        
+                        top_predictions.append({
+                            'class': category_name,
+                            'confidence': category_confidence,
+                            'category_uuid': category_uuid
+                        })
+                
+                # Get UUID for top predicted category
+                top_category_obj = category_name_to_obj.get(predicted_class_name)
+                category_uuid = str(top_category_obj.id) if top_category_obj else None
+                
+                # Get all categories from database
+                all_categories_objs = Category.objects.filter(shop__isnull=True)
+                all_categories_list = [
+                    {'uuid': str(cat.id), 'name': cat.name, 'id': str(cat.id)}
+                    for cat in all_categories_objs
+                ]
+                
+                # Prepare response
+                result = {
+                    'success': True,
+                    'predicted_category': {
+                        'category_uuid': category_uuid,
+                        'category_name': predicted_class_name,
+                        'confidence': confidence
+                    },
+                    'alternative_categories': top_predictions[1:] if len(top_predictions) > 1 else [],
+                    'all_categories': all_categories_list,
+                    'predictions': {
+                        'predicted_class': predicted_class_name,
+                        'confidence': confidence,
+                        'top_predictions': top_predictions,
+                        'all_predictions': {
+                            class_name: float(predictions[0][i]) if i < len(predictions[0]) else 0.0
+                            for i, class_name in enumerate(class_names)
+                        }
+                    }
+                }
+                
+                return Response(result, status=status.HTTP_200_OK)
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(tmp_file_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"Image prediction error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            return Response({
+                'success': False,
+                'error': f'Image prediction failed: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
