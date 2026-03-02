@@ -60,6 +60,8 @@ router.register(r'swap-products', SwapViewset, basename='swap-products')
 router.register(r'customer-products-viewset', CustomerProductViewSet, basename='customer-products-viewset')
 router.register(r'customer-product-list', CustomerProductsList, basename='customer-product-list')
 router.register(r'home-boosts', HomeBoosts, basename='home-boosts')
+router.register(r'customer-order-list', CustomerOrderList, basename='customer-order-list')
+router.register(r'customer-arrange-shipment', CustomerArrangeShipment, basename='customer-arrange-shipment')
 
 router.register(r'seller-gift', SellerGifts, basename='seller-gift')
 router.register(r'customer-gift', CustomerGiftViewSet, basename='customer-gift')

@@ -1,21 +1,20 @@
 import type { Route } from './+types/order-list';
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
-import { Link } from 'react-router';
 import { 
   Card, 
-  CardContent 
+  CardContent
 } from '~/components/ui/card';
-import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
+import { Button } from '~/components/ui/button';
 import { Input } from '~/components/ui/input';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router';
 import { 
   ShoppingCart,
   Clock,
   User,
   Package,
-  Calendar,
   PhilippinePeso,
   CheckCircle,
   XCircle,
@@ -23,25 +22,53 @@ import {
   Eye,
   Truck,
   Package2,
-  CheckSquare,
   List,
   Ship,
   Loader2,
-  RotateCcw,
-  Printer,
   ChevronDown,
   ChevronUp,
-  MapPin,
   CreditCard,
-  Phone
+  Phone,
+  MoreHorizontal,
+  Store,
+  Ban,
+  AlertCircle,
+  MessageCircle,
+  Handshake,
+  MapPin,
+  Calendar,
+  Printer,
+  RotateCcw,
+  Star
 } from 'lucide-react';
+import AxiosInstance from '~/components/axios/Axios';
+import { useIsMobile } from '~/hooks/use-mobile';
+import { Sheet, SheetContent, SheetTrigger } from '~/components/ui/sheet';
+import { toast } from 'sonner';
 
 export function meta(): Route.MetaDescriptors {
   return [
     {
-      title: "Seller Orders",
+      title: "Personal Listing Orders",
     },
   ];
+}
+
+interface DeliveryInfo {
+  delivery_id?: string;
+  rider_name?: string;
+  status?: string;
+  tracking_number?: string;
+  estimated_delivery?: string;
+  submitted_at?: string;
+  is_pending_offer?: boolean;
+}
+
+interface SellerInfo {
+  id: string;
+  username: string;
+  first_name: string;
+  last_name: string;
 }
 
 interface OrderItem {
@@ -52,11 +79,8 @@ interface OrderItem {
       id: string;
       name: string;
       price: number;
-      variant?: string;
-      shop: {
-        id: string;
-        name: string;
-      };
+      variant: string;
+      seller?: SellerInfo;
     };
     quantity: number;
   };
@@ -75,7 +99,7 @@ interface OrderItem {
 
 interface Order {
   order_id: string;
-  user: {
+  buyer: {
     id: string;
     username: string;
     email: string;
@@ -86,425 +110,410 @@ interface Order {
   status: string;
   total_amount: number;
   payment_method: string | null;
-  delivery_address: string;
+  delivery_method?: string | null;
+  shipping_method?: string | null;
+  delivery_address: string | null;
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+  delivery_info?: DeliveryInfo;
+  is_pickup?: boolean;
+  is_personal_listing?: boolean;
 }
 
-export async function loader({ request, context }: Route.LoaderArgs) {
-  return {
-    user: {
-      id: "demo-seller-001",
-      name: "TechGadgets Store",
-      email: "seller@techgadgets.com",
-      isCustomer: true,
-      isAdmin: false,
-      isRider: false,
-      isModerator: false,
-      isSeller: false,
-      username: "techgadgets_seller",
-    },
-    orders: [
-      {
-        order_id: "ORD-2024-00123",
-        user: {
-          id: "demo-customer-123",
-          username: "john_customer",
-          email: "john.customer@example.com",
-          first_name: "John",
-          last_name: "Customer",
-          phone: "+639123456789"
-        },
-        status: "completed",
-        total_amount: 57000,
-        payment_method: "Credit Card",
-        delivery_address: "123 Main St, Manila, Philippines",
-        created_at: "2024-01-15T10:30:00Z",
-        updated_at: "2024-01-16T14:25:00Z",
-        items: [
-          {
-            id: "item-001",
-            cart_item: {
-              id: "cart-001",
-              product: {
-                id: "prod-001",
-                name: "Apple iPhone 13 Pro",
-                price: 45000,
-                variant: "256GB, Graphite",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 1
-            },
-            quantity: 1,
-            total_amount: 45000,
-            status: "completed",
-            is_shipped: true,
-            is_processed: true,
-            shipping_method: "Standard Shipping",
-            tracking_number: "TRK-7890123456",
-            estimated_delivery: "2024-01-18",
-            created_at: "2024-01-15T10:30:00Z",
-            shipping_status: "completed",
-            waybill_url: "/waybills/ORD-2024-00123.pdf"
-          },
-          {
-            id: "item-002",
-            cart_item: {
-              id: "cart-002",
-              product: {
-                id: "prod-002",
-                name: "iPhone 13 Pro Case",
-                price: 1200,
-                variant: "Clear, Anti-Yellowing",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 1
-            },
-            quantity: 1,
-            total_amount: 1200,
-            status: "completed",
-            is_shipped: true,
-            is_processed: true,
-            created_at: "2024-01-15T10:30:00Z",
-            shipping_status: "completed"
-          }
-        ]
-      },
-      {
-        order_id: "ORD-2024-00124",
-        user: {
-          id: "demo-customer-124",
-          username: "jane_buyer",
-          email: "jane.buyer@example.com",
-          first_name: "Jane",
-          last_name: "Buyer",
-          phone: "+639987654321"
-        },
-        status: "pending_shipment",
-        total_amount: 32000,
-        payment_method: "GCash",
-        delivery_address: "456 Oak St, Quezon City, Philippines",
-        created_at: "2024-01-18T14:20:00Z",
-        updated_at: "2024-01-18T14:20:00Z",
-        items: [
-          {
-            id: "item-003",
-            cart_item: {
-              id: "cart-003",
-              product: {
-                id: "prod-003",
-                name: "MacBook Air M1",
-                price: 32000,
-                variant: "8GB RAM, 256GB SSD",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 1
-            },
-            quantity: 1,
-            total_amount: 32000,
-            status: "pending_shipment",
-            is_shipped: false,
-            is_processed: false,
-            created_at: "2024-01-18T14:20:00Z",
-            shipping_status: "pending_shipment"
-          }
-        ]
-      },
-      {
-        order_id: "ORD-2024-00125",
-        user: {
-          id: "demo-customer-125",
-          username: "mike_shopper",
-          email: "mike.shopper@example.com",
-          first_name: "Mike",
-          last_name: "Shopper",
-          phone: "+639876543210"
-        },
-        status: "to_ship",
-        total_amount: 10500,
-        payment_method: "Bank Transfer",
-        delivery_address: "789 Pine St, Makati, Philippines",
-        created_at: "2024-01-19T09:15:00Z",
-        updated_at: "2024-01-19T09:15:00Z",
-        items: [
-          {
-            id: "item-004",
-            cart_item: {
-              id: "cart-004",
-              product: {
-                id: "prod-004",
-                name: "Wireless Headphones",
-                price: 8500,
-                variant: "Black, Noise Cancelling",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 1
-            },
-            quantity: 1,
-            total_amount: 8500,
-            status: "to_ship",
-            is_shipped: false,
-            is_processed: true,
-            created_at: "2024-01-19T09:15:00Z",
-            shipping_status: "to_ship"
-          },
-          {
-            id: "item-005",
-            cart_item: {
-              id: "cart-005",
-              product: {
-                id: "prod-005",
-                name: "USB-C Cable",
-                price: 500,
-                variant: "2m, Fast Charging",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 2
-            },
-            quantity: 2,
-            total_amount: 1000,
-            status: "to_ship",
-            is_shipped: false,
-            is_processed: true,
-            created_at: "2024-01-19T09:15:00Z",
-            shipping_status: "to_ship"
-          }
-        ]
-      },
-      {
-        order_id: "ORD-2024-00126",
-        user: {
-          id: "demo-customer-126",
-          username: "sarah_tech",
-          email: "sarah.tech@example.com",
-          first_name: "Sarah",
-          last_name: "Tech",
-          phone: "+639555123456"
-        },
-        status: "shipped",
-        total_amount: 25000,
-        payment_method: "Credit Card",
-        delivery_address: "101 Tech Blvd, Taguig, Philippines",
-        created_at: "2024-01-20T11:45:00Z",
-        updated_at: "2024-01-20T14:30:00Z",
-        items: [
-          {
-            id: "item-006",
-            cart_item: {
-              id: "cart-006",
-              product: {
-                id: "prod-006",
-                name: "Smart Watch Pro",
-                price: 25000,
-                variant: "Black, GPS",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 1
-            },
-            quantity: 1,
-            total_amount: 25000,
-            status: "shipped",
-            is_shipped: true,
-            is_processed: true,
-            shipping_method: "Express Shipping",
-            tracking_number: "TRK-1234567890",
-            estimated_delivery: "2024-01-22",
-            created_at: "2024-01-20T11:45:00Z",
-            shipping_status: "shipped",
-            waybill_url: "/waybills/ORD-2024-00126.pdf"
-          }
-        ]
-      },
-      {
-        order_id: "ORD-2024-00127",
-        user: {
-          id: "demo-customer-127",
-          username: "david_tech",
-          email: "david.tech@example.com",
-          first_name: "David",
-          last_name: "Tech",
-          phone: "+639666789012"
-        },
-        status: "in_transit",
-        total_amount: 18000,
-        payment_method: "GCash",
-        delivery_address: "222 Electronics St, Pasig, Philippines",
-        created_at: "2024-01-21T09:30:00Z",
-        updated_at: "2024-01-21T16:45:00Z",
-        items: [
-          {
-            id: "item-007",
-            cart_item: {
-              id: "cart-007",
-              product: {
-                id: "prod-007",
-                name: "Wireless Earbuds",
-                price: 9000,
-                variant: "White, Water Resistant",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 2
-            },
-            quantity: 2,
-            total_amount: 18000,
-            status: "in_transit",
-            is_shipped: true,
-            is_processed: true,
-            shipping_method: "Standard Shipping",
-            tracking_number: "TRK-2345678901",
-            estimated_delivery: "2024-01-23",
-            created_at: "2024-01-21T09:30:00Z",
-            shipping_status: "in_transit"
-          }
-        ]
-      },
-      {
-        order_id: "ORD-2024-00128",
-        user: {
-          id: "demo-customer-128",
-          username: "lisa_shopper",
-          email: "lisa.shopper@example.com",
-          first_name: "Lisa",
-          last_name: "Shopper",
-          phone: "+639777890123"
-        },
-        status: "out_for_delivery",
-        total_amount: 7500,
-        payment_method: "Bank Transfer",
-        delivery_address: "333 Gadget Ave, Mandaluyong, Philippines",
-        created_at: "2024-01-22T08:15:00Z",
-        updated_at: "2024-01-22T10:20:00Z",
-        items: [
-          {
-            id: "item-008",
-            cart_item: {
-              id: "cart-008",
-              product: {
-                id: "prod-008",
-                name: "Portable Speaker",
-                price: 7500,
-                variant: "Blue, Bluetooth 5.0",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 1
-            },
-            quantity: 1,
-            total_amount: 7500,
-            status: "out_for_delivery",
-            is_shipped: true,
-            is_processed: true,
-            shipping_method: "Express Shipping",
-            tracking_number: "TRK-3456789012",
-            estimated_delivery: "2024-01-22",
-            created_at: "2024-01-22T08:15:00Z",
-            shipping_status: "out_for_delivery"
-          }
-        ]
-      },
-      {
-        order_id: "ORD-2024-00129",
-        user: {
-          id: "demo-customer-129",
-          username: "tom_buyer",
-          email: "tom.buyer@example.com",
-          first_name: "Tom",
-          last_name: "Buyer",
-          phone: "+639888901234"
-        },
-        status: "cancelled",
-        total_amount: 15000,
-        payment_method: null,
-        delivery_address: "444 Cancel St, Paranaque, Philippines",
-        created_at: "2024-01-23T14:00:00Z",
-        updated_at: "2024-01-23T15:30:00Z",
-        items: [
-          {
-            id: "item-009",
-            cart_item: {
-              id: "cart-009",
-              product: {
-                id: "prod-009",
-                name: "Tablet Mini",
-                price: 15000,
-                variant: "64GB, WiFi",
-                shop: {
-                  id: "shop-001",
-                  name: "TechGadgets Store"
-                }
-              },
-              quantity: 1
-            },
-            quantity: 1,
-            total_amount: 15000,
-            status: "cancelled",
-            is_shipped: false,
-            is_processed: false,
-            created_at: "2024-01-23T14:00:00Z",
-            shipping_status: "cancelled"
-          }
-        ]
-      }
-    ]
+interface ApiResponse {
+  success: boolean;
+  message: string;
+  data: Order[];
+  data_source: string;
+  count?: number;
+}
+
+interface AvailableActionsResponse {
+  success: boolean;
+  data: {
+    order_id: string;
+    current_status: string;
+    is_pickup: boolean;
+    has_pending_offer: boolean;
+    available_actions: string[];
   };
 }
 
-const EmptyState = ({ message = "No orders" }: { message?: string }) => (
-  <div className="text-center py-6">
-    <ShoppingCart className="mx-auto h-8 w-8 text-gray-300 mb-2" />
-    <p className="text-gray-500 text-sm">{message}</p>
-  </div>
-);
+interface DeliveryStatusResponse {
+  success: boolean;
+  message: string;
+  data: {
+    delivery_id: string;
+    rider_name: string;
+    status: string;
+    submitted_at: string;
+    order_id: string;
+  };
+}
 
-const TABS = [
+// Loader function to get session data and fetch orders
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { registrationMiddleware } = await import("~/middleware/registration.server");
+  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
+  const { requireRole } = await import("~/middleware/role-require.server");
+  const { fetchUserRole } = await import("~/middleware/role.server");
+
+  let user = (context as any).user;
+  if (!user) {
+      user = await fetchUserRole({ request, context });
+  }
+
+  await requireRole(request, context, ["isCustomer"]);
+
+  const { getSession } = await import('~/sessions.server');
+  const session = await getSession(request.headers.get("Cookie"));
+  
+  const userId = session.get("userId");
+  
+  console.log('Loader - User ID from session (seller):', userId);
+  
+  // Fetch orders from API in loader
+  let orders: Order[] = [];
+  let apiResponse = null;
+  
+  if (userId) {
+    try {
+      const axiosInstance = await import('~/components/axios/Axios').then(module => module.default);
+      console.log('Loader - Fetching orders from /customer-order-list/order_list/ with user_id:', userId);
+      
+      const response = await axiosInstance.get<ApiResponse>('/customer-order-list/order_list/', {
+        params: {
+          user_id: userId
+        }
+      });
+      
+      console.log('Loader - API Response status:', response.status);
+      console.log('Loader - API Response data:', response.data);
+      
+      apiResponse = response.data;
+      
+      if (response.data.success) {
+        orders = response.data.data || [];
+        console.log('Loader - Orders loaded:', orders.length);
+        if (orders.length > 0) {
+          console.log('Loader - First order:', orders[0]);
+        } else {
+          console.log('Loader - No orders found in response data');
+        }
+      } else {
+        console.log('Loader - API returned success=false:', response.data.message);
+      }
+    } catch (error: any) {
+      console.error('Loader - Error fetching orders:', error);
+      if (error.response) {
+        console.error('Loader - Error response:', error.response.data);
+        console.error('Loader - Error status:', error.response.status);
+      }
+    }
+  } else {
+    console.log('Loader - No user ID found in session');
+  }
+  
+  return { userId, orders, apiResponse };
+}
+
+// Status badges configuration
+const STATUS_CONFIG = {
+  pending_shipment: { 
+    label: 'Pending',
+    color: 'bg-yellow-100 text-yellow-800',
+    icon: Clock
+  },
+  to_ship: { 
+    label: 'Processing',
+    color: 'bg-amber-100 text-amber-800',
+    icon: Loader2
+  },
+  processing: {
+    label: 'Processing',
+    color: 'bg-amber-100 text-amber-800',
+    icon: Loader2
+  },
+  ready_for_pickup: { 
+    label: 'Ready for Pickup', 
+    color: 'bg-blue-100 text-blue-800',
+    icon: Store
+  },
+  shipped: { 
+    label: 'Shipped', 
+    color: 'bg-blue-100 text-blue-800',
+    icon: Ship
+  },
+  in_transit: { 
+    label: 'In Transit', 
+    color: 'bg-purple-100 text-purple-800',
+    icon: Truck
+  },
+  out_for_delivery: { 
+    label: 'Out for Delivery', 
+    color: 'bg-indigo-100 text-indigo-800',
+    icon: Truck
+  },
+  completed: { 
+    label: 'Completed', 
+    color: 'bg-green-100 text-green-800',
+    icon: CheckCircle
+  },
+  cancelled: { 
+    label: 'Cancelled', 
+    color: 'bg-red-100 text-red-800',
+    icon: XCircle
+  },
+  arrange_shipment: { 
+    label: 'Arrange Shipment', 
+    color: 'bg-orange-100 text-orange-800',
+    icon: Handshake
+  },
+  pending_offer: { 
+    label: 'Pending Offer', 
+    color: 'bg-amber-100 text-amber-800',
+    icon: MessageCircle
+  },
+  default: { 
+    label: 'Unknown', 
+    color: 'bg-gray-100 text-gray-800',
+    icon: Clock
+  }
+};
+
+// Tabs configuration
+const STATUS_TABS = [
   { id: 'all', label: 'All', icon: List },
-  { id: 'to_ship', label: 'To Ship', icon: Package2 },
-  { id: 'in_transit', label: 'In Transit', icon: Truck },
-  { id: 'out_for_delivery', label: 'Out for Delivery', icon: Truck },
-  { id: 'completed', label: 'Completed', icon: CheckSquare },
+  { id: 'pending', label: 'Pending', icon: Clock },
+  { id: 'processing', label: 'Processing', icon: Loader2 },
+  { id: 'shipped', label: 'Shipped', icon: Ship },
+  { id: 'completed', label: 'Completed', icon: CheckCircle },
   { id: 'cancelled', label: 'Cancelled', icon: XCircle }
 ];
 
-const TO_SHIP_SUBTABS = [
-  { id: 'all_to_ship', label: 'All', icon: Package2 },
-  { id: 'pending_shipment', label: 'To Process', icon: Loader2 },
-  { id: 'to_ship', label: 'Processed', icon: CheckSquare },
-  { id: 'shipped', label: 'Shipped', icon: Ship }
-];
-
-export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
-  const { user, orders } = loaderData;
+export default function PersonalOrderList({ loaderData }: Route.ComponentProps) {
+  const { userId, orders: initialOrders, apiResponse } = loaderData;
+  const [orders, setOrders] = useState<Order[]>(initialOrders);
+  const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<string>('all');
-  const [toShipSubTab, setToShipSubTab] = useState<string>('all_to_ship');
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  const [availableActions, setAvailableActions] = useState<Record<string, string[]>>({});
+  const [loadingActions, setLoadingActions] = useState<Record<string, boolean>>({});
+  const [deliveryStatuses, setDeliveryStatuses] = useState<Record<string, DeliveryInfo>>({});
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
-  const formatCustomerName = (user: { first_name: string; last_name: string }) => {
-    return `${user.first_name} ${user.last_name}`;
+  // Debug logging
+  useEffect(() => {
+    console.log('Component mounted with:');
+    console.log('Seller User ID:', userId);
+    console.log('initialOrders:', initialOrders);
+    console.log('initialOrders length:', initialOrders?.length);
+    console.log('apiResponse:', apiResponse);
+  }, []);
+
+  // Check if order has pending delivery offer
+  const hasPendingDeliveryOffer = (order: Order): boolean => {
+    return order.delivery_info?.status === 'pending_offer';
+  };
+
+  // Check if order has active delivery
+  const hasActiveDelivery = (order: Order): boolean => {
+    return !!(order.delivery_info?.delivery_id && 
+             order.delivery_info?.status !== 'pending_offer');
+  };
+
+  // Check if order is for delivery (not pickup)
+  const isDeliveryOrder = (order: Order): boolean => {
+    const method = order.delivery_method || order.shipping_method || '';
+    return !(method.toLowerCase().includes('pickup') || method.toLowerCase().includes('store'));
+  };
+
+  // Check if order is for pickup
+  const isPickupOrder = (order: Order): boolean => {
+    const method = order.delivery_method || order.shipping_method || '';
+    return method.toLowerCase().includes('pickup') || method.toLowerCase().includes('store');
+  };
+
+  // Refresh orders function
+  const refreshOrders = async () => {
+    if (!userId) return;
+    
+    setLoading(true);
+    try {
+      console.log('Refreshing orders for seller:', userId);
+      const response = await AxiosInstance.get<ApiResponse>('/customer-order-list/order_list/', {
+        params: {
+          user_id: userId
+        }
+      });
+      
+      console.log('Refresh response:', response.data);
+      
+      if (response.data.success) {
+        setOrders(response.data.data || []);
+        console.log('Orders updated:', response.data.data?.length);
+        setAvailableActions({});
+        setDeliveryStatuses({});
+      }
+    } catch (error: any) {
+      console.error('Error fetching orders:', error);
+      toast.error("Failed to load orders", {
+        description: "Please try again later."
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load available actions for an order
+  const loadAvailableActions = async (orderId: string) => {
+    if (!userId || loadingActions[orderId]) return;
+    
+    setLoadingActions(prev => ({ ...prev, [orderId]: true }));
+    
+    try {
+      const response = await AxiosInstance.get<AvailableActionsResponse>(
+        `/customer-order-list/${orderId}/available_actions/`,
+        {
+          params: { user_id: userId }
+        }
+      );
+      
+      if (response.data.success) {
+        let actions = response.data.data.available_actions || [];
+        
+        setAvailableActions(prev => ({
+          ...prev,
+          [orderId]: actions
+        }));
+      }
+    } catch (error: any) {
+      console.error('Error loading available actions:', error);
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  // Check delivery status for orders with arrange_shipment action
+  const checkDeliveryStatus = async (orderId: string) => {
+    if (!userId) return;
+    
+    try {
+      const response = await AxiosInstance.get<DeliveryStatusResponse>(
+        `/customer-arrange-shipment/${orderId}/check_delivery_status/`,
+        {
+          params: { user_id: userId }
+        }
+      );
+      
+      if (response.data.success) {
+        setDeliveryStatuses(prev => ({
+          ...prev,
+          [orderId]: response.data.data
+        }));
+      }
+    } catch (error: any) {
+      // If endpoint doesn't exist or fails, check if order has delivery info
+      const order = orders.find(o => o.order_id === orderId);
+      if (order?.delivery_info) {
+        setDeliveryStatuses(prev => ({
+          ...prev,
+          [orderId]: order.delivery_info!
+        }));
+      }
+    }
+  };
+
+  // Handle arrange shipment navigation
+  const handleArrangeShipment = (orderId: string) => {
+    if (!userId) {
+      toast.error("User ID missing", {
+        description: "Please refresh the page and try again."
+      });
+      return;
+    }
+    
+    navigate(`/customer-arrange-shipment?orderId=${orderId}&userId=${userId}`);
+  };
+
+  const handlePrepareShipment = async (orderId: string) => {
+    try {
+      setLoadingActions(prev => ({ ...prev, [orderId]: true }));
+      
+      const response = await AxiosInstance.post(
+        `/customer-order-list/${orderId}/prepare_shipment/`,
+        {},
+        {
+          params: { user_id: userId }
+        }
+      );
+      
+      if (response.data.success) {
+        const { updated_order, updated_available_actions } = response.data.data;
+        
+        setOrders(prevOrders => 
+          prevOrders.map(order => 
+            order.order_id === orderId 
+              ? { ...updated_order, order_id: orderId }
+              : order
+          )
+        );
+        
+        if (updated_available_actions) {
+          setAvailableActions(prev => ({
+            ...prev,
+            [orderId]: updated_available_actions
+          }));
+        }
+        
+        toast.success("Order prepared for shipment", {
+          description: response.data.message || "The order is now ready for shipping arrangements."
+        });
+      }
+    } catch (error: any) {
+      console.error('Error preparing shipment:', error);
+      toast.error("Failed to prepare shipment", {
+        description: error.response?.data?.message || "Please try again."
+      });
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  // Handle view offer
+  const handleViewOffer = (orderId: string) => {
+    if (!userId) {
+      toast.error("User ID missing", {
+        description: "Please refresh the page and try again."
+      });
+      return;
+    }
+    
+    navigate(`/customer-view-offer?orderId=${orderId}&userId=${userId}`);
+  };
+
+  // Load actions and delivery status when component mounts or orders change
+  useEffect(() => {
+    if (userId && orders.length > 0) {
+      console.log('Loading actions for', orders.length, 'orders');
+      const ordersToLoad = orders.slice(0, 10);
+      ordersToLoad.forEach(order => {
+        if (!availableActions[order.order_id]) {
+          loadAvailableActions(order.order_id);
+        }
+        
+        if (hasPendingDeliveryOffer(order) || order.status === 'arrange_shipment') {
+          checkDeliveryStatus(order.order_id);
+        }
+      });
+    }
+  }, [userId, orders]);
+
+  const formatBuyerName = (buyer: { first_name: string; last_name: string }) => {
+    return `${buyer.first_name} ${buyer.last_name}`;
   };
 
   const toggleOrderExpansion = (orderId: string) => {
@@ -517,43 +526,30 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     setExpandedOrders(newExpanded);
   };
 
-  const getStatusColor = (status: string) => {
-    switch(status?.toLowerCase()) {
-      case 'completed': return '#10b981';
-      case 'pending_shipment': return '#f59e0b';
-      case 'to_ship': return '#f97316';
-      case 'shipped': return '#3b82f6';
-      case 'in_transit': return '#3b82f6';
-      case 'out_for_delivery': return '#8b5cf6';
-      case 'cancelled': return '#6b7280';
-      default: return '#6b7280';
-    }
+  const isCancelledOrder = (order: Order) => {
+    return order.status?.toLowerCase() === 'cancelled';
   };
 
-  const getStatusIcon = (status: string) => {
-    switch(status?.toLowerCase()) {
-      case 'completed': return <CheckCircle className="w-3 h-3" />;
-      case 'pending_shipment': return <Clock className="w-3 h-3" />;
-      case 'to_ship': return <Package2 className="w-3 h-3" />;
-      case 'shipped': return <Ship className="w-3 h-3" />;
-      case 'in_transit': return <Truck className="w-3 h-3" />;
-      case 'out_for_delivery': return <Truck className="w-3 h-3" />;
-      case 'cancelled': return <XCircle className="w-3 h-3" />;
-      default: return <Clock className="w-3 h-3" />;
-    }
-  };
+  const getStatusBadge = (status: string, order: Order) => {
+    const isPickup = isPickupOrder(order);
+    const hasPendingOffer = hasPendingDeliveryOffer(order);
+    const hasActiveDelivery = order.delivery_info?.status === 'pending';
 
-  const getStatusLabel = (status: string) => {
-    switch(status?.toLowerCase()) {
-      case 'pending_shipment': return 'Pending Shipment';
-      case 'to_ship': return 'To Ship';
-      case 'shipped': return 'Shipped';
-      case 'in_transit': return 'In Transit';
-      case 'out_for_delivery': return 'Out for Delivery';
-      case 'completed': return 'Completed';
-      case 'cancelled': return 'Cancelled';
-      default: return status?.replace(/_/g, ' ') || 'Unknown';
-    }
+    let statusKey = (status || 'default').toLowerCase();
+
+    if (hasPendingOffer) statusKey = 'pending_offer';
+    else if (hasActiveDelivery && statusKey === 'arrange_shipment') statusKey = 'pending_offer';
+    else if (isPickup && statusKey === 'pending_shipment') statusKey = 'ready_for_pickup';
+
+    const config = STATUS_CONFIG[statusKey as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.default;
+    const Icon = config.icon;
+
+    return (
+      <Badge className={`text-[10px] h-5 px-1.5 py-0 flex items-center gap-1 ${config.color}`}>
+        <Icon className="w-2.5 h-2.5" />
+        {config.label}
+      </Badge>
+    );
   };
 
   const formatDate = (dateString?: string) => {
@@ -586,16 +582,20 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     }
   };
 
+  const formatCurrency = (amount: number) => {
+    return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  };
+
   const getFilteredOrders = () => {
     let filtered = orders.filter(order => {
       if (!searchTerm) return true;
       const searchLower = searchTerm.toLowerCase();
-      const customerName = formatCustomerName(order.user).toLowerCase();
+      const buyerName = formatBuyerName(order.buyer).toLowerCase();
       
       return (
-        customerName.includes(searchLower) ||
+        buyerName.includes(searchLower) ||
         order.order_id.toLowerCase().includes(searchLower) ||
-        order.user.email.toLowerCase().includes(searchLower) ||
+        order.buyer.email.toLowerCase().includes(searchLower) ||
         order.items.some(item => 
           item.cart_item?.product?.name?.toLowerCase().includes(searchLower)
         )
@@ -603,22 +603,36 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     });
 
     if (activeTab !== 'all') {
-      if (activeTab === 'to_ship') {
-        filtered = filtered.filter(order => 
-          order.status === 'pending_shipment' || 
-          order.status === 'to_ship' || 
-          order.status === 'shipped'
-        );
-
-        if (toShipSubTab === 'pending_shipment') {
-          filtered = filtered.filter(order => order.status === 'pending_shipment');
-        } else if (toShipSubTab === 'to_ship') {
-          filtered = filtered.filter(order => order.status === 'to_ship');
-        } else if (toShipSubTab === 'shipped') {
-          filtered = filtered.filter(order => order.status === 'shipped');
-        }
-      } else {
-        filtered = filtered.filter(order => order.status === activeTab);
+      switch (activeTab) {
+        case 'pending':
+          filtered = filtered.filter(order => 
+            order.status?.toLowerCase() === 'pending_shipment'
+          );
+          break;
+        case 'processing':
+          filtered = filtered.filter(order => 
+            order.status?.toLowerCase() === 'to_ship' || 
+            order.status?.toLowerCase() === 'processing'
+          );
+          break;
+        case 'shipped':
+          filtered = filtered.filter(order => {
+            const s = order.status?.toLowerCase();
+            return ['shipped', 'in_transit', 'out_for_delivery', 'arrange_shipment'].includes(s || '');
+          });
+          break;
+        case 'completed':
+          filtered = filtered.filter(order => 
+            order.status?.toLowerCase() === 'completed'
+          );
+          break;
+        case 'cancelled':
+          filtered = filtered.filter(order => 
+            order.status?.toLowerCase() === 'cancelled'
+          );
+          break;
+        default:
+          filtered = filtered.filter(order => order.status?.toLowerCase() === activeTab.toLowerCase());
       }
     }
 
@@ -629,439 +643,657 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
 
   const counts = {
     all: orders.length,
-    to_ship: orders.filter(o => ['pending_shipment', 'to_ship', 'shipped'].includes(o.status)).length,
-    pending_shipment: orders.filter(o => o.status === 'pending_shipment').length,
-    to_ship_status: orders.filter(o => o.status === 'to_ship').length,
-    shipped: orders.filter(o => o.status === 'shipped').length,
-    in_transit: orders.filter(o => o.status === 'in_transit').length,
-    out_for_delivery: orders.filter(o => o.status === 'out_for_delivery').length,
-    completed: orders.filter(o => o.status === 'completed').length,
-    cancelled: orders.filter(o => o.status === 'cancelled').length
+    pending: orders.filter(o => o.status?.toLowerCase() === 'pending_shipment').length,
+    processing: orders.filter(o => o.status?.toLowerCase() === 'to_ship' || o.status?.toLowerCase() === 'processing').length,
+    shipped: orders.filter(o => {
+      const s = o.status?.toLowerCase();
+      return ['shipped', 'in_transit', 'out_for_delivery', 'arrange_shipment'].includes(s || '');
+    }).length,
+    completed: orders.filter(o => o.status?.toLowerCase() === 'completed').length,
+    cancelled: orders.filter(o => o.status?.toLowerCase() === 'cancelled').length
   };
 
-  const getPaymentIcon = (method: string | null) => {
-    if (!method) return <CreditCard className="w-3 h-3" />;
-    switch(method.toLowerCase()) {
-      case 'credit card':
-      case 'debit card':
-        return <CreditCard className="w-3 h-3" />;
-      case 'gcash':
-        return <Phone className="w-3 h-3" />;
-      case 'bank transfer':
-        return <CreditCard className="w-3 h-3" />;
-      default:
-        return <CreditCard className="w-3 h-3" />;
+  const handleUpdateStatus = async (orderId: string, actionType: string) => {
+    try {
+      const response = await AxiosInstance.patch(
+        `/customer-order-list/${orderId}/update_status/`, 
+        {
+          action_type: actionType
+        }, 
+        {
+          params: { user_id: userId }
+        }
+      );
+      
+      if (response.data.success) {
+        const { updated_order, updated_available_actions } = response.data.data;
+        
+        setOrders(prevOrders => 
+          prevOrders.map(order => 
+            order.order_id === orderId 
+              ? { ...updated_order, order_id: orderId }
+              : order
+          )
+        );
+        
+        if (updated_available_actions) {
+          setAvailableActions(prev => ({
+            ...prev,
+            [orderId]: updated_available_actions
+          }));
+        }
+
+        try {
+          const backendStatus = String(response.data.data?.status || '').toLowerCase();
+          const updatedOrderStatus = String((updated_order as any)?.status || '').toLowerCase();
+          const movedToProcessing = backendStatus === 'processing' || updatedOrderStatus === 'to_ship';
+          if (actionType === 'confirm' && movedToProcessing) {
+            setActiveTab('processing');
+          }
+        } catch (e) {
+          /* ignore */
+        }
+        
+        toast.success("Order status updated", {
+          description: response.data.message || `Order ${actionType} successfully`
+        });
+      }
+    } catch (error: any) {
+      console.error('Error updating order status:', error);
+      toast.error("Failed to update order status", {
+        description: error.response?.data?.message || error.message || "Please try again."
+      });
     }
   };
 
-  const getActionButton = (order: Order) => {
-    const status = order.status;
-    const orderId = order.order_id;
-    const primaryItem = order.items[0];
+  const handleCancelOrder = async (orderId: string) => {
+    if (!confirm('Are you sure you want to cancel this order?')) return;
     
-    switch(status) {
-      case 'pending_shipment':
-        return (
-          <Button
-            size="sm"
-            onClick={() => alert(`Confirming order ${orderId}`)}
-            className="h-7 px-2 text-xs bg-blue-600 hover:bg-blue-700"
-          >
-            <CheckCircle className="w-3 h-3 mr-1" />
-            Confirm Order
-          </Button>
-        );
-      case 'to_ship':
-        return (
-          <Link to={`/arrange-shipment?orderId=${orderId}`}>
-            <Button
-              size="sm"
-              className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700"
-            >
-              <Ship className="w-3 h-3 mr-1" />
-              Arrange Shipment
-            </Button>
-          </Link>
-        );
-      case 'shipped':
-        return (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => alert(`Printing waybill for ${orderId}`)}
-            className="h-7 px-2 text-xs"
-          >
-            <Printer className="w-3 h-3 mr-1" />
-            Print Waybill
-          </Button>
-        );
-      case 'in_transit':
-        return (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const trackingNum = (primaryItem as OrderItem)?.tracking_number;
-              if (trackingNum) {
-                alert(`Tracking ${orderId}: ${trackingNum}`);
-              } else {
-                alert(`No tracking number available for ${orderId}`);
-              }
-            }}
-            className="h-7 px-2 text-xs"
-          >
-            <Truck className="w-3 h-3 mr-1" />
-            Track Order
-          </Button>
-        );
-      case 'out_for_delivery':
-        return (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => alert(`Order ${orderId} is out for delivery`)}
-            className="h-7 px-2 text-xs"
-          >
-            <Truck className="w-3 h-3 mr-1" />
-            Delivery Status
-          </Button>
-        );
-      case 'completed':
-        return (
+    try {
+      const response = await AxiosInstance.patch(`/customer-order-list/${orderId}/update_status/`, {
+        action_type: 'cancel'
+      }, {
+        params: { user_id: userId }
+      });
+      
+      if (response.data.success) {
+        await refreshOrders();
+        await loadAvailableActions(orderId);
+        toast.success("Order cancelled", {
+          description: "Order cancelled successfully"
+        });
+      }
+    } catch (error: any) {
+      console.error('Error cancelling order:', error);
+      toast.error("Failed to cancel order", {
+        description: error.response?.data?.message || "Please try again."
+      });
+    }
+  };
+
+  const handlePickedUp = async (orderId: string) => {
+    try {
+      const response = await AxiosInstance.patch(`/customer-order-list/${orderId}/update_status/`, {
+        action_type: 'picked_up'
+      }, {
+        params: { user_id: userId }
+      });
+      
+      if (response.data.success) {
+        await refreshOrders();
+        toast.success("Order marked as picked up", {
+          description: "Thank you for your purchase!"
+        });
+      }
+    } catch (error: any) {
+      console.error('Error marking as picked up:', error);
+      toast.error("Failed to update order status", {
+        description: error.response?.data?.message || "Please try again."
+      });
+    }
+  };
+
+  const getTabCount = (tabId: string) => {
+    switch (tabId) {
+      case 'all': return counts.all;
+      case 'pending': return counts.pending;
+      case 'processing': return counts.processing;
+      case 'shipped': return counts.shipped;
+      case 'completed': return counts.completed;
+      case 'cancelled': return counts.cancelled;
+      default: return 0;
+    }
+  };
+
+  const getActionButtons = (order: Order) => {
+    const isCancelled = isCancelledOrder(order);
+    const isPickup = isPickupOrder(order);
+    const actions = availableActions[order.order_id] || [];
+    const isLoading = loadingActions[order.order_id];
+
+    const isPending = order.status?.toLowerCase() === 'pending_shipment';
+    const canCancel = !isCancelled && !['cancelled', 'completed', 'refunded'].includes(order.status?.toLowerCase() || '');
+    const riderAssignedPending = Boolean(order.delivery_info?.rider_name && String(order.delivery_info?.status || '').toLowerCase() === 'pending');
+
+    const dbOrderStatus = String((order as any).order_status || '').toLowerCase();
+    const uiStatus = String(order.status || '').toLowerCase();
+    const deliveryAccepted = String(order.delivery_info?.status || '').toLowerCase() === 'accepted';
+    const riderAcceptedProcessing = deliveryAccepted && (dbOrderStatus === 'processing' || (!dbOrderStatus && uiStatus === 'to_ship'));
+
+    if (isLoading) {
+      return (
+        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" disabled>
+          <Loader2 className="w-3 h-3 animate-spin" />
+        </Button>
+      );
+    }
+
+    if (isPending) {
+      return (
+        <div className="flex gap-1 items-center">
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => alert(`Viewing completed order ${orderId}`)}
-            className="h-7 px-2 text-xs text-gray-600"
+            className="h-6 px-2 text-[10px]"
+            onClick={async (e) => { 
+              e.stopPropagation(); 
+              if (!confirm('Confirm this order?')) return; 
+              await handleUpdateStatus(order.order_id, 'confirm'); 
+            }}
+            title="Confirm order"
           >
-            <CheckCircle className="w-3 h-3 mr-1" />
-            View Details
+            <CheckCircle className="mr-1 w-3 h-3 text-green-600" /> Confirm
           </Button>
-        );
-      default:
-        return null;
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-6 px-2 text-[10px] ${canCancel ? '' : 'opacity-50 cursor-not-allowed text-gray-400'}`}
+            disabled={!canCancel}
+            onClick={async (e) => { e.stopPropagation(); if (!canCancel) return; await handleCancelOrder(order.order_id); }}
+            title={canCancel ? 'Cancel order' : 'Cannot cancel this order'}
+          >
+            <Ban className="mr-1 w-3 h-3 text-red-600" /> Cancel
+          </Button>
+        </div>
+      );
     }
+
+    const isToShip = String(order.status || '').toLowerCase() === 'to_ship';
+    if (isToShip) {
+      const showArrange = !riderAssignedPending && !riderAcceptedProcessing;
+      return (
+        <div className="flex gap-1 items-center">
+          {showArrange && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[10px]"
+              onClick={(e) => { e.stopPropagation(); handleArrangeShipment(order.order_id); }}
+              title="Arrange shipping"
+            >
+              <Ship className="mr-1 w-3 h-3 text-blue-600" /> Arrange Shipping
+            </Button>
+          )}
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-6 px-2 text-[10px] ${canCancel ? '' : 'opacity-50 cursor-not-allowed text-gray-400'}`}
+            disabled={!canCancel}
+            onClick={async (e) => { e.stopPropagation(); if (!canCancel) return; await handleCancelOrder(order.order_id); }}
+            title={canCancel ? 'Cancel order' : 'Cannot cancel this order'}
+          >
+            <Ban className="mr-1 w-3 h-3 text-red-600" /> Cancel
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {isMobile ? (
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="ghost" className="h-6 w-6 p-0">
+                <MoreHorizontal className="h-3 w-3" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="h-auto max-h-[80vh] overflow-y-auto">
+              <div className="space-y-4 p-4">
+                <h3 className="text-sm font-semibold">Order Actions</h3>
+                <div className="flex flex-col gap-2">
+                  <Button variant="ghost" size="sm" className="h-8 text-sm" onClick={() => toggleOrderExpansion(order.order_id)}>
+                    <Eye className="mr-2 h-4 w-4" /> View Details
+                  </Button>
+
+                  {actions.includes('prepare_shipment') && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-sm"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await handlePrepareShipment(order.order_id);
+                      }}
+                    >
+                      <Package2 className="mr-2 h-4 w-4 text-blue-600" /> Prepare Shipment
+                    </Button>
+                  )}
+
+                  {order.status === 'arrange_shipment' && !riderAssignedPending && !riderAcceptedProcessing && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleArrangeShipment(order.order_id);
+                      }}
+                    >
+                      <Ship className="mr-2 h-4 w-4 text-blue-600" /> Arrange Shipping
+                    </Button>
+                  )}
+
+                  {actions.includes('view_offer') && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewOffer(order.order_id);
+                      }}
+                    >
+                      <MessageCircle className="mr-2 h-4 w-4 text-blue-600" /> View Offer
+                    </Button>
+                  )}
+
+                  {canCancel && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-sm"
+                      onClick={async (e) => { 
+                        e.stopPropagation(); 
+                        await handleCancelOrder(order.order_id); 
+                      }}
+                    >
+                      <Ban className="mr-2 h-4 w-4 text-red-600" /> Cancel
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+        ) : (
+          <div className="flex gap-1 items-center">
+            {actions.includes('prepare_shipment') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  await handlePrepareShipment(order.order_id);
+                }}
+                title="Prepare for shipment"
+              >
+                <Package2 className="mr-1 w-3 h-3 text-blue-600" /> Prepare
+              </Button>
+            )}
+
+            {order.status === 'arrange_shipment' && !riderAcceptedProcessing && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleArrangeShipment(order.order_id);
+                }}
+                title="Arrange shipping"
+              >
+                <Ship className="mr-1 w-3 h-3 text-blue-600" /> Arrange
+              </Button>
+            )}
+
+            {actions.includes('view_offer') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleViewOffer(order.order_id);
+                }}
+                title="View offer"
+              >
+                <MessageCircle className="mr-1 w-3 h-3 text-blue-600" /> Offer
+              </Button>
+            )}
+
+            {canCancel && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={async (e) => { 
+                  e.stopPropagation(); 
+                  await handleCancelOrder(order.order_id); 
+                }}
+                title="Cancel order"
+              >
+                <Ban className="mr-1 w-3 h-3 text-red-600" /> Cancel
+              </Button>
+            )}
+          </div>
+        )}
+      </>
+    );
   };
 
   return (
-    <UserProvider user={user}>
+    <UserProvider user={{ id: userId, isAdmin: false, isCustomer: true, isRider: false, isModerator: false }}>
       <SidebarLayout>
         <div className="space-y-3 p-3">
           {/* Header */}
           <div className="mb-2">
-            <h1 className="text-lg font-bold">Orders</h1>
-            <p className="text-gray-500 text-xs">Manage customer orders</p>
+            <h1 className="text-lg font-bold">Personal Listing Orders</h1>
+            <p className="text-gray-500 text-xs">Manage orders from buyers for your personal listings</p>
           </div>
 
-          {/* Search */}
-          <div className="relative mb-2">
-            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <Input
-              placeholder="Search orders..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8 text-sm h-8"
-            />
+          {/* Stats Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-xl font-bold">{counts.all}</div>
+                <div className="text-xs text-muted-foreground">Total Orders</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-xl font-bold text-yellow-600">{counts.pending}</div>
+                <div className="text-xs text-muted-foreground">Pending</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-xl font-bold text-amber-600">{counts.processing}</div>
+                <div className="text-xs text-muted-foreground">Processing</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-xl font-bold text-blue-600">{counts.shipped}</div>
+                <div className="text-xs text-muted-foreground">Shipped</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-xl font-bold text-green-600">{counts.completed}</div>
+                <div className="text-xs text-muted-foreground">Completed</div>
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Main Tabs */}
-          <div className="flex items-center space-x-1 overflow-x-auto mb-2">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const count = counts[tab.id as keyof typeof counts] || 0;
-              const isActive = activeTab === tab.id;
-              
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => {
-                    setActiveTab(tab.id);
-                    if (tab.id === 'to_ship') setToShipSubTab('all_to_ship');
-                  }}
-                  className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap ${
-                    isActive 
-                      ? 'bg-blue-50 text-blue-600 border border-blue-200' 
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <Icon className="w-3 h-3" />
-                  <span>{tab.label}</span>
-                  {count > 0 && (
-                    <span className={`text-[10px] px-1 py-0.5 rounded ${
-                      isActive ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* To Ship Subtabs */}
-          {activeTab === 'to_ship' && (
-            <div className="bg-gray-50 p-2 rounded mb-2">
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-1">
-                  <Package2 className="w-3.5 h-3.5 text-orange-500" />
-                  <span className="text-xs font-medium">To Ship Orders</span>
+          {/* Main Content */}
+          <Card>
+            <CardContent className="p-3">
+              {!userId ? (
+                <div className="text-center py-4 text-muted-foreground">
+                  <div className="mb-2 text-xs">User authentication required</div>
+                  <Button size="sm" asChild>
+                    <Link to="/login">Please log in</Link>
+                  </Button>
                 </div>
-                <span className="text-xs text-gray-500">
-                  {counts.pending_shipment} to process • {counts.to_ship_status} processed • {counts.shipped} shipped
-                </span>
-              </div>
-              <div className="flex space-x-1 overflow-x-auto">
-                {TO_SHIP_SUBTABS.map((subtab) => {
-                  const Icon = subtab.icon;
-                  const isActive = toShipSubTab === subtab.id;
-                  const count = counts[subtab.id as keyof typeof counts] || 0;
-                  
-                  return (
-                    <button
-                      key={subtab.id}
-                      onClick={() => setToShipSubTab(subtab.id)}
-                      className={`flex items-center gap-1 px-2 py-1 rounded text-xs whitespace-nowrap ${
-                        isActive 
-                          ? 'bg-white text-blue-600 border border-blue-200' 
-                          : 'text-gray-600 hover:bg-white'
-                      }`}
-                    >
-                      <Icon className="w-3 h-3" />
-                      <span>{subtab.label}</span>
-                      {count > 0 && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-gray-100 text-gray-600">
-                          {count}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+              ) : (
+                <div className="space-y-3">
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
+                    <Input
+                      placeholder="Search orders by ID, buyer, or product..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-8 text-sm h-8"
+                    />
+                  </div>
 
-          {/* Orders List */}
-          <div className="space-y-2">
-            {filteredOrders.length === 0 ? (
-              <EmptyState 
-                message={
-                  activeTab === 'to_ship' ? (
-                    toShipSubTab === 'pending_shipment' ? 'No orders to process' :
-                    toShipSubTab === 'to_ship' ? 'No processed orders ready to ship' :
-                    toShipSubTab === 'shipped' ? 'No shipped orders' :
-                    'No orders to ship'
-                  ) :
-                  activeTab === 'in_transit' ? 'No orders in transit' :
-                  activeTab === 'out_for_delivery' ? 'No orders out for delivery' :
-                  activeTab === 'completed' ? 'No completed orders' :
-                  activeTab === 'cancelled' ? 'No cancelled orders' :
-                  'No orders yet'
-                }
-              />
-            ) : (
-              filteredOrders.map((order) => {
-                const customerName = formatCustomerName(order.user);
-                const primaryItem = order.items[0];
-                const isExpanded = expandedOrders.has(order.order_id);
-                const statusColor = getStatusColor(order.status);
-                
-                return (
-                  <Card key={order.order_id} className="overflow-hidden border">
-                    <CardContent className="p-3">
-                      {/* Top Section - Order Header */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <User className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
-                            <span className="text-sm font-medium truncate">{customerName}</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-gray-500">
-                            <span className="truncate">{order.order_id}</span>
-                            <span>•</span>
-                            <span>{formatDate(order.created_at)}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <Badge 
-                            className="text-xs h-5 px-2 py-0 flex items-center gap-1"
-                            style={{ 
-                              backgroundColor: `${statusColor}15`, 
-                              color: statusColor 
-                            }}
-                          >
-                            {getStatusIcon(order.status)}
-                            {getStatusLabel(order.status)}
-                          </Badge>
-                          <button 
-                            onClick={() => toggleOrderExpansion(order.order_id)}
-                            className="p-1 hover:bg-gray-100 rounded"
-                          >
-                            {isExpanded ? (
-                              <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
-                            ) : (
-                              <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-                            )}
-                          </button>
-                        </div>
+                  {/* Tabs */}
+                  <div className="flex items-center space-x-1 overflow-x-auto">
+                    {STATUS_TABS.map((tab) => {
+                      const Icon = tab.icon;
+                      const count = getTabCount(tab.id);
+                      const isActive = activeTab === tab.id;
+                      
+                      return (
+                        <button
+                          key={tab.id}
+                          onClick={() => setActiveTab(tab.id)}
+                          className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs whitespace-nowrap ${
+                            isActive 
+                              ? 'bg-blue-50 text-blue-600 border border-blue-200' 
+                              : 'text-gray-600 hover:bg-gray-100'
+                          }`}
+                        >
+                          <Icon className="w-3 h-3" />
+                          <span>{tab.label}</span>
+                          {count > 0 && (
+                            <span className={`text-[10px] px-1 py-0.5 rounded ${
+                              isActive ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                            }`}>
+                              {count}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Orders List */}
+                  <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
+                    {filteredOrders.length === 0 ? (
+                      <div className="text-center py-4">
+                        <ShoppingCart className="mx-auto h-6 w-6 text-gray-300 mb-2" />
+                        <p className="text-gray-500 text-xs">
+                          {activeTab === 'all' ? 'No personal listing orders found' :
+                           activeTab === 'pending' ? 'No pending orders' :
+                           activeTab === 'processing' ? 'No orders to process' :
+                           activeTab === 'shipped' ? 'No shipped orders' :
+                           activeTab === 'completed' ? 'No completed orders' :
+                           'No cancelled orders'}
+                        </p>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="mt-2 text-xs"
+                          onClick={refreshOrders}
+                        >
+                          Refresh Orders
+                        </Button>
                       </div>
+                    ) : (
+                      filteredOrders.map((order) => {
+                        const isExpanded = expandedOrders.has(order.order_id);
+                        const primaryItem = order.items[0];
+                        const buyerName = formatBuyerName(order.buyer);
 
-                      {/* Middle Section - Order Summary */}
-                      <div className="mb-2">
-                        <div className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                          <Package className="w-3 h-3" />
-                          <span className="truncate">
-                            {primaryItem?.cart_item?.product?.name}
-                            {order.items.length > 1 && ` +${order.items.length - 1} more`}
-                          </span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <div className="text-xs text-gray-500 flex items-center gap-1">
-                            <span>{order.items.length} item{order.items.length !== 1 ? 's' : ''}</span>
-                            <span>•</span>
-                            {getPaymentIcon(order.payment_method)}
-                            <span>{order.payment_method || 'Payment pending'}</span>
-                          </div>
-                          <div className="font-medium text-sm">
-                            <PhilippinePeso className="inline w-3 h-3 mr-0.5" />
-                            {order.total_amount.toLocaleString()}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Expanded Section - Product Details */}
-                      {isExpanded && (
-                        <div className="mt-3 pt-3 border-t">
-                          {/* Customer Information */}
-                          <div className="mb-3">
-                            <div className="text-xs font-medium text-gray-700 mb-1">Customer Information</div>
-                            <div className="text-xs space-y-1">
-                              <div className="flex items-center gap-1 text-gray-600">
-                                <User className="w-3 h-3" />
-                                <span>{customerName}</span>
-                              </div>
-                              <div className="flex items-center gap-1 text-gray-600">
-                                <CreditCard className="w-3 h-3" />
-                                <span>{order.user.email}</span>
-                              </div>
-                              {order.user.phone && (
-                                <div className="flex items-center gap-1 text-gray-600">
-                                  <Phone className="w-3 h-3" />
-                                  <span>{order.user.phone}</span>
-                                </div>
-                              )}
-                              <div className="flex items-start gap-1 text-gray-600">
-                                <MapPin className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                                <span>{order.delivery_address}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Order Details */}
-                          <div className="mb-3">
-                            <div className="text-xs font-medium text-gray-700 mb-1">Order Details</div>
-                            <div className="text-xs space-y-1 text-gray-600">
-                              <div>Order ID: {order.order_id}</div>
-                              <div>Order Date: {formatDateTime(order.created_at)}</div>
-                              <div>Last Updated: {formatDateTime(order.updated_at)}</div>
-                            </div>
-                          </div>
-
-                          {/* Products */}
-                          <div className="mb-3">
-                            <div className="text-xs font-medium text-gray-700 mb-1">Products</div>
-                            <div className="space-y-2">
-                              {order.items.map((item, index) => (
-                                <div key={item.id} className="text-xs">
-                                  <div className="flex justify-between items-start">
-                                    <div className="flex-1">
-                                      <div className="font-medium text-gray-900">
-                                        {item.cart_item.product.name}
-                                      </div>
-                                      {item.cart_item.product.variant && (
-                                        <div className="text-gray-500 mt-0.5">
-                                          Variant: {item.cart_item.product.variant}
-                                        </div>
-                                      )}
-                                      <div className="text-gray-600 mt-0.5">
-                                        Quantity: {item.quantity} × 
-                                        <span className="ml-1">
-                                          <PhilippinePeso className="inline w-2.5 h-2.5 mr-0.5" />
-                                          {item.cart_item.product.price.toLocaleString()}
-                                        </span>
-                                      </div>
+                        const dbOrderStatus = String((order as any).order_status || '').toLowerCase();
+                        const uiStatus = String(order.status || '').toLowerCase();
+                        const isDbProcessing = dbOrderStatus === 'processing';
+                        const isUiToShip = uiStatus === 'to_ship';
+                        const isProcessingState = isDbProcessing || isUiToShip;
+                        
+                        return (
+                          <Card key={order.order_id} className="overflow-hidden border">
+                            <CardContent className="p-3">
+                              {/* Top Section - Header */}
+                              <div className="flex items-start justify-between mb-2">
+                                <div className="flex-1 min-w-0">
+                                  {activeTab === 'processing' && isProcessingState && order.delivery_info?.status === 'pending' && order.delivery_info?.rider_name && (
+                                    <div className="bg-amber-50 p-2 rounded text-[10px] text-amber-700 mb-1">
+                                      <div className="font-medium">Waiting for rider to accept the order {order.delivery_info.rider_name}</div>
                                     </div>
-                                    <div className="font-medium ml-2">
-                                      <PhilippinePeso className="inline w-3 h-3 mr-0.5" />
-                                      {item.total_amount.toLocaleString()}
+                                  )}
+
+                                  {activeTab === 'processing' && String(order.delivery_info?.status || '').toLowerCase() === 'accepted' && (
+                                    (dbOrderStatus === 'processing' || (!dbOrderStatus && uiStatus === 'to_ship')) && (
+                                      <div className="bg-amber-50 p-2 rounded text-[10px] text-amber-700 mb-1">
+                                        <div className="font-medium">Rider will pick up the order</div>
+                                      </div>
+                                    )
+                                  )}
+
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <Package className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                                    <span className="text-xs font-medium truncate">
+                                      {primaryItem?.cart_item?.product?.name || 'Order Items'}
+                                      {order.items.length > 1 && ` +${order.items.length - 1} more`}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                                    <span className="truncate">{order.order_id}</span>
+                                    <span>•</span>
+                                    <span>{formatDate(order.created_at)}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  {getStatusBadge(order.status, order)}
+                                  <button 
+                                    onClick={() => toggleOrderExpansion(order.order_id)}
+                                    className="p-1 hover:bg-gray-100 rounded"
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+                                    ) : (
+                                      <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Middle Section - Summary */}
+                              <div className="mb-2">
+                                <div className="flex items-center gap-2 text-[10px] text-gray-600 mb-1">
+                                  <User className="w-2.5 h-2.5" />
+                                  <span className="truncate">{buyerName}</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] text-gray-600 mb-1">
+                                  {isPickupOrder(order) ? (
+                                    <>
+                                      <Store className="w-2.5 h-2.5" />
+                                      <span>Pickup</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Truck className="w-2.5 h-2.5" />
+                                      <span>Delivery</span>
+                                    </>
+                                  )}
+                                  <span>•</span>
+                                  <span>Qty: {order.items.reduce((sum, item) => sum + item.quantity, 0)}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <div className="text-[10px] text-gray-500">
+                                    {order.payment_method || 'N/A'}
+                                  </div>
+                                  <div className="font-medium text-xs">
+                                    {formatCurrency(order.total_amount)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Product Images Preview */}
+                              <div className="my-2 flex gap-1">
+                                {order.items.slice(0, 3).map((item, idx) => (
+                                  <div key={idx} className="h-12 w-12 rounded-md border bg-gray-50 flex items-center justify-center overflow-hidden">
+                                    <Package className="w-6 h-6 text-gray-300" />
+                                  </div>
+                                ))}
+                                {order.items.length > 3 && (
+                                  <div className="h-12 w-12 rounded-md border bg-gray-50 flex items-center justify-center">
+                                    <span className="text-xs text-gray-500">+{order.items.length - 3}</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Expanded Section - Details */}
+                              {isExpanded && (
+                                <div className="mt-3 pt-3 border-t space-y-2">
+                                  <div className="text-[10px]">
+                                    <div className="font-medium text-gray-700 mb-1">Buyer Details</div>
+                                    <div className="text-gray-600 space-y-0.5">
+                                      <div>Name: {buyerName}</div>
+                                      <div>Email: {order.buyer.email}</div>
+                                      {order.buyer.phone && <div>Phone: {order.buyer.phone}</div>}
                                     </div>
                                   </div>
-                                  {index < order.items.length - 1 && <hr className="my-2 border-gray-100" />}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                                  
+                                  <div className="text-[10px]">
+                                    <div className="font-medium text-gray-700 mb-1">Delivery Information</div>
+                                    <div className="text-gray-600 space-y-0.5">
+                                      <div>Address: {order.delivery_address || 'N/A'}</div>
+                                      <div>Method: {order.delivery_method || order.shipping_method || 'N/A'}</div>
+                                      {order.delivery_info?.rider_name && (
+                                        <div>Rider: {order.delivery_info.rider_name}</div>
+                                      )}
+                                      {order.delivery_info?.tracking_number && (
+                                        <div>Tracking: {order.delivery_info.tracking_number}</div>
+                                      )}
+                                    </div>
+                                  </div>
 
-                          {/* Shipping Info (if available) */}
-                          {(order.status === 'shipped' || order.status === 'in_transit' || order.status === 'out_for_delivery') && 
-                           (primaryItem as OrderItem)?.tracking_number && (
-                            <div className="mb-3 p-2 bg-blue-50 rounded text-xs">
-                              <div className="flex items-center gap-1 text-blue-700 mb-1">
-                                <Truck className="w-3 h-3" />
-                                <span className="font-medium">Shipping Information</span>
-                              </div>
-                              {(primaryItem as OrderItem).shipping_method && (
-                                <div className="text-blue-600 mb-0.5">
-                                  Method: {(primaryItem as OrderItem).shipping_method}
+                                  <div className="text-[10px]">
+                                    <div className="font-medium text-gray-700 mb-1">Order Items</div>
+                                    <div className="space-y-1">
+                                      {order.items.map((item, idx) => (
+                                        <div key={idx} className="flex justify-between text-gray-600">
+                                          <span className="truncate max-w-[180px]">
+                                            {item.cart_item?.product?.name} x{item.quantity}
+                                          </span>
+                                          <span>{formatCurrency(item.total_amount)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  {order.delivery_info?.status === 'pending_offer' && (
+                                    <div className="bg-amber-50 p-2 rounded text-[10px] text-amber-700">
+                                      <div className="font-medium">Pending Rider Offer</div>
+                                      <div>A rider will soon provide a delivery fee offer.</div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
-                              <div className="text-blue-600">
-                                Tracking Number: {(primaryItem as OrderItem).tracking_number}
-                              </div>
-                              {(primaryItem as OrderItem).estimated_delivery && (
-                                <div className="text-blue-600 mt-0.5">
-                                  Estimated Delivery: {(primaryItem as OrderItem).estimated_delivery}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
 
-                      {/* Bottom Section - Actions */}
-                      <div className="flex items-center justify-between pt-2 border-t">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => alert(`Viewing details for ${order.order_id}`)}
-                          className="h-6 px-2 text-xs"
-                        >
-                          <Eye className="w-3 h-3 mr-1" />
-                          Details
-                        </Button>
-                        
-                        <div className="flex gap-1">
-                          {getActionButton(order)}
-                          
-                          {/* Additional Waybill button for shipped orders */}
-                          {order.status === 'shipped' && order.items.some(item => (item as OrderItem).waybill_url) && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => alert(`Viewing waybill for ${order.order_id}`)}
-                              className="h-6 px-2 text-xs"
-                            >
-                              <Printer className="w-3 h-3 mr-1" />
-                              View Waybill
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })
-            )}
-          </div>
+                              {/* Bottom Section - Actions */}
+                              <div className="flex items-center justify-between pt-2 border-t mt-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => toggleOrderExpansion(order.order_id)}
+                                  className="h-6 px-2 text-[10px]"
+                                >
+                                  <Eye className="w-2.5 h-2.5 mr-1" />
+                                  {isExpanded ? 'Show Less' : 'View Details'}
+                                </Button>
+                                
+                                <div className="flex gap-1">
+                                  {getActionButtons(order)}
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </SidebarLayout>
     </UserProvider>
