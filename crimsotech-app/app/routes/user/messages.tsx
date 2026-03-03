@@ -219,7 +219,7 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
     const loadMessages = async (conversationId: string) => {
         try {
             const response = await AxiosInstance.get(
-                `/conversation/messages/${conversationId}/`,
+                `/conversation/messages/${conversationId}/list/`,
                 { headers: { 'X-User-Id': userId } }
             );
             setMessages(response.data);
