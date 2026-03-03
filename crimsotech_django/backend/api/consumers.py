@@ -62,7 +62,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         
         # If we have a specific conversation ID from the frontend, use it
         if data.get('conversation_id'):
-            self.conversation_id = data.get('conversation_id')
+            self.conversation_id = str(data.get('conversation_id'))
         elif not self.conversation_id and self.other_user_id:
             self.conversation_id = await self.get_conversation_id(
                 str(self.user.id), 
@@ -70,6 +70,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
         
         if self.conversation_id:
+            # Ensure conversation_id is a string
+            self.conversation_id = str(self.conversation_id)
             self.room_group_name = f'chat_{self.conversation_id}'
             
             await self.channel_layer.group_add(
@@ -91,7 +93,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'user_id': str(self.user.id),
                 'conversation_id': None
             }))
-    
+
     @database_sync_to_async
     def get_user(self, user_id):
         """Get user by ID - lazy import"""
@@ -124,6 +126,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }))
             return
             
+        # Ensure conversation_id is a string and valid
+        conversation_id = str(conversation_id)
+        
+        # Create a safe group name - ensure it's valid
+        self.room_group_name = f"chat_{conversation_id}"
+        
+        # Make sure we're in the group
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+        
         message = await self.save_message_to_db(
             receiver_id=data['receiver_id'],
             content=data['content'],
@@ -131,19 +145,23 @@ class ChatConsumer(AsyncWebsocketConsumer):
             conversation_id=conversation_id
         )
         
+        # Prepare message for broadcast
+        message_data = {
+            'type': 'chat_message',
+            'message_id': str(message.id),
+            'sender_id': str(self.user.id),
+            'sender_name': self.user.username or 'Unknown',
+            'receiver_id': data['receiver_id'],
+            'content': data['content'],
+            'timestamp': str(message.created_at),
+            'status': message.status,
+            'conversation_id': conversation_id
+        }
+        
+        # Send to group
         await self.channel_layer.group_send(
             self.room_group_name,
-            {
-                'type': 'chat_message',
-                'message_id': str(message.id),
-                'sender_id': str(self.user.id),
-                'sender_name': self.user.username,
-                'receiver_id': data['receiver_id'],
-                'content': data['content'],
-                'timestamp': str(message.created_at),
-                'status': message.status,
-                'conversation_id': conversation_id
-            }
+            message_data
         )
     
     async def handle_read_receipt(self, data):
@@ -196,7 +214,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'status': event['status'],
             'conversation_id': event['conversation_id']
         }))
-    
+
     async def read_receipt(self, event):
         """Send read receipt to WebSocket client"""
         await self.send(text_data=json.dumps({
