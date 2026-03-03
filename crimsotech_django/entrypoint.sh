@@ -3,6 +3,22 @@ set -ex
 
 echo ">>> entrypoint: starting (pid $$)"
 
+# Calculate optimal workers based on available memory
+MEMORY_LIMIT=${MEMORY_AVAILABLE:-512}
+if [ $MEMORY_LIMIT -le 512 ]; then
+    WORKERS=1
+    MAX_REQUESTS=500
+    CONCURRENCY=100
+elif [ $MEMORY_LIMIT -le 1024 ]; then
+    WORKERS=2
+    MAX_REQUESTS=750
+    CONCURRENCY=200
+else
+    WORKERS=3
+    MAX_REQUESTS=1000
+    CONCURRENCY=400
+fi
+
 echo ">>> seeding data"
 python manage.py seed_data
 
@@ -10,24 +26,27 @@ echo ">>> migrating tables..."
 python manage.py migrate --noinput
 
 echo ">>> collecting static files"
-python manage.py collectstatic --noinput || true
+python manage.py collectstatic --noinput
 
 echo ">>> starting server with WebSocket support"
-echo ">>> Redis URL: ${REDIS_URL}"
+echo ">>> Workers: $WORKERS, Memory: ${MEMORY_LIMIT}MB"
 
 # Set Django settings module explicitly
 export DJANGO_SETTINGS_MODULE=backend.settings
+export PYTHONUNBUFFERED=TRUE
+export PYTHONMALLOC=malloc
 
-# Use Gunicorn with Uvicorn workers
+# Fixed: Removed comment after backslash
 exec gunicorn backend.asgi:application \
   -k uvicorn.workers.UvicornWorker \
   --bind "0.0.0.0:${PORT:-8000}" \
-  --workers ${WEB_CONCURRENCY:-1} \
+  --workers $WORKERS \
   --threads 1 \
-  --worker-connections 1000 \
-  --max-requests 1000 \
+  --worker-connections $CONCURRENCY \
+  --max-requests $MAX_REQUESTS \
   --max-requests-jitter 50 \
-  --timeout 600 \
+  --timeout 120 \
   --log-level info \
   --access-logfile - \
-  --error-logfile -
+  --error-logfile - \
+  --preload

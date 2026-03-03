@@ -5,6 +5,7 @@ from pathlib import Path
 import environ
 import dj_database_url
 from corsheaders.defaults import default_headers
+import redis  # Added for Redis connection pooling
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -120,12 +121,13 @@ ASGI_APPLICATION = 'backend.asgi.application'
 # Database Configuration
 db_url = env.str("DATABASE_URL", default="")
 if db_url:
-    # Parse database URL with SSL requirements for Supabase/cloud databases
-    db_config = dj_database_url.parse(db_url, conn_max_age=600)
+    # Parse database URL with optimized connection age (reduced from 600 to 60)
+    db_config = dj_database_url.parse(db_url, conn_max_age=60)  # Reduced for better memory management
     # Add SSL requirement if using Supabase or other cloud providers
     if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
         db_config["OPTIONS"] = {
             "sslmode": "require",
+            "connect_timeout": 10,
         }
     DATABASES = {
         "default": db_config,
@@ -140,22 +142,43 @@ else:
             "PASSWORD": env.str("POSTGRES_PASSWORD", default=""),
             "HOST": env.str("POSTGRES_HOST", default="127.0.0.1"),
             "PORT": env.str("POSTGRES_PORT", default="5432"),
-            "CONN_MAX_AGE": 600,
+            "CONN_MAX_AGE": 60,  # Reduced for better memory management
+            "OPTIONS": {
+                "connect_timeout": 10,
+            },
         }
     }
 
 # Redis Configuration for Channels
 REDIS_URL = env.str("REDIS_URL", default="redis://localhost:6379")
 
-# Channel Layers for WebSocket (Production ready)
+# Redis Connection Pooling Settings
+REDIS_POOL_SIZE = env.int("REDIS_POOL_SIZE", default=10)
+REDIS_CONNECTION_KWARGS = {
+    "socket_keepalive": True,
+    "socket_connect_timeout": 5,
+    "socket_timeout": 30,
+    "retry_on_timeout": True,
+    "max_connections": REDIS_POOL_SIZE,
+}
+
+# Channel Layers with optimized Redis connection pooling
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_URL],
-            "capacity": 1500,  # Default capacity for messages
-            "expiry": 60,  # Message expiry in seconds
-            "symmetric_encryption_keys": [SECRET_KEY],  # Optional: encrypt WebSocket messages
+            "hosts": [{
+                "address": REDIS_URL,
+                "ssl_cert_reqs": None,
+                **REDIS_CONNECTION_KWARGS  # Add connection pooling
+            }],
+            "capacity": 100,  # Reduced from 1500 to prevent memory buildup
+            "expiry": 30,  # Reduced from 60 seconds
+            "symmetric_encryption_keys": [SECRET_KEY],
+            "channel_capacity": {
+                "http.request": 200,
+                "websocket.send*": 100,
+            }
         },
     },
 }
@@ -230,6 +253,11 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
+        "channels_redis": {  # Add Redis channel logging
+            "handlers": ["console"],
+            "level": "WARNING",  # Only log warnings to reduce noise
+            "propagate": False,
+        },
     },
 }
 
@@ -246,6 +274,7 @@ STORAGES = {
             "addressing_style": "path",
             "default_acl": None,
             "querystring_auth": False,
+            # "max_pool_connections": 10,
         },
     },
     "staticfiles": {
@@ -255,13 +284,14 @@ STORAGES = {
 
 MEDIA_URL = f"{env.str('SUPABASE_ENDPOINT')}/{env.str('SUPABASE_STORAGE_BUCKET')}/"
 
-# Chat/WebSocket specific settings
-CHAT_MESSAGE_HISTORY_DAYS = env.int("CHAT_MESSAGE_HISTORY_DAYS", default=30)  # How long to keep message history
-MAX_UPLOAD_SIZE = env.int("MAX_UPLOAD_SIZE", default=10485760)  # 10MB max file upload for chat
+CHAT_MESSAGE_HISTORY_DAYS = env.int("CHAT_MESSAGE_HISTORY_DAYS", default=30)
+MAX_UPLOAD_SIZE = env.int("MAX_UPLOAD_SIZE", default=10485760)
 ALLOWED_CHAT_FILE_TYPES = ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.doc', '.docx', '.txt']
 
-# Session settings for WebSocket authentication
-SESSION_COOKIE_SECURE = not DEBUG  # Use secure cookies in production
-SESSION_COOKIE_SAMESITE = 'Lax'  # Required for WebSocket to work with sessions
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = 'Lax'  
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = 'Lax'
+
+import gc
+gc.set_threshold(700, 10, 5)

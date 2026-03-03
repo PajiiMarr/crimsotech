@@ -35012,16 +35012,36 @@ class ConversationViewSet(viewsets.ViewSet):
     ViewSet for handling conversations and messages between users
     """
     
-    def list(self, request):
+    def get_conversation_id(self, request):
         """
-        GET /api/conversation/messages/{conv_id}/
-        Note: This endpoint is actually for getting messages in a conversation
-        The URL pattern maps to: /api/conversation/messages/<conv_id>/
+        Helper method to extract conversation ID from various sources
         """
-        # Extract conversation ID from the URL
-        # Since this is the list method and the URL includes the conv_id,
-        # we need to get it from the kwargs or path
-        conv_id = self.kwargs.get('conv_id') or request.GET.get('conv_id')
+        # Try to get from kwargs first (from URL pattern)
+        conv_id = self.kwargs.get('conv_id')
+        
+        # If not in kwargs, try query params
+        if not conv_id:
+            conv_id = request.query_params.get('conv_id')
+        
+        # If still not found, try to extract from path
+        if not conv_id:
+            path_parts = request.path.split('/')
+            if 'messages' in path_parts:
+                msg_index = path_parts.index('messages')
+                if len(path_parts) > msg_index + 1:
+                    conv_id = path_parts[msg_index + 1]
+        
+        return conv_id
+    
+    # AFTER
+    @action(detail=False, methods=['get'], url_path=r'messages/(?P<conv_id>[^/]+)/list')
+    def get_messages(self, request, conv_id=None):
+        """
+        GET /api/conversation/messages/{conv_id}/ - Get messages for a conversation
+        """
+        # Use conv_id from URL pattern
+        if not conv_id:
+            conv_id = self.get_conversation_id(request)
         
         if not conv_id:
             return Response(
@@ -35440,7 +35460,7 @@ class ConversationViewSet(viewsets.ViewSet):
         
         return Response(data)
     
-    @action(detail=False, methods=['post'], url_path='messages/(?P<message_id>[^/]+)/read')
+    @action(detail=False, methods=['post'], url_path=r'messages/(?P<message_id>[^/]+)/read/?')
     def mark_as_read(self, request, message_id=None):
         """
         POST /api/conversation/messages/{message_id}/read/ - Mark a message as read
@@ -35487,7 +35507,7 @@ class ConversationViewSet(viewsets.ViewSet):
         
         return Response({'status': 'marked as read'})
     
-    @action(detail=False, methods=['delete'], url_path='messages/(?P<message_id>[^/]+)')
+    @action(detail=False, methods=['delete'], url_path=r'messages/(?P<message_id>[^/]+)/?')
     def delete_message(self, request, message_id=None):
         """
         DELETE /api/conversation/messages/{message_id}/ - Soft delete a message
@@ -35526,7 +35546,7 @@ class ConversationViewSet(viewsets.ViewSet):
         
         return Response({'status': 'message deleted'})
     
-    @action(detail=False, methods=['post'], url_path='archive/(?P<conv_id>[^/]+)')
+    @action(detail=False, methods=['post'], url_path=r'archive/(?P<conv_id>[^/]+)/?')
     def archive_conversation(self, request, conv_id=None):
         """
         POST /api/conversation/archive/{conv_id}/ - Archive a conversation
@@ -35563,7 +35583,7 @@ class ConversationViewSet(viewsets.ViewSet):
         
         return Response({'status': 'conversation archived'})
     
-    @action(detail=False, methods=['post'], url_path='unarchive/(?P<conv_id>[^/]+)')
+    @action(detail=False, methods=['post'], url_path=r'unarchive/(?P<conv_id>[^/]+)/?')
     def unarchive_conversation(self, request, conv_id=None):
         """
         POST /api/conversation/unarchive/{conv_id}/ - Unarchive a conversation
@@ -35600,7 +35620,7 @@ class ConversationViewSet(viewsets.ViewSet):
         
         return Response({'status': 'conversation unarchived'})
     
-    @action(detail=False, methods=['post'], url_path='mute/(?P<conv_id>[^/]+)')
+    @action(detail=False, methods=['post'], url_path=r'mute/(?P<conv_id>[^/]+)/?')
     def mute_conversation(self, request, conv_id=None):
         """
         POST /api/conversation/mute/{conv_id}/ - Mute a conversation
@@ -35621,7 +35641,7 @@ class ConversationViewSet(viewsets.ViewSet):
             )
         
         mute_duration = request.data.get('duration', 24)  # Default 24 hours
-        mute_until = timezone.now() + timezone.timedelta(hours=mute_duration)
+        mute_until = timezone.now() + timedelta(hours=mute_duration)
         
         try:
             participant = ConversationParticipant.objects.get(
@@ -35643,7 +35663,7 @@ class ConversationViewSet(viewsets.ViewSet):
             'muted_until': mute_until.isoformat()
         })
     
-    @action(detail=False, methods=['post'], url_path='unmute/(?P<conv_id>[^/]+)')
+    @action(detail=False, methods=['post'], url_path=r'unmute/(?P<conv_id>[^/]+)/?')
     def unmute_conversation(self, request, conv_id=None):
         """
         POST /api/conversation/unmute/{conv_id}/ - Unmute a conversation
@@ -35679,9 +35699,7 @@ class ConversationViewSet(viewsets.ViewSet):
         participant.save(update_fields=['is_muted', 'muted_until'])
         
         return Response({'status': 'conversation unmuted'})
-
-
-
+    
 
 class CustomerOrderList(viewsets.ViewSet):
     
