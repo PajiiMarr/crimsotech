@@ -107,7 +107,7 @@ const menuItems = [
     children: [
       { title: "My products", url: "/personal-listing", icon: Package, roles: ["customer"] },
       { title: "Order Lists", url: "/order-list", icon: ClipboardList, roles: ["customer"] },
-      { title: "Return/Refund/Cancel", url: "/return-refund-cancel", icon: Repeat, roles: ["customer"] },
+      { title: "Refund & Returns", url: "/personal-return-refund", icon: Repeat, roles: ["customer"] },
       { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
     ]
   },

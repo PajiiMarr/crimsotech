@@ -57,7 +57,7 @@ export default [
     //customer-seller
     route('view-customer-return-cancel/:returnId', 'routes/customer/view-customer-return-cancel.tsx'),
     // route('view-refund-request/:refundId', 'routes/customer/view-refund-request.tsx'),
-    // route('customer-return-cancel', 'routes/customer/customer-return-cancel.tsx'),
+    route('personal-return-refund', 'routes/customer/personal-return-refund.tsx'),
 
     // File dispute route
     route('file-dispute/:refundId', 'routes/seller/file-dispute.tsx'),

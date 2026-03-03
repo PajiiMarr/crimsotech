@@ -12,7 +12,8 @@ import {
   Bell,
   AlertTriangle,
   Bolt,
-  Zap
+  Zap,
+  MapPin
 } from "lucide-react";
 
 import { Link, useLocation } from 'react-router'
@@ -55,7 +56,7 @@ export default function SellerSidebar() {
       group: "Refund & Return",
       children: [
         { title: "Return/Refund/Cancel", url: "/seller/seller-return-refund-cancel", icon: RotateCcw },
-        { title: "Manage Return Address", url: "/seller/return-address", icon: RotateCcw },
+        { title: "Manage Return Address", url: "/seller/return-address", icon: MapPin  },
       ],
     },
     {
