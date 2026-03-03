@@ -274,7 +274,7 @@ STORAGES = {
             "addressing_style": "path",
             "default_acl": None,
             "querystring_auth": False,
-            "max_pool_connections": 10,
+            # "max_pool_connections": 10,
         },
     },
     "staticfiles": {

@@ -99,12 +99,24 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
                 setConnectionError(null);
                 setIsAuthenticated(false);
                 
-                const API_URL = import.meta.env.VITE_API_URL || 'localhost:8000';
-                const wsUrl = `ws://${API_URL}/ws/chat/`;
+                // Use VITE_WEBSOCKET_URL from environment
+                const WS_URL = import.meta.env.VITE_WEBSOCKET_URL;
                 
+                if (!WS_URL) {
+                    console.error('VITE_WEBSOCKET_URL is not defined in environment');
+                    setConnectionError('WebSocket URL not configured');
+                    return;
+                }
+                
+                // Ensure the URL ends with /ws/chat/
+                const baseUrl = WS_URL.endsWith('/') ? WS_URL.slice(0, -1) : WS_URL;
+                const wsUrl = `${baseUrl}/ws/chat/`;
+                
+                console.log('Connecting to WebSocket:', wsUrl);
                 wsRef.current = new WebSocket(wsUrl);
                 
                 wsRef.current.onopen = () => {
+                    console.log('WebSocket connected');
                     setIsConnected(true);
                     setConnectionError(null);
                     
@@ -128,6 +140,7 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
                         const data = JSON.parse(event.data);
                         
                         if (data.type === 'authenticated') {
+                            console.log('WebSocket authenticated');
                             setIsAuthenticated(true);
                         }
                         
@@ -137,13 +150,15 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
                     }
                 };
                 
-                wsRef.current.onerror = () => {
+                wsRef.current.onerror = (error) => {
+                    console.error('WebSocket error:', error);
                     setConnectionError('Connection failed');
                     setIsConnected(false);
                     setIsAuthenticated(false);
                 };
                 
                 wsRef.current.onclose = (event) => {
+                    console.log('WebSocket closed:', event.code, event.reason);
                     setIsConnected(false);
                     setIsAuthenticated(false);
                     
@@ -192,7 +207,6 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
     
     const loadConversations = async () => {
         try {
-            // Fixed: Changed from '/conversation/' to '/conversation/list/'
             const response = await AxiosInstance.get('/conversation/list/', {
                 headers: { 'X-User-Id': userId }
             });
@@ -203,16 +217,16 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
     };
     
     const loadMessages = async (conversationId: string) => {
-    try {
-        const response = await AxiosInstance.get(
-            `/conversation/messages/${conversationId}/list/`,
-            { headers: { 'X-User-Id': userId } }
-        );
-        setMessages(response.data);
-    } catch (error) {
-        console.error('Failed to load messages:', error);
-    }
-};
+        try {
+            const response = await AxiosInstance.get(
+                `/conversation/messages/${conversationId}/`,
+                { headers: { 'X-User-Id': userId } }
+            );
+            setMessages(response.data);
+        } catch (error) {
+            console.error('Failed to load messages:', error);
+        }
+    };
     
     const handleWebSocketMessage = (data: any) => {
         switch (data.type) {
@@ -344,7 +358,6 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
         
         setIsLoadingUsers(true);
         try {
-            // Fixed: Using the correct endpoint
             const response = await AxiosInstance.get(`/conversation/search/?q=${term}`, {
                 headers: { 'X-User-Id': userId }
             });
@@ -358,7 +371,6 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
     
     const startNewConversation = async (otherUserId: string, username: string) => {
         try {
-            // Fixed: Using the correct endpoint
             const response = await AxiosInstance.post('/conversation/start/', 
                 { user_id: otherUserId },
                 { headers: { 'X-User-Id': userId } }
