@@ -21386,55 +21386,58 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=False, methods=['GET'])
-    def get_order_details(self, request):
+    
+    @action(detail=False, methods=['get'], url_path='get_order_details/(?P<order_id>[^/.]+)')
+    def get_order_details(self, request, order_id=None):
         """
-        Get order details for payment page
+        Get order details by order ID
         """
-        order_id = request.query_params.get('order_id')
-        
-        if not order_id:
-            return Response({
-                'success': False,
-                'error': 'Order ID is required'
-            }, status=400)
-        
         try:
-            order = get_object_or_404(
-                Order.objects.select_related(
-                    'user',
-                    'shipping_address'
-                ).prefetch_related(
-                    'payment_set'
-                ),
-                order=order_id
-            )
+            # Try to find the order by its UUID
+            order = get_object_or_404(Order, order=order_id)
             
-            payment = order.payment_set.first()
-            payment_status = 'paid' if payment and payment.status == 'success' else 'pending'
-            
-            order_details = {
+            # You can customize what data you want to return
+            order_data = {
                 'order_id': str(order.order),
-                'total_amount': float(order.total_amount),
+                'status': order.status,
+                'approval': order.approval,
+                'total_amount': str(order.total_amount),
                 'payment_method': order.payment_method,
-                'status': payment_status,
-                'created_at': order.created_at.isoformat(),
-                'order_status': order.status,
                 'delivery_method': order.delivery_method,
-                'shipping_address': order.delivery_address_text if order.delivery_address_text else None
+                'delivery_address': order.delivery_address_text,
+                'created_at': order.created_at,
+                'updated_at': order.updated_at,
+                'user': {
+                    'id': str(order.user.id),
+                    'username': order.user.username,
+                    'email': order.user.email,
+                    'first_name': order.user.first_name,
+                    'last_name': order.user.last_name,
+                }
             }
             
-            return Response({
-                'success': True,
-                'order': order_details
-            })
+            # If you want to include shipping address details
+            if order.shipping_address:
+                order_data['shipping_address'] = {
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type,
+                }
             
-        except (ValueError, Exception) as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-    
+            return Response(order_data, status=status.HTTP_200_OK)
+            
+        except Order.DoesNotExist:
+            return Response(
+                {'error': f'Order with ID {order_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
     @action(detail=False, methods=['POST'])
     def add_receipt(self, request):
         try:

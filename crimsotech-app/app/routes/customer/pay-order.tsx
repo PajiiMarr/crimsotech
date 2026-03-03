@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, Link, useSearchParams } from "react-router";
+import { useLoaderData, Link, useSearchParams, useNavigate } from "react-router";
 import type { Route } from "./+types/pay-order";
 import { UserProvider } from '~/components/providers/user-role-provider';
 import AxiosInstance from '~/components/axios/Axios';
@@ -17,10 +17,27 @@ interface LoaderData {
 
 interface OrderDetails {
     order_id: string;
-    total_amount: number;
-    payment_method: string;
     status: string;
+    approval: string;
+    total_amount: string;
+    payment_method: string;
+    delivery_method: string;
+    delivery_address: string;
     created_at: string;
+    updated_at: string;
+    user: {
+        id: string;
+        username: string;
+        email: string;
+        first_name: string;
+        last_name: string;
+    };
+    shipping_address?: {
+        recipient_name: string;
+        recipient_phone: string;
+        full_address: string;
+        address_type: string;
+    };
 }
 
 export async function loader({ request, context}: Route.LoaderArgs): Promise<LoaderData> {
@@ -65,6 +82,7 @@ export async function action({ request }: { request: Request }) {
 
 export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
     const { user } = loaderData;
+    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const orderId = searchParams.get('order_id');
     const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
@@ -86,10 +104,10 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
     const fetchOrderDetails = async () => {
         try {
             const response = await AxiosInstance.get(`/checkout-order/get_order_details/${orderId}/`);
-            if (response.data.success) {
-                setOrderDetails(response.data.order);
-                setPaymentStatus(response.data.order.status === 'paid' ? 'paid' : 'pending');
-            } else setError(response.data.error || "Failed to load order details");
+            // Directly set the response data since it matches our interface
+            setOrderDetails(response.data);
+            // Check if order is already paid/completed - you might need to adjust this logic
+            setPaymentStatus(response.data.status === 'paid' || response.data.status === 'completed' ? 'paid' : 'pending');
         } catch (err: any) {
             setError(err.response?.data?.error || "Error fetching order details");
         } finally {
@@ -109,8 +127,8 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
     const getQRCodeImage = () => {
         if (!orderDetails) return null;
         switch(orderDetails.payment_method) {
-            case 'GCash': return 'gcash.jpeg';
-            case 'Maya': return 'maya.jpeg';
+            case 'GCash': return '/gcash.jpeg';
+            case 'Maya': return '/maya.jpeg';
             default: return null;
         }
     };
@@ -161,7 +179,8 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
             });
 
             if (response.data.success) {
-                handlePaymentComplete();
+                // Navigate to order successful page immediately after successful upload
+                navigate(`/order-successful/${orderId}`);
             } else {
                 setError(response.data.error || "Failed to upload receipt");
             }
@@ -179,16 +198,24 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                 order_id: orderId,
             });
             if (response.data.success) {
-                setPaymentStatus('paid');
-                setTimeout(() => {
-                    window.location.href = `/order-successful/${orderId}`;
-                });
+                // Navigate to order successful page after successful payment confirmation
+                navigate(`/order-successful/${orderId}`);
             } else setError(response.data.error || "Failed to confirm payment");
         } catch (err: any) {
             setError(err.response?.data?.error || "Error confirming payment");
         } finally {
             setLoading(false);
         }
+    };
+
+    const formatDate = (dateString: string) => {
+        return new Date(dateString).toLocaleDateString('en-PH', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     };
 
     if (loading) return (
@@ -208,7 +235,9 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                 <div className="text-center max-w-md">
                     <AlertCircle className="h-16 w-16 text-red-500 mx-auto mb-4" />
                     <h2 className="text-xl font-semibold text-gray-900 mb-2">{error || "Order Not Found"}</h2>
-                    <Link to="/orders"><Button>View Orders</Button></Link>
+                    <Link to="/orders">
+                        <Button>View Orders</Button>
+                    </Link>
                 </div>
             </div>
         </UserProvider>
@@ -231,11 +260,11 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                         </div>
                                         <div className="text-center sm:text-left">
                                             <h1 className="text-2xl font-bold text-white">Complete Your Payment</h1>
-                                            <p className="text-orange-100">Order #{orderDetails.order_id}</p>
+                                            <p className="text-orange-100">Order #{orderDetails.order_id.slice(0, 8)}</p>
                                         </div>
                                     </div>
                                     <div className="text-center sm:text-right">
-                                        <div className="text-3xl font-bold text-white">₱{orderDetails.total_amount.toFixed(2)}</div>
+                                        <div className="text-3xl font-bold text-white">₱{parseFloat(orderDetails.total_amount).toFixed(2)}</div>
                                         <div className="text-orange-100">Total Amount</div>
                                     </div>
                                 </div>
@@ -243,13 +272,14 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
 
                             <div className="flex-1 p-6 overflow-auto">
                                 {paymentStatus === 'paid' && (
-                                    <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
+                                    <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
                                         <div className="flex items-center justify-center gap-4">
                                             <div className="p-3 bg-green-100 rounded-full">
                                                 <CheckCircle className="h-8 w-8 text-green-600" />
                                             </div>
                                             <div>
                                                 <h3 className="font-semibold text-green-800">Payment Confirmed!</h3>
+                                                <p className="text-sm text-green-600">Your order is being processed</p>
                                             </div>
                                         </div>
                                     </div>
@@ -282,7 +312,8 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                     ) : (
                                                         <div className="h-full flex flex-col items-center justify-center">
                                                             <CreditCard className="h-20 w-20 text-gray-400 mb-4" />
-                                                            <p className="text-gray-500">QR Code not available for {orderDetails.payment_method}</p>
+                                                            <p className="text-gray-500">Please complete your payment via {orderDetails.payment_method}</p>
+                                                            <p className="text-sm text-gray-400 mt-2">Instructions will be provided by the seller</p>
                                                         </div>
                                                     )}
                                                 </div>
@@ -310,7 +341,7 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                     <div className="flex justify-between p-3 bg-white rounded-lg border">
                                                         <div>
                                                             <div className="text-xs text-gray-500">Order ID</div>
-                                                            <div className="font-mono text-sm">{orderDetails.order_id}</div>
+                                                            <div className="font-mono text-sm break-all">{orderDetails.order_id}</div>
                                                         </div>
                                                     </div>
 
@@ -318,16 +349,35 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                         <div>
                                                             <div className="text-xs text-gray-500">Order Date</div>
                                                             <div className="font-medium text-sm">
-                                                                {new Date(orderDetails.created_at).toLocaleDateString('en-PH', {
-                                                                    year: 'numeric',
-                                                                    month: 'long',
-                                                                    day: 'numeric',
-                                                                    hour: '2-digit',
-                                                                    minute: '2-digit'
-                                                                })}
+                                                                {formatDate(orderDetails.created_at)}
                                                             </div>
                                                         </div>
                                                     </div>
+
+                                                    <div className="flex justify-between p-3 bg-white rounded-lg border">
+                                                        <div>
+                                                            <div className="text-xs text-gray-500">Delivery Method</div>
+                                                            <div className="font-medium text-sm">{orderDetails.delivery_method}</div>
+                                                        </div>
+                                                    </div>
+
+                                                    {orderDetails.delivery_address && (
+                                                        <div className="flex justify-between p-3 bg-white rounded-lg border">
+                                                            <div>
+                                                                <div className="text-xs text-gray-500">Delivery Address</div>
+                                                                <div className="font-medium text-sm">{orderDetails.delivery_address}</div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {orderDetails.shipping_address && (
+                                                        <div className="p-3 bg-white rounded-lg border">
+                                                            <div className="text-xs text-gray-500 mb-1">Shipping Details</div>
+                                                            <div className="font-medium text-sm">{orderDetails.shipping_address.recipient_name}</div>
+                                                            <div className="text-xs text-gray-600">{orderDetails.shipping_address.recipient_phone}</div>
+                                                            <div className="text-xs text-gray-600 mt-1">{orderDetails.shipping_address.full_address}</div>
+                                                        </div>
+                                                    )}
 
                                                     <div className="p-4 bg-white rounded-lg border border-dashed border-blue-300">
                                                         <div className="text-center">
@@ -353,14 +403,16 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                                                                 className="w-28 h-28 object-cover rounded-lg border"
                                                                                             />
                                                                                             <div className="absolute -top-2 -right-2 bg-orange-500 text-white rounded-full p-1">
-                                                                                                <Image className="h-2 w-2" />
+                                                                                                <Image className="h-3 w-3" />
                                                                                             </div>
                                                                                         </div>
                                                                                     ) : (
-                                                                                        <div className="w-28 h-28 bg-gray-100 rounded-lg border flex items-center justify-center">
-                                                                                            <FileText className="h-10 w-10 text-gray-400" />
+                                                                                        <div className="relative">
+                                                                                            <div className="w-28 h-28 bg-gray-100 rounded-lg border flex items-center justify-center">
+                                                                                                <FileText className="h-10 w-10 text-gray-400" />
+                                                                                            </div>
                                                                                             <div className="absolute -top-2 -right-2 bg-orange-500 text-white rounded-full p-1">
-                                                                                                <FileText className="h-2 w-2" />
+                                                                                                <FileText className="h-3 w-3" />
                                                                                             </div>
                                                                                         </div>
                                                                                     )}
@@ -406,7 +458,7 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                                 <div className="text-xs text-gray-600">Including all charges</div>
                                                             </div>
                                                             <div className="text-xl font-bold text-orange-600">
-                                                                ₱{orderDetails.total_amount.toFixed(2)}
+                                                                ₱{parseFloat(orderDetails.total_amount).toFixed(2)}
                                                             </div>
                                                         </div>
 
@@ -437,7 +489,7 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                                         variant="outline"
                                                                         size="sm"
                                                                         className="w-full h-10"
-                                                                        onClick={() => window.location.href = `/order-successful/${orderId}`}
+                                                                        onClick={() => navigate(`/order-successful/${orderId}`)}
                                                                         disabled={uploadingReceipt}
                                                                     >
                                                                         Skip Payment for Now
@@ -447,7 +499,7 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                                 <Button
                                                                     size="lg"
                                                                     className="w-full h-12 text-sm font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
-                                                                    onClick={() => window.location.href = `/order-successful/${orderId}`}
+                                                                    onClick={() => navigate(`/order-successful/${orderId}`)}
                                                                 >
                                                                     <CheckCircle className="h-4 w-4 mr-2" />
                                                                     View Order Details
