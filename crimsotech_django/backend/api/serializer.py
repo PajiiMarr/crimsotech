@@ -1106,3 +1106,23 @@ class LogsSerializer(serializers.ModelSerializer):
         elif user.is_customer:
             return 'customer'
         return 'unknown'
+
+
+class UserPaymentDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserPaymentDetail
+        fields = [
+            'payment_id', 'payment_method', 'bank_name', 
+            'account_name', 'account_number', 'is_default',
+            'created_at', 'updated_at', 'verified_by'
+        ]
+        read_only_fields = ['payment_id', 'created_at', 'updated_at', 'verified_by']
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Mask account number for security
+        if data.get('account_number'):
+            acc_num = data['account_number']
+            if len(acc_num) > 4:
+                data['account_number'] = '*' * (len(acc_num) - 4) + acc_num[-4:]
+        return data

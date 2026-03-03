@@ -33020,8 +33020,7 @@ class ProfileView(APIView):
             # Get user
             user = User.objects.get(id=user_id)
             user_data = UserSerializer(user).data
-
-            # Add user headers (user-specific info)
+         # Add user headers (user-specific info)
             user_data['full_name'] = " ".join(filter(None, [
                 user.first_name, 
                 user.middle_name, 
@@ -33201,6 +33200,189 @@ class ProfileView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def post(self, request):
+        """Handle POST requests for payment methods"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {"error": "X-User-Id header is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(id=user_id)
+            action = request.data.get('action')
+
+            if action == 'add_payment_method':
+                return self.add_payment_method(request, user)
+            elif action == 'delete_payment_method':
+                return self.delete_payment_method(request, user)
+            elif action == 'set_default_payment':
+                return self.set_default_payment(request, user)
+            else:
+                return Response(
+                    {"error": "Invalid action"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error in profile POST: {str(e)}")
+            return Response(
+                {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def add_payment_method(self, request, user):
+        """Add a new payment method for the user"""
+        try:
+            data = request.data
+
+            # Validate required fields
+            required_fields = ['payment_method', 'account_name', 'account_number']
+            for field in required_fields:
+                if not data.get(field):
+                    return Response(
+                        {"error": f"{field} is required"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            # If this is the first payment method, make it default
+            is_first = not UserPaymentDetail.objects.filter(user=user).exists()
+
+            # If setting as default, unset any existing default
+            if data.get('is_default', False) or is_first:
+                UserPaymentDetail.objects.filter(user=user, is_default=True).update(is_default=False)
+
+            # Create payment method
+            payment_method = UserPaymentDetail.objects.create(
+                user=user,
+                payment_method=data.get('payment_method'),
+                bank_name=data.get('bank_name', ''),
+                account_name=data.get('account_name'),
+                account_number=data.get('account_number'),
+                is_default=data.get('is_default', False) or is_first
+            )
+
+            # Return success response with the new payment method
+            return Response({
+                "success": True,
+                "message": "Payment method added successfully",
+                "payment_method": {
+                    'payment_id': str(payment_method.payment_id),
+                    'payment_method': payment_method.payment_method,
+                    'bank_name': payment_method.bank_name,
+                    'account_name': payment_method.account_name,
+                    'account_number': self.mask_account_number(payment_method.account_number),
+                    'is_default': payment_method.is_default,
+                    'created_at': payment_method.created_at.isoformat(),
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            logger.error(f"Error adding payment method: {str(e)}")
+            return Response(
+                {"error": "Failed to add payment method"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def delete_payment_method(self, request, user):
+        """Delete a payment method"""
+        try:
+            payment_id = request.data.get('payment_id')
+            if not payment_id:
+                return Response(
+                    {"error": "payment_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                payment_method = UserPaymentDetail.objects.get(
+                    payment_id=payment_id, 
+                    user=user
+                )
+            except UserPaymentDetail.DoesNotExist:
+                return Response(
+                    {"error": "Payment method not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            was_default = payment_method.is_default
+            payment_method.delete()
+
+            # If deleted payment was default, set another as default
+            if was_default:
+                next_payment = UserPaymentDetail.objects.filter(user=user).first()
+                if next_payment:
+                    next_payment.is_default = True
+                    next_payment.save()
+
+            return Response({
+                "success": True,
+                "message": "Payment method deleted successfully"
+            })
+
+        except Exception as e:
+            logger.error(f"Error deleting payment method: {str(e)}")
+            return Response(
+                {"error": "Failed to delete payment method"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def set_default_payment(self, request, user):
+        """Set a payment method as default"""
+        try:
+            payment_id = request.data.get('payment_id')
+            if not payment_id:
+                return Response(
+                    {"error": "payment_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                payment_method = UserPaymentDetail.objects.get(
+                    payment_id=payment_id, 
+                    user=user
+                )
+            except UserPaymentDetail.DoesNotExist:
+                return Response(
+                    {"error": "Payment method not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Unset any existing default
+            UserPaymentDetail.objects.filter(user=user, is_default=True).update(is_default=False)
+
+            # Set new default
+            payment_method.is_default = True
+            payment_method.save()
+
+            return Response({
+                "success": True,
+                "message": "Default payment method updated"
+            })
+
+        except Exception as e:
+            logger.error(f"Error setting default payment: {str(e)}")
+            return Response(
+                {"error": "Failed to set default payment method"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def mask_account_number(self, account_number):
+        """Mask account number for security"""
+        if not account_number:
+            return None
+        if len(account_number) <= 4:
+            return '*' * len(account_number)
+        return '*' * (len(account_number) - 4) + account_number[-4:]
+
+        
 
 class SellerBoosts(viewsets.ViewSet):
     """ViewSet for seller boost operations"""
