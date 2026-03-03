@@ -18405,6 +18405,106 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         })
 
 
+    @action(detail=True, methods=['get'], url_path='seller')
+    def get_seller_info(self, request, pk=None):
+        """
+        Get seller information for a product
+        For products without shops, returns the customer/seller info
+        """
+        try:
+            # Simplified queryset to avoid complex joins
+            product = Product.objects.select_related(
+                'customer',  # This gets the Customer model
+                'customer__customer',  # This gets the User model through Customer
+                'shop'
+            ).get(
+                id=pk, 
+                is_removed=False, 
+                upload_status='published'
+            )
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=404)
+        except Exception as e:
+            print(f"Error fetching product: {str(e)}")  # Use print for debugging
+            return Response({"error": "Database error"}, status=500)
+
+        try:
+            # If product has a shop, return shop info
+            if product.shop:
+                shop = product.shop
+                seller_data = {
+                    'type': 'shop',
+                    'id': str(shop.id),
+                    'name': shop.name,
+                    'address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}" if shop.street else None,
+                    'avg_rating': float(shop.avg_rating) if shop.avg_rating else None,
+                    'shop_picture': convert_s3_to_public_url(shop.shop_picture.url) if shop.shop_picture and hasattr(shop.shop_picture, 'url') else None,
+                    'description': shop.description,
+                    'verified': shop.verified,
+                    'total_sales': str(shop.total_sales),
+                    'contact_number': shop.contact_number,
+                    'created_at': shop.created_at.isoformat() if shop.created_at else None,
+                }
+                return Response(seller_data)
+
+            # If product has a customer (personal listing), return customer info
+            elif product.customer:
+                customer = product.customer
+                # Get the User model through the customer field
+                user = customer.customer if hasattr(customer, 'customer') else None
+                
+                # Build address from User model fields
+                address_parts = []
+                if user:
+                    if user.street:
+                        address_parts.append(user.street)
+                    if user.barangay:
+                        address_parts.append(user.barangay)
+                    if user.city:
+                        address_parts.append(user.city)
+                    if user.province:
+                        address_parts.append(user.province)
+                address = ', '.join(address_parts) if address_parts else None
+                
+                # Safely get profile picture URL (Customer model doesn't have profile_picture, so set to None)
+                profile_picture_url = None
+                
+                seller_data = {
+                    'type': 'seller',
+                    'id': str(customer.customer_id) if customer.customer_id else None,  # This is the User ID
+                    'username': user.username if user else None,
+                    'email': user.email if user else None,
+                    'full_name': f"{user.first_name} {user.last_name}".strip() if user else None,
+                    'first_name': user.first_name if user else None,
+                    'last_name': user.last_name if user else None,
+                    'contact_number': user.contact_number if user else None,
+                    'address': address,
+                    'profile_picture': profile_picture_url,
+                    'created_at': user.created_at.isoformat() if user and user.created_at else None,
+                }
+                return Response(seller_data)
+
+            return Response({"error": "No seller information found"}, status=404)
+            
+        except Exception as e:
+            print(f"Error in get_seller_info: {str(e)}")  # Use print for debugging
+            import traceback
+            traceback.print_exc()
+            return Response({"error": str(e)}, status=500)
+
+    def convert_s3_to_public_url(url):
+        """Helper function to convert URLs to public format"""
+        if not url:
+            return None
+        # If it's already a full URL, return as is
+        if url.startswith('http://') or url.startswith('https://'):
+            return url
+        # Otherwise, assume it's a relative path and prepend your media URL
+        media_url = getattr(settings, 'MEDIA_URL', '/media/')
+        return f"{media_url}{url.lstrip('/')}"
+    
+
+
         
 class AddToCartView(APIView):
     """

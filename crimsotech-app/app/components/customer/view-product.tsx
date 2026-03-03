@@ -14,7 +14,8 @@ import {
   RefreshCw,
   ShieldCheck,
   ShieldOff,
-  Gift
+  Gift,
+  X
 } from "lucide-react";
 
 import { useEffect, useState } from "react";
@@ -122,9 +123,9 @@ interface SellerInfo {
   profile_picture?: string | null;
   created_at?: string;
   is_suspended?: boolean;
+  address?: string; // Add address field
   // Shop fields
   name?: string;
-  address?: string;
   avg_rating?: number | null;
   shop_picture?: string | null;
   description?: string;
@@ -273,6 +274,8 @@ function extractVariantGroups(product: Product): { groups: any[], optionTitles: 
     return { groups, optionTitles };
   }
 
+  // This is a placeholder - you'll need to implement actual variant group extraction
+  // based on your data structure
   return { groups, optionTitles };
 }
 
@@ -354,6 +357,8 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const [variantGroups, setVariantGroups] = useState<any[]>([]);
   const [optionTitles, setOptionTitles] = useState<Record<string, Record<string, string>>>({});
   const [cartItemCount, setCartItemCount] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   const user = loaderData?.user;
 
@@ -532,6 +537,18 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const mainImageFromVariant = currentVariant?.image || currentVariant?.image_url ? resolveImageUrl(currentVariant.image || currentVariant.image_url) : null;
   const displayImageUrl = (mainImageFromVariant ?? (thumbnailUrls.length > 0 ? thumbnailUrls[activeImage]?.url : null)) ?? '/Crimsotech.png';
 
+  // Handle image click to open lightbox
+  const handleImageClick = () => {
+    setLightboxImage(displayImageUrl);
+    setLightboxOpen(true);
+  };
+
+  // Handle thumbnail click in lightbox
+  const handleLightboxThumbnailClick = (url: string, index: number) => {
+    setLightboxImage(url);
+    setActiveImage(index);
+  };
+
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
       toast.error("Please login to add items to cart");
@@ -662,6 +679,11 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
     return 'Unknown Seller';
   };
 
+  // Get seller address from sellerInfo
+  const getSellerAddress = () => {
+    return sellerInfo?.address || null;
+  };
+
   // Get seller contact from sellerInfo
   const getSellerContact = () => {
     return sellerInfo?.contact_number || null;
@@ -723,11 +745,12 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
-          <div className="relative aspect-square overflow-hidden rounded-lg border bg-gray-50 flex-1">
+          <div className="relative aspect-square overflow-hidden rounded-lg border bg-gray-50 flex-1 cursor-pointer">
             <img
               src={displayImageUrl}
               alt={product.name}
               className="h-full w-full object-contain"
+              onClick={handleImageClick}
             />
 
             {thumbnailUrls.length > 1 && (
@@ -736,7 +759,10 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                   variant="ghost"
                   size="icon"
                   className="absolute left-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-white/90 hover:bg-white"
-                  onClick={() => setActiveImage(prev => prev === 0 ? thumbnailUrls.length - 1 : prev - 1)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveImage(prev => prev === 0 ? thumbnailUrls.length - 1 : prev - 1);
+                  }}
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
                 </Button>
@@ -744,7 +770,10 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                   variant="ghost"
                   size="icon"
                   className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-white/90 hover:bg-white"
-                  onClick={() => setActiveImage(prev => prev === thumbnailUrls.length - 1 ? 0 : prev + 1)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveImage(prev => prev === thumbnailUrls.length - 1 ? 0 : prev + 1);
+                  }}
                 >
                   <ChevronRight className="h-3.5 w-3.5" />
                 </Button>
@@ -792,35 +821,35 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               <span className="text-gray-600">{product.condition}</span>
 
               {/* Only show refund info if it's NOT a gift product */}
-{!isGift && (
-  isRefundable ? (
-    <>
-      <span className="text-gray-300">•</span>
-      <Link
-        to="#"
-        aria-label={refundAriaLabel}
-        title={refundAriaLabel}
-        className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-medium border border-emerald-100 hover:bg-emerald-100"
-      >
-        <ShieldCheck className="h-3 w-3 text-emerald-700" />
-        <span>{refundText}</span>
-      </Link>
-    </>
-  ) : (isExplicitlyNonRefundable && (
-    <>
-      <span className="text-gray-300">•</span>
-      <span
-        role="status"
-        aria-label="Non-refundable"
-        title="Non-refundable"
-        className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-medium border border-rose-100"
-      >
-        <ShieldOff className="h-3 w-3 text-rose-600" />
-        <span>Non-refundable</span>
-      </span>
-    </>
-  ))
-)}
+              {!isGift && (
+                isRefundable ? (
+                  <>
+                    <span className="text-gray-300">•</span>
+                    <Link
+                      to="#"
+                      aria-label={refundAriaLabel}
+                      title={refundAriaLabel}
+                      className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-medium border border-emerald-100 hover:bg-emerald-100"
+                    >
+                      <ShieldCheck className="h-3 w-3 text-emerald-700" />
+                      <span>{refundText}</span>
+                    </Link>
+                  </>
+                ) : (isExplicitlyNonRefundable && (
+                  <>
+                    <span className="text-gray-300">•</span>
+                    <span
+                      role="status"
+                      aria-label="Non-refundable"
+                      title="Non-refundable"
+                      className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-medium border border-rose-100"
+                    >
+                      <ShieldOff className="h-3 w-3 text-rose-600" />
+                      <span>Non-refundable</span>
+                    </span>
+                  </>
+                ))
+              )}
             </div>
 
             <div className="flex items-center gap-3">
@@ -953,33 +982,49 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
                   <h3 className="font-medium text-sm text-gray-900 truncate">
                     {getSellerDisplayName()}
                   </h3>
+                  
+                  {/* Display username if available */}
+                  {sellerInfo.username && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <User className="h-3 w-3 text-gray-400" />
+                      <span className="text-xs text-gray-600">@{sellerInfo.username}</span>
+                    </div>
+                  )}
+                  
+                  {/* Display address if available */}
+                  {getSellerAddress() && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <MapPin className="h-3 w-3 text-gray-400" />
+                      <span className="text-xs text-gray-600">{getSellerAddress()}</span>
+                    </div>
+                  )}
+                  
+                  {/* Display email if available */}
                   {getSellerEmail() && (
-                    <div className="flex items-center gap-1 mt-0.5">
+                    <div className="flex items-center gap-1 mt-1">
                       <span className="text-xs text-gray-500">{getSellerEmail()}</span>
                     </div>
                   )}
+                  
+                  {/* Display contact if available */}
                   {getSellerContact() && (
-                    <div className="flex items-center gap-1 mt-0.5">
+                    <div className="flex items-center gap-1 mt-1">
                       <span className="text-xs text-gray-500">Contact: {getSellerContact()}</span>
                     </div>
                   )}
-                  <div className="flex items-center gap-1 mt-0.5">
+                  
+                  <div className="flex items-center gap-1 mt-2">
                     <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
                       Personal Listing
                     </span>
                   </div>
+                  
                   {sellerInfo.created_at && (
-                    <div className="text-xs text-gray-400 mt-1">
+                    <div className="text-xs text-gray-400 mt-2">
                       Member since {new Date(sellerInfo.created_at).toLocaleDateString()}
                     </div>
                   )}
                 </div>
-                {/* Could add a link to seller profile if available */}
-                {/* <Link to={`/seller/${sellerInfo.id}`}>
-                  <Button size="sm" className="h-7 text-xs px-3 bg-purple-600 hover:bg-purple-700">
-                    View Profile
-                  </Button>
-                </Link> */}
               </div>
             </div>
           ) : (
@@ -1037,7 +1082,7 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         )
       )}
 
-      {/* Variant Details - Only show for non-gift products or if gift has details */}
+      {/* Variant Details - Only show for non-gift products */}
       {currentVariant && !isGift && (
         <div className="mt-6 border-t pt-4">
           <h2 className="text-lg font-semibold mb-3">Product Details</h2>
@@ -1121,6 +1166,85 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
             {currentVariant.swap_description && (
               <div className="mt-2 p-3 bg-gray-50 rounded">
                 {currentVariant.swap_description}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Image Lightbox Modal */}
+      {lightboxOpen && lightboxImage && (
+        <div 
+          className="fixed inset-0 z-50 bg-black bg-opacity-95 flex items-center justify-center"
+          onClick={() => setLightboxOpen(false)}
+        >
+          <div className="relative w-full h-full flex flex-col">
+            {/* Close button */}
+            <button
+              className="absolute top-4 right-4 z-10 p-2 bg-black bg-opacity-50 rounded-full text-white hover:bg-opacity-70 transition-all"
+              onClick={() => setLightboxOpen(false)}
+            >
+              <X className="h-6 w-6" />
+            </button>
+
+            {/* Main image */}
+            <div className="flex-1 flex items-center justify-center p-4">
+              <img
+                src={lightboxImage}
+                alt={product.name}
+                className="max-w-full max-h-full object-contain"
+              />
+            </div>
+
+            {/* Navigation arrows */}
+            {thumbnailUrls.length > 1 && (
+              <>
+                <button
+                  className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-black bg-opacity-50 rounded-full text-white hover:bg-opacity-70 transition-all"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const newIndex = activeImage === 0 ? thumbnailUrls.length - 1 : activeImage - 1;
+                    setActiveImage(newIndex);
+                    setLightboxImage(thumbnailUrls[newIndex].url);
+                  }}
+                >
+                  <ChevronLeft className="h-6 w-6" />
+                </button>
+                <button
+                  className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-black bg-opacity-50 rounded-full text-white hover:bg-opacity-70 transition-all"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const newIndex = activeImage === thumbnailUrls.length - 1 ? 0 : activeImage + 1;
+                    setActiveImage(newIndex);
+                    setLightboxImage(thumbnailUrls[newIndex].url);
+                  }}
+                >
+                  <ChevronRight className="h-6 w-6" />
+                </button>
+              </>
+            )}
+
+            {/* Thumbnail strip */}
+            {thumbnailUrls.length > 1 && (
+              <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2 p-2 overflow-x-auto">
+                {thumbnailUrls.map((thumb, idx) => (
+                  <button
+                    key={idx}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleLightboxThumbnailClick(thumb.url, idx);
+                    }}
+                    className={`flex-shrink-0 h-16 w-16 rounded border-2 overflow-hidden transition-all ${
+                      activeImage === idx ? 'border-orange-500 scale-110' : 'border-transparent opacity-70 hover:opacity-100'
+                    }`}
+                  >
+                    <img
+                      src={thumb.url}
+                      alt={`Thumb ${idx + 1}`}
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
+                ))}
               </div>
             )}
           </div>

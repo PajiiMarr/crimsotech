@@ -1,3 +1,4 @@
+// app/(customer)/cart.tsx
 import React, { useState, useEffect } from 'react';
 import { 
   SafeAreaView, 
@@ -9,59 +10,613 @@ import {
   Image, 
   StyleSheet, 
   Alert,
-  RefreshControl
+  RefreshControl,
+  TextInput,
+  Modal,
+  Platform
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons'; 
+import { 
+  Ionicons, 
+  MaterialCommunityIcons,
+  MaterialIcons 
+} from '@expo/vector-icons'; 
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import CustomerLayout from './CustomerLayout';
 import AxiosInstance from '../../contexts/axios';
 
-// Types
-interface ProductMedia {
+// ------------------ TYPES based on your API response ------------------
+interface VariantDetails {
   id: string;
-  file_url: string;
-  file_type: string;
+  title: string;
+  sku_code: string;
+  price: string;
+  compare_price: string | null;
+  image: string | null;
+  option_title: string;
+  options: Record<string, any>;
+  quantity_available?: number;
 }
 
-interface Product {
+interface ProductDetails {
   id: string;
   name: string;
   description: string;
-  price: string;
-  quantity: number;
-  shop: string;
-  shop_name?: string;
-  productmedia_set: ProductMedia[];
+  condition: string;
+  shop_name: string;
+  shop_id: string;
+  main_image: string | null;
+  media_files?: { id: string; url: string; file_type: string }[];
 }
 
-interface CartItem {
+interface ApiCartItem {
   id: string;
   product: string;
-  product_details: Product | null;
-  item_name: string;
-  item_price: string;
+  variant: string | null;
   quantity: number;
   added_at: string;
-  subtotal: number;
+  product_details: ProductDetails;
+  variant_details: VariantDetails | null;
+  total_price: string;
+}
+
+interface CartApiResponse {
+  success: boolean;
+  cart_items: ApiCartItem[];
+  error?: string;
+}
+
+interface CartCountResponse {
+  success: boolean;
+  count: number;
+  error?: string;
+}
+
+interface CartItemType {
+  id: string;
+  product_id: string;
+  variant_id: string | null;
+  name: string;
+  price: number;
+  quantity: number;
+  image: string;
+  shop_name: string;
+  shop_id: string;
   selected: boolean;
+  added_at: string;
+  subtotal: number;
+  variant_title: string | null;
+  max_available?: number;
 }
 
 interface CartStore {
   shop_id: string;
   shop_name: string;
-  items: CartItem[];
+  items: CartItemType[];
+  selected: boolean;
 }
 
+// ------------------ CONSTANTS ------------------
+const DELIVERY_FEE = 50.00;
+const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1557821552-17105176677c?w=400&q=80';
+
+// ------------------ HELPER FUNCTIONS ------------------
+const formatImageUrl = (url: string | null | undefined): string | null => {
+  if (!url || url.trim() === '') return null;
+
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+
+  const baseURL = (AxiosInstance.defaults && AxiosInstance.defaults.baseURL) 
+    ? AxiosInstance.defaults.baseURL.replace(/\/$/, '') 
+    : 'http://localhost:8000';
+  
+  if (url.startsWith('/')) {
+    return `${baseURL}${url}`;
+  }
+
+  return `${baseURL}/${url}`;
+};
+
+const resolveCartItemImage = (
+  variantDetails: VariantDetails | null,
+  productDetails: ProductDetails
+): string => {
+  if (variantDetails?.image) {
+    const resolved = formatImageUrl(variantDetails.image);
+    if (resolved) return resolved;
+  }
+
+  if (productDetails?.main_image) {
+    const resolved = formatImageUrl(productDetails.main_image);
+    if (resolved) return resolved;
+  }
+
+  if (productDetails?.media_files && productDetails.media_files.length > 0) {
+    const resolved = formatImageUrl(productDetails.media_files[0].url);
+    if (resolved) return resolved;
+  }
+
+  return FALLBACK_IMAGE;
+};
+
+const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
+  return apiItems.map((item) => {
+    const productDetails = item.product_details;
+    const variantDetails = item.variant_details;
+
+    const price = variantDetails?.price ? parseFloat(variantDetails.price) : 0;
+    const maxAvailable = variantDetails?.quantity_available ?? 999;
+    const image = resolveCartItemImage(variantDetails, productDetails);
+    const subtotal = item.total_price ? parseFloat(item.total_price) : price * item.quantity;
+
+    const variantLabel = variantDetails?.option_title?.trim() || variantDetails?.title?.trim() || null;
+
+    return {
+      id: item.id,
+      product_id: productDetails?.id || item.product,
+      variant_id: item.variant,
+      name: productDetails?.name || 'Product',
+      price,
+      quantity: item.quantity,
+      image,
+      shop_name: productDetails?.shop_name || 'Store',
+      shop_id: productDetails?.shop_id || '',
+      selected: true,
+      added_at: item.added_at,
+      subtotal,
+      variant_title: variantLabel,
+      max_available: maxAvailable,
+    };
+  });
+};
+
+// ------------------ COMPONENTS ------------------
+
+// Coupon Modal Component
+const CouponModal = ({ 
+  visible, 
+  onClose, 
+  onApply 
+}: { 
+  visible: boolean; 
+  onClose: () => void; 
+  onApply: (code: string) => Promise<void>;
+}) => {
+  const [couponCode, setCouponCode] = useState('');
+  const [isApplying, setIsApplying] = useState(false);
+
+  const handleApply = async () => {
+    if (!couponCode.trim()) return;
+    setIsApplying(true);
+    try {
+      await onApply(couponCode.trim());
+      setCouponCode('');
+      onClose();
+    } finally {
+      setIsApplying(false);
+    }
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Apply Coupon</Text>
+            <TouchableOpacity 
+              onPress={onClose}
+              style={styles.modalCloseButton}
+            >
+              <MaterialIcons name="close" size={24} color="#374151" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.modalBody}>
+            <View style={styles.couponInputContainer}>
+              <MaterialIcons name="local-offer" size={20} color="#F97316" />
+              <TextInput
+                style={styles.couponInput}
+                placeholder="Enter coupon code"
+                placeholderTextColor="#9CA3AF"
+                value={couponCode}
+                onChangeText={setCouponCode}
+                autoCapitalize="characters"
+                editable={!isApplying}
+              />
+            </View>
+
+            {isApplying ? (
+              <View style={styles.applyButton}>
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[
+                  styles.applyButton,
+                  (!couponCode.trim()) && styles.applyButtonDisabled
+                ]}
+                onPress={handleApply}
+                disabled={!couponCode.trim()}
+              >
+                <Text style={styles.applyButtonText}>Apply Coupon</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// Shop Header Component
+const ShopHeader = ({
+  shopName,
+  itemCount,
+  shopTotal,
+  allSelected,
+  onSelectShop,
+  isExpanded,
+  onToggleExpand,
+}: {
+  shopName: string;
+  itemCount: number;
+  shopTotal: number;
+  allSelected: boolean;
+  onSelectShop: (checked: boolean) => void;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+}) => {
+  return (
+    <View style={styles.shopHeader}>
+      <TouchableOpacity 
+        onPress={() => onSelectShop(!allSelected)}
+        style={styles.shopCheckbox}
+      >
+        <View style={[
+          styles.checkbox,
+          allSelected && styles.checkboxChecked
+        ]}>
+          {allSelected && (
+            <MaterialIcons name="check" size={16} color="#FFFFFF" />
+          )}
+        </View>
+      </TouchableOpacity>
+
+      <TouchableOpacity 
+        style={styles.shopHeaderContent}
+        onPress={onToggleExpand}
+        activeOpacity={0.7}
+      >
+        <View style={styles.shopIconContainer}>
+          <MaterialIcons name="storefront" size={20} color="#F97316" />
+        </View>
+        <View style={styles.shopInfo}>
+          <Text style={styles.shopNameText} numberOfLines={1}>{shopName}</Text>
+          <Text style={styles.shopSummary}>
+            {itemCount} {itemCount === 1 ? 'item' : 'items'} • ₱{shopTotal.toFixed(2)}
+          </Text>
+        </View>
+        <MaterialIcons 
+          name={isExpanded ? "keyboard-arrow-up" : "keyboard-arrow-down"} 
+          size={24} 
+          color="#9CA3AF" 
+        />
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+// Cart Item Component
+const CartItemComponent = ({
+  item,
+  onUpdateQuantity,
+  onRemove,
+  onSelect,
+  isUpdating,
+}: {
+  item: CartItemType;
+  onUpdateQuantity: (id: string, quantity: number) => void;
+  onRemove: (id: string) => void;
+  onSelect: (id: string, checked: boolean) => void;
+  isUpdating: boolean;
+}) => {
+  const [imageError, setImageError] = useState(false);
+
+  const handleIncrement = () => {
+    if (item.max_available !== undefined && item.quantity >= item.max_available) {
+      Alert.alert('Maximum Quantity', `Only ${item.max_available} items available`);
+      return;
+    }
+    onUpdateQuantity(item.id, item.quantity + 1);
+  };
+
+  const handleDecrement = () => {
+    if (item.quantity <= 1) {
+      Alert.alert(
+        'Remove Item',
+        'Remove this item from cart?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Remove', style: 'destructive', onPress: () => onRemove(item.id) }
+        ]
+      );
+      return;
+    }
+    onUpdateQuantity(item.id, item.quantity - 1);
+  };
+
+  return (
+    <View style={styles.cartItem}>
+      <TouchableOpacity 
+        onPress={() => onSelect(item.id, !item.selected)}
+        style={styles.checkbox}
+        disabled={isUpdating}
+      >
+        <View style={[
+          styles.checkbox,
+          item.selected && styles.checkboxChecked
+        ]}>
+          {item.selected && (
+            <MaterialIcons name="check" size={16} color="#FFFFFF" />
+          )}
+        </View>
+      </TouchableOpacity>
+
+      <Image 
+        source={{ uri: imageError ? FALLBACK_IMAGE : item.image }} 
+        style={styles.itemImage}
+        onError={() => setImageError(true)}
+      />
+
+      <View style={styles.itemContent}>
+        <View style={styles.itemHeader}>
+          <Text style={styles.itemName} numberOfLines={2}>
+            {item.name}
+          </Text>
+          <Text style={styles.itemPrice}>₱{(item.price * item.quantity).toFixed(2)}</Text>
+        </View>
+
+        {item.variant_title && (
+          <Text style={styles.variantText}>{item.variant_title}</Text>
+        )}
+
+        <View style={styles.itemDetails}>
+          <Text style={styles.itemPriceEach}>₱{item.price.toFixed(2)} each</Text>
+
+          <View style={styles.quantityControl}>
+            <TouchableOpacity 
+              onPress={handleDecrement}
+              style={[styles.qtyBtn, isUpdating && styles.qtyBtnDisabled]}
+              disabled={isUpdating}
+            >
+              <MaterialIcons name="remove" size={16} color="#4B5563" />
+            </TouchableOpacity>
+            
+            {isUpdating ? (
+              <ActivityIndicator size="small" color="#F97316" style={styles.qtyValue} />
+            ) : (
+              <Text style={styles.qtyValue}>{item.quantity}</Text>
+            )}
+            
+            <TouchableOpacity 
+              onPress={handleIncrement}
+              style={[styles.qtyBtn, isUpdating && styles.qtyBtnDisabled]}
+              disabled={isUpdating || (item.max_available !== undefined && item.quantity >= item.max_available)}
+            >
+              <MaterialIcons name="add" size={16} color="#4B5563" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {item.max_available !== undefined && item.quantity >= item.max_available && (
+          <Text style={styles.maxAvailableText}>Max available quantity</Text>
+        )}
+
+      
+      </View>
+    </View>
+  );
+};
+
+// Shop Section Component
+const ShopSection = ({
+  shop,
+  onUpdateQuantity,
+  onRemove,
+  onSelectItem,
+  onSelectShop,
+  updatingId,
+}: {
+  shop: CartStore;
+  onUpdateQuantity: (id: string, quantity: number) => void;
+  onRemove: (id: string) => void;
+  onSelectItem: (id: string, checked: boolean) => void;
+  onSelectShop: (shopId: string, checked: boolean) => void;
+  updatingId: string | null;
+}) => {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  const shopTotal = shop.items.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
+  const allSelected = shop.items.every((item) => item.selected);
+  const selectedItems = shop.items.filter((item) => item.selected);
+  const selectedTotal = selectedItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
+
+  return (
+    <View style={styles.shopSection}>
+      <ShopHeader
+        shopName={shop.shop_name}
+        itemCount={shop.items.length}
+        shopTotal={shopTotal}
+        allSelected={allSelected}
+        onSelectShop={(checked) => onSelectShop(shop.shop_id, checked)}
+        isExpanded={isExpanded}
+        onToggleExpand={() => setIsExpanded(!isExpanded)}
+      />
+
+      {isExpanded && (
+        <>
+          <View style={styles.itemsContainer}>
+            {shop.items.map((item) => (
+              <CartItemComponent
+                key={item.id}
+                item={item}
+                onUpdateQuantity={onUpdateQuantity}
+                onRemove={onRemove}
+                onSelect={onSelectItem}
+                isUpdating={updatingId === item.id}
+              />
+            ))}
+          </View>
+
+          <View style={styles.shopSummaryContainer}>
+            <View style={styles.shopSummaryRow}>
+              <Text style={styles.shopSummaryLabel}>
+                Selected from {shop.shop_name}:
+              </Text>
+              <Text style={styles.shopSummaryValue}>
+                {selectedItems.length} of {shop.items.length}
+              </Text>
+            </View>
+            <View style={styles.shopSummaryRow}>
+              <Text style={styles.shopSummaryLabel}>Subtotal:</Text>
+              <Text style={styles.shopSummaryTotal}>₱{selectedTotal.toFixed(2)}</Text>
+            </View>
+          </View>
+        </>
+      )}
+    </View>
+  );
+};
+
+// Order Summary Component
+const OrderSummary = ({
+  subtotal,
+  discount,
+  delivery,
+  itemCount,
+  shopCount,
+  onApplyCoupon,
+  onProceedToCheckout,
+}: {
+  subtotal: number;
+  discount: number;
+  delivery: number;
+  itemCount: number;
+  shopCount: number;
+  onApplyCoupon: () => void;
+  onProceedToCheckout: () => void;
+}) => {
+  const total = subtotal - discount + delivery;
+
+  return (
+    <View style={styles.orderSummary}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionIcon}>
+          <MaterialIcons name="receipt" size={24} color="#F97316" />
+        </View>
+        <View>
+          <Text style={styles.sectionTitle}>Order Summary</Text>
+          <Text style={styles.sectionSubtitle}>Review your order details</Text>
+        </View>
+      </View>
+
+      <View style={styles.summaryRow}>
+        <Text style={styles.summaryLabel}>Items ({itemCount})</Text>
+        <Text style={styles.summaryValue}>₱{subtotal.toFixed(2)}</Text>
+      </View>
+
+      <View style={styles.summaryRow}>
+        <Text style={styles.summaryLabel}>Shops ({shopCount})</Text>
+        <View style={styles.shopBadge}>
+          <Text style={styles.shopBadgeText}>Separate deliveries</Text>
+        </View>
+      </View>
+
+      {discount > 0 && (
+        <View style={styles.discountRow}>
+          <Text style={styles.discountLabel}>Discount</Text>
+          <Text style={styles.discountValue}>-₱{discount.toFixed(2)}</Text>
+        </View>
+      )}
+
+      <View style={styles.summaryRow}>
+        <Text style={styles.summaryLabel}>Delivery (estimated)</Text>
+        <Text style={styles.summaryValue}>₱{delivery.toFixed(2)}</Text>
+      </View>
+
+      <View style={styles.divider} />
+
+      <View style={styles.totalRow}>
+        <Text style={styles.totalLabel}>Total</Text>
+        <View style={styles.totalRight}>
+          <Text style={styles.totalValue}>₱{total.toFixed(2)}</Text>
+          <Text style={styles.totalVat}>Including VAT</Text>
+        </View>
+      </View>
+
+      <Text style={styles.shopCountText}>
+        From {shopCount} {shopCount === 1 ? 'shop' : 'shops'}
+      </Text>
+
+      <TouchableOpacity 
+        style={styles.couponButton}
+        onPress={onApplyCoupon}
+      >
+        <MaterialIcons name="local-offer" size={20} color="#F97316" />
+        <Text style={styles.couponButtonText}>Apply Coupon</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.checkoutBtn, itemCount === 0 && styles.checkoutBtnDisabled]}
+        onPress={onProceedToCheckout}
+        disabled={itemCount === 0}
+      >
+        <MaterialCommunityIcons name="truck-fast-outline" size={20} color="#FFF" />
+        <Text style={styles.checkoutBtnText}>
+          Proceed to Checkout ({itemCount})
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+// ------------------ MAIN COMPONENT ------------------
 export default function CartPage() {
   const { loading: authLoading, userId } = useAuth();
   const [cartStores, setCartStores] = useState<CartStore[]>([]);
-  const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [updatingItem, setUpdatingItem] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [couponModalVisible, setCouponModalVisible] = useState(false);
+  const [cartCount, setCartCount] = useState<number>(0);
 
-  // Fetch cart data from API
+  const fetchCartCount = async () => {
+    if (!userId) return;
+    try {
+      const response = await AxiosInstance.get<CartCountResponse>('/cart/count/', {
+        params: { user_id: userId },
+      });
+      if (response.data.success) {
+        setCartCount(response.data.count);
+      }
+    } catch (err) {
+      console.error('Error fetching cart count:', err);
+    }
+  };
+
   const fetchCartData = async () => {
     if (!userId) {
       Alert.alert('Login Required', 'Please login to view your cart');
@@ -71,52 +626,38 @@ export default function CartPage() {
 
     try {
       setLoading(true);
-      const response = await AxiosInstance.get('/view-cart/', {
+      const response = await AxiosInstance.get<CartApiResponse>('/view-cart/', {
         params: { user_id: userId },
-        headers: {
-          'Content-Type': 'application/json',
-        }
       });
 
-      console.log('Cart API Response:', response.data);
-
       if (response.data.success && response.data.cart_items) {
-        // Transform API data to match our structure
-        const items: CartItem[] = response.data.cart_items.map((item: any) => ({
-          ...item,
-          selected: true, // Default to selected
-          product_details: item.product_details || null
-        }));
+        const transformedItems = transformApiData(response.data.cart_items);
+        setCartCount(transformedItems.length);
 
-        // Group items by shop
-        const groupedItems = items.reduce((acc: Record<string, CartStore>, item: CartItem) => {
-          const shopId = item.product_details?.shop || 'unknown';
-          const shopName = item.product_details?.shop_name || 'Unknown Store';
-          
-          if (!acc[shopId]) {
-            acc[shopId] = {
-              shop_id: shopId,
-              shop_name: shopName,
-              items: []
-            };
-          }
-          
-          acc[shopId].items.push(item);
-          return acc;
-        }, {} as Record<string, CartStore>);
+        const groupedItems = transformedItems.reduce<Record<string, CartStore>>(
+          (acc, item) => {
+            if (!acc[item.shop_id]) {
+              acc[item.shop_id] = {
+                shop_id: item.shop_id,
+                shop_name: item.shop_name,
+                items: [],
+                selected: true,
+              };
+            }
+            acc[item.shop_id].items.push(item);
+            return acc;
+          },
+          {}
+        );
 
-        // Convert to array
         const storesArray: CartStore[] = Object.values(groupedItems);
         setCartStores(storesArray);
-        
-        // Select all items by default
-        setSelectedItems(items.map((item: CartItem) => item.id));
       } else {
         setCartStores([]);
+        setCartCount(0);
       }
     } catch (error: any) {
       console.error('Error fetching cart:', error);
-      console.error('Response data:', error.response?.data);
       
       let errorMessage = 'Failed to load cart items';
       if (error.response?.status === 404) {
@@ -146,26 +687,17 @@ export default function CartPage() {
     fetchCartData();
   };
 
-  // Update quantity in API
   const updateQuantity = async (itemId: string, newQuantity: number) => {
     if (!userId || newQuantity < 1) return;
 
+    setUpdatingId(itemId);
     try {
-      setUpdatingItem(itemId);
-      
       const response = await AxiosInstance.put(`/view-cart/update/${itemId}/`, {
         user_id: userId,
-        quantity: newQuantity
-      }, {
-        headers: {
-          'Content-Type': 'application/json',
-        }
+        quantity: newQuantity,
       });
 
-      console.log('Update quantity response:', response.data);
-
       if (response.data.success) {
-        // Update local state
         setCartStores(prev => prev.map(store => ({
           ...store,
           items: store.items.map(item => 
@@ -173,11 +705,13 @@ export default function CartPage() {
               ? { 
                   ...item, 
                   quantity: newQuantity,
-                  subtotal: parseFloat(item.item_price) * newQuantity 
+                  subtotal: item.price * newQuantity 
                 } 
               : item
           )
         })));
+        
+        fetchCartCount();
       } else {
         Alert.alert('Error', response.data.error || 'Failed to update quantity');
       }
@@ -193,417 +727,290 @@ export default function CartPage() {
       }
       
       Alert.alert('Error', errorMessage);
-      
-      // Refresh cart to get correct quantities
       fetchCartData();
     } finally {
-      setUpdatingItem(null);
+      setUpdatingId(null);
     }
   };
 
-  // Remove item from cart
   const removeItem = async (itemId: string) => {
     if (!userId) return;
 
+    setUpdatingId(itemId);
+    try {
+      const response = await AxiosInstance.delete(`/view-cart/delete/${itemId}/`, {
+        data: { user_id: userId },
+      });
+
+      if (response.data.success) {
+        setCartStores(prev => {
+          const newStores = prev
+            .map(store => ({
+              ...store,
+              items: store.items.filter(item => item.id !== itemId)
+            }))
+            .filter(store => store.items.length > 0);
+          
+          setCartCount(newStores.reduce((acc, store) => acc + store.items.length, 0));
+          return newStores;
+        });
+      } else {
+        Alert.alert('Error', response.data.error || 'Failed to remove item');
+      }
+    } catch (error) {
+      console.error('Error removing item:', error);
+      Alert.alert('Error', 'Failed to remove item. Please try again.');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const removeSelectedItems = async () => {
+    const selectedIds = selectedItems.map(item => item.id);
+    if (selectedIds.length === 0) return;
+
     Alert.alert(
-      'Remove Item',
-      'Are you sure you want to remove this item from your cart?',
+      'Remove Items',
+      `Remove ${selectedIds.length} selected item(s) from cart?`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Remove', 
+        {
+          text: 'Remove',
           style: 'destructive',
           onPress: async () => {
-            try {
-              const response = await AxiosInstance.delete(`/view-cart/delete/${itemId}/`, {
-                data: { user_id: userId },
-                headers: {
-                  'Content-Type': 'application/json',
-                }
-              });
-
-              console.log('Remove item response:', response.data);
-
-              if (response.data.success) {
-                // Remove from local state
-                setCartStores(prev => 
-                  prev.map(store => ({
-                    ...store,
-                    items: store.items.filter(item => item.id !== itemId)
-                  })).filter(store => store.items.length > 0) // Remove empty stores
-                );
-                
-                // Remove from selected items
-                setSelectedItems(prev => prev.filter(id => id !== itemId));
-                
-                Alert.alert('Success', 'Item removed from cart');
-              } else {
-                Alert.alert('Error', response.data.error || 'Failed to remove item');
-              }
-            } catch (error: any) {
-              console.error('Error removing item:', error);
-              Alert.alert('Error', 'Failed to remove item. Please try again.');
-            }
+            await Promise.all(selectedIds.map(id => removeItem(id)));
           }
         }
       ]
     );
   };
 
-  const toggleSelect = (id: string) => {
-    setSelectedItems(prev => 
-      prev.includes(id) 
-        ? prev.filter(x => x !== id) 
-        : [...prev, id]
-    );
+  const handleSelectItem = (id: string, checked: boolean) => {
+    setCartStores(prev => prev.map(store => ({
+      ...store,
+      items: store.items.map(item => 
+        item.id === id ? { ...item, selected: checked } : item
+      )
+    })));
   };
 
-  const toggleSelectStore = (storeItems: CartItem[]) => {
-    const ids = storeItems.map(i => i.id);
-    const allSelected = ids.every(id => selectedItems.includes(id));
-    setSelectedItems(prev => 
-      allSelected 
-        ? prev.filter(id => !ids.includes(id)) 
-        : [...new Set([...prev, ...ids])]
-    );
+  const handleSelectShop = (shopId: string, checked: boolean) => {
+    setCartStores(prev => prev.map(store => 
+      store.shop_id === shopId 
+        ? { 
+            ...store, 
+            items: store.items.map(item => ({ ...item, selected: checked }))
+          } 
+        : store
+    ));
   };
 
-  const toggleSelectAll = () => {
-    const allItems = cartStores.flatMap(store => store.items);
-    setSelectedItems(
-      selectedItems.length === allItems.length 
-        ? [] 
-        : allItems.map(i => i.id)
-    );
+  const handleSelectAll = (checked: boolean) => {
+    setCartStores(prev => prev.map(store => ({
+      ...store,
+      items: store.items.map(item => ({ ...item, selected: checked }))
+    })));
   };
 
-  // Get product image URL
-  const getProductImage = (item: CartItem): string => {
-    const baseURL = (AxiosInstance.defaults && AxiosInstance.defaults.baseURL) ? AxiosInstance.defaults.baseURL.replace(/\/$/, '') : 'http://localhost:8000';
-
-    // 1) New serializer shape: product_details.media_files -> [{ file_url }]
-    const pd: any = item.product_details as any;
-    if (pd?.media_files && Array.isArray(pd.media_files) && pd.media_files.length > 0) {
-      const media = pd.media_files[0];
-      const fileUrl = media.file_url || media.file || '';
-      if (fileUrl) {
-        if (fileUrl.startsWith('http')) return fileUrl;
-        if (fileUrl.startsWith('/')) return `${baseURL}${fileUrl}`;
-        return `${baseURL}/${fileUrl}`;
-      }
-    }
-
-    // 2) Older/alternate shape: product_details.productmedia_set -> [{ file_url }]
-    if (pd?.productmedia_set && Array.isArray(pd.productmedia_set) && pd.productmedia_set.length > 0) {
-      const media = pd.productmedia_set[0];
-      const fileUrl = media.file_url || media.file || (media.file_data && media.file_data.url) || '';
-      if (fileUrl) {
-        if (fileUrl.startsWith('http')) return fileUrl;
-        if (fileUrl.startsWith('/')) return `${baseURL}${fileUrl}`;
-        return `${baseURL}/${fileUrl}`;
-      }
-    }
-
-    // 3) Serializer also exposes item_image sometimes
-    // (CartItemSerializer.get_item_image returns absolute URL when request provided)
-    const maybeItemImage = (item as any).item_image;
-    if (maybeItemImage) {
-      if (maybeItemImage.startsWith('http')) return maybeItemImage;
-      if (maybeItemImage.startsWith('/')) return `${baseURL}${maybeItemImage}`;
-      return `${baseURL}/${maybeItemImage}`;
-    }
-
-    // Fallback placeholders based on product name
-    const productName = (item.item_name || '').toLowerCase();
-    const placeholders: Record<string, string> = {
-      phone: 'https://images.unsplash.com/photo-1632661674596-df8be070a5c5?w=400&q=80',
-      iphone: 'https://images.unsplash.com/photo-1632661674596-df8be070a5c5?w=400&q=80',
-      headphone: 'https://images.unsplash.com/photo-1618366712010-f4ae9c647dcb?w=400&q=80',
-      mouse: 'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=400&q=80',
-      nintendo: 'https://images.unsplash.com/photo-1612444530582-fc66183b16f7?w=400&q=80',
-      keyboard: 'https://images.unsplash.com/photo-1511467687858-23d96c32e4ae?w=400&q=80',
-      kindle: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=400&q=80',
-      default: 'https://images.unsplash.com/photo-1557821552-17105176677c?w=400&q=80'
-    };
-
-    if (productName.includes('iphone') || productName.includes('phone')) return placeholders.phone;
-    if (productName.includes('headphone') || productName.includes('earphone')) return placeholders.headphone;
-    if (productName.includes('mouse')) return placeholders.mouse;
-    if (productName.includes('nintendo')) return placeholders.nintendo;
-    if (productName.includes('keyboard')) return placeholders.keyboard;
-    if (productName.includes('kindle')) return placeholders.kindle;
-
-    return placeholders.default;
+  const handleApplyCoupon = async (code: string) => {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    Alert.alert('Success', `Coupon "${code}" applied successfully!`);
   };
 
-  // Calculate totals
   const allItems = cartStores.flatMap(store => store.items);
-  const selectedCartItems = allItems.filter(item => selectedItems.includes(item.id));
+  const selectedItems = allItems.filter(item => item.selected);
+  const selectedShops = new Set(selectedItems.map(item => item.shop_id)).size;
   
-  const totalPrice = selectedCartItems.reduce((sum, item) => {
-    const price = parseFloat(item.item_price) || 0;
-    return sum + (price * item.quantity);
-  }, 0);
+  const subtotal = selectedItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
+  const discount = 0;
+  const delivery = selectedItems.length > 0 ? DELIVERY_FEE : 0;
+  const allSelected = allItems.length > 0 && allItems.every(item => item.selected);
 
-  const itemCount = selectedCartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const handleCheckout = () => {
+    if (selectedItems.length === 0) {
+      Alert.alert('No Items Selected', 'Please select items to checkout');
+      return;
+    }
 
-  // Handle checkout
-  // In cart.tsx, update the handleCheckout function:
-const handleCheckout = () => {
-  if (selectedCartItems.length === 0) {
-    Alert.alert('No Items Selected', 'Please select items to checkout');
-    return;
-  }
-
-  // Prepare checkout data
-  const checkoutData = {
-    items: selectedCartItems.map(item => ({
-      id: item.id,
-      product_id: item.product,
-      name: item.item_name,
-      price: parseFloat(item.item_price),
-      quantity: item.quantity,
-      shop_id: item.product_details?.shop,
-      shop_name: item.product_details?.shop_name || 'Unknown Store'
-    })),
-    total: totalPrice,
-    itemCount: selectedCartItems.length,
-    shopCount: new Set(selectedCartItems.map(item => item.product_details?.shop)).size
+    const selectedIds = selectedItems.map(item => item.id).join(',');
+    router.push(`/customer/checkout?selected=${selectedIds}`);
   };
 
-  // Navigate to checkout page
-  Alert.alert(
-    'Proceed to Checkout',
-    `Total: ₱${totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}\nItems: ${itemCount}\n\nProceed to checkout?`,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      { 
-        text: 'Checkout', 
-        onPress: () => {
-          console.log('Checkout data:', checkoutData);
-          // Use simpler navigation
-          router.push(`/customer/checkout?selected=${selectedItems.join(',')}`);
-        }
-      }
-    ]
-  );
-};
-
-  // Loading state
   if (authLoading || loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color="#000" />
-            <Text style={styles.loadingText}>Loading cart...</Text>
-          </View>
-        </CustomerLayout>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#F97316" />
+          <Text style={styles.loadingText}>Loading cart...</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
-  // Empty cart state
-  if (cartStores.length === 0 && !loading) {
+  if (cartStores.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
-          <View style={styles.emptyContainer}>
-            <Ionicons name="cart-outline" size={80} color="#E5E5E5" />
-            <Text style={styles.emptyTitle}>Your cart is empty</Text>
-            <Text style={styles.emptyText}>Add items from your favorite shops</Text>
-            <TouchableOpacity style={styles.shopButton}>
-              <Text style={styles.shopButtonText}>Start Shopping</Text>
-            </TouchableOpacity>
+        <View style={styles.center}>
+          <View style={styles.emptyIconContainer}>
+            <MaterialIcons name="shopping-cart" size={48} color="#F97316" />
           </View>
-        </CustomerLayout>
+          <Text style={styles.emptyTitle}>Your cart is empty</Text>
+          <Text style={styles.emptyText}>
+            Add items from your favorite shops to get started
+          </Text>
+          <TouchableOpacity 
+            style={styles.shopButton}
+            onPress={() => router.push('/')}
+          >
+            <Text style={styles.shopButtonText}>Start Shopping</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.container}>
-      <CustomerLayout disableScroll>
-        
+      {/* Header */}
+      <View style={styles.headerSafeArea}>
         <View style={styles.header}>
           <View>
             <Text style={styles.shopName}>Shopping Cart</Text>
             <Text style={styles.pageTitle}>My Items ({allItems.length})</Text>
           </View>
-          <TouchableOpacity onPress={toggleSelectAll}>
-            <Text style={styles.headerAction}>
-              {selectedItems.length === allItems.length ? 'Deselect All' : 'Select All'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView 
-          contentContainerStyle={styles.scrollContent} 
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl 
-              refreshing={refreshing} 
-              onRefresh={onRefresh}
-              colors={['#000']}
-              tintColor="#000"
-            />
-          }
-        >
-          {cartStores.map((store) => {
-            const isStoreSelected = store.items.every(item => selectedItems.includes(item.id));
-
-            return (
-              <View key={store.shop_id} style={styles.storeSection}>
-                <TouchableOpacity 
-                  style={styles.storeHeader} 
-                  onPress={() => toggleSelectStore(store.items)}
-                >
-                  <Ionicons 
-                    name={isStoreSelected ? "checkbox" : "square-outline"} 
-                    size={20} 
-                    color={isStoreSelected ? "#111" : "#C4C4C4"} 
-                    style={{marginRight: 8}}
-                  />
-                  <Text style={styles.storeName}>{store.shop_name}</Text>
-                  <Ionicons name="chevron-forward" size={12} color="#9CA3AF" />
-                </TouchableOpacity>
-
-                {store.items.map((item) => {
-                  const isSelected = selectedItems.includes(item.id);
-                  const price = parseFloat(item.item_price) || 0;
-                  const subtotal = price * item.quantity;
-
-                  return (
-                    <View key={item.id} style={styles.cartItem}>
-                      <TouchableOpacity 
-                        onPress={() => toggleSelect(item.id)} 
-                        style={styles.checkbox}
-                        disabled={updatingItem === item.id}
-                      >
-                        <Ionicons 
-                          name={isSelected ? "checkbox" : "square-outline"} 
-                          size={24} 
-                          color={isSelected ? "#111" : "#E5E5E5"} 
-                        />
-                      </TouchableOpacity>
-
-                      <Image 
-                        source={{ uri: getProductImage(item) }} 
-                        style={styles.itemImage} 
-                      />
-
-                      <View style={styles.itemContent}>
-                        <Text style={styles.itemName} numberOfLines={2}>
-                          {item.item_name}
-                        </Text>
-                        
-                        <View style={styles.bottomRow}>
-                          <View>
-                            <Text style={styles.itemPrice}>₱{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</Text>
-                            <Text style={styles.itemPriceEach}>₱{price.toLocaleString()} each</Text>
-                          </View>
-                          
-                          <View style={styles.qtyControl}>
-                            <TouchableOpacity 
-                              onPress={() => updateQuantity(item.id, item.quantity - 1)}
-                              style={styles.qtyBtn}
-                              disabled={updatingItem === item.id || item.quantity <= 1}
-                            >
-                              <Ionicons name="remove" size={14} color="#333" />
-                            </TouchableOpacity>
-                            
-                            {updatingItem === item.id ? (
-                              <ActivityIndicator size="small" color="#000" />
-                            ) : (
-                              <Text style={styles.qtyValue}>{item.quantity}</Text>
-                            )}
-                            
-                            <TouchableOpacity 
-                              onPress={() => updateQuantity(item.id, item.quantity + 1)}
-                              style={styles.qtyBtn}
-                              disabled={updatingItem === item.id}
-                            >
-                              <Ionicons name="add" size={14} color="#333" />
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                        
-                        <TouchableOpacity 
-                          style={styles.removeButton}
-                          onPress={() => removeItem(item.id)}
-                          disabled={updatingItem === item.id}
-                        >
-                          <Ionicons name="trash-outline" size={14} color="#666" />
-                          <Text style={styles.removeText}>Remove</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            );
-          })}
-        </ScrollView>
-
-        <View style={styles.footer}>
-          <View>
-            <Text style={styles.totalLabel}>Total Amount</Text>
-            <Text style={styles.totalPrice}>
-              ₱{totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            </Text>
-            <Text style={styles.itemCount}>{itemCount} {itemCount === 1 ? 'item' : 'items'} selected</Text>
+          <View style={styles.headerActions}>
+            <TouchableOpacity 
+              onPress={() => handleSelectAll(!allSelected)}
+              style={styles.selectAllButton}
+            >
+              <Text style={styles.headerActionText}>
+                {allSelected ? 'Deselect All' : 'Select All'}
+              </Text>
+            </TouchableOpacity>
+            {selectedItems.length > 0 && (
+              <TouchableOpacity 
+                onPress={removeSelectedItems}
+                style={styles.removeSelectedButton}
+              >
+                <MaterialIcons name="delete-outline" size={20} color="#EF4444" />
+              </TouchableOpacity>
+            )}
           </View>
-          <TouchableOpacity 
-            style={[styles.checkoutBtn, { opacity: selectedCartItems.length > 0 ? 1 : 0.5 }]}
-            disabled={selectedCartItems.length === 0}
-            onPress={handleCheckout}
-          >
-            <Text style={styles.checkoutText}>
-              Checkout ({selectedCartItems.length})
-            </Text>
-          </TouchableOpacity>
         </View>
+      </View>
 
-      </CustomerLayout>
+      <ScrollView 
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={onRefresh}
+            colors={['#F97316']}
+            tintColor="#F97316"
+          />
+        }
+      >
+        {/* Shop Sections */}
+        {cartStores.map((store) => (
+          <ShopSection
+            key={store.shop_id}
+            shop={store}
+            onUpdateQuantity={updateQuantity}
+            onRemove={removeItem}
+            onSelectItem={handleSelectItem}
+            onSelectShop={handleSelectShop}
+            updatingId={updatingId}
+          />
+        ))}
+
+        
+      </ScrollView>
+
+      {/* Footer */}
+      <View style={styles.footer}>
+        <View style={styles.orderSummaryFooter}>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Total</Text>
+            <Text style={styles.summaryValue}>₱{subtotal.toFixed(2)}</Text>
+          </View>
+          <Text style={styles.totalVat}>Including VAT</Text>
+        </View>
+        
+        <TouchableOpacity
+          style={[
+            styles.checkoutButton,
+            selectedItems.length === 0 && styles.checkoutButtonDisabled
+          ]}
+          onPress={handleCheckout}
+          disabled={selectedItems.length === 0}
+        >
+          <MaterialCommunityIcons name="truck-fast-outline" size={20} color="#FFFFFF" />
+          <Text style={styles.checkoutButtonText}>
+            Checkout ({selectedItems.length})
+          </Text>
+        </TouchableOpacity>
+        
+        <View style={styles.footerNotes}>
+          <MaterialIcons name="security" size={14} color="#6B7280" />
+          <Text style={styles.footerNoteText}>Secure checkout • Your payment information is encrypted</Text>
+        </View>
+      </View>
+
+      {/* Coupon Modal */}
+      <CouponModal
+        visible={couponModalVisible}
+        onClose={() => setCouponModalVisible(false)}
+        onApply={handleApplyCoupon}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F9F9' },
-  center: { 
-    flex: 1, 
-    justifyContent: 'center', 
+  container: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    minHeight: 400
+    padding: 20,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
   },
-  emptyContainer: {
-    flex: 1,
+  emptyIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#FFF7ED',
     justifyContent: 'center',
     alignItems: 'center',
-    minHeight: 400,
-    padding: 20,
+    marginBottom: 16,
   },
   emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#374151',
-    marginTop: 20,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
     marginBottom: 8,
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#6B7280',
     textAlign: 'center',
     marginBottom: 24,
+    paddingHorizontal: 40,
+    lineHeight: 20,
   },
   shopButton: {
-    backgroundColor: '#000',
+    backgroundColor: '#F97316',
     paddingHorizontal: 32,
     paddingVertical: 14,
     borderRadius: 8,
@@ -613,120 +1020,205 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  header: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'flex-end', 
-    paddingHorizontal: 20, 
-    paddingVertical: 20, 
-    backgroundColor: '#FFF' 
+  headerSafeArea: { 
+    backgroundColor: '#FFFFFF', 
+    paddingTop: Platform.OS === 'android' ? 40 : 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#FFFFFF',
   },
   shopName: { 
-    fontSize: 11, 
+    fontSize: 12, 
     fontWeight: '700', 
-    color: '#999', 
+    color: '#9CA3AF', 
     letterSpacing: 1, 
     textTransform: 'uppercase' 
   },
   pageTitle: { 
     fontSize: 24, 
     fontWeight: '800', 
-    color: '#000', 
+    color: '#111827', 
     marginTop: 2 
   },
-  headerAction: { 
-    fontSize: 13, 
-    color: '#666', 
-    fontWeight: '600' 
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
-  scrollContent: { 
-    paddingBottom: 120 
+  selectAllButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
   },
-  storeSection: { 
-    marginTop: 12, 
-    backgroundColor: '#FFF', 
-    marginHorizontal: 16, 
-    borderRadius: 16, 
-    overflow: 'hidden', 
-    borderWidth: 1, 
-    borderColor: '#F0F0F0' 
+  headerActionText: {
+    fontSize: 13,
+    color: '#F97316',
+    fontWeight: '600',
   },
-  storeHeader: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    padding: 14, 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#F8F8F8', 
-    backgroundColor: '#FAFAFA' 
+  removeSelectedButton: {
+    padding: 8,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
   },
-  storeName: { 
-    fontSize: 13, 
-    fontWeight: '700', 
-    color: '#333', 
-    marginRight: 4,
-    flex: 1 
+  scrollView: {
+    flex: 1,
   },
-  cartItem: { 
-    flexDirection: 'row', 
-    padding: 14, 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#F8F8F8' 
+  shopSection: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    overflow: 'hidden',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
   },
-  checkbox: { 
-    justifyContent: 'center', 
-    paddingRight: 10 
+  shopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#FAFAFA',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   },
-  itemImage: { 
-    width: 80, 
-    height: 80, 
-    borderRadius: 10, 
-    backgroundColor: '#F3F3F3' 
+  shopCheckbox: {
+    marginRight: 12,
   },
-  itemContent: { 
-    flex: 1, 
-    marginLeft: 12, 
-    justifyContent: 'space-between' 
+  shopHeaderContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  itemName: { 
-    fontSize: 15, 
-    fontWeight: '600', 
-    color: '#111',
-    marginBottom: 8 
+  shopIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#FFF7ED',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
-  bottomRow: {
+  shopInfo: {
+    flex: 1,
+  },
+  shopNameText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  shopSummary: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  itemsContainer: {
+    paddingHorizontal: 16,
+  },
+  cartItem: {
+    flexDirection: 'row',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  checkboxChecked: {
+    backgroundColor: '#F97316',
+    borderColor: '#F97316',
+  },
+  itemImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  itemContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  itemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+  },
+  itemName: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+    marginRight: 8,
+  },
+  itemPrice: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#F97316',
+  },
+  variantText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  itemDetails: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8
-  },
-  itemPrice: { 
-    fontSize: 16, 
-    fontWeight: '700', 
-    color: '#000' 
+    marginBottom: 8,
   },
   itemPriceEach: {
     fontSize: 12,
-    color: '#666',
-    marginTop: 2
+    color: '#6B7280',
   },
-  qtyControl: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#FFF', 
-    borderRadius: 8, 
-    borderWidth: 1, 
-    borderColor: '#EEE' 
+  quantityControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
-  qtyBtn: { 
-    padding: 6, 
-    paddingHorizontal: 10 
+  qtyBtn: {
+    padding: 6,
+    paddingHorizontal: 10,
   },
-  qtyValue: { 
-    fontSize: 14, 
-    fontWeight: '700', 
-    color: '#333', 
-    minWidth: 20, 
-    textAlign: 'center' 
+  qtyBtnDisabled: {
+    opacity: 0.5,
+  },
+  qtyValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    minWidth: 30,
+    textAlign: 'center',
+  },
+  maxAvailableText: {
+    fontSize: 11,
+    color: '#F97316',
+    marginBottom: 4,
   },
   removeButton: {
     flexDirection: 'row',
@@ -735,56 +1227,325 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 4,
-    backgroundColor: '#F5F5F5'
+    backgroundColor: '#FEF2F2',
+    gap: 4,
   },
   removeText: {
     fontSize: 12,
-    color: '#666',
-    marginLeft: 4
+    color: '#EF4444',
+    fontWeight: '500',
   },
-  footer: { 
-    position: 'absolute', 
-    bottom: 0, 
-    left: 0, 
-    right: 0, 
-    backgroundColor: '#FFF', 
-    padding: 20, 
-    paddingBottom: 35, 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    borderTopWidth: 1, 
-    borderTopColor: '#EEE',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 5
+  shopSummaryContainer: {
+    padding: 16,
+    backgroundColor: '#FFF7ED',
+    borderTopWidth: 1,
+    borderTopColor: '#FED7AA',
   },
-  totalLabel: { 
-    fontSize: 11, 
-    color: '#999', 
-    fontWeight: '600' 
+  shopSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
   },
-  totalPrice: { 
-    fontSize: 20, 
-    fontWeight: '800', 
-    color: '#000' 
-  },
-  itemCount: {
+  shopSummaryLabel: {
     fontSize: 12,
-    color: '#666',
-    marginTop: 2
+    color: '#4B5563',
   },
-  checkoutBtn: { 
-    backgroundColor: '#000', 
-    paddingVertical: 14, 
-    paddingHorizontal: 30, 
-    borderRadius: 12 
+  shopSummaryValue: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontWeight: '500',
   },
-  checkoutText: { 
-    color: '#FFF', 
-    fontWeight: '700', 
-    fontSize: 15 
+  shopSummaryTotal: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F97316',
+  },
+  orderSummary: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFF7ED',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  summaryLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  summaryValue: {
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '500',
+  },
+  shopBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  shopBadgeText: {
+    fontSize: 10,
+    color: '#92400E',
+    fontWeight: '600',
+  },
+  discountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    marginBottom: 8,
+  },
+  discountLabel: {
+    fontSize: 14,
+    color: '#059669',
+  },
+  discountValue: {
+    fontSize: 14,
+    color: '#059669',
+    fontWeight: '700',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginVertical: 12,
+  },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  totalLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  totalRight: {
+    alignItems: 'flex-end',
+  },
+  totalValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  totalVat: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  shopCountText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 16,
+  },
+  couponButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FFF7ED',
+    paddingVertical: 14,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  couponButtonText: {
+    fontSize: 14,
+    color: '#F97316',
+    fontWeight: '600',
+  },
+  checkoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#F97316',
+    paddingVertical: 16,
+    borderRadius: 8,
+  },
+  checkoutBtnDisabled: {
+    opacity: 0.5,
+  },
+  checkoutBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  infoCard: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 100,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+  },
+  footer: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
+  },
+  orderSummaryFooter: {
+    marginBottom: 12,
+  },
+  checkoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#F97316',
+    paddingVertical: 16,
+    borderRadius: 8,
+  },
+  checkoutButtonDisabled: {
+    opacity: 0.5,
+  },
+  checkoutButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  footerNotes: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  footerNoteText: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalBody: {
+    padding: 20,
+    gap: 16,
+  },
+  couponInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F9FAFB',
+  },
+  couponInput: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    fontSize: 14,
+    color: '#111827',
+  },
+  applyButton: {
+    backgroundColor: '#F97316',
+    paddingVertical: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  applyButtonDisabled: {
+    opacity: 0.5,
+  },
+  applyButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
