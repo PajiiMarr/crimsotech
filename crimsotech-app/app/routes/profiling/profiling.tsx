@@ -348,17 +348,7 @@ export default function ProfilingRoute({loaderData}: Route.ComponentProps) {
                             </div>
                             <Input id="first_name" type="text" name="first_name" />
                         </div>
-                        <div className="grid gap-3 w-full">
-                            <div className="flex items-center">
-                                <Label htmlFor="last_name">Last Name</Label>
-                                {errors?.last_name && (
-                                <p className="px-1 text-xs text-red-600">
-                                    {errors.last_name}
-                                </p>
-                                )}
-                            </div>
-                            <Input id="last_name" type="text" name="last_name" />
-                        </div>
+                       
                         <div className="grid gap-3 w-full">
                             <div className="flex items-center">
                                 <Label htmlFor="middle_name">Middle Name</Label>
@@ -369,6 +359,17 @@ export default function ProfilingRoute({loaderData}: Route.ComponentProps) {
                                 )}
                             </div>
                             <Input id="middle_name" type="text" name="middle_name" />
+                        </div>
+                         <div className="grid gap-3 w-full">
+                            <div className="flex items-center">
+                                <Label htmlFor="last_name">Last Name</Label>
+                                {errors?.last_name && (
+                                <p className="px-1 text-xs text-red-600">
+                                    {errors.last_name}
+                                </p>
+                                )}
+                            </div>
+                            <Input id="last_name" type="text" name="last_name" />
                         </div>
                     </div>
                     <div className="grid grid-cols-3 gap-4 ">

@@ -1,4 +1,3 @@
-// app/routes/home.tsx
 import type { Route } from './+types/home'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider'
@@ -212,37 +211,62 @@ const getProductImage = (product: Product): string => {
 }
 
 // ----------------------------
-// Get product price display
+// Get product price display - FIXED to show FREE GIFT for gift products
 // ----------------------------
 const getProductPrice = (product: Product): string => {
-  // If price_display is provided from backend, use it
+  // SPECIAL CHECK: If product name indicates it's a gift, show FREE GIFT
+  const nameLower = product.name?.toLowerCase() || '';
+  if (nameLower.includes('gift') || nameLower.includes('free') || nameLower.includes('giveaway')) {
+    return "FREE GIFT";
+  }
+
+  // If price_display is provided from backend
   if (product.price_display) {
+    // If it's "Price unavailable" but name suggests gift, override
+    if (product.price_display === "Price unavailable" || product.price_display === "Price not available") {
+      if (nameLower.includes('gift') || nameLower.includes('free')) {
+        return "FREE GIFT";
+      }
+    }
     return product.price_display;
   }
   
   // Fallback to price_range if available
   if (product.price_range) {
     if (!product.price_range.is_range) {
+      // Single price - check if zero
+      if (product.price_range.min === 0) {
+        return "FREE GIFT";
+      }
       return `₱${product.price_range.min.toFixed(2)}`;
     } else {
+      // Price range - check if min is zero
+      if (product.price_range.min === 0) {
+        return `₱0 - ₱${product.price_range.max.toFixed(2)}`;
+      }
       return `₱${product.price_range.min.toFixed(2)} - ₱${product.price_range.max.toFixed(2)}`;
     }
   }
   
-  // Legacy fallback
-  if (product.price === 0) {
-    return "FREE GIFT";
+  // Legacy price field
+  if (product.price !== undefined) {
+    // Check if price is zero
+    if (product.price === 0 || Number(product.price) === 0) {
+      return "FREE GIFT";
+    }
+    return `₱${product.price.toFixed(2)}`;
   }
   
-  if (product.price) {
-    return `₱${product.price.toFixed(2)}`;
+  // Final check - if name suggests gift but we got here, still show FREE GIFT
+  if (nameLower.includes('gift') || nameLower.includes('free')) {
+    return "FREE GIFT";
   }
   
   return "Price unavailable";
 }
 
 // ----------------------------
-// Compact Product Card
+// Compact Product Card - FIXED
 // ----------------------------
 const CompactProductCard = ({ 
   product, 
@@ -260,6 +284,7 @@ const CompactProductCard = ({
   const [loadingFav, setLoadingFav] = useState(false);
   const [imageUrl, setImageUrl] = useState<string>('/Crimsotech.png');
   const [priceDisplay, setPriceDisplay] = useState<string>('');
+  const [isGift, setIsGift] = useState(false);
 
   useEffect(() => {
     setIsFavorite(favoriteIds.includes(product.id));
@@ -271,9 +296,18 @@ const CompactProductCard = ({
     setImageUrl(url);
   }, [product]);
 
-  // Set price display
+  // Set price display and gift status
   useEffect(() => {
-    setPriceDisplay(getProductPrice(product));
+    const price = getProductPrice(product);
+    setPriceDisplay(price);
+    
+    // Check if it's a gift - either price says FREE GIFT or name contains gift/free
+    const isGiftProduct = price === "FREE GIFT" || 
+      product.name?.toLowerCase().includes('gift') || 
+      product.name?.toLowerCase().includes('free') ||
+      product.name?.toLowerCase().includes('giveaway');
+    
+    setIsGift(isGiftProduct);
   }, [product]);
 
   const handleClick = () => {
@@ -312,9 +346,6 @@ const CompactProductCard = ({
       setLoadingFav(false);
     }
   };
-
-  // Check if product is a gift (price is 0 or it's a gift item)
-  const isGift = product.price === 0 || priceDisplay === "FREE GIFT";
 
   return (
     <div 
@@ -379,11 +410,9 @@ const CompactProductCard = ({
         
         <div className="mt-auto pt-1">
           <div className="flex items-center justify-between">
-            {isGift ? (
-              <span className="text-sm font-bold text-orange-600">FREE GIFT</span>
-            ) : (
-              <span className="text-sm font-bold text-gray-900">{priceDisplay}</span>
-            )}
+            <span className={`text-sm font-bold ${isGift ? 'text-orange-600' : 'text-gray-900'}`}>
+              {isGift ? "FREE GIFT" : priceDisplay}
+            </span>
           </div>
         </div>
       </div>
@@ -732,7 +761,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
       if (hiddenGiftIds.length > 0) {
         products = products.filter(p => {
-          const isGift = Number(p.price || 0) === 0;
+          const isGift = Number(p.price || 0) === 0 || 
+            p.name?.toLowerCase().includes('gift') || 
+            p.name?.toLowerCase().includes('free');
           const pid = String(p.id);
           if (isGift && hiddenGiftIds.map(String).includes(pid)) {
             console.log('Hiding applied gift product', pid, p.name);
@@ -932,7 +963,10 @@ export default function Home({ loaderData }: any) {
     const matchesCategory = selectedCategory === '' || 
       (prodCatId && prodCatId === selectedCategory);
 
-    const isGift = product.price === 0 || getProductPrice(product) === "FREE GIFT";
+    const isGift = getProductPrice(product) === "FREE GIFT" || 
+      product.name?.toLowerCase().includes('gift') || 
+      product.name?.toLowerCase().includes('free');
+      
     const appliedSet = appliedGiftIds.map(String);
     if (isGift && appliedSet.includes(String(product.id))) return false;
 

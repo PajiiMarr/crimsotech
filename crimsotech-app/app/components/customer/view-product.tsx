@@ -791,33 +791,36 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
               <span className="text-gray-300">•</span>
               <span className="text-gray-600">{product.condition}</span>
 
-              {isRefundable ? (
-                <>
-                  <span className="text-gray-300">•</span>
-                  <Link
-                    to="#"
-                    aria-label={refundAriaLabel}
-                    title={refundAriaLabel}
-                    className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-medium border border-emerald-100 hover:bg-emerald-100"
-                  >
-                    <ShieldCheck className="h-3 w-3 text-emerald-700" />
-                    <span>{refundText}</span>
-                  </Link>
-                </>
-              ) : (isExplicitlyNonRefundable && (
-                <>
-                  <span className="text-gray-300">•</span>
-                  <span
-                    role="status"
-                    aria-label="Non-refundable"
-                    title="Non-refundable"
-                    className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-medium border border-rose-100"
-                  >
-                    <ShieldOff className="h-3 w-3 text-rose-600" />
-                    <span>Non-refundable</span>
-                  </span>
-                </>
-              ))}
+              {/* Only show refund info if it's NOT a gift product */}
+{!isGift && (
+  isRefundable ? (
+    <>
+      <span className="text-gray-300">•</span>
+      <Link
+        to="#"
+        aria-label={refundAriaLabel}
+        title={refundAriaLabel}
+        className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-medium border border-emerald-100 hover:bg-emerald-100"
+      >
+        <ShieldCheck className="h-3 w-3 text-emerald-700" />
+        <span>{refundText}</span>
+      </Link>
+    </>
+  ) : (isExplicitlyNonRefundable && (
+    <>
+      <span className="text-gray-300">•</span>
+      <span
+        role="status"
+        aria-label="Non-refundable"
+        title="Non-refundable"
+        className="inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-xs font-medium border border-rose-100"
+      >
+        <ShieldOff className="h-3 w-3 text-rose-600" />
+        <span>Non-refundable</span>
+      </span>
+    </>
+  ))
+)}
             </div>
 
             <div className="flex items-center gap-3">
