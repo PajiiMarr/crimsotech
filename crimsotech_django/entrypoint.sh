@@ -1,11 +1,10 @@
---workers ${WEB_CONCURRENCY:-1}
---threads 1
-
+#!/usr/bin/env bash
 set -ex
 
 echo ">>> entrypoint: starting (pid $$)"
 
-MEMORY_LIMIT=${MEMORY_AVAILABLE:-512}  # Set this in your app spec
+# Calculate optimal workers based on available memory
+MEMORY_LIMIT=${MEMORY_AVAILABLE:-512}
 if [ $MEMORY_LIMIT -le 512 ]; then
     WORKERS=1
     MAX_REQUESTS=500
@@ -32,10 +31,12 @@ python manage.py collectstatic --noinput
 echo ">>> starting server with WebSocket support"
 echo ">>> Workers: $WORKERS, Memory: ${MEMORY_LIMIT}MB"
 
+# Set Django settings module explicitly
 export DJANGO_SETTINGS_MODULE=backend.settings
 export PYTHONUNBUFFERED=TRUE
 export PYTHONMALLOC=malloc
 
+# Fixed: Removed comment after backslash
 exec gunicorn backend.asgi:application \
   -k uvicorn.workers.UvicornWorker \
   --bind "0.0.0.0:${PORT:-8000}" \
@@ -44,7 +45,7 @@ exec gunicorn backend.asgi:application \
   --worker-connections $CONCURRENCY \
   --max-requests $MAX_REQUESTS \
   --max-requests-jitter 50 \
-  --timeout 120 \  # Reduced from 600
+  --timeout 120 \
   --log-level info \
   --access-logfile - \
   --error-logfile - \
