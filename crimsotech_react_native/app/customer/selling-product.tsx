@@ -341,9 +341,9 @@ export default function SellingProductPage() {
     switch (status.toLowerCase()) {
       case "active":
       case "published":
-        return "#10B981";
+        return "#111827";
       case "draft":
-        return "#F59E0B";
+        return "#4B5563";
       case "inactive":
       case "archived":
         return "#9CA3AF";
@@ -355,11 +355,11 @@ export default function SellingProductPage() {
   const getStockStatusColor = (status: string) => {
     switch (status) {
       case "in_stock":
-        return "#10B981";
+        return "#111827";
       case "low_stock":
-        return "#F59E0B";
+        return "#4B5563";
       case "out_of_stock":
-        return "#EF4444";
+        return "#9CA3AF";
       default:
         return "#9CA3AF";
     }
@@ -639,7 +639,7 @@ export default function SellingProductPage() {
   if (loading && !refreshing) {
     return (
       <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color="#4F46E5" />
+        <ActivityIndicator size="large" color="#111827" />
         <Text style={styles.loadingText}>Loading listings...</Text>
       </SafeAreaView>
     );
@@ -655,30 +655,13 @@ export default function SellingProductPage() {
             {customerInfo.current_product_count} items listed
           </Text>
         </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.refreshButton}
-            onPress={onRefresh}
-            disabled={refreshing}
-          >
-            <Icon
-              name="refresh"
-              size={20}
-              color="#4F46E5"
-              style={refreshing && styles.refreshingIcon}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.addButton,
-              customerInfo.remaining_products <= 0 && styles.disabledAddButton,
-            ]}
-            onPress={handleCreateProduct}
-            disabled={customerInfo.remaining_products <= 0}
-          >
-            <Icon name="add" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          style={styles.headerActionButton}
+          onPress={onRefresh}
+          disabled={refreshing}
+        >
+          <Icon name="refresh" size={20} color="#111827" />
+        </TouchableOpacity>
       </View>
 
       {/* Limit Alert Modal */}
@@ -691,7 +674,7 @@ export default function SellingProductPage() {
         <View style={styles.alertOverlay}>
           <View style={styles.alertContent}>
             <View style={styles.alertIcon}>
-              <Icon name="warning" size={40} color="#EF4444" />
+              <Icon name="warning" size={40} color="#111827" />
             </View>
             <Text style={styles.alertTitle}>Limit Reached</Text>
             <Text style={styles.alertMessage}>
@@ -736,8 +719,8 @@ export default function SellingProductPage() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={["#4F46E5"]}
-            tintColor="#4F46E5"
+            colors={["#111827"]}
+            tintColor="#111827"
           />
         }
         showsVerticalScrollIndicator={false}
@@ -861,7 +844,7 @@ export default function SellingProductPage() {
                   handleDeleteProduct(productId!);
                 }}
               >
-                <Icon name="delete" size={18} color="#EF4444" />
+                <Icon name="delete" size={18} color="#111827" />
                 <Text style={styles.deleteMenuText}>Delete</Text>
               </TouchableOpacity>
             </View>
@@ -913,8 +896,13 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 13,
-    color: "#6B7280",
+    color: "#4B5563",
     marginTop: 2,
+  },
+  headerActionButton: {
+    padding: 8,
+    justifyContent: "center",
+    alignItems: "center",
   },
   headerActions: {
     flexDirection: "row",
@@ -928,29 +916,29 @@ const styles = StyleSheet.create({
     transform: [{ rotate: "360deg" }],
   },
   addButton: {
-    backgroundColor: "#4F46E5",
+    backgroundColor: "#111827",
     width: 36,
     height: 36,
     borderRadius: 18,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "#4F46E5",
+    shadowColor: "#111827",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 2,
   },
   disabledAddButton: {
-    backgroundColor: "#CBD5E1",
+    backgroundColor: "#D1D5DB",
   },
   message: {
     fontSize: 14,
-    color: "#6B7280",
+    color: "#4B5563",
   },
   loadingText: {
     marginTop: 12,
     fontSize: 13,
-    color: "#6B7280",
+    color: "#4B5563",
   },
   scrollView: {
     flex: 1,
@@ -959,21 +947,21 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   limitInfo: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#F9FAFB",
     padding: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#F1F5F9",
   },
   limitProgress: {
     height: 6,
-    backgroundColor: "#E2E8F0",
+    backgroundColor: "#E5E7EB",
     borderRadius: 3,
     overflow: "hidden",
     marginBottom: 8,
   },
   limitProgressBar: {
     height: "100%",
-    backgroundColor: "#4F46E5",
+    backgroundColor: "#111827",
   },
   limitTextContainer: {
     flexDirection: "row",
@@ -982,12 +970,12 @@ const styles = StyleSheet.create({
   },
   limitText: {
     fontSize: 13,
-    color: "#475569",
+    color: "#1F2937",
     fontWeight: "500",
   },
   remainingText: {
     fontSize: 13,
-    color: "#10B981",
+    color: "#111827",
     fontWeight: "500",
   },
   statsContainer: {
@@ -1007,16 +995,16 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
   },
   totalStat: {
-    backgroundColor: "#F1F5F9",
+    backgroundColor: "#F3F4F6",
   },
   publishedStat: {
-    backgroundColor: "#F0FDF4",
+    backgroundColor: "#F3F4F6",
   },
   draftStat: {
-    backgroundColor: "#FFFBEB",
+    backgroundColor: "#F3F4F6",
   },
   limitStat: {
-    backgroundColor: "#EEF2FF",
+    backgroundColor: "#F3F4F6",
   },
   statNumber: {
     fontSize: 18,
@@ -1025,7 +1013,7 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 11,
-    color: "#6B7280",
+    color: "#4B5563",
     marginTop: 2,
   },
   searchContainer: {
@@ -1036,11 +1024,11 @@ const styles = StyleSheet.create({
   searchInputContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#F9FAFB",
     borderRadius: 8,
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#E5E7EB",
     height: 40,
   },
   searchIcon: {
@@ -1065,7 +1053,7 @@ const styles = StyleSheet.create({
   },
   listSubtitle: {
     fontSize: 12,
-    color: "#6B7280",
+    color: "#4B5563",
     marginTop: 2,
   },
   listContent: {
@@ -1099,7 +1087,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 6,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#F3F4F6",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1107,7 +1095,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: -3,
     right: -3,
-    backgroundColor: "#4F46E5",
+    backgroundColor: "#111827",
     borderRadius: 6,
     paddingHorizontal: 4,
     paddingVertical: 1,
@@ -1143,14 +1131,14 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   categoryBadge: {
-    backgroundColor: "#EEF2FF",
+    backgroundColor: "#F3F4F6",
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
   categoryText: {
     fontSize: 11,
-    color: "#4F46E5",
+    color: "#111827",
     fontWeight: "500",
   },
   productPrice: {
@@ -1186,11 +1174,11 @@ const styles = StyleSheet.create({
   },
   stockText: {
     fontSize: 11,
-    color: "#6B7280",
+    color: "#4B5563",
   },
   dateText: {
     fontSize: 11,
-    color: "#94A3B8",
+    color: "#9CA3AF",
   },
   emptyContainer: {
     alignItems: "center",
@@ -1205,13 +1193,13 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#475569",
+    color: "#374151",
     marginBottom: 8,
     textAlign: "center",
   },
   emptyDescription: {
     fontSize: 13,
-    color: "#94A3B8",
+    color: "#6B7280",
     textAlign: "center",
     marginBottom: 20,
     lineHeight: 18,
@@ -1220,18 +1208,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#4F46E5",
+    backgroundColor: "#111827",
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    shadowColor: "#4F46E5",
+    shadowColor: "#111827",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 2,
   },
   disabledButton: {
-    backgroundColor: "#CBD5E1",
+    backgroundColor: "#D1D5DB",
     shadowOpacity: 0,
   },
   createButtonText: {
@@ -1241,14 +1229,14 @@ const styles = StyleSheet.create({
   },
   limitWarning: {
     fontSize: 11,
-    color: "#EF4444",
+    color: "#111827",
     marginTop: 12,
   },
   floatingButton: {
     position: "absolute",
     bottom: 20,
     right: 20,
-    backgroundColor: "#4F46E5",
+    backgroundColor: "#111827",
     width: 50,
     height: 50,
     borderRadius: 25,
@@ -1262,7 +1250,7 @@ const styles = StyleSheet.create({
   },
   menuOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   actionMenu: {
@@ -1292,11 +1280,11 @@ const styles = StyleSheet.create({
   },
   deleteMenuText: {
     fontSize: 15,
-    color: "#EF4444",
+    color: "#111827",
   },
   alertOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
@@ -1321,13 +1309,13 @@ const styles = StyleSheet.create({
   },
   alertMessage: {
     fontSize: 13,
-    color: "#6B7280",
+    color: "#4B5563",
     textAlign: "center",
     lineHeight: 18,
     marginBottom: 20,
   },
   alertButton: {
-    backgroundColor: "#4F46E5",
+    backgroundColor: "#111827",
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
