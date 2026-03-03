@@ -192,7 +192,8 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
     
     const loadConversations = async () => {
         try {
-            const response = await AxiosInstance.get('/conversation/', {
+            // Fixed: Changed from '/conversation/' to '/conversation/list/'
+            const response = await AxiosInstance.get('/conversation/list/', {
                 headers: { 'X-User-Id': userId }
             });
             setConversations(response.data);
@@ -202,15 +203,16 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
     };
     
     const loadMessages = async (conversationId: string) => {
-        try {
-            const response = await AxiosInstance.get(`/conversation/messages/${conversationId}/`, {
-                headers: { 'X-User-Id': userId }
-            });
-            setMessages(response.data);
-        } catch (error) {
-            console.error('Failed to load messages:', error);
-        }
-    };
+    try {
+        const response = await AxiosInstance.get(
+            `/conversation/messages/${conversationId}/list/`,
+            { headers: { 'X-User-Id': userId } }
+        );
+        setMessages(response.data);
+    } catch (error) {
+        console.error('Failed to load messages:', error);
+    }
+};
     
     const handleWebSocketMessage = (data: any) => {
         switch (data.type) {
@@ -342,6 +344,7 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
         
         setIsLoadingUsers(true);
         try {
+            // Fixed: Using the correct endpoint
             const response = await AxiosInstance.get(`/conversation/search/?q=${term}`, {
                 headers: { 'X-User-Id': userId }
             });
@@ -355,6 +358,7 @@ export default function Messages({ loaderData }: { loaderData: LoaderData }) {
     
     const startNewConversation = async (otherUserId: string, username: string) => {
         try {
+            // Fixed: Using the correct endpoint
             const response = await AxiosInstance.post('/conversation/start/', 
                 { user_id: otherUserId },
                 { headers: { 'X-User-Id': userId } }
