@@ -1,4 +1,3 @@
-// app/customer/home.tsx
 import React, { useEffect, useState } from 'react';
 import {
   Dimensions,
@@ -28,7 +27,13 @@ interface Product {
   id: string;
   name: string;
   description: string;
-  price: number;
+  price?: number;
+  price_display?: string;
+  price_range?: {
+    min: number;
+    max: number;
+    is_range: boolean;
+  };
   primary_image?: { url: string } | null;
   shop?: { name: string; shop_picture?: string };
   condition?: string;
@@ -44,19 +49,85 @@ interface Category {
   name: string;
 }
 
-// Product Card Component
+// ----------------------------
+// Get product price display - FIXED for FREE GIFT
+// ----------------------------
+const getProductPrice = (product: Product): { display: string; isGift: boolean } => {
+  // SPECIAL CHECK: If product name indicates it's a gift, show FREE GIFT
+  const nameLower = product.name?.toLowerCase() || '';
+  if (nameLower.includes('gift') || nameLower.includes('free') || nameLower.includes('giveaway')) {
+    return { display: "FREE GIFT", isGift: true };
+  }
+
+  // If price_display is provided from backend
+  if (product.price_display) {
+    // If it's "Price unavailable" but name suggests gift, override
+    if (product.price_display === "Price unavailable" || product.price_display === "Price not available") {
+      if (nameLower.includes('gift') || nameLower.includes('free')) {
+        return { display: "FREE GIFT", isGift: true };
+      }
+    }
+    // Check if price_display indicates zero
+    if (product.price_display === "₱0" || product.price_display === "₱0.00" || product.price_display === "0" || product.price_display === "0.00") {
+      return { display: "FREE GIFT", isGift: true };
+    }
+    return { display: product.price_display, isGift: false };
+  }
+  
+  // Check price_range
+  if (product.price_range) {
+    const min = product.price_range.min;
+    const max = product.price_range.max;
+    
+    if (!product.price_range.is_range) {
+      // Single price - check if zero
+      if (min === 0) {
+        return { display: "FREE GIFT", isGift: true };
+      }
+      return { display: `₱${min.toFixed(2)}`, isGift: false };
+    } else {
+      // Price range - check if min is zero
+      if (min === 0) {
+        return { display: `₱0 - ₱${max.toFixed(2)}`, isGift: max === 0 };
+      }
+      return { display: `₱${min.toFixed(2)} - ₱${max.toFixed(2)}`, isGift: false };
+    }
+  }
+  
+  // Legacy price field
+  if (product.price !== undefined) {
+    // Check if price is zero
+    if (product.price === 0 || Number(product.price) === 0) {
+      return { display: "FREE GIFT", isGift: true };
+    }
+    return { display: `₱${product.price.toFixed(2)}`, isGift: false };
+  }
+  
+  // Final check - if name suggests gift but we got here, still show FREE GIFT
+  if (nameLower.includes('gift') || nameLower.includes('free')) {
+    return { display: "FREE GIFT", isGift: true };
+  }
+  
+  return { display: "Price unavailable", isGift: false };
+};
+
+// ----------------------------
+// Product Card Component - FIXED
+// ----------------------------
 const CompactProductCard = ({
   product,
   onPress,
-  onFavoritePress // ADD THIS
+  onFavoritePress
 }: {
   product: Product;
   onPress: () => void;
-  onFavoritePress: () => void; // ADD THIS
+  onFavoritePress: () => void;
 }) => {
-  const priceNumber = typeof product.price === 'number' ? product.price : Number(product.price);
-  const hasValidPrice = !isNaN(priceNumber) && priceNumber !== null;
-  const isGift = hasValidPrice && priceNumber === 0;
+  const [priceInfo, setPriceInfo] = useState({ display: "", isGift: false });
+
+  useEffect(() => {
+    setPriceInfo(getProductPrice(product));
+  }, [product]);
 
   const categoryName = typeof product.category === 'string'
     ? product.category
@@ -79,7 +150,7 @@ const CompactProductCard = ({
 
   return (
     <TouchableOpacity style={styles.productCard} onPress={onPress} activeOpacity={0.7}>
-      {isGift ? (
+      {priceInfo.isGift ? (
         <View style={styles.giftBadge}>
           <MaterialIcons name="card-giftcard" size={10} color="#059669" />
           <Text style={styles.giftText}>FREE GIFT</Text>
@@ -94,9 +165,9 @@ const CompactProductCard = ({
       <View style={styles.favoriteButton}>
         <TouchableOpacity onPress={onFavoritePress}>
           <MaterialIcons 
-            name={product.isFavorite ? 'favorite' : 'favorite-border'} // UPDATE THIS
+            name={product.isFavorite ? 'favorite' : 'favorite-border'}
             size={16} 
-            color={product.isFavorite ? '#EF4444' : '#666'} // UPDATE THIS
+            color={product.isFavorite ? '#EF4444' : '#666'}
           />
         </TouchableOpacity>
       </View>
@@ -115,13 +186,9 @@ const CompactProductCard = ({
         {categoryName ? <Text style={styles.categoryText}>{categoryName}</Text> : null}
         {product.shop?.name ? <Text style={styles.shopText}>{product.shop.name}</Text> : null}
         <View style={styles.priceContainer}>
-          {isGift ? (
-            <Text style={styles.freePrice}>FREE GIFT</Text>
-          ) : hasValidPrice ? (
-            <Text style={styles.price}>₱{priceNumber.toFixed(2)}</Text>
-          ) : (
-            <Text style={styles.priceUnavailable}>Price unavailable</Text>
-          )}
+          <Text style={priceInfo.isGift ? styles.freePrice : styles.price}>
+            {priceInfo.display}
+          </Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -138,31 +205,47 @@ export default function CustomerHome() {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
 
   const fetchData = async () => {
-  try {
-    setLoading(true);
-    await fetchFavorites();     // sets favoriteIds
-    const products = await fetchProducts(); // JUST fetch
-    setProducts(products);
-    await fetchCategories();
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-};
+    try {
+      setLoading(true);
+      await fetchFavorites();     // sets favoriteIds
+      const products = await fetchProducts(); // JUST fetch
+      setProducts(products);
+      await fetchCategories();
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
 
+  const fetchProducts = async () => {
+    try {
+      const response = await AxiosInstance.get('/public-products/', {
+        headers: { 'X-User-Id': String(user?.id || '') },
+      });
 
- const fetchProducts = async () => {
-  const response = await AxiosInstance.get('/public-products/', {
-    headers: { 'X-User-Id': String(user?.id || '') },
-  });
+      let productsData = response.data;
+      let productsList = [];
+      
+      if (Array.isArray(productsData)) {
+        productsList = productsData;
+      } else if (productsData.results) {
+        productsList = productsData.results;
+      } else if (productsData.products) {
+        productsList = productsData.products;
+      } else {
+        productsList = [];
+      }
 
-  let productsData = response.data;
-  if (Array.isArray(productsData)) return productsData;
-  if (productsData.results) return productsData.results;
-  if (productsData.products) return productsData.products;
-  return [];
-};
-
+      // Map favorite status
+      return productsList.map((p: any) => ({
+        ...p,
+        isFavorite: favoriteIds.includes(p.id)
+      }));
+    } catch (error) {
+      console.error('Error fetching products:', error);
+      return [];
+    }
+  };
 
   const fetchCategories = async () => {
     try {
@@ -178,84 +261,87 @@ export default function CustomerHome() {
   };
 
   const fetchFavorites = async () => {
-  if (!user?.id) return;
-  try {
-    const response = await AxiosInstance.get('/customer-favorites/', { headers: { 'X-User-Id': String(user.id) } });
-    if (response.data.favorites) {
-      const favIds = response.data.favorites
-        .map((f: any) => typeof f.product === 'string' ? f.product : f.product?.id)
-        .filter(Boolean);
-      setFavoriteIds(favIds);
-      
-      // Update products with favorite status
-      setProducts(prev => prev.map(product => ({
-        ...product,
-        isFavorite: favIds.includes(product.id)
-      })));
+    if (!user?.id) return;
+    try {
+      const response = await AxiosInstance.get('/customer-favorites/', { 
+        headers: { 'X-User-Id': String(user.id) } 
+      });
+      if (response.data.favorites) {
+        const favIds = response.data.favorites
+          .map((f: any) => typeof f.product === 'string' ? f.product : f.product?.id)
+          .filter(Boolean);
+        setFavoriteIds(favIds);
+        
+        // Update products with favorite status
+        setProducts(prev => prev.map(product => ({
+          ...product,
+          isFavorite: favIds.includes(product.id)
+        })));
+      }
+    } catch (error) {
+      console.error('Error fetching favorites:', error);
     }
-  } catch (error) {
-    console.error('Error fetching favorites:', error);
-  }
-};
+  };
 
   const toggleFavorite = async (productId: string, currentFavoriteStatus: boolean) => {
-  if (!user?.id) return;
-  
-  try {
-    if (currentFavoriteStatus) {
-      // Remove from favorites (backend expects payload, not URL pk)
-      await AxiosInstance.delete('/customer-favorites/', {
-        data: { product: productId, customer: user.id },
-        headers: { 'X-User-Id': String(user.id) },
-      });
-    } else {
-      // Add to favorites
-      await AxiosInstance.post('/customer-favorites/', 
-        { product: productId, customer: user.id }, 
-        { headers: { 'X-User-Id': String(user.id) } }
-      );
-    }
+    if (!user?.id) return;
     
-    // Update local state
-    setProducts(prev => prev.map(product => {
-      if (product.id === productId) {
-        return { ...product, isFavorite: !currentFavoriteStatus };
-      }
-      return product;
-    }));
-    
-    // Update favoriteIds state
-    setFavoriteIds(prev => {
+    try {
       if (currentFavoriteStatus) {
-        return prev.filter(id => id !== productId);
+        // Remove from favorites
+        await AxiosInstance.delete('/customer-favorites/', {
+          data: { product: productId, customer: user.id },
+          headers: { 'X-User-Id': String(user.id) },
+        });
       } else {
-        return [...prev, productId];
+        // Add to favorites
+        await AxiosInstance.post('/customer-favorites/', 
+          { product: productId, customer: user.id }, 
+          { headers: { 'X-User-Id': String(user.id) } }
+        );
       }
-    });
-    
-  } catch (error: any) {
-    console.error('Error toggling favorite:', error);
-    const status = error?.response?.status;
-    const data = error?.response?.data || {};
-    const message = data?.message || data?.error || (status === 404 ? 'Product not found' : 'Failed to toggle favorite');
-    Alert.alert('Error', message);
-  }
-};
+      
+      // Update local state
+      setProducts(prev => prev.map(product => {
+        if (product.id === productId) {
+          return { ...product, isFavorite: !currentFavoriteStatus };
+        }
+        return product;
+      }));
+      
+      // Update favoriteIds state
+      setFavoriteIds(prev => {
+        if (currentFavoriteStatus) {
+          return prev.filter(id => id !== productId);
+        } else {
+          return [...prev, productId];
+        }
+      });
+      
+    } catch (error: any) {
+      console.error('Error toggling favorite:', error);
+      const status = error?.response?.status;
+      const data = error?.response?.data || {};
+      const message = data?.message || data?.error || (status === 404 ? 'Product not found' : 'Failed to toggle favorite');
+      Alert.alert('Error', message);
+    }
+  };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { 
+    fetchData(); 
+  }, []);
 
-  // Add this effect after the existing effects
-useEffect(() => {
-  if (!products.length) return;
+  // Update products when favoriteIds change
+  useEffect(() => {
+    if (!products.length) return;
 
-  setProducts(prev =>
-    prev.map(product => ({
-      ...product,
-      isFavorite: favoriteIds.includes(product.id),
-    }))
-  );
-}, [favoriteIds]);
-
+    setProducts(prev =>
+      prev.map(product => ({
+        ...product,
+        isFavorite: favoriteIds.includes(product.id),
+      }))
+    );
+  }, [favoriteIds]);
 
   // Prevent access to home unless registration stage is 4
   useEffect(() => {
@@ -264,17 +350,21 @@ useEffect(() => {
       router.replace('/(auth)/login');
     }
   }, [authLoading, registrationStage]);
-  const onRefresh = () => { setRefreshing(true); fetchData(); };
+
+  const onRefresh = () => { 
+    setRefreshing(true); 
+    fetchData(); 
+  };
 
   const filteredProducts = selectedCategory === ''
     ? products
     : products.filter((product: Product) => {
-      let prodCatId;
-      if (typeof product.category === 'string') prodCatId = product.category;
-      else if (product.category && typeof product.category === 'object') prodCatId = (product.category as any).id;
-      else prodCatId = product.category_admin?.id;
-      return prodCatId && prodCatId === selectedCategory;
-    });
+        let prodCatId;
+        if (typeof product.category === 'string') prodCatId = product.category;
+        else if (product.category && typeof product.category === 'object') prodCatId = (product.category as any).id;
+        else prodCatId = product.category_admin?.id;
+        return prodCatId && prodCatId === selectedCategory;
+      });
 
   if (loading) {
     return (
@@ -328,6 +418,7 @@ useEffect(() => {
         <View style={styles.productsSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Suggested For You</Text>
+            <Text style={styles.productCount}>{filteredProducts.length} items</Text>
           </View>
           {filteredProducts.length > 0 ? (
             <FlatList
@@ -335,13 +426,13 @@ useEffect(() => {
               renderItem={({ item }) => (
                 <CompactProductCard
                   product={item}
-                  onPress={() => router.push({ pathname: '/customer/view-product', params: { productId: item.id } })}
-                  onFavoritePress={() =>toggleFavorite(item.id, favoriteIds.includes(item.id))
-}
-
+                  onPress={() => router.push({ 
+                    pathname: '/customer/view-product', 
+                    params: { productId: item.id } 
+                  })}
+                  onFavoritePress={() => toggleFavorite(item.id, favoriteIds.includes(item.id))}
                 />
               )}
-              
               keyExtractor={item => item.id}
               numColumns={2}
               columnWrapperStyle={styles.productGrid}
@@ -361,44 +452,160 @@ useEffect(() => {
   );
 }
 
-// Keep your styles as-is
+// Styles
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8F9FA', paddingBottom: Platform.OS === 'ios' ? 74 : 64 },
+  loadingContainer: { 
+    flex: 1, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    backgroundColor: '#F8F9FA', 
+    paddingBottom: Platform.OS === 'ios' ? 74 : 64 
+  },
   loadingText: { marginTop: 12, fontSize: 14, color: '#666' },
-  categoriesSection: { backgroundColor: '#FFFFFF', marginTop: 8, marginHorizontal: 4, paddingVertical: 14, borderRadius: 12, ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } }, android: { elevation: 1 } }) },
+  categoriesSection: { 
+    backgroundColor: '#FFFFFF', 
+    marginTop: 8, 
+    marginHorizontal: 4, 
+    paddingVertical: 14, 
+    borderRadius: 12, 
+    ...Platform.select({ 
+      ios: { 
+        shadowColor: '#000', 
+        shadowOpacity: 0.05, 
+        shadowRadius: 3, 
+        shadowOffset: { width: 0, height: 1 } 
+      }, 
+      android: { elevation: 1 } 
+    }) 
+  },
   sectionTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 12, marginLeft: 12 },
+  productCount: { fontSize: 12, color: '#6B7280', marginRight: 12 },
   categoriesContent: { paddingHorizontal: 12 },
   categoryItem: { alignItems: 'center', marginRight: 12, width: 68 },
   categoryItemActive: {},
-  categoryIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#F1F3F5', justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  categoryIcon: { 
+    width: 52, 
+    height: 52, 
+    borderRadius: 26, 
+    backgroundColor: '#F1F3F5', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    marginBottom: 8 
+  },
   categoryIconActive: { backgroundColor: '#EEF2FF' },
   categoryInitial: { fontSize: 16, fontWeight: '600', color: '#666' },
   categoryInitialActive: { color: '#4F46E5' },
   categoryName: { fontSize: 13, color: '#666', textAlign: 'center' },
   categoryNameActive: { color: '#4F46E5', fontWeight: '600' },
-  productsSection: { backgroundColor: '#FFFFFF', marginTop: 16, marginHorizontal: 3, marginBottom: 16, paddingVertical: 14, borderRadius: 12, ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } }, android: { elevation: 1 } }) },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingHorizontal: 0 },
+  productsSection: { 
+    backgroundColor: '#FFFFFF', 
+    marginTop: 16, 
+    marginHorizontal: 3, 
+    marginBottom: 16, 
+    paddingVertical: 14, 
+    borderRadius: 12, 
+    ...Platform.select({ 
+      ios: { 
+        shadowColor: '#000', 
+        shadowOpacity: 0.05, 
+        shadowRadius: 3, 
+        shadowOffset: { width: 0, height: 1 } 
+      }, 
+      android: { elevation: 1 } 
+    }) 
+  },
+  sectionHeader: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 12, 
+    paddingHorizontal: 12 
+  },
   productGrid: { justifyContent: 'space-between', paddingHorizontal: 12 },
   productGridContent: { paddingBottom: 8 },
-  productCard: { width: CARD_WIDTH, backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#F3F4F6', marginBottom: 12, overflow: 'hidden', ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } }, android: { elevation: 1 } }) },
-  giftBadge: { position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: '#D1FAE5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, zIndex: 1 },
+  productCard: { 
+    width: CARD_WIDTH, 
+    backgroundColor: '#FFFFFF', 
+    borderRadius: 8, 
+    borderWidth: 1, 
+    borderColor: '#F3F4F6', 
+    marginBottom: 12, 
+    overflow: 'hidden', 
+    ...Platform.select({ 
+      ios: { 
+        shadowColor: '#000', 
+        shadowOpacity: 0.05, 
+        shadowRadius: 3, 
+        shadowOffset: { width: 0, height: 1 } 
+      }, 
+      android: { elevation: 1 } 
+    }) 
+  },
+  giftBadge: { 
+    position: 'absolute', 
+    top: 8, 
+    left: 8, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#D1FAE5', 
+    paddingHorizontal: 6, 
+    paddingVertical: 2, 
+    borderRadius: 4, 
+    zIndex: 1 
+  },
   giftText: { fontSize: 9, color: '#059669', fontWeight: '700', marginLeft: 2 },
-  swapBadge: { position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: '#E0E7FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, zIndex: 1 },
+  swapBadge: { 
+    position: 'absolute', 
+    top: 8, 
+    left: 8, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#E0E7FF', 
+    paddingHorizontal: 6, 
+    paddingVertical: 2, 
+    borderRadius: 4, 
+    zIndex: 1 
+  },
   swapText: { fontSize: 9, color: '#4F46E5', fontWeight: '700', marginLeft: 2 },
-  favoriteButton: { position: 'absolute', top: 8, right: 8, zIndex: 1, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 12, padding: 4 },
+  favoriteButton: { 
+    position: 'absolute', 
+    top: 8, 
+    right: 8, 
+    zIndex: 1, 
+    backgroundColor: 'rgba(255,255,255,0.9)', 
+    borderRadius: 12, 
+    padding: 4 
+  },
   productImageContainer: { width: '100%', aspectRatio: 0.95, backgroundColor: '#F9FAFB' },
   productImage: { width: '100%', height: '100%', resizeMode: 'cover' },
   productInfo: { padding: 10 },
-  productName: { fontSize: 12, fontWeight: '600', color: '#111827', marginBottom: 3, lineHeight: 15, height: 28 },
+  productName: { 
+    fontSize: 12, 
+    fontWeight: '600', 
+    color: '#111827', 
+    marginBottom: 3, 
+    lineHeight: 15, 
+    height: 30 
+  },
   categoryText: { fontSize: 11, color: '#3B82F6', fontWeight: '500', marginBottom: 2 },
   shopText: { fontSize: 10, color: '#6B7280', marginBottom: 8 },
   priceContainer: { marginTop: 'auto' },
   freePrice: { fontSize: 12, fontWeight: '700', color: '#059669' },
   price: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  priceUnavailable: { fontSize: 12, color: '#9CA3AF' },
-  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 48, paddingHorizontal: 16 },
-  emptyText: { fontSize: 14, color: '#6B7280', marginTop: 12, textAlign: 'center', fontWeight: '500' },
+  emptyContainer: { 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    paddingVertical: 48, 
+    paddingHorizontal: 16 
+  },
+  emptyText: { 
+    fontSize: 14, 
+    color: '#6B7280', 
+    marginTop: 12, 
+    textAlign: 'center', 
+    fontWeight: '500' 
+  },
   conditionText: { fontSize: 12, color: '#9CA3AF', marginTop: 4, textAlign: 'center' },
   bottomPadding: { height: Platform.OS === 'ios' ? 74 : 64 },
 });

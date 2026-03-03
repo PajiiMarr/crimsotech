@@ -56,31 +56,33 @@ import {
   Plus,
   Wallet,
   Landmark,
-  Send
+  Send,
+  User as UserIcon
 } from 'lucide-react';
 
 export function meta(): Route.MetaDescriptors {
   return [
     {
-      title: "My Returns & Refunds",
+      title: "Personal Returns & Refunds",
     },
   ];
 }
 
-// Interface for return/refund/cancel items (customer view)
+// Interface for return/refund/cancel items (SELLER view for personal listings)
 interface ReturnItem {
   id: string;
   refund_id?: string;
   order_id: string;
   request_number?: string;
+  buyer: {
+    id: string;
+    name: string;
+    email?: string;
+  };
   product: {
     id: string;
     name: string;
     price: number;
-    shop: {
-      id: string;
-      name: string;
-    };
     image?: string;
   };
   quantity: number;
@@ -96,6 +98,7 @@ interface ReturnItem {
   preferred_refund_method?: string;
   final_refund_method?: string;
   refund_method?: string;
+  refund_payment_status?: string | null;
   tracking_number?: string;
   dispute_reason?: string;
   resolution?: string;
@@ -116,7 +119,6 @@ interface ReturnItem {
   detailed?: boolean;
   // API response fields
   buyer_notified_at?: string | null;
-  refund_payment_status?: string | null;
   return_request?: {
     status: 'waiting_shipment' | 'shipped' | 'received' | 'inspected' | 'approved' | 'completed' | 'problem' | 'rejected';
     tracking_number?: string;
@@ -129,7 +131,7 @@ interface ReturnItem {
     reason?: string;
     resolution?: string;
   };
-  // Customer-specific fields
+  // Personal listing specific fields
   counter_requests?: Array<{
     id: string;
     status: string;
@@ -139,9 +141,9 @@ interface ReturnItem {
     notes?: string;
     requested_at: string;
   }>;
-  seller_suggested_method?: string;
-  seller_suggested_type?: string;
-  seller_suggested_amount?: number;
+  buyer_suggested_method?: string;
+  buyer_suggested_type?: string;
+  buyer_suggested_amount?: number;
 } 
 
 interface ReturnStats {
@@ -163,26 +165,13 @@ interface ReturnStats {
   rejected_cancelled: number;
 }
 
-interface PersonalReturnRefundLoaderData {
-  user: {
-    id: string;
-    name: string;
-    isCustomer: boolean;
-    isSeller: boolean;
-    isAdmin: boolean;
-    isRider: boolean;
-    isModerator: boolean;
-  };
-  returnItems: ReturnItem[];
-  stats: ReturnStats;
-}
-
 export async function loader({ request, context }: Route.LoaderArgs) {
   // Session+role checks
   try {
     const { registrationMiddleware } = await import('~/middleware/registration.server');
     await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
     const { requireRole } = await import('~/middleware/role-require.server');
+    // User must be a customer (seller with personal listings)
     await requireRole(request, undefined, ['isCustomer'] as any);
   } catch (err) {
     console.error('Loader middleware error', err);
@@ -200,7 +189,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const url = new URL(request.url);
   const statusFilter = url.searchParams.get('status') || undefined;
-  const filterPersonal = url.searchParams.get('filter_personal') === 'true';
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -208,15 +196,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // Build query params
     const params = new URLSearchParams();
     if (statusFilter) params.set('status', statusFilter);
-    if (filterPersonal) params.set('filter_personal', 'true');
 
     const headers: Record<string,string> = { 
       'Accept': 'application/json', 
       'X-User-Id': userId 
     };
 
-    // For customers, use get_my_refunds endpoint (no shop required)
-    const endpoint = 'get_my_refunds';
+    // For personal listings seller view, use get_personal_refunds endpoint
+    // This endpoint should return refund requests for the seller's personal listings
+    const endpoint = 'get_personal_refunds';
     const res = await fetch(`${API_BASE_URL}/personal-refunds/${endpoint}/${params.toString() ? `?${params.toString()}` : ''}`, {
       method: 'GET',
       headers,
@@ -224,7 +212,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     });
 
     if (!res.ok) {
-      console.error('Failed to fetch refunds:', res.status, res.statusText);
+      console.error('Failed to fetch personal refunds:', res.status, res.statusText);
       const defaultStats = {
         total_requests: 0,
         pending: 0,
@@ -243,13 +231,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         disputed: 0,
         rejected_cancelled: 0,
       };
-      return { user: { id: userId, name: 'Customer', isCustomer: true, isSeller: false, isAdmin: false, isRider: false, isModerator: false }, returnItems: [], stats: defaultStats };
+      return { 
+        user: { id: userId, name: 'Seller', isCustomer: true, isSeller: true, isAdmin: false, isRider: false, isModerator: false }, 
+        returnItems: [], 
+        stats: defaultStats 
+      };
     }
 
     const data = await res.json();
     console.log('API Response data:', data);
 
-    // API returns array of refunds directly
+    // API may return { results } or array
     const serverList = Array.isArray(data) ? data : (data.results || data);
 
     const returnItems: ReturnItem[] = serverList.map((r: any) => ({
@@ -257,12 +249,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       refund_id: r.refund_id || r.id,
       order_id: r.order_id || r.order_info?.order_id || r.order?.order || r.order?.order_id || '',
       request_number: r.request_number,
-      buyer_notified_at: r.buyer_notified_at || null,
+      buyer: {
+        id: r.buyer?.id || r.customer?.id || r.user?.id || '',
+        name: r.buyer?.name || r.customer?.name || r.user?.username || 'Buyer',
+        email: r.buyer?.email || r.customer?.email || r.user?.email
+      },
       product: {
         id: r.order_items?.[0]?.product_id || r.order_items?.[0]?.product?.id || 'unknown',
         name: r.order_items?.[0]?.product_name || r.order_items?.[0]?.product?.name || r.order_items?.[0]?.name || 'Product',
         price: Number(r.order_items?.[0]?.price) || Number(r.amount) || 0,
-        shop: r.shop || r.order_items?.[0]?.shop || { id: '', name: '' },
         image: r.order_items?.[0]?.product_image || ''
       },
       quantity: r.order_items?.[0]?.quantity || 1,
@@ -289,7 +284,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       pickup_scheduled_date: undefined,
       courier: r.return_request?.logistic_service || undefined,
       notes: r.customer_note || r.notes || '',
-      // API response fields
+      buyer_notified_at: r.buyer_notified_at || null,
       return_request: r.return_request ? {
         status: r.return_request.status,
         tracking_number: r.return_request.tracking_number,
@@ -303,19 +298,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         resolution: r.dispute.resolution,
       } : undefined,
       counter_requests: r.counter_requests,
-      seller_suggested_method: r.seller_suggested_method,
-      seller_suggested_type: r.seller_suggested_type,
-      seller_suggested_amount: r.seller_suggested_amount,
+      buyer_suggested_method: r.buyer_suggested_method,
+      buyer_suggested_type: r.buyer_suggested_type,
+      buyer_suggested_amount: r.buyer_suggested_amount,
       available_actions: (function(status){
         switch(status){
-          case 'pending': return ['cancel','upload_evidence'];
-          case 'negotiation': return ['accept_counter_offer','reject_counter_offer','file_dispute'];
+          case 'pending': return ['approve','reject','propose_negotiation'];
+          case 'negotiation': return ['propose_negotiation','contact_buyer'];
           case 'approved': 
             if (r.refund_type === 'return') {
-              return ['start_return','upload_shipping_info'];
+              return ['awaiting_return','process_refund_after_return'];
             }
-            return [];
-          case 'dispute': return ['upload_dispute_evidence'];
+            return ['process_refund'];
+          case 'dispute': return ['contact_buyer','resolve_dispute'];
           case 'rejected': return [];
           case 'cancelled': return [];
           case 'failed': return [];
@@ -326,7 +321,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
     const stats = {
       total_requests: returnItems.length,
-      // status breakdown
       pending: returnItems.filter(i => i.status === 'pending').length,
       negotiation: returnItems.filter(i => i.status === 'negotiation').length,
       approved: returnItems.filter(i => i.status === 'approved').length,
@@ -334,7 +328,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       rejected: returnItems.filter(i => i.status === 'rejected').length,
       cancelled: returnItems.filter(i => i.status === 'cancelled').length,
       failed: returnItems.filter(i => i.status === 'failed').length,
-      // legacy UI fields
       return_refund_requests: returnItems.filter(i => i.type === 'return' || i.type === 'refund').length,
       cancellation_requests: returnItems.filter(i => i.type === 'cancellation').length,
       failed_delivery_requests: returnItems.filter(i => i.type === 'failed_delivery').length,
@@ -345,7 +338,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       rejected_cancelled: returnItems.filter(i => ['rejected','cancelled','failed'].includes(i.status)).length,
     };
 
-    const userObj = { id: userId, name: 'Customer', isCustomer: true, isSeller: false, isAdmin: false, isRider: false, isModerator: false };
+    const userObj = { 
+      id: userId, 
+      name: 'Personal Seller', 
+      isCustomer: true, 
+      isSeller: true, 
+      isAdmin: false, 
+      isRider: false, 
+      isModerator: false 
+    };
+    
     return { user: userObj, returnItems, stats };
 
   } catch (err) {
@@ -368,7 +370,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       disputed: 0,
       rejected_cancelled: 0,
     };
-    const userObj = { id: userId, name: 'Customer', isCustomer: true, isSeller: false, isAdmin: false, isRider: false, isModerator: false };
+    const userObj = { 
+      id: userId, 
+      name: 'Personal Seller', 
+      isCustomer: true, 
+      isSeller: true, 
+      isAdmin: false, 
+      isRider: false, 
+      isModerator: false 
+    };
     return { user: userObj, returnItems: [], stats: defaultStats };
   }
 }
@@ -382,25 +392,17 @@ const EmptyTable = ({ message = "No refund requests found" }: { message?: string
         {message}
       </h3>
       <p className="text-gray-500 max-w-sm mx-auto text-sm">
-        Your return, refund, and cancellation requests will appear here. Start by creating a new refund request for an order.
+        Buyers' return, refund, and cancellation requests for your personal listings will appear here.
       </p>
-      <Button 
-        className="mt-4"
-        onClick={() => window.location.href = '/orders'}
-      >
-        <ShoppingBag className="w-4 h-4 mr-2" />
-        View My Orders
-      </Button>
     </div>
   </div>
 );
 
-// Tabs for customer view
+// Tabs for seller view (personal listings)
 const STATUS_TABS = [
   { id: 'all', label: 'All Requests', icon: List },
-  { id: 'pending', label: 'Pending', icon: Clock },
-  { id: 'negotiation', label: 'Negotiation', icon: MessageCircle },
-  { id: 'approved', label: 'Approved', icon: CheckCircle },
+  { id: 'new', label: 'New Requests', icon: Clock },
+  { id: 'to-process', label: 'To Process', icon: RefreshCcw },
   { id: 'disputes', label: 'Disputes', icon: ShieldAlert },
   { id: 'completed', label: 'Completed', icon: CheckCheck },
 ];
@@ -435,9 +437,9 @@ const REFUND_METHOD_CONFIG = {
 export default function PersonalReturnRefundCancel(props: Route.ComponentProps) {
   const defaultUser = {
     id: '',
-    name: 'Customer',
+    name: 'Personal Seller',
     isCustomer: true,
-    isSeller: false,
+    isSeller: true,
     isAdmin: false,
     isRider: false,
     isModerator: false,
@@ -462,7 +464,7 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
     rejected_cancelled: 0,
   };
 
-  const loaderData = (props as { loaderData?: PersonalReturnRefundLoaderData }).loaderData;
+  const loaderData = (props as { loaderData?: any }).loaderData;
   const user = loaderData?.user ?? defaultUser;
   const initialReturnItems = loaderData?.returnItems ?? [];
   const stats = loaderData?.stats ?? defaultStats;
@@ -477,7 +479,7 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
   const [loading, setLoading] = useState(!loaderData);
   const [successMessage, setSuccessMessage] = useState<string>('');
 
-  // Get refunds for current tab
+  // Get refunds for current tab based on seller logic
   const getRefundsForTab = (tabId: string): ReturnItem[] => {
     if (!refundData) return [];
 
@@ -486,21 +488,62 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
     switch(tabId) {
       case 'all':
         return refunds;
-      case 'pending':
-        return refunds.filter(refund => refund.status === 'pending');
-      case 'negotiation':
-        return refunds.filter(refund => refund.status === 'negotiation');
-      case 'approved':
-        return refunds.filter(refund => refund.status === 'approved');
+
+      case 'new':
+        // New Requests: refund.status='pending' AND refund.payment_status='pending'
+        return refunds.filter(refund =>
+          String(refund.status).toLowerCase() === 'pending' &&
+          String(refund.refund_payment_status).toLowerCase() === 'pending'
+        );
+
+      case 'to-process':
+        // To Process tab - include refunds that require seller action or are in-progress
+        return refunds.filter(refund => {
+          const st = String(refund.status || '').toLowerCase();
+          const rtype = String(refund.refund_type || '').toLowerCase();
+          const rrStatus = (refund.return_request?.status || '').toLowerCase();
+          const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
+
+          // Exclude final states
+          if (['completed','rejected','cancelled','failed'].includes(st)) return false;
+
+          // Negotiations awaiting buyer response
+          if (st === 'negotiation' && paymentStatus === 'pending') return true;
+
+          // Awaiting Shipment: approved returns waiting for buyer to ship
+          if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped','received'].includes(rrStatus))) return true;
+
+          // In Transit (shipped by buyer)
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
+
+          // Received (need inspection)
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
+
+          // Inspection complete (seller decision needed)
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
+
+          // Ready to Process Payment
+          if (st === 'approved' && (
+            (rtype === 'keep' && paymentStatus === 'processing') ||
+            (rtype === 'return' && paymentStatus === 'processing' && rrStatus === 'approved')
+          )) return true;
+
+          return false;
+        });
+
       case 'disputes':
-        return refunds.filter(refund => refund.status === 'dispute');
+        return refunds.filter(refund => 
+          String(refund.status).toLowerCase() === 'dispute' || 
+          String(refund.dispute?.status || '').toLowerCase() === 'under_review'
+        );
+
       case 'completed':
         return refunds.filter(refund => 
-          refund.status === 'rejected' || 
-          refund.status === 'cancelled' || 
-          refund.status === 'failed' ||
-          refund.refund_payment_status === 'completed'
+          refund.refund_payment_status === 'completed' ||
+          ['rejected', 'cancelled', 'failed'].includes(refund.status) ||
+          (refund.status === 'approved' && refund.return_request?.status === 'rejected')
         );
+
       default:
         return refunds;
     }
@@ -510,21 +553,17 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
     if (!initialReturnItems) {
       fetchRefundData();
     } else {
-      console.log('Initial refund data for customer:', {
+      console.log('Initial refund data for personal seller:', {
         userId: user?.id,
         refundCount: initialReturnItems.length,
         refunds: initialReturnItems.map((r: ReturnItem) => ({
           id: r.id,
           order_id: r.order_id,
+          buyer: r.buyer?.name,
           status: r.status,
           refund_type: r.refund_type,
           refund_payment_status: r.refund_payment_status,
-          buyer_notified_at: r.buyer_notified_at,
-          return_request_status: r.return_request?.status,
-          dispute_status: r.dispute?.status,
-          amount: r.amount,
-          reason: r.reason,
-          created_at: r.created_at
+          amount: r.amount
         }))
       });
     }
@@ -548,14 +587,10 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
         filtered = filtered.filter((refund: ReturnItem) =>
           refund.reason.toLowerCase().includes(search.toLowerCase()) ||
           refund.id.toLowerCase().includes(search.toLowerCase()) ||
-          refund.order_id.toLowerCase().includes(search.toLowerCase())
+          refund.order_id.toLowerCase().includes(search.toLowerCase()) ||
+          refund.buyer?.name.toLowerCase().includes(search.toLowerCase())
         );
       }
-
-      console.log(`Refunds for tab "${activeTab}":`, {
-        totalInTab: tabRefunds.length,
-        afterSearch: filtered.length
-      });
 
       setFilteredRefunds(filtered);
     }
@@ -563,8 +598,8 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
 
   const fetchRefundData = async () => {
     try {
-      console.log('Fetching refund data for customer:', { userId: user?.id });
-      const response = await AxiosInstance.get('/personal-refunds/get_my_refunds/', {
+      console.log('Fetching refund data for personal seller:', { userId: user?.id });
+      const response = await AxiosInstance.get('/personal-refunds/get_personal_refunds/', {
         headers: {
           'X-User-Id': user?.id || ''
         }
@@ -606,22 +641,6 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
     );
   };
 
-  const getRefundMethodBadge = (method: string) => {
-    const config = REFUND_METHOD_CONFIG[method as keyof typeof REFUND_METHOD_CONFIG];
-    if (!config) return null;
-    
-    const Icon = config.icon;
-    return (
-      <Badge
-        className="text-[10px] h-5 px-1.5 py-0 flex items-center gap-1"
-        style={{ backgroundColor: config.bgColor, color: config.color }}
-      >
-        <Icon className="w-2.5 h-2.5" />
-        {config.label}
-      </Badge>
-    );
-  };
-
   const getTabCount = (tabId: string): number => {
     if (!refundData) return 0;
     return getRefundsForTab(tabId).length;
@@ -638,84 +657,24 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
   };
 
   const getActionButtons = (refund: ReturnItem) => {
-    // Tab query param to return to the same tab after action
+    // All buttons go to view details with the current tab
     const tabQs = `?tab=${encodeURIComponent(activeTab)}`;
     
     switch(refund.status) {
       case 'pending':
-        return (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-6 px-2 text-xs text-red-600 border-red-200 hover:bg-red-50"
-              title="Cancel Request"
-              onClick={() => navigate(`/personal/cancel-refund/${refund.id}${tabQs}`)}
-            >
-              <X className="w-3 h-3 mr-1" />
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-              title="View Details"
-              onClick={() => navigate(`/personal/view-refund-details/${refund.id}${tabQs}`)}
-            >
-              <Eye className="w-3 h-3" />
-            </Button>
-          </>
-        );
       case 'negotiation':
         return (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-6 px-2 text-xs text-green-600 border-green-200 hover:bg-green-50"
-              title="Respond to Offer"
-              onClick={() => navigate(`/personal/respond-negotiation/${refund.id}${tabQs}`)}
-            >
-              <MessageCircle className="w-3 h-3 mr-1" />
-              Respond
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-              title="View Details"
-              onClick={() => navigate(`/personal/view-refund-details/${refund.id}${tabQs}`)}
-            >
-              <Eye className="w-3 h-3" />
-            </Button>
-          </>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+            title="View Details"
+            onClick={() => navigate(`/personal/view-refund-details/${refund.id}${tabQs}`)}
+          >
+            <Eye className="w-3 h-3" />
+          </Button>
         );
       case 'approved':
-        if (refund.refund_type === 'return') {
-          return (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-6 px-2 text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
-                title="Start Return Process"
-                onClick={() => navigate(`/personal/start-return/${refund.id}${tabQs}`)}
-              >
-                <Truck className="w-3 h-3 mr-1" />
-                Start Return
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                title="View Details"
-                onClick={() => navigate(`/personal/view-refund-details/${refund.id}${tabQs}`)}
-              >
-                <Eye className="w-3 h-3" />
-              </Button>
-            </>
-          );
-        }
         return (
           <Button
             size="sm"
@@ -754,17 +713,7 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
           </Button>
         );
       default:
-        return (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-            title="View Details"
-            onClick={() => navigate(`/personal/view-refund-details/${refund.id}${tabQs}`)}
-          >
-            <Eye className="w-3 h-3" />
-          </Button>
-        );
+        return null;
     }
   };
 
@@ -784,40 +733,11 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
     <UserProvider user={user}>
       <SidebarLayout>
         <div className="space-y-3 p-3">
-          {/* Header with Create Button */}
-          <div className="flex items-center justify-between mb-2">
-            <div>
-              <h1 className="text-lg font-bold">My Returns & Refunds</h1>
-              <p className="text-gray-500 text-xs">Track and manage your refund requests</p>
-            </div>
-            <Button
-              size="sm"
-              className="h-8 px-3 text-xs"
-              onClick={() => navigate('/orders')}
-            >
-              <Plus className="w-3 h-3 mr-1" />
-              New Request
-            </Button>
+          {/* Header */}
+          <div className="mb-2">
+            <h1 className="text-lg font-bold">Personal Returns & Refunds</h1>
+            <p className="text-gray-500 text-xs">Manage refund requests from buyers for your personal listings</p>
           </div>
-
-          {/* Success Message */}
-          {successMessage && (
-            <Alert className="mb-4 border-green-200 bg-green-50">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertTitle className="text-green-800">Success!</AlertTitle>
-              <AlertDescription className="text-green-700">
-                {successMessage}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="ml-2 h-auto p-1 text-green-600 hover:text-green-800"
-                  onClick={() => setSuccessMessage('')}
-                >
-                  <XCircle className="h-3 w-3" />
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
 
           {/* Stats Cards */}
           <div className="grid grid-cols-4 gap-2 mb-2">
@@ -847,13 +767,32 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
             </Card>
           </div>
 
+          {/* Success Message */}
+          {successMessage && (
+            <Alert className="mb-4 border-green-200 bg-green-50">
+              <CheckCircle className="h-4 w-4 text-green-600" />
+              <AlertTitle className="text-green-800">Success!</AlertTitle>
+              <AlertDescription className="text-green-700">
+                {successMessage}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-2 h-auto p-1 text-green-600 hover:text-green-800"
+                  onClick={() => setSuccessMessage('')}
+                >
+                  <XCircle className="h-3 w-3" />
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Search Bar */}
           <div className="mb-2">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
               <Input
                 type="text"
-                placeholder="Search by reason, refund ID, or order ID..."
+                placeholder="Search by reason, refund ID, order ID, or buyer name..."
                 value={search}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
                 className="pl-8 text-sm h-8"
@@ -861,7 +800,7 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
             </div>
           </div>
 
-          {/* Status Tabs */}
+          {/* Status Tabs - Seller View */}
           <div className="flex items-center space-x-1 overflow-x-auto mb-2 pb-1">
             {STATUS_TABS.map((tab) => {
               const Icon = tab.icon;
@@ -898,9 +837,8 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
               <EmptyTable 
                 message={
                   activeTab === 'all' ? 'No refund requests found' :
-                  activeTab === 'pending' ? 'No pending refund requests' :
-                  activeTab === 'negotiation' ? 'No refunds in negotiation' :
-                  activeTab === 'approved' ? 'No approved refunds' :
+                  activeTab === 'new' ? 'No new refund requests' :
+                  activeTab === 'to-process' ? 'No refunds ready to process' :
                   activeTab === 'disputes' ? 'No disputes' :
                   activeTab === 'completed' ? 'No completed refunds' :
                   'No refunds found'
@@ -962,21 +900,25 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
                             </div>
                           </div>
                           <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <UserIcon className="w-3 h-3 text-gray-400" />
+                            <span className="truncate max-w-[100px]">{refund.buyer?.name || 'Buyer'}</span>
+                            <span>•</span>
                             <span className="truncate">Order: {refund.order_id.slice(0, 8)}</span>
                             <span>•</span>
                             <span>{formatDate(refund.created_at)}</span>
-                            {refund.product?.shop?.name && (
-                              <>
-                                <span>•</span>
-                                <Store className="w-3 h-3 text-gray-400" />
-                                <span className="truncate max-w-[100px]">{refund.product.shop.name}</span>
-                              </>
-                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {getStatusBadge(refund.status)}
-                          {refund.preferred_refund_method && getRefundMethodBadge(refund.preferred_refund_method)}
+                          {refund.preferred_refund_method && (
+                            <Badge
+                              className="text-[10px] h-5 px-1.5 py-0 flex items-center gap-1 bg-gray-50"
+                              style={{ color: '#6b7280' }}
+                            >
+                              <Wallet className="w-2.5 h-2.5" />
+                              {refund.preferred_refund_method}
+                            </Badge>
+                          )}
                           <button
                             onClick={() => toggleRefundExpansion(refund.id)}
                             className="p-1 hover:bg-gray-100 rounded"
@@ -1000,13 +942,15 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
                           <span>Type: {refund.refund_type === 'return' ? 'Return Item' : 'Keep Item'}</span>
                           <span>•</span>
                           <span>Amount: ₱{refund.refund_amount || refund.amount}</span>
+                          <span>•</span>
+                          <span>Qty: {refund.quantity}</span>
                         </div>
-                        {/* Show seller offer if in negotiation */}
-                        {refund.status === 'negotiation' && refund.seller_suggested_amount && (
+                        {/* Show buyer suggestion if in negotiation */}
+                        {refund.status === 'negotiation' && refund.buyer_suggested_amount && (
                           <div className="text-xs text-blue-600 bg-blue-50 p-1.5 rounded">
-                            <span className="font-medium">Seller offered: </span>
-                            ₱{refund.seller_suggested_amount} 
-                            {refund.seller_suggested_type && ` (${refund.seller_suggested_type === 'return' ? 'Return' : 'Keep'})`}
+                            <span className="font-medium">Buyer suggested: </span>
+                            ₱{refund.buyer_suggested_amount} 
+                            {refund.buyer_suggested_type && ` (${refund.buyer_suggested_type === 'return' ? 'Return' : 'Keep'})`}
                           </div>
                         )}
                         {/* Show return status */}
@@ -1041,13 +985,8 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
                                       <div className="flex-1 min-w-0">
                                         <div className="font-medium text-sm truncate">{item.product?.name}</div>
                                         <div className="text-gray-500 text-xs">
-                                          {item.product?.shop?.name || 'Shop'} • Qty: {item.quantity}
+                                          Qty: {item.quantity}
                                         </div>
-                                        {item.variant && (
-                                          <div className="text-gray-400 text-xs">
-                                            Variant: {item.variant.title}
-                                          </div>
-                                        )}
                                       </div>
                                       <div className="text-right flex-shrink-0">
                                         <div className="font-medium text-sm">₱{item.amount || item.price}</div>
@@ -1068,6 +1007,7 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
                                 <div className="text-gray-600 space-y-1">
                                   <div><span className="text-gray-400">Refund ID:</span> {refund.id.slice(0, 8)}</div>
                                   <div><span className="text-gray-400">Order ID:</span> {refund.order_id.slice(0, 8)}</div>
+                                  <div><span className="text-gray-400">Buyer:</span> {refund.buyer?.name || 'N/A'}</div>
                                   <div><span className="text-gray-400">Request Date:</span> {formatDate(refund.created_at)}</div>
                                   <div><span className="text-gray-400">Last Updated:</span> {formatDate(refund.updated_at)}</div>
                                 </div>
@@ -1084,43 +1024,6 @@ export default function PersonalReturnRefundCancel(props: Route.ComponentProps) 
                                 </div>
                               </div>
                             </div>
-
-                            {/* Counter Offers */}
-                            {refund.counter_requests && refund.counter_requests.length > 0 && (
-                              <div>
-                                <div className="font-medium text-gray-700 mb-1">Seller Counter Offers</div>
-                                <div className="space-y-1">
-                                  {refund.counter_requests.map((offer, idx) => (
-                                    <div key={idx} className="bg-gray-50 p-2 rounded text-xs">
-                                      <div className="flex justify-between">
-                                        <span className="font-medium">Offer {idx + 1}:</span>
-                                        <Badge className="text-[8px] h-4 px-1">
-                                          {offer.status}
-                                        </Badge>
-                                      </div>
-                                      <div>Amount: ₱{offer.counter_refund_amount}</div>
-                                      <div>Type: {offer.counter_refund_type === 'return' ? 'Return' : 'Keep'}</div>
-                                      {offer.notes && <div className="text-gray-500 mt-1">Note: {offer.notes}</div>}
-                                      <div className="text-gray-400 mt-1">{formatDate(offer.requested_at)}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Evidence */}
-                            {refund.evidence && refund.evidence.length > 0 && (
-                              <div>
-                                <div className="font-medium text-gray-700 mb-1">Evidence Files</div>
-                                <div className="flex gap-2">
-                                  {refund.evidence.map((file: any, idx: number) => (
-                                    <div key={idx} className="text-xs text-blue-600 underline">
-                                      File {idx + 1}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
                           </div>
                         </div>
                       )}

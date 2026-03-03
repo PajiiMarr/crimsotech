@@ -450,10 +450,7 @@ export default function Favorites({ loaderData }: Route.ComponentProps) {
                 <p className="text-xs text-gray-500">Variants</p>
                 <p className="text-sm font-semibold text-gray-900">{totalVariants}</p>
               </div>
-              <div>
-                <p className="text-xs text-gray-500">Swap Ready</p>
-                <p className="text-sm font-semibold text-gray-900">{swapEligible}</p>
-              </div>
+             
             </div>
           </div>
 

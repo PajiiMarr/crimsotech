@@ -1,4 +1,4 @@
-// view-product.tsx
+// app/(customer)/product/view-product.tsx
 import React, { useEffect, useState } from 'react';
 import {
   SafeAreaView,
@@ -18,13 +18,9 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import CustomerLayout from './CustomerLayout';
 import { useAuth } from '../../contexts/AuthContext';
-import { LinearGradient } from 'expo-linear-gradient';
-// import * as Sharing from 'expo-sharing';
-// import * as Clipboard from 'expo-clipboard';
 import AxiosInstance from '../../contexts/axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Ensure URLs are absolute (sometimes backend returns relative paths)
+// Ensure URLs are absolute
 const ensureAbsoluteUrl = (url?: string | null) => {
   if (!url) return null;
   if (typeof url !== 'string') return null;
@@ -34,13 +30,12 @@ const ensureAbsoluteUrl = (url?: string | null) => {
   return `${base}/${url}`;
 };
 
-// Icons (you'll need to install these or use your own)
+// Icons
 import {
   Ionicons,
   MaterialIcons,
   MaterialCommunityIcons,
   FontAwesome,
-  FontAwesome5,
   AntDesign,
   Feather,
 } from '@expo/vector-icons';
@@ -48,76 +43,214 @@ import {
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_SIZE = SCREEN_WIDTH - 32;
 
-interface VariantOption {
+// Types
+interface Variant {
   id: string;
+  product: string;
+  shop: string;
   title: string;
-  image?: string | null;
-  price?: string;
-  quantity?: number;
-}
-
-interface VariantGroup {
-  id: string;
-  title: string;
-  options: VariantOption[];
-}
-
-interface SKU {
-  id: string;
+  option_title: string;
+  option_created_at: string;
   option_ids: string[];
   option_map: Record<string, string>;
-  sku_code?: string;
-  price: number;
-  compare_price?: number;
+  sku_code: string;
+  price: string;
+  compare_price: string | null;
   quantity: number;
-  image?: string | null;
-  length?: number | null;
-  width?: number | null;
-  height?: number | null;
-  weight?: number | null;
-  weight_unit?: string;
-  allow_swap?: boolean;
-  swap_type?: string;
-  minimum_additional_payment?: number;
-  maximum_additional_payment?: number;
-  swap_description?: string;
-  accepted_categories?: { id: string; name: string }[];
+  weight: string;
+  weight_unit: string;
+  critical_trigger: number;
+  is_active: boolean;
+  is_refundable: boolean;
+  refund_days: number;
+  allow_swap: boolean;
+  swap_type: string;
+  original_price: string;
+  usage_period: number;
+  usage_unit: string;
+  depreciation_rate: number;
+  minimum_additional_payment: string;
+  maximum_additional_payment: string;
+  swap_description: string;
+  image: string | null;
+  image_url: string | null;
+  critical_stock: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface MediaFile {
+  id: string;
+  file_data: string;
+  file_type: string;
+  file_url: string;
+}
+
+interface PrimaryImage {
+  id: string;
+  url: string;
+  file_type: string;
+}
+
+interface PriceRange {
+  min: number;
+  max: number;
+  is_range: boolean;
+}
+
+interface Shop {
+  id: string;
+  address: string;
+  avg_rating: number | null;
+  shop_picture: string | null;
+  description: string;
+  name: string;
+  province: string;
+  city: string;
+  barangay: string;
+  street: string;
+  contact_number: string;
+  verified: boolean;
+  status: string;
+  total_sales: string;
+  created_at: string;
+  updated_at: string;
+  is_suspended: boolean;
+  suspension_reason: string | null;
+  suspended_until: string | null;
+  customer: string;
+}
+
+interface SellerInfo {
+  type: 'shop' | 'seller';
+  id: string;
+  username?: string;
+  email?: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  contact_number?: string;
+  profile_picture?: string | null;
+  created_at?: string;
+  is_suspended?: boolean;
+  name?: string;
+  address?: string;
+  avg_rating?: number | null;
+  shop_picture?: string | null;
+  description?: string;
+  verified?: boolean;
+  total_sales?: string;
+}
+
+interface Customer {
+  id: string;
+  username: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  profile_picture?: string | null;
+  contact_number?: string;
+  avg_rating?: number | null;
+  total_sales?: number;
+  created_at?: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  shop: string | null;
+  user: string;
 }
 
 interface Product {
   id: string;
   name: string;
   description: string;
-  quantity: number;
-  price: number;
-  compare_price?: number;
-  category?: { name: string };
-  shop?: {
-    id?: string;
-    shop_picture?: string;
-    name?: string;
-    address?: string;
-    avg_rating?: number;
-  };
-  media_files?: { file_url: string }[];
-  sold?: number;
-  reviews_count?: number;
-  rating?: number;
-  variants?: VariantGroup[];
-  skus?: SKU[];
-  open_for_swap?: boolean;
-  swap_type?: string;
-  minimum_additional_payment?: number;
-  maximum_additional_payment?: number;
-  swap_description?: string;
-  accepted_categories?: { id: string; name: string }[];
-  length?: number | null;
-  width?: number | null;
-  height?: number | null;
-  weight?: number | null;
-  weight_unit?: string | null;
-  applied_gift?: any;
+  status: string;
+  upload_status: string;
+  condition: string;
+  is_refundable: boolean;
+  refund_days: number;
+  created_at: string;
+  updated_at: string;
+  shop: Shop | null;
+  customer?: Customer | null;
+  category: Category | null;
+  category_admin: Category | null;
+  variants: Variant[];
+  media_files: MediaFile[];
+  primary_image: PrimaryImage | null;
+  total_stock: number;
+  price_display: string;
+  price_range?: PriceRange | null;
+  variant_count: number;
+  default_variant: Variant | null;
 }
+
+// Helper function to safely convert to number
+const safeToNumber = (value: any, defaultValue: number = 0): number => {
+  if (value === null || value === undefined) return defaultValue;
+  const num = Number(value);
+  return isNaN(num) ? defaultValue : num;
+};
+
+// Helper function to check if product is a gift
+const isProductGift = (product: Product | null): boolean => {
+  if (!product) return false;
+  
+  // Check by name
+  if (product.name.toLowerCase().includes('gift')) {
+    return true;
+  }
+  
+  // Check price_display
+  if (product.price_display === "FREE GIFT" || 
+      product.price_display === "₱0" || 
+      product.price_display === "₱0.00" ||
+      product.price_display === "Price unavailable" ||
+      product.price_display === "Price not available") {
+    
+    if (product.name.toLowerCase().includes('gift')) {
+      return true;
+    }
+    
+    // Check if all variants have zero price
+    if (product.variants && product.variants.length > 0) {
+      const allZeroPrices = product.variants.every(v => safeToNumber(v.price) === 0);
+      if (allZeroPrices) {
+        return true;
+      }
+    }
+  }
+  
+  // Check if price_range has min and max both 0
+  if (product.price_range) {
+    if (product.price_range.min === 0 && product.price_range.max === 0) {
+      return true;
+    }
+  }
+  
+  // Check if any variant has price 0
+  if (product.variants && product.variants.length > 0) {
+    const hasZeroPriceVariant = product.variants.some(v => safeToNumber(v.price) === 0);
+    if (hasZeroPriceVariant) {
+      return true;
+    }
+  }
+  
+  return false;
+};
+
+// Helper function to get display price
+const getProductDisplayPrice = (product: Product | null): string => {
+  if (!product) return "Price unavailable";
+  
+  if (isProductGift(product)) {
+    return "FREE GIFT";
+  }
+  
+  return product.price_display || "Price unavailable";
+};
 
 export default function ViewProductPage() {
   const params = useLocalSearchParams();
@@ -125,46 +258,74 @@ export default function ViewProductPage() {
   const { user } = useAuth();
   
   const [product, setProduct] = useState<Product | null>(null);
+  const [sellerInfo, setSellerInfo] = useState<SellerInfo | null>(null);
+  const [loadingSeller, setLoadingSeller] = useState(false);
   const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [activeImage, setActiveImage] = useState(0);
   const [addingToCart, setAddingToCart] = useState(false);
   const [cartError, setCartError] = useState<string | null>(null);
-  const [currentSKU, setCurrentSKU] = useState<SKU | null>(null);
+  const [currentVariant, setCurrentVariant] = useState<Variant | null>(null);
   const [startingSwap, setStartingSwap] = useState(false);
   const [swapError, setSwapError] = useState<string | null>(null);
   const [imageModalVisible, setImageModalVisible] = useState(false);
-  const [swipeEnabled, setSwipeEnabled] = useState(true);
   const [isFavorite, setIsFavorite] = useState(false);
 
-  const hasVariants = product?.variants && product.variants.length > 0;
+  // Determine if this is a gift product
+  const isGift = isProductGift(product);
+  const displayPrice = getProductDisplayPrice(product);
+
+  // Determine if this is a personal listing (no shop)
+  const isPersonalListing = !product?.shop;
+
+  // Safely determine if product has variants
+  const hasVariants = !!(product?.variants && Array.isArray(product.variants) && product.variants.length > 0);
+
+  // Refund policy
+  const isRefundable = !!(currentVariant?.is_refundable || product?.is_refundable);
+  const refundDays = currentVariant?.is_refundable 
+    ? (currentVariant.refund_days ?? product?.refund_days ?? 0) 
+    : (product?.is_refundable ? (product.refund_days ?? 0) : 0);
+  const refundText = `refundable (${refundDays} day${refundDays === 1 ? '' : 's'})`;
+
+  const isExplicitlyNonRefundable = (currentVariant?.is_refundable === false) || (product?.is_refundable === false);
+
   const isAvailableForSwap = hasVariants
-    ? (currentSKU && currentSKU.allow_swap)
-    : (product?.open_for_swap || false);
+    ? (currentVariant && currentVariant.allow_swap)
+    : false;
 
   // Fetch product data
   useEffect(() => {
     fetchProduct();
   }, [productId]);
 
-  // Update current SKU when options change
+  // Fetch seller information for personal listings
   useEffect(() => {
-    if (!hasVariants || !product?.skus || Object.keys(selectedOptions).length === 0) {
-      setCurrentSKU(null);
-      return;
+    const fetchSellerInfo = async () => {
+      if (product?.id && isPersonalListing) {
+        setLoadingSeller(true);
+        try {
+          const response = await AxiosInstance.get(`/public-products/${product.id}/seller/`);
+          setSellerInfo(response.data);
+          console.log("Seller info loaded:", response.data);
+        } catch (err) {
+          console.error("Error fetching seller info:", err);
+        } finally {
+          setLoadingSeller(false);
+        }
+      }
+    };
+
+    fetchSellerInfo();
+  }, [product?.id, isPersonalListing]);
+
+  // Use default variant if available
+  useEffect(() => {
+    if (product?.default_variant && !currentVariant) {
+      setCurrentVariant(product.default_variant);
     }
-
-    const selectedOptionIds = Object.values(selectedOptions);
-    const matchingSKU = product.skus.find(sku => {
-      const skuOptionIds = (sku.option_ids || []).map(String);
-      const selectedIds = selectedOptionIds.map(String);
-      if (skuOptionIds.length !== selectedOptionIds.length) return false;
-      return selectedIds.every(id => skuOptionIds.includes(id));
-    });
-
-    setCurrentSKU(matchingSKU || null);
-  }, [selectedOptions, product?.skus, hasVariants]);
+  }, [product?.default_variant]);
 
   const fetchProduct = async () => {
     try {
@@ -175,10 +336,7 @@ export default function ViewProductPage() {
       // Initialize variant selections
       if (response.data.variants?.length) {
         const initial: Record<string, string> = {};
-        response.data.variants.forEach((g: VariantGroup) => {
-          const firstOption = g.options && g.options[0];
-          if (firstOption) initial[g.id] = firstOption.id;
-        });
+        // You'll need to implement proper variant group extraction
         setSelectedOptions(initial);
       }
     } catch (error) {
@@ -190,47 +348,47 @@ export default function ViewProductPage() {
   };
 
   const getAvailableOptionIdsForGroup = (
-    skus: SKU[],
+    variants: Variant[],
     selectedOptions: Record<string, string>,
     groupId: string
   ): Set<string> => {
+    if (!variants || variants.length === 0) return new Set<string>();
+    
     const otherSelected = Object.entries(selectedOptions)
       .filter(([g, optId]) => g !== groupId && !!optId)
       .map(([, optId]) => String(optId));
 
     if (otherSelected.length === 0) {
-      return new Set<string>(skus.flatMap((s) => (s.option_ids || []).map(String)));
+      return new Set<string>(variants.flatMap((v) => (v.option_ids || []).map(String)));
     }
 
-    const matchingSkus = skus.filter((sku) => {
-      const skuOptionIds = (sku.option_ids || []).map(String);
-      return otherSelected.every((id) => skuOptionIds.includes(id));
+    const matchingVariants = variants.filter((variant) => {
+      const variantOptionIds = (variant.option_ids || []).map(String);
+      return otherSelected.every((id) => variantOptionIds.includes(id));
     });
 
-    return new Set<string>(matchingSkus.flatMap((s) => (s.option_ids || []).map(String)));
+    return new Set<string>(matchingVariants.flatMap((v) => (v.option_ids || []).map(String)));
   };
 
   const handleSelectOption = (groupId: string, optionId: string) => {
-    const variants = product?.variants || [];
-    const groupIndex = variants.findIndex((g) => g.id === groupId);
-
-    const newSelectedOptions: Record<string, string> = { ...selectedOptions, [groupId]: optionId };
-
-    if (groupIndex >= 0) {
-      for (let i = groupIndex + 1; i < variants.length; i++) {
-        delete newSelectedOptions[variants[i].id];
-      }
-    }
-
-    setSelectedOptions(newSelectedOptions);
+    setSelectedOptions({ ...selectedOptions, [groupId]: optionId });
   };
 
+  // Get display values from current variant or product defaults
+  const displayVariantPrice = currentVariant
+    ? safeToNumber(currentVariant.price, 0)
+    : (product?.price_range?.min || 0);
+  
+  const displayComparePrice = currentVariant?.compare_price 
+    ? safeToNumber(currentVariant.compare_price) 
+    : undefined;
+
+  const displayStock = currentVariant
+    ? safeToNumber(currentVariant.quantity, 0)
+    : safeToNumber(product?.total_stock || 0, 0);
+
   const increaseQuantity = () => {
-    const maxQty = hasVariants
-      ? (currentSKU ? currentSKU.quantity : product?.skus?.reduce((sum, sku) => sum + (sku.quantity || 0), 0) || 0)
-      : (product?.quantity || 0);
-    
-    if (quantity < maxQty) {
+    if (quantity < displayStock) {
       setQuantity(prev => prev + 1);
     }
   };
@@ -241,85 +399,94 @@ export default function ViewProductPage() {
     }
   };
 
-  // Normalize pricing and stock to numbers to avoid runtime errors when API returns strings
-  const rawDisplayPrice = hasVariants 
-    ? (currentSKU?.price ?? product?.price ?? 0)
-    : (product?.price ?? 0);
-  const displayPrice = typeof rawDisplayPrice === 'number' ? rawDisplayPrice : (Number(rawDisplayPrice) || 0);
-  
-  const rawComparePrice = hasVariants
-    ? (currentSKU?.compare_price ?? product?.compare_price)
-    : product?.compare_price;
-  const displayComparePrice = rawComparePrice === undefined || rawComparePrice === null ? undefined : (typeof rawComparePrice === 'number' ? rawComparePrice : (Number(rawComparePrice) || undefined));
+  // Build media URLs
+  const getMediaUrls = () => {
+    if (!product) return ['https://via.placeholder.com/400'];
+    
+    const urls: string[] = [];
+    const seen = new Set<string>();
 
-  const displayStock = hasVariants
-    ? (currentSKU ? (Number(currentSKU.quantity) || 0) : (product?.skus?.reduce((sum, sku) => sum + (Number(sku.quantity || 0)), 0) || 0))
-    : (Number(product?.quantity || 0));
+    // Add product media files
+    if (product.media_files && Array.isArray(product.media_files)) {
+      product.media_files.forEach((img) => {
+        const url = ensureAbsoluteUrl(img.file_data || img.file_url);
+        if (url && !seen.has(url)) {
+          urls.push(url);
+          seen.add(url);
+        }
+      });
+    }
 
-  const selectedChoicesText = hasVariants && product?.variants
-    ? product.variants
-        .map((group) => {
-          const selectedId = selectedOptions[group.id];
-          if (!selectedId) return null;
-          const opt = group.options.find((o) => o.id === selectedId);
-          return opt ? opt.title : null;
-        })
-        .filter(Boolean)
-        .join(' × ')
-    : '';
+    // Add variant images
+    if (product.variants && Array.isArray(product.variants)) {
+      product.variants.forEach((variant) => {
+        if (variant.image || variant.image_url) {
+          const url = ensureAbsoluteUrl(variant.image || variant.image_url);
+          if (url && !seen.has(url)) {
+            urls.push(url);
+            seen.add(url);
+          }
+        }
+      });
+    }
+
+    // Add primary image
+    if (product.primary_image?.url) {
+      const url = ensureAbsoluteUrl(product.primary_image.url);
+      if (url && !seen.has(url)) {
+        urls.unshift(url);
+        seen.add(url);
+      }
+    }
+
+    return urls.length > 0 ? urls : ['https://via.placeholder.com/400'];
+  };
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
-      setCartError("Please login to add items to cart");
       Alert.alert('Login Required', 'Please login to add items to cart');
       return;
     }
 
-    if (hasVariants) {
-      const allSelected = product.variants!.every(g => selectedOptions[g.id]);
-      if (!allSelected) {
-        setCartError("Please select all variant options");
-        Alert.alert('Selection Required', 'Please select all variant options');
-        return;
-      }
-
-      if (!currentSKU) {
-        setCartError("Please select valid variant options");
-        Alert.alert('Invalid Selection', 'Please select valid variant options');
-        return;
-      }
+    if (!currentVariant) {
+      Alert.alert('Selection Required', 'Please select a variant');
+      return;
     }
 
     setAddingToCart(true);
     setCartError(null);
 
     try {
-      const payload: any = {
+      const payload = {
         user_id: user.id,
         product_id: product.id,
+        variant_id: currentVariant.id,
         quantity,
       };
-
-      if (hasVariants && currentSKU) {
-        payload.sku_id = currentSKU.id;
-      }
-
-      if (hasVariants && Object.keys(selectedOptions).length > 0) {
-        payload.variant_selection = selectedOptions;
-      }
 
       const response = await AxiosInstance.post("/cart/add/", payload);
 
       if (response.data.success) {
-        Alert.alert('Success', 'Product added to cart!');
+        let message = "Product added to cart!";
+        switch (response.data.action) {
+          case 'updated':
+            message = `Cart updated! Quantity is now ${response.data.new_quantity}`;
+            break;
+          case 'recycled':
+            message = "Item added to cart from previous order";
+            break;
+        }
+        Alert.alert('Success', message);
       } else {
-        setCartError(response.data.error || "Failed to add to cart");
         Alert.alert('Error', response.data.error || "Failed to add to cart");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setCartError("An error occurred while adding to cart");
-      Alert.alert('Error', 'An error occurred while adding to cart');
+      let errorMsg = "An error occurred while adding to cart";
+      if (err.response?.data?.error) {
+        errorMsg = err.response.data.error;
+      }
+      Alert.alert('Error', errorMsg);
     } finally {
       setAddingToCart(false);
     }
@@ -327,43 +494,19 @@ export default function ViewProductPage() {
 
   const handleStartSwap = async () => {
     if (!product || !user?.id) {
-      setSwapError("Please login to start a swap");
       Alert.alert('Login Required', 'Please login to start a swap');
       return;
     }
 
-    if (hasVariants) {
-      const allSelected = product.variants!.every(g => selectedOptions[g.id]);
-      if (!allSelected) {
-        setSwapError("Please select all variant options to swap");
-        Alert.alert('Selection Required', 'Please select all variant options to swap');
-        return;
-      }
-
-      if (!currentSKU) {
-        setSwapError("Please select valid variant options to swap");
-        Alert.alert('Invalid Selection', 'Please select valid variant options to swap');
-        return;
-      }
-
-      if (!currentSKU.allow_swap) {
-        setSwapError("This variant is not available for swap");
-        Alert.alert('Not Available', 'This variant is not available for swap');
-        return;
-      }
-    } else {
-      if (!product.open_for_swap) {
-        setSwapError("This product is not available for swap");
-        Alert.alert('Not Available', 'This product is not available for swap');
-        return;
-      }
+    if (!currentVariant || !currentVariant.allow_swap) {
+      Alert.alert('Not Available', 'This variant is not available for swap');
+      return;
     }
 
     setStartingSwap(true);
     setSwapError(null);
 
     try {
-      // For now, show coming soon message
       Alert.alert(
         'Coming Soon',
         'Swap functionality will be available soon!',
@@ -371,39 +514,34 @@ export default function ViewProductPage() {
       );
     } catch (err: any) {
       console.error(err);
-      setSwapError("An error occurred while initiating swap");
       Alert.alert('Error', 'An error occurred while initiating swap');
     } finally {
       setStartingSwap(false);
     }
   };
 
- const handleShare = async () => {
-  try {
-    const message = `Check out ${product?.name} on our app!\nPrice: ₱${displayPrice.toFixed(2)}`;
-    
-    // Simple alert for now
-    Alert.alert(
-      'Share Product',
-      message,
-      [
-        { text: 'Copy to Clipboard', onPress: () => {
-          // You can implement clipboard functionality later
-          Alert.alert('Copied!', 'Product info copied to clipboard');
-        }},
-        { text: 'Cancel', style: 'cancel' }
-      ]
-    );
-  } catch (error) {
-    console.error('Error sharing:', error);
-    Alert.alert('Error', 'Failed to share product');
-  }
-};
+  const handleShare = async () => {
+    try {
+      const message = `Check out ${product?.name} on our app!\nPrice: ${displayPrice}`;
+      
+      Alert.alert(
+        'Share Product',
+        message,
+        [
+          { text: 'Copy to Clipboard', onPress: () => {
+            Alert.alert('Copied!', 'Product info copied to clipboard');
+          }},
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
+    } catch (error) {
+      console.error('Error sharing:', error);
+      Alert.alert('Error', 'Failed to share product');
+    }
+  };
 
-  const toggleFavorite = async () => {
-    // Implement favorite functionality
+  const toggleFavorite = () => {
     setIsFavorite(!isFavorite);
-    // You might want to make an API call here
   };
 
   const handleVisitShop = () => {
@@ -412,42 +550,26 @@ export default function ViewProductPage() {
     }
   };
 
-  const getMediaUrls = () => {
-    if (!product) return [];
+  // Get seller display name
+  const getSellerDisplayName = () => {
+    if (!sellerInfo) return 'Unknown Seller';
     
-    const urls: string[] = [];
-    
-    // Add product images
-    if (product.media_files) {
-      product.media_files.forEach(img => {
-        if (img.file_url) {
-          const abs = ensureAbsoluteUrl(img.file_url);
-          if (abs) urls.push(abs);
-        }
-      });
+    if (sellerInfo.full_name) return sellerInfo.full_name;
+    if (sellerInfo.first_name || sellerInfo.last_name) {
+      return `${sellerInfo.first_name || ''} ${sellerInfo.last_name || ''}`.trim();
     }
+    if (sellerInfo.username) return sellerInfo.username;
+    if (sellerInfo.name) return sellerInfo.name;
+    return 'Unknown Seller';
+  };
 
-    // Add SKU image if available
-    if (currentSKU?.image) {
-      const abs = ensureAbsoluteUrl(currentSKU.image);
-      if (abs) urls.push(abs);
+  // Get seller profile picture
+  const getSellerPicture = () => {
+    if (sellerInfo?.type === 'shop') {
+      return ensureAbsoluteUrl(sellerInfo.shop_picture) || 'https://via.placeholder.com/60';
+    } else {
+      return ensureAbsoluteUrl(sellerInfo?.profile_picture) || 'https://via.placeholder.com/60';
     }
-
-    // Add variant option images
-    if (product.variants) {
-      product.variants.forEach(group => {
-        group.options.forEach(option => {
-          const abs = ensureAbsoluteUrl(option.image);
-          if (abs && !urls.includes(abs)) {
-            urls.push(abs);
-          }
-        });
-      });
-    }
-
-    // Deduplicate and return
-    const unique = Array.from(new Set(urls.filter(Boolean)));
-    return unique.length > 0 ? unique : ['https://via.placeholder.com/400'];
   };
 
   const renderStars = (rating: number = 0) => {
@@ -494,6 +616,10 @@ export default function ViewProductPage() {
   }
 
   const mediaUrls = getMediaUrls();
+  const mainImageFromVariant = currentVariant?.image || currentVariant?.image_url 
+    ? ensureAbsoluteUrl(currentVariant.image || currentVariant.image_url) 
+    : null;
+  const displayImageUrl = mainImageFromVariant ?? mediaUrls[activeImage] ?? mediaUrls[0];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -507,7 +633,7 @@ export default function ViewProductPage() {
               activeOpacity={0.9}
             >
               <Image
-                source={{ uri: mediaUrls[activeImage] || mediaUrls[0] }}
+                source={{ uri: displayImageUrl }}
                 style={styles.mainImage}
                 resizeMode="cover"
               />
@@ -575,7 +701,15 @@ export default function ViewProductPage() {
           <View style={styles.productInfo}>
             {/* Title and Actions */}
             <View style={styles.titleRow}>
-              <Text style={styles.productName}>{product.name}</Text>
+              <View style={styles.titleContainer}>
+                <Text style={styles.productName}>{product.name}</Text>
+                {isGift && (
+                  <View style={styles.giftBadge}>
+                    <MaterialCommunityIcons name="gift" size={14} color="#9A3412" />
+                    <Text style={styles.giftBadgeText}>FREE GIFT</Text>
+                  </View>
+                )}
+              </View>
               <View style={styles.actionButtons}>
                 <TouchableOpacity onPress={toggleFavorite} style={styles.iconButton}>
                   <Ionicons 
@@ -590,25 +724,41 @@ export default function ViewProductPage() {
               </View>
             </View>
 
-            {/* Rating and Sold */}
+            {/* Rating, Condition and Refund */}
             <View style={styles.ratingRow}>
               <View style={styles.ratingContainer}>
-                {renderStars(product.rating || 0)}
-                <Text style={styles.ratingText}>{product.rating?.toFixed(1) || '0.0'}</Text>
-                <Text style={styles.reviewCount}>({product.reviews_count || 0})</Text>
+                {renderStars(product.shop?.avg_rating || 0)}
+                <Text style={styles.ratingText}>{product.shop?.avg_rating?.toFixed(1) || '0.0'}</Text>
               </View>
-              <Text style={styles.soldText}>{product.sold || 0} sold</Text>
+              <Text style={styles.conditionText}>{product.condition}</Text>
+
+              {/* Refund info - only show if not a gift */}
+              {!isGift && (
+                isRefundable ? (
+                  <View style={styles.refundableBadge}>
+                    <MaterialCommunityIcons name="shield-check" size={14} color="#065F46" />
+                    <Text style={styles.refundableText}>{refundText}</Text>
+                  </View>
+                ) : isExplicitlyNonRefundable && (
+                  <View style={styles.nonRefundableBadge}>
+                    <MaterialCommunityIcons name="shield-off" size={14} color="#991B1B" />
+                    <Text style={styles.nonRefundableText}>Non-refundable</Text>
+                  </View>
+                )
+              )}
             </View>
 
             {/* Price */}
             <View style={styles.priceContainer}>
-              <Text style={styles.price}>₱{displayPrice.toFixed(2)}</Text>
-              {displayComparePrice && displayComparePrice > displayPrice && (
+              <Text style={[styles.price, isGift && styles.giftPrice]}>
+                {displayPrice}
+              </Text>
+              {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
                 <Text style={styles.comparePrice}>₱{displayComparePrice.toFixed(2)}</Text>
               )}
             </View>
 
-            {/* Stock */}
+            {/* Stock and Price Range */}
             <View style={styles.stockContainer}>
               <Text style={[
                 styles.stockText,
@@ -616,66 +766,35 @@ export default function ViewProductPage() {
               ]}>
                 Stock: {displayStock} {displayStock <= 0 ? "(Out of Stock)" : ""}
               </Text>
-              {selectedChoicesText ? (
-                <Text style={styles.selectedVariantText}>
-                  Selected: {selectedChoicesText}
+              {!isGift && product.price_range && product.price_range.is_range && (
+                <Text style={styles.priceRangeText}>
+                  Price range: ₱{product.price_range.min.toFixed(2)} - ₱{product.price_range.max.toFixed(2)}
                 </Text>
-              ) : null}
+              )}
             </View>
 
             {/* Description */}
             <Text style={styles.description}>{product.description}</Text>
           </View>
 
-          {/* Variants */}
-          {hasVariants && product.variants && (
-            <View style={styles.variantsSection}>
-              <Text style={styles.sectionTitle}>Variants</Text>
-              {product.variants.map((group, groupIndex) => (
-                <View key={group.id} style={styles.variantGroup}>
-                  <Text style={styles.variantGroupTitle}>{group.title}</Text>
-                  <View style={styles.variantOptions}>
-                    {group.options.map((opt) => {
-                      const isSelected = selectedOptions[group.id] === opt.id;
-                      const previousSelected = product.variants!
-                        .slice(0, groupIndex)
-                        .every((g) => !!selectedOptions[g.id]);
-                      const availableSet = product.skus
-                        ? getAvailableOptionIdsForGroup(product.skus, selectedOptions, group.id)
-                        : new Set<string>();
-                      const isAvailable = previousSelected && availableSet.has(String(opt.id));
-
-                      return (
-                        <TouchableOpacity
-                          key={opt.id}
-                          style={[
-                            styles.variantOption,
-                            isSelected && styles.variantOptionSelected,
-                            !isAvailable && styles.variantOptionDisabled
-                          ]}
-                          onPress={() => handleSelectOption(group.id, opt.id)}
-                          disabled={!isAvailable}
-                        >
-                          <Text style={[
-                            styles.variantOptionText,
-                            isSelected && styles.variantOptionTextSelected,
-                            !isAvailable && styles.variantOptionTextDisabled
-                          ]}>
-                            {opt.title}
-                          </Text>
-                          {opt.price && (
-                            <Text style={styles.variantOptionPrice}>{opt.price}</Text>
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-              ))}
+          {/* Variant count info */}
+          {!isGift && product.variant_count > 1 && (
+            <View style={styles.variantInfo}>
+              <Text style={styles.variantInfoText}>
+                This product has {product.variant_count} variants available. Please select your preferred variant.
+              </Text>
             </View>
           )}
 
-          {/* Quantity Selector */}
+          {/* Variants */}
+          {hasVariants && product.variants && !isGift && (
+            <View style={styles.variantsSection}>
+              <Text style={styles.sectionTitle}>Variants</Text>
+              {/* You'll need to implement variant group rendering here */}
+            </View>
+          )}
+
+          {/* Quantity - Always show */}
           <View style={styles.quantitySection}>
             <Text style={styles.sectionTitle}>Quantity</Text>
             <View style={styles.quantitySelector}>
@@ -697,140 +816,101 @@ export default function ViewProductPage() {
             </View>
           </View>
 
-          {/* Shop Information */}
-          {product.shop && (
-            <TouchableOpacity onPress={handleVisitShop} style={styles.shopSection}>
-              <Text style={styles.sectionTitle}>Shop Information</Text>
-              <View style={styles.shopInfo}>
-                <Image
-                  source={{ 
-                    uri: ensureAbsoluteUrl(product.shop.shop_picture) || 'https://via.placeholder.com/60'
-                  }}
-                  style={styles.shopImage}
-                />
-                <View style={styles.shopDetails}>
-                  <Text style={styles.shopName}>{product.shop.name || "Unknown Shop"}</Text>
-                  {product.shop.address && (
-                    <View style={styles.shopAddress}>
-                      <Ionicons name="location-outline" size={14} color="#6B7280" />
-                      <Text style={styles.shopAddressText} numberOfLines={1}>
-                        {product.shop.address}
-                      </Text>
-                    </View>
-                  )}
-                  {product.shop.avg_rating !== undefined && (
-                    <View style={styles.shopRating}>
-                      {renderStars(product.shop.avg_rating)}
-                      <Text style={styles.shopRatingText}>
-                        {product.shop.avg_rating?.toFixed(1) || "N/A"}
-                      </Text>
-                    </View>
-                  )}
+          {/* Conditional Seller/Shop Information */}
+          {isPersonalListing ? (
+            /* Personal Listing - Show Seller Information */
+            <View style={styles.sellerSection}>
+              <Text style={styles.sectionTitle}>Seller Information</Text>
+              {loadingSeller ? (
+                <View style={styles.loadingSeller}>
+                  <ActivityIndicator size="small" color="#8B5CF6" />
+                  <Text style={styles.loadingSellerText}>Loading seller information...</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-              </View>
-            </TouchableOpacity>
-          )}
-
-          {/* Product Details */}
-          <View style={styles.detailsSection}>
-            <Text style={styles.sectionTitle}>Product Details</Text>
-            <View style={styles.detailsGrid}>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>SKU Code</Text>
-                <Text style={styles.detailValue}>
-                  {hasVariants 
-                    ? (currentSKU?.sku_code || "No SKU Code") 
-                    : "Standard Product"}
-                </Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Price</Text>
-                <Text style={styles.detailPrice}>₱{displayPrice.toFixed(2)}</Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Stock</Text>
-                <Text style={styles.detailValue}>{displayStock} units</Text>
-              </View>
-              
-              {/* Physical Properties */}
-              {(currentSKU?.length || product.length) && (
-                <View style={styles.detailItem}>
-                  <Text style={styles.detailLabel}>Dimensions</Text>
-                  <Text style={styles.detailValue}>
-                    {hasVariants
-                      ? `${currentSKU?.length || '-'} × ${currentSKU?.width || '-'} × ${currentSKU?.height || '-'} cm`
-                      : `${product.length || '-'} × ${product.width || '-'} × ${product.height || '-'} cm`
-                    }
-                  </Text>
-                </View>
-              )}
-              
-              {(currentSKU?.weight || product.weight) && (
-                <View style={styles.detailItem}>
-                  <Text style={styles.detailLabel}>Weight</Text>
-                  <Text style={styles.detailValue}>
-                    {hasVariants
-                      ? `${currentSKU?.weight || '-'} ${currentSKU?.weight_unit || 'kg'}`
-                      : `${product.weight || '-'} ${product.weight_unit || 'kg'}`
-                    }
-                  </Text>
-                </View>
-              )}
-            </View>
-          </View>
-
-          {/* Swap Options */}
-          {isAvailableForSwap && (
-            <View style={styles.swapSection}>
-              <Text style={styles.sectionTitle}>Swap Options</Text>
-              <View style={styles.swapInfo}>
-                <View style={styles.swapType}>
-                  <MaterialCommunityIcons 
-                    name="swap-horizontal" 
-                    size={20} 
-                    color="#059669" 
-                  />
-                  <Text style={styles.swapTypeText}>
-                    {hasVariants
-                      ? currentSKU?.swap_type?.replace('_', ' ')
-                      : product.swap_type?.replace('_', ' ')
-                    }
-                  </Text>
-                </View>
-                
-                {(hasVariants ? currentSKU?.swap_description : product.swap_description) && (
-                  <Text style={styles.swapDescription}>
-                    {hasVariants ? currentSKU?.swap_description : product.swap_description}
-                  </Text>
-                )}
-                
-                {(hasVariants ? currentSKU?.accepted_categories : product.accepted_categories)?.length > 0 && (
-                  <View style={styles.acceptedCategories}>
-                    <Text style={styles.categoriesLabel}>Accepted Categories:</Text>
-                    <View style={styles.categoryTags}>
-                      {(hasVariants ? currentSKU?.accepted_categories : product.accepted_categories)?.map((cat) => (
-                        <View key={cat.id} style={styles.categoryTag}>
-                          <Text style={styles.categoryTagText}>{cat.name}</Text>
-                        </View>
-                      ))}
-                    </View>
+              ) : sellerInfo ? (
+                <TouchableOpacity style={styles.sellerInfo}>
+                  <View style={styles.sellerAvatar}>
+                    {sellerInfo.profile_picture ? (
+                      <Image
+                        source={{ uri: getSellerPicture() }}
+                        style={styles.sellerImage}
+                      />
+                    ) : (
+                      <Ionicons name="person" size={24} color="#8B5CF6" />
+                    )}
                   </View>
-                )}
-              </View>
+                  <View style={styles.sellerDetails}>
+                    <Text style={styles.sellerName}>{getSellerDisplayName()}</Text>
+                    {sellerInfo.email && (
+                      <Text style={styles.sellerEmail}>{sellerInfo.email}</Text>
+                    )}
+                    {sellerInfo.contact_number && (
+                      <Text style={styles.sellerContact}>Contact: {sellerInfo.contact_number}</Text>
+                    )}
+                    <View style={styles.personalListingBadge}>
+                      <Text style={styles.personalListingText}>Personal Listing</Text>
+                    </View>
+                    {sellerInfo.created_at && (
+                      <Text style={styles.memberSince}>
+                        Member since {new Date(sellerInfo.created_at).toLocaleDateString()}
+                      </Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.noInfoText}>Seller information not available</Text>
+              )}
             </View>
+          ) : (
+            /* Shop Product - Show Shop Information */
+            product.shop && (
+              <TouchableOpacity onPress={handleVisitShop} style={styles.shopSection}>
+                <Text style={styles.sectionTitle}>Shop Information</Text>
+                <View style={styles.shopInfo}>
+                  <Image
+                    source={{ 
+                      uri: ensureAbsoluteUrl(product.shop.shop_picture) || 'https://via.placeholder.com/60'
+                    }}
+                    style={styles.shopImage}
+                  />
+                  <View style={styles.shopDetails}>
+                    <Text style={styles.shopName}>{product.shop.name || "Unknown Shop"}</Text>
+                    {product.shop.address && (
+                      <View style={styles.shopAddress}>
+                        <Ionicons name="location-outline" size={14} color="#6B7280" />
+                        <Text style={styles.shopAddressText} numberOfLines={1}>
+                          {product.shop.address}
+                        </Text>
+                      </View>
+                    )}
+                    {product.shop.avg_rating !== undefined && product.shop.avg_rating !== null && (
+                      <View style={styles.shopRating}>
+                        {renderStars(product.shop.avg_rating)}
+                        <Text style={styles.shopRatingText}>
+                          {product.shop.avg_rating?.toFixed(1) || "N/A"}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+                </View>
+              </TouchableOpacity>
+            )
           )}
+
+         
         </ScrollView>
 
         {/* Fixed Action Bar */}
         <View style={styles.actionBar}>
           <View style={styles.priceSummary}>
             <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalPrice}>₱{(displayPrice * quantity).toFixed(2)}</Text>
+            <Text style={styles.totalPrice}>
+              {isGift ? 'FREE' : `₱${(displayVariantPrice * quantity).toFixed(2)}`}
+            </Text>
           </View>
           <View style={styles.actionButtonsContainer}>
             {/* Swap Button */}
-            {isAvailableForSwap && displayStock > 0 && (
+            {!isGift && isAvailableForSwap && displayStock > 0 && (
               <TouchableOpacity
                 style={[styles.actionButton, styles.swapButton]}
                 onPress={handleStartSwap}
@@ -849,7 +929,11 @@ export default function ViewProductPage() {
             
             {/* Add to Cart Button */}
             <TouchableOpacity
-              style={[styles.actionButton, styles.cartButton]}
+              style={[
+                styles.actionButton, 
+                styles.cartButton,
+                (!isGift && isAvailableForSwap) ? { flex: 1.2 } : { flex: 1 }
+              ]}
               onPress={handleAddToCart}
               disabled={addingToCart || displayStock <= 0}
             >
@@ -859,7 +943,7 @@ export default function ViewProductPage() {
                 <>
                   <Ionicons name="cart-outline" size={18} color="#FFF" />
                   <Text style={styles.cartButtonText}>
-                    {displayStock <= 0 ? "Out of Stock" : "Add to Cart"}
+                    {displayStock <= 0 ? "Out of Stock" : isGift ? "Add to Cart (Free)" : "Add to Cart"}
                   </Text>
                 </>
               )}
@@ -867,12 +951,16 @@ export default function ViewProductPage() {
             
             {/* Buy Now Button */}
             <TouchableOpacity
-              style={[styles.actionButton, styles.buyButton]}
-              onPress={handleAddToCart} // You might want a separate buy now function
+              style={[
+                styles.actionButton, 
+                styles.buyButton,
+                (!isGift && isAvailableForSwap) ? { flex: 1 } : { flex: 1 }
+              ]}
+              onPress={handleAddToCart}
               disabled={displayStock <= 0}
             >
               <Text style={styles.buyButtonText}>
-                {displayStock <= 0 ? "Out of Stock" : "Buy Now"}
+                {displayStock <= 0 ? "Out of Stock" : isGift ? "Claim Free Gift" : "Buy Now"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -901,12 +989,18 @@ export default function ViewProductPage() {
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
+              initialScrollIndex={activeImage}
               onMomentumScrollEnd={(event) => {
                 const index = Math.round(
                   event.nativeEvent.contentOffset.x / SCREEN_WIDTH
                 );
                 setActiveImage(index);
               }}
+              getItemLayout={(data, index) => ({
+                length: SCREEN_WIDTH,
+                offset: SCREEN_WIDTH * index,
+                index,
+              })}
               renderItem={({ item }) => (
                 <View style={styles.modalImageContainer}>
                   <Image
@@ -939,6 +1033,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   loadingText: {
     marginTop: 12,
@@ -1043,12 +1138,30 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 8,
   },
+  titleContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
   productName: {
     fontSize: 20,
     fontWeight: '700',
     color: '#111827',
-    flex: 1,
-    marginRight: 12,
+    marginBottom: 4,
+  },
+  giftBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEDD5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+    alignSelf: 'flex-start',
+    gap: 4,
+  },
+  giftBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#9A3412',
   },
   actionButtons: {
     flexDirection: 'row',
@@ -1062,8 +1175,9 @@ const styles = StyleSheet.create({
   },
   ratingRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 12,
   },
   ratingContainer: {
@@ -1076,14 +1190,37 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#374151',
   },
-  reviewCount: {
-    marginLeft: 4,
+  conditionText: {
     fontSize: 14,
     color: '#6B7280',
   },
-  soldText: {
-    fontSize: 14,
-    color: '#6B7280',
+  refundableBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+    gap: 4,
+  },
+  refundableText: {
+    fontSize: 11,
+    color: '#065F46',
+    fontWeight: '600',
+  },
+  nonRefundableBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+    gap: 4,
+  },
+  nonRefundableText: {
+    fontSize: 11,
+    color: '#991B1B',
+    fontWeight: '600',
   },
   priceContainer: {
     flexDirection: 'row',
@@ -1095,6 +1232,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#F97316',
   },
+  giftPrice: {
+    color: '#9A3412',
+  },
   comparePrice: {
     fontSize: 18,
     color: '#9CA3AF',
@@ -1102,28 +1242,36 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   stockContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: 16,
   },
   stockText: {
     fontSize: 14,
     color: '#374151',
+    marginBottom: 4,
   },
   outOfStock: {
     color: '#EF4444',
   },
-  selectedVariantText: {
-    fontSize: 12,
+  priceRangeText: {
+    fontSize: 13,
     color: '#6B7280',
-    flexShrink: 1,
-    textAlign: 'right',
   },
   description: {
     fontSize: 14,
     lineHeight: 20,
     color: '#4B5563',
+  },
+  variantInfo: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    padding: 12,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+  },
+  variantInfoText: {
+    fontSize: 13,
+    color: '#1E40AF',
+    textAlign: 'center',
   },
   variantsSection: {
     padding: 16,
@@ -1135,54 +1283,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111827',
     marginBottom: 16,
-  },
-  variantGroup: {
-    marginBottom: 20,
-  },
-  variantGroupTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  variantOptions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginHorizontal: -4,
-  },
-  variantOption: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    margin: 4,
-    minWidth: 80,
-    alignItems: 'center',
-  },
-  variantOptionSelected: {
-    borderColor: '#F97316',
-    backgroundColor: '#FFF7ED',
-  },
-  variantOptionDisabled: {
-    backgroundColor: '#F3F4F6',
-    borderColor: '#E5E7EB',
-  },
-  variantOptionText: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  variantOptionTextSelected: {
-    color: '#F97316',
-    fontWeight: '600',
-  },
-  variantOptionTextDisabled: {
-    color: '#9CA3AF',
-  },
-  variantOptionPrice: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
   },
   quantitySection: {
     padding: 16,
@@ -1217,6 +1317,84 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#111827',
+  },
+  sellerSection: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  loadingSeller: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    gap: 8,
+  },
+  loadingSellerText: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  sellerInfo: {
+    flexDirection: 'row',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 16,
+  },
+  sellerAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#EDE9FE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  sellerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  sellerDetails: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  sellerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  sellerEmail: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 2,
+  },
+  sellerContact: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
+  personalListingBadge: {
+    backgroundColor: '#EDE9FE',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+    marginBottom: 4,
+  },
+  personalListingText: {
+    fontSize: 11,
+    color: '#6D28D9',
+    fontWeight: '600',
+  },
+  memberSince: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  noInfoText: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    padding: 16,
   },
   shopSection: {
     padding: 16,
@@ -1282,6 +1460,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     marginBottom: 16,
   },
+  detailItemFull: {
+    width: '100%',
+    paddingHorizontal: 8,
+    marginBottom: 8,
+    marginTop: 8,
+  },
   detailLabel: {
     fontSize: 12,
     color: '#6B7280',
@@ -1296,6 +1480,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#F97316',
     fontWeight: '700',
+  },
+  detailComparePrice: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
   },
   swapSection: {
     padding: 16,
@@ -1319,37 +1508,27 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     textTransform: 'capitalize',
   },
+  swapPayment: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  swapPaymentLabel: {
+    fontSize: 13,
+    color: '#374151',
+  },
+  swapPaymentValue: {
+    fontSize: 13,
+    color: '#059669',
+    fontWeight: '600',
+  },
   swapDescription: {
     fontSize: 14,
     color: '#374151',
     lineHeight: 20,
-    marginBottom: 12,
-  },
-  acceptedCategories: {
     marginTop: 8,
-  },
-  categoriesLabel: {
-    fontSize: 14,
-    color: '#374151',
-    fontWeight: '500',
-    marginBottom: 8,
-  },
-  categoryTags: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginHorizontal: -4,
-  },
-  categoryTag: {
-    backgroundColor: '#D1FAE5',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    margin: 4,
-  },
-  categoryTagText: {
-    fontSize: 12,
-    color: '#065F46',
-    fontWeight: '500',
+    fontStyle: 'italic',
   },
   actionBar: {
     backgroundColor: '#FFFFFF',
@@ -1383,7 +1562,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   actionButton: {
-    flex: 1,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1403,7 +1581,6 @@ const styles = StyleSheet.create({
   },
   cartButton: {
     backgroundColor: '#F97316',
-    flex: 1.2,
   },
   cartButtonText: {
     color: '#FFFFFF',
@@ -1413,7 +1590,6 @@ const styles = StyleSheet.create({
   },
   buyButton: {
     backgroundColor: '#DC2626',
-    flex: 1,
   },
   buyButtonText: {
     color: '#FFFFFF',
