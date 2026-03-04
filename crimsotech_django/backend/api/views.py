@@ -16792,6 +16792,203 @@ class SellerProducts(viewsets.ModelViewSet):
                 'error': f'Image prediction failed: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['get'], url_path='get_product')
+    def get_product(self, request, pk=None):
+        try:
+            product = Product.objects.select_related(
+                'shop', 'customer__customer', 'category', 'category_admin'
+            ).prefetch_related(
+                'variants', 'productmedia_set', 'reviews__customer__customer'
+            ).get(pk=pk)
+
+            user_id = request.query_params.get('user_id')
+            if not user_id or str(product.customer.customer_id) != str(user_id):
+                return Response({
+                    "success": False,
+                    "error": "You don't have permission to view this product"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            variants_data = []
+            for variant in product.variants.all():
+                options = []
+                if variant.option_ids and variant.option_map:
+                    try:
+                        if isinstance(variant.option_ids, list) and isinstance(variant.option_map, dict):
+                            for opt_id in variant.option_ids:
+                                if opt_id in variant.option_map:
+                                    opt = variant.option_map[opt_id]
+                                    options.append({
+                                        "id": opt_id,
+                                        "name": opt.get("name", ""),
+                                        "value": opt.get("value", ""),
+                                        "title": opt.get("title", "")
+                                    })
+                    except:
+                        pass
+
+                variants_data.append({
+                    "id": str(variant.id),
+                    "title": variant.title,
+                    "sku_code": variant.sku_code,
+                    "price": str(variant.price) if variant.price else None,
+                    "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                    "quantity": variant.quantity,
+                    "weight": str(variant.weight) if variant.weight else None,
+                    "weight_unit": variant.weight_unit,
+                    "critical_trigger": variant.critical_trigger,
+                    "is_active": variant.is_active,
+                    "is_refundable": variant.is_refundable,
+                    "refund_days": variant.refund_days,
+                    "allow_swap": variant.allow_swap,
+                    "swap_type": variant.swap_type,
+                    "original_price": str(variant.original_price) if variant.original_price else None,
+                    "usage_period": variant.usage_period,
+                    "usage_unit": variant.usage_unit,
+                    "depreciation_rate": variant.depreciation_rate,
+                    "minimum_additional_payment": str(variant.minimum_additional_payment),
+                    "maximum_additional_payment": str(variant.maximum_additional_payment),
+                    "swap_description": variant.swap_description,
+                    "critical_stock": variant.critical_stock,
+                    "image": get_media_url(variant.image) if variant.image else None,
+                    "option_title": variant.option_title,
+                    "option_ids": variant.option_ids,
+                    "option_map": variant.option_map,
+                    "options": options,
+                    "created_at": variant.created_at.isoformat() if variant.created_at else None,
+                    "updated_at": variant.updated_at.isoformat() if variant.updated_at else None,
+                })
+
+            media_data = []
+            for media in product.productmedia_set.all():
+                media_data.append({
+                    "id": str(media.id),
+                    "file_data": get_media_url(media.file_data) if media.file_data else None,
+                    "file_type": media.file_type
+                })
+
+            reviews_data = []
+            total_rating = 0
+            for review in product.reviews.all():
+                reviews_data.append({
+                    "id": str(review.id),
+                    "rating": review.rating,
+                    "comment": review.comment,
+                    "customer": {
+                        "id": str(review.customer.customer.id) if review.customer else None,
+                        "username": review.customer.customer.username if review.customer else None,
+                        "first_name": review.customer.customer.first_name if review.customer else None,
+                        "last_name": review.customer.customer.last_name if review.customer else None,
+                    } if review.customer else None,
+                    "created_at": review.created_at.isoformat() if review.created_at else None,
+                    "updated_at": review.updated_at.isoformat() if review.updated_at else None,
+                })
+                total_rating += review.rating
+
+            avg_rating = total_rating / len(reviews_data) if reviews_data else 0
+
+            active_variants = product.variants.filter(is_active=True)
+            total_stock = sum(v.quantity for v in active_variants)
+            min_price_variant = active_variants.filter(price__isnull=False).order_by('price').first()
+            max_price_variant = active_variants.filter(price__isnull=False).order_by('-price').first()
+            low_stock = active_variants.filter(quantity__lt=5, quantity__gt=0).count()
+            out_of_stock = active_variants.filter(quantity=0).count()
+
+            variant_stats = {
+                "total_variants": product.variants.count(),
+                "active_variants": active_variants.count(),
+                "total_stock": total_stock,
+                "min_price": str(min_price_variant.price) if min_price_variant else None,
+                "max_price": str(max_price_variant.price) if max_price_variant else None,
+                "low_stock_variants": low_stock,
+                "out_of_stock_variants": out_of_stock
+            }
+
+            favorites_count = product.favorites_set.count()
+
+            product_data = {
+                "id": str(product.id),
+                "name": product.name,
+                "description": product.description,
+                "quantity": total_stock,
+                "price_range": {
+                    "min": str(min_price_variant.price) if min_price_variant else None,
+                    "max": str(max_price_variant.price) if max_price_variant else None
+                },
+                "upload_status": product.upload_status,
+                "status": product.status,
+                "condition": product.condition,
+                "is_refundable": product.is_refundable,
+                "refund_days": product.refund_days,
+                "created_at": product.created_at.isoformat() if product.created_at else None,
+                "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                "is_removed": product.is_removed,
+                "removal_reason": product.removal_reason,
+                "removed_at": product.removed_at.isoformat() if product.removed_at else None,
+                "active_report_count": 0,
+                "favorites_count": favorites_count,
+                "average_rating": avg_rating,
+                "total_reviews": len(reviews_data),
+                "shop": {
+                    "id": str(product.shop.id) if product.shop else None,
+                    "name": product.shop.name if product.shop else None,
+                    "shop_picture": get_media_url(product.shop.shop_picture) if product.shop and product.shop.shop_picture else None,
+                    "verified": product.shop.verified if product.shop else None,
+                    "city": product.shop.city if product.shop else None,
+                    "barangay": product.shop.barangay if product.shop else None,
+                    "street": product.shop.street if product.shop else None,
+                    "contact_number": product.shop.contact_number if product.shop else None,
+                    "total_sales": str(product.shop.total_sales) if product.shop else None,
+                    "created_at": product.shop.created_at.isoformat() if product.shop else None,
+                    "is_suspended": product.shop.is_suspended if product.shop else None,
+                } if product.shop else None,
+                "customer": {
+                    "id": str(product.customer.customer.id) if product.customer else None,
+                    "username": product.customer.customer.username if product.customer else None,
+                    "email": product.customer.customer.email if product.customer else None,
+                    "first_name": product.customer.customer.first_name if product.customer else None,
+                    "last_name": product.customer.customer.last_name if product.customer else None,
+                    "contact_number": product.customer.customer.contact_number if product.customer else None,
+                    "product_limit": product.customer.product_limit if product.customer else None,
+                    "current_product_count": product.customer.current_product_count if product.customer else None,
+                } if product.customer else None,
+                "category": {
+                    "id": str(product.category.id) if product.category else None,
+                    "name": product.category.name if product.category else None,
+                } if product.category else None,
+                "category_admin": {
+                    "id": str(product.category_admin.id) if product.category_admin else None,
+                    "name": product.category_admin.name if product.category_admin else None,
+                } if product.category_admin else None,
+                "media": media_data,
+                "variants": variants_data,
+                "reviews": reviews_data,
+                "variant_stats": variant_stats,
+                "reports": {
+                    "active": 0,
+                    "resolved": 0,
+                    "total": 0,
+                    "active_reports": []
+                }
+            }
+
+            return Response({
+                "success": True,
+                "product": product_data,
+                "message": "Product retrieved successfully"
+            }, status=status.HTTP_200_OK)
+
+        except Product.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": "Product not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error getting product: {str(e)}")
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer

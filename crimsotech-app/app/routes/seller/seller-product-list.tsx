@@ -385,10 +385,10 @@ export default function SellerProductList() {
           <div className="flex items-center gap-2">
             <Link 
               to={`/seller/seller-product/${product.id}`}
-              className="text-primary hover:underline"
+              className="text-primary hover:text-primary/80 transition-colors"
               title="View Details"
             >
-              <Eye className="w-4 h-4" />
+              <Eye className="w-5 h-5" />
             </Link>
             
             <Select onValueChange={handleAction}>
