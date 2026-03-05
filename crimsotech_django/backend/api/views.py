@@ -8763,6 +8763,18 @@ class AdminRefunds(viewsets.ViewSet):
             return Response({"error": "User not found"}, 
                             status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            try:
+                logger.error(f"Error in get_my_refunds (personal): {str(e)}", exc_info=True)
+            except Exception:
+                print(f"Error in get_my_refunds (personal): {str(e)}")
+            return Response({"error": "Internal server error", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            try:
+                logger.error(f"Error in get_my_refunds: {str(e)}", exc_info=True)
+            except Exception:
+                print(f"Error in get_my_refunds: {str(e)}")
+            return Response({"error": "Internal server error", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
             print(f"Unexpected error in get_admin_refund_details: {str(e)}")
             import traceback
             traceback.print_exc()

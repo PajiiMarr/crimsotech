@@ -183,7 +183,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFFFF' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   message: { fontSize: 16, color: '#6B7280' },
-  center: { alignItems: 'center', justifyContent: 'center', padding: 24 },
+  centerWithPadding: { alignItems: 'center', justifyContent: 'center', padding: 24 },
   loadingText: { marginTop: 10, color: '#6B7280' },
 
   // Label Styles
