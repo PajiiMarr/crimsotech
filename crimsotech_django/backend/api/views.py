@@ -15694,6 +15694,123 @@ class SellerDashboard(viewsets.ViewSet):
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
+
+    @action(detail=True, methods=['put'], url_path='update_product')
+    def update_product(self, request, pk=None):
+        """
+        Update basic product fields from the seller edit form.
+        Editable: name, description, condition, upload_status,
+                  is_refundable, refund_days, category_admin_id
+        """
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            product = Product.objects.select_related('category_admin').get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ownership check
+        if str(product.customer.customer_id) != str(user_id):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Collect update fields
+        update_fields = []
+
+        name = request.data.get('name', '').strip()
+        if name:
+            if len(name) > 100:
+                return Response({"error": "Name cannot exceed 100 characters"}, status=status.HTTP_400_BAD_REQUEST)
+            product.name = name
+            update_fields.append('name')
+
+        description = request.data.get('description', '').strip()
+        if description:
+            if len(description) > 1000:
+                return Response({"error": "Description cannot exceed 1000 characters"}, status=status.HTTP_400_BAD_REQUEST)
+            product.description = description
+            update_fields.append('description')
+
+        condition = request.data.get('condition')
+        valid_conditions = ['Like New', 'New', 'Refurbished', 'Used - Excellent', 'Used - Good']
+        if condition:
+            if condition not in valid_conditions:
+                return Response({"error": f"Invalid condition. Choose from: {', '.join(valid_conditions)}"}, status=status.HTTP_400_BAD_REQUEST)
+            product.condition = condition
+            update_fields.append('condition')
+
+        upload_status = request.data.get('upload_status')
+        valid_statuses = ['draft', 'published', 'archived']
+        if upload_status:
+            if upload_status not in valid_statuses:
+                return Response({"error": f"Invalid upload_status. Choose from: {', '.join(valid_statuses)}"}, status=status.HTTP_400_BAD_REQUEST)
+            product.upload_status = upload_status
+            update_fields.append('upload_status')
+
+        # Refund
+        is_refundable = request.data.get('is_refundable')
+        if is_refundable is not None:
+            if isinstance(is_refundable, bool):
+                product.is_refundable = is_refundable
+            else:
+                product.is_refundable = str(is_refundable).lower() in ('true', '1', 'yes')
+            update_fields.append('is_refundable')
+
+        refund_days = request.data.get('refund_days')
+        if refund_days is not None:
+            try:
+                refund_days_int = int(refund_days)
+                if refund_days_int < 0:
+                    return Response({"error": "refund_days cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
+                product.refund_days = refund_days_int
+                update_fields.append('refund_days')
+            except (ValueError, TypeError):
+                return Response({"error": "Invalid refund_days value"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Category admin
+        category_admin_id = request.data.get('category_admin_id')
+        if category_admin_id is not None:
+            if category_admin_id == '' or category_admin_id is None:
+                product.category_admin = None
+                update_fields.append('category_admin')
+            else:
+                try:
+                    import uuid as _uuid
+                    _uuid.UUID(str(category_admin_id))
+                    cat = Category.objects.filter(id=category_admin_id, shop__isnull=True).first()
+                    if not cat:
+                        return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
+                    product.category_admin = cat
+                    update_fields.append('category_admin')
+                except (ValueError, TypeError):
+                    return Response({"error": "Invalid category_admin_id format"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not update_fields:
+            return Response({"error": "No fields to update"}, status=status.HTTP_400_BAD_REQUEST)
+
+        update_fields.append('updated_at')
+        product.save(update_fields=update_fields)
+
+        return Response({
+            "success": True,
+            "message": "Product updated successfully",
+            "product": {
+                "id": str(product.id),
+                "name": product.name,
+                "description": product.description,
+                "condition": product.condition,
+                "upload_status": product.upload_status,
+                "is_refundable": product.is_refundable,
+                "refund_days": product.refund_days,
+                "category_admin": {
+                    "id": str(product.category_admin.id),
+                    "name": product.category_admin.name,
+                } if product.category_admin else None,
+            }
+        }, status=status.HTTP_200_OK)
+
+        
     @action(detail=False, methods=['get'], url_path='global-categories')    
     def get_global_categories(self, request):
         """
@@ -16988,7 +17105,24 @@ class SellerProducts(viewsets.ModelViewSet):
                 "success": False,
                 "error": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    
+    @action(detail=True, methods=['delete'], url_path='delete_product')
+    def delete_product(self, request, pk=None):
+        user_id = request.query_params.get('user_id')
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            product = Product.objects.get(pk=pk)
+            if str(product.customer.customer_id) != str(user_id):
+                return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+            if product.upload_status != 'draft':
+                return Response({"error": "Only draft products can be deleted"}, status=status.HTTP_400_BAD_REQUEST)
+            product.delete()
+            return Response({"success": True, "message": "Draft deleted successfully"}, status=status.HTTP_200_OK)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer

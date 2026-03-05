@@ -83,13 +83,11 @@ import {
   TooltipTrigger,
 } from "~/components/ui/tooltip";
 import { Link, useParams } from "react-router";
+// ── NEW: import the edit dialog ──────────────────────────────────────────────
+import { EditProductDialog } from "~/components/seller/edit-product";
 
 export function meta(): Route.MetaDescriptors {
-    return [
-        {
-            title: "View Product | Seller",
-        }
-    ]
+    return [{ title: "View Product | Seller" }]
 }
 
 interface ProductData {
@@ -98,10 +96,7 @@ interface ProductData {
   description: string;
   quantity: number;
   used_for: string;
-  price_range: {
-    min: string;
-    max: string;
-  };
+  price_range: { min: string; max: string; };
   upload_status: string;
   status: string;
   condition: string;
@@ -117,133 +112,51 @@ interface ProductData {
   average_rating: number;
   total_reviews: number;
   shop: {
-    id: string;
-    name: string;
-    shop_picture: string | null;
-    verified: boolean;
-    city: string;
-    barangay: string;
-    street: string;
-    contact_number: string;
-    total_sales: string;
-    created_at: string;
-    is_suspended: boolean;
+    id: string; name: string; shop_picture: string | null; verified: boolean;
+    city: string; barangay: string; street: string; contact_number: string;
+    total_sales: string; created_at: string; is_suspended: boolean;
   } | null;
   customer: {
-    id: string;
-    username: string | null;
-    email: string | null;
-    first_name: string;
-    last_name: string;
-    contact_number: string;
-    product_limit: number;
-    current_product_count: number;
+    id: string; username: string | null; email: string | null;
+    first_name: string; last_name: string; contact_number: string;
+    product_limit: number; current_product_count: number;
   } | null;
-  category: {
-    id: string;
-    name: string;
-  } | null;
-  category_admin: {
-    id: string;
-    name: string;
-  } | null;
-  media: Array<{
-    id: string;
-    file_data: string | null;
-    file_type: string;
-  }>;
+  category: { id: string; name: string; } | null;
+  category_admin: { id: string; name: string; } | null;
+  media: Array<{ id: string; file_data: string | null; file_type: string; }>;
   variants: Array<{
-    id: string;
-    title: string;
-    sku_code: string | null;
-    price: string | null;
-    compare_price: string | null;
-    quantity: number;
-    weight: string | null;
-    weight_unit: string;
-    critical_trigger: number | null;
-    is_active: boolean;
-    is_refundable: boolean;
-    refund_days: number;
-    allow_swap: boolean;
-    swap_type: string;
-    original_price: string | null;
-    usage_period: number | null;
-    usage_unit: string | null;
-    depreciation_rate: number | null;
-    minimum_additional_payment: string;
-    maximum_additional_payment: string;
-    swap_description: string | null;
-    critical_stock: number | null;
-    image: string | null;
-    option_title: string | null;
-    option_ids: Array<any>;
-    option_map: any;
-    options: Array<{
-      id: string;
-      name: string;
-      value: string;
-      title: string;
-    }>;
-    created_at: string | null;
-    updated_at: string | null;
+    id: string; title: string; sku_code: string | null; price: string | null;
+    compare_price: string | null; quantity: number; weight: string | null;
+    weight_unit: string; critical_trigger: number | null; is_active: boolean;
+    is_refundable: boolean; refund_days: number; allow_swap: boolean; swap_type: string;
+    original_price: string | null; usage_period: number | null; usage_unit: string | null;
+    depreciation_rate: number | null; minimum_additional_payment: string;
+    maximum_additional_payment: string; swap_description: string | null;
+    critical_stock: number | null; image: string | null; option_title: string | null;
+    option_ids: Array<any>; option_map: any;
+    options: Array<{ id: string; name: string; value: string; title: string; }>;
+    created_at: string | null; updated_at: string | null;
   }>;
   reviews: Array<{
-    id: string;
-    rating: number;
-    comment: string | null;
-    customer: {
-      id: string | null;
-      username: string | null;
-      first_name: string | null;
-      last_name: string | null;
-    } | null;
-    created_at: string;
-    updated_at: string | null;
+    id: string; rating: number; comment: string | null;
+    customer: { id: string | null; username: string | null; first_name: string | null; last_name: string | null; } | null;
+    created_at: string; updated_at: string | null;
   }>;
   boost: {
-    id: string;
-    status: string;
-    plan: {
-      id: string;
-      name: string;
-      price: string;
-      duration: number;
-      time_unit: string;
-    } | null;
-    start_date: string | null;
-    end_date: string | null;
-    created_at: string | null;
+    id: string; status: string;
+    plan: { id: string; name: string; price: string; duration: number; time_unit: string; } | null;
+    start_date: string | null; end_date: string | null; created_at: string | null;
   } | null;
-  pending_boost: {
-    id: string;
-    created_at: string | null;
-  } | null;
-  issues: Array<{
-    id: string;
-    description: string;
-  }>;
+  pending_boost: { id: string; created_at: string | null; } | null;
+  issues: Array<{ id: string; description: string; }>;
   variant_stats: {
-    total_variants: number;
-    active_variants: number;
-    total_stock: number;
-    min_price: string | null;
-    max_price: string | null;
-    low_stock_variants: number;
-    out_of_stock_variants: number;
+    total_variants: number; active_variants: number; total_stock: number;
+    min_price: string | null; max_price: string | null;
+    low_stock_variants: number; out_of_stock_variants: number;
   };
   reports: {
-    active: number;
-    resolved: number;
-    total: number;
-    active_reports: Array<{
-      id: string;
-      reason: string;
-      description: string;
-      status: string;
-      created_at: string;
-      reporter: string | null;
-    }>;
+    active: number; resolved: number; total: number;
+    active_reports: Array<{ id: string; reason: string; description: string; status: string; created_at: string; reporter: string | null; }>;
   };
 }
 
@@ -254,10 +167,7 @@ interface LoaderData {
 }
 
 interface CarouselImage {
-  id: string;
-  src: string;
-  type: 'product' | 'variant';
-  variantTitle: string | null;
+  id: string; src: string; type: 'product' | 'variant'; variantTitle: string | null;
 }
 
 export async function loader({ request, context, params }: Route.LoaderArgs): Promise<LoaderData> {
@@ -266,30 +176,17 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
     const { requireRole } = await import("~/middleware/role-require.server");
     const { fetchUserRole } = await import("~/middleware/role.server");
     let user = (context as any).user;
-    if (!user) {
-        user = await fetchUserRole({ request, context });
-    }
+    if (!user) user = await fetchUserRole({ request, context });
     await requireRole(request, context, ["isCustomer"]);
-
     const productId = params.productId;
-
-    if (!productId) {
-        return { user, error: "No product ID provided" };
-    }
-
+    if (!productId) return { user, error: "No product ID provided" };
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuidPattern.test(productId)) {
-        return { user, error: "Invalid product ID" };
-    }
-
+    if (!uuidPattern.test(productId)) return { user, error: "Invalid product ID" };
     try {
         const { getSession } = await import('~/sessions.server');
         const session = await getSession(request.headers.get("Cookie"));
         const userId = session.get("userId");
-
-        const response = await AxiosInstance.get(
-            `/seller-products/${productId}/get_product/?user_id=${userId}`
-        );
+        const response = await AxiosInstance.get(`/seller-products/${productId}/get_product/?user_id=${userId}`);
         return { user, product: response.data.product || response.data };
     } catch (error: any) {
         return { user, error: error.response?.data?.error || "Failed to load product data" };
@@ -298,67 +195,39 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
 
 const actionConfigs = {
   edit: {
-    title: "Edit Product",
-    description: "Edit your product details.",
-    confirmText: "Go to Edit",
-    variant: "default" as const,
-    icon: Edit,
-    needsReason: false,
-    needsSuspensionDays: false,
+    title: "Edit Product", description: "Edit your product details.",
+    confirmText: "Go to Edit", variant: "default" as const, icon: Edit,
+    needsReason: false, needsSuspensionDays: false,
   },
   addVariant: {
-    title: "Add Variant",
-    description: "Add a new variant to this product.",
-    confirmText: "Add Variant",
-    variant: "default" as const,
-    icon: Plus,
-    needsReason: false,
-    needsSuspensionDays: false,
+    title: "Add Variant", description: "Add a new variant to this product.",
+    confirmText: "Add Variant", variant: "default" as const, icon: Plus,
+    needsReason: false, needsSuspensionDays: false,
   },
   archive: {
-    title: "Archive Product",
-    description: "This will archive the product. It can be restored later if needed.",
-    confirmText: "Archive",
-    variant: "outline" as const,
-    icon: Archive,
-    needsReason: false,
-    needsSuspensionDays: false,
+    title: "Archive Product", description: "This will archive the product. It can be restored later if needed.",
+    confirmText: "Archive", variant: "outline" as const, icon: Archive,
+    needsReason: false, needsSuspensionDays: false,
   },
   restore: {
-    title: "Restore Product",
-    description: "This will restore the product to its previous state.",
-    confirmText: "Restore",
-    variant: "outline" as const,
-    icon: Undo,
-    needsReason: false,
-    needsSuspensionDays: false,
+    title: "Restore Product", description: "This will restore the product to its previous state.",
+    confirmText: "Restore", variant: "outline" as const, icon: Undo,
+    needsReason: false, needsSuspensionDays: false,
   },
   remove: {
-    title: "Remove Product",
-    description: "This will remove the product from the platform. This action can be reversed.",
-    confirmText: "Remove",
-    variant: "destructive" as const,
-    icon: XCircle,
-    needsReason: true,
-    needsSuspensionDays: false,
+    title: "Remove Product", description: "This will remove the product from the platform. This action can be reversed.",
+    confirmText: "Remove", variant: "destructive" as const, icon: XCircle,
+    needsReason: true, needsSuspensionDays: false,
   },
   restoreRemoved: {
-    title: "Restore Product",
-    description: "This will restore the removed product and make it available again.",
-    confirmText: "Restore",
-    variant: "default" as const,
-    icon: CheckCircle,
-    needsReason: false,
-    needsSuspensionDays: false,
+    title: "Restore Product", description: "This will restore the removed product and make it available again.",
+    confirmText: "Restore", variant: "default" as const, icon: CheckCircle,
+    needsReason: false, needsSuspensionDays: false,
   },
   deleteDraft: {
-    title: "Delete Draft",
-    description: "Are you sure you want to delete this draft product? This action cannot be undone.",
-    confirmText: "Delete",
-    variant: "destructive" as const,
-    icon: Trash2,
-    needsReason: false,
-    needsSuspensionDays: false,
+    title: "Delete Draft", description: "Are you sure you want to delete this draft product? This action cannot be undone.",
+    confirmText: "Delete", variant: "destructive" as const, icon: Trash2,
+    needsReason: false, needsSuspensionDays: false,
   },
 };
 
@@ -370,19 +239,20 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     const [product, setProduct] = useState<ProductData | null>(loaderData.product || null);
     const [error, setError] = useState<string | undefined>(loaderData.error);
     const [loading, setLoading] = useState(false);
-
     const [activeAction, setActiveAction] = useState<string | null>(null);
     const [showDialog, setShowDialog] = useState(false);
     const [reason, setReason] = useState("");
     const [processing, setProcessing] = useState(false);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
+    // ── NEW: edit dialog state ───────────────────────────────────────────────
+    const [editDialogOpen, setEditDialogOpen] = useState(false);
+
     const isMobile = useIsMobile();
     const { toast } = useToast();
 
     const fetchProductData = async () => {
         if (!productId) return;
-
         setLoading(true);
         try {
             const response = await AxiosInstance.get(
@@ -391,7 +261,6 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
             setProduct(response.data.product || response.data);
             setError(undefined);
         } catch (error: any) {
-            console.error('Error fetching product:', error);
             setError(error.response?.data?.error || "Failed to load product data");
         } finally {
             setLoading(false);
@@ -400,27 +269,27 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
     const handleSuccessfulAction = async () => {
         if (activeAction === 'deleteDraft') {
-            setTimeout(() => {
-                window.location.href = '/seller/products';
-            }, 100);
+            setTimeout(() => { window.location.href = '/seller/products'; }, 100);
             return;
         }
         await fetchProductData();
     };
 
+    // ── NEW: apply edits from EditProductDialog directly to local state ──────
+    const handleProductEdited = (updated: Partial<ProductData>) => {
+        setProduct(prev => prev ? { ...prev, ...updated } : prev);
+    };
+
     const averageRating = product?.average_rating ||
         (product?.reviews && product.reviews.length > 0
-            ? product.reviews.reduce((acc, review) => acc + review.rating, 0) / product.reviews.length
+            ? product.reviews.reduce((acc, r) => acc + r.rating, 0) / product.reviews.length
             : 0);
 
     const getAvailableActions = () => {
         if (!product) return [];
-
         const actions = [];
-
         actions.push({ id: "edit", label: "Edit Product", icon: Edit, variant: "default" as const });
         actions.push({ id: "addVariant", label: "Add Variant", icon: Plus, variant: "default" as const });
-
         if (product.upload_status === 'draft') {
             actions.push({ id: "deleteDraft", label: "Delete Draft", icon: Trash2, variant: "destructive" as const });
         } else if (product.upload_status === 'published') {
@@ -428,13 +297,11 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
         } else if (product.upload_status === 'archived') {
             actions.push({ id: "restore", label: "Restore", icon: Undo, variant: "outline" as const });
         }
-
         if (product.is_removed) {
             actions.push({ id: "restoreRemoved", label: "Restore Removed Product", icon: CheckCircle, variant: "default" as const });
         } else {
             actions.push({ id: "remove", label: "Remove Product", icon: XCircle, variant: "destructive" as const });
         }
-
         return actions;
     };
 
@@ -442,6 +309,11 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     const currentAction = activeAction ? actionConfigs[activeAction as keyof typeof actionConfigs] : null;
 
     const handleActionClick = (actionId: string) => {
+        // ── CHANGED: intercept "edit" → open EditProductDialog instead ────────
+        if (actionId === 'edit') {
+            setEditDialogOpen(true);
+            return;
+        }
         setActiveAction(actionId);
         setReason("");
         setShowDialog(true);
@@ -449,56 +321,25 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
 
     const handleConfirm = async () => {
         if (!activeAction || !product) return;
-
-        if (activeAction === 'edit') {
-            window.location.href = `/seller/products/edit/${product.id}`;
-            return;
-        }
-
         if (activeAction === 'addVariant') {
             window.location.href = `/seller/products/${product.id}/variants/add`;
             return;
         }
-
         if (activeAction === 'remove' && !reason.trim()) {
-            toast({
-                title: "Validation Error",
-                description: "Please provide a reason for removing the product",
-                variant: "destructive",
-            });
+            toast({ title: "Validation Error", description: "Please provide a reason for removing the product", variant: "destructive" });
             return;
         }
-
         setProcessing(true);
         try {
-            const requestData: any = {
-                product_id: product.id,
-                action_type: activeAction,
-                user_id: user.user_id
-            };
-
-            if (reason.trim()) {
-                requestData.reason = reason;
-            }
-
+            const requestData: any = { product_id: product.id, action_type: activeAction, user_id: user.user_id };
+            if (reason.trim()) requestData.reason = reason;
             const response = await AxiosInstance.put('/seller-products/update_product_status/', requestData);
-
-            toast({
-                title: "Success",
-                description: response.data.message,
-                variant: "success",
-            });
-
+            toast({ title: "Success", description: response.data.message, variant: "success" });
             await handleSuccessfulAction();
-
         } catch (error: any) {
-            console.error('Error executing action:', error);
-            const errorMessage = error.response?.data?.error ||
-                                error.response?.data?.detail ||
-                                "Failed to complete action. Please try again.";
             toast({
                 title: "Error",
-                description: errorMessage,
+                description: error.response?.data?.error || error.response?.data?.detail || "Failed to complete action. Please try again.",
                 variant: "destructive",
             });
         } finally {
@@ -535,54 +376,48 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
             'Used - Good': { variant: "outline", color: "" },
         };
         const config = conditionMap[condition] || { variant: "outline", color: "" };
-        return (
-            <Badge variant={config.variant} className={config.color}>
-                {condition}
-            </Badge>
-        );
+        return <Badge variant={config.variant} className={config.color}>{condition}</Badge>;
     };
 
     const renderDialogContent = () => {
         if (!currentAction || !product) return null;
         return (
-            <>
-                <div className="space-y-4">
-                    <div>
-                        <h3 className="text-lg font-semibold">{currentAction.title}</h3>
-                        <p className="text-sm text-muted-foreground mt-1">{currentAction.description}</p>
+            <div className="space-y-4">
+                <div>
+                    <h3 className="text-lg font-semibold">{currentAction.title}</h3>
+                    <p className="text-sm text-muted-foreground mt-1">{currentAction.description}</p>
+                </div>
+                <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-sm font-medium">Product: {product.name}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        Current Status: {product.upload_status} • {product.status} • {product.is_removed ? 'Removed' : 'Active'}
+                    </p>
+                </div>
+                {activeAction === 'remove' && (
+                    <div className="space-y-2">
+                        <Label htmlFor="reason" className="text-sm font-medium">
+                            Reason for Removal <span className="text-red-500">*</span>
+                        </Label>
+                        <Input
+                            id="reason"
+                            value={reason}
+                            onChange={(e) => setReason(e.target.value)}
+                            placeholder="Please provide a reason for removing this product..."
+                            className="h-10"
+                            required
+                        />
+                        <p className="text-xs text-muted-foreground">This reason will be recorded.</p>
                     </div>
-                    <div className="bg-muted/50 rounded-lg p-3">
-                        <p className="text-sm font-medium">Product: {product.name}</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Current Status: {product.upload_status} • {product.status} • {product.is_removed ? 'Removed' : 'Active'}
+                )}
+                {currentAction.variant === "destructive" && (
+                    <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
+                        <p className="text-sm font-medium text-destructive flex items-center gap-1">
+                            <AlertCircle className="w-4 h-4" />
+                            Warning: This action cannot be undone
                         </p>
                     </div>
-                    {activeAction === 'remove' && (
-                        <div className="space-y-2">
-                            <Label htmlFor="reason" className="text-sm font-medium">
-                                Reason for Removal <span className="text-red-500">*</span>
-                            </Label>
-                            <Input
-                                id="reason"
-                                value={reason}
-                                onChange={(e) => setReason(e.target.value)}
-                                placeholder="Please provide a reason for removing this product..."
-                                className="h-10"
-                                required
-                            />
-                            <p className="text-xs text-muted-foreground">This reason will be recorded.</p>
-                        </div>
-                    )}
-                    {currentAction.variant === "destructive" && (
-                        <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
-                            <p className="text-sm font-medium text-destructive flex items-center gap-1">
-                                <AlertCircle className="w-4 h-4" />
-                                Warning: This action cannot be undone
-                            </p>
-                        </div>
-                    )}
-                </div>
-            </>
+                )}
+            </div>
         );
     };
 
@@ -593,11 +428,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                 <AlertDialogContent className="sm:max-w-[500px] max-w-[95vw]">
                     {renderDialogContent()}
                     <AlertDialogFooter className="mt-6 sm:flex-row flex-col gap-2">
-                        <AlertDialogCancel
-                            onClick={handleCancel}
-                            disabled={processing}
-                            className="mt-0 sm:w-auto w-full order-2 sm:order-1"
-                        >
+                        <AlertDialogCancel onClick={handleCancel} disabled={processing} className="mt-0 sm:w-auto w-full order-2 sm:order-1">
                             Cancel
                         </AlertDialogCancel>
                         <AlertDialogAction
@@ -605,9 +436,9 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             className={`sm:w-auto w-full order-1 sm:order-2 ${currentAction.variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""}`}
                             disabled={processing || (activeAction === 'remove' && !reason.trim())}
                         >
-                            {processing ? (
-                                <><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />Processing...</>
-                            ) : currentAction.confirmText}
+                            {processing
+                                ? <><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />Processing...</>
+                                : currentAction.confirmText}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
@@ -631,9 +462,9 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             className={`sm:w-auto w-full ${currentAction.variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""}`}
                             disabled={processing || (activeAction === 'remove' && !reason.trim())}
                         >
-                            {processing ? (
-                                <><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />Processing...</>
-                            ) : currentAction.confirmText}
+                            {processing
+                                ? <><div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />Processing...</>
+                                : currentAction.confirmText}
                         </Button>
                         <DrawerClose asChild className="sm:w-auto w-full">
                             <Button variant="outline" onClick={handleCancel} disabled={processing}>Cancel</Button>
@@ -648,8 +479,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
         if (!product) return [];
         const images: CarouselImage[] = [];
         const imageSet = new Set<string>();
-
-        if (product.media && product.media.length > 0) {
+        if (product.media?.length > 0) {
             product.media.forEach(media => {
                 if (media.file_data) {
                     imageSet.add(media.file_data);
@@ -657,7 +487,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                 }
             });
         }
-        if (product.variants && product.variants.length > 0) {
+        if (product.variants?.length > 0) {
             product.variants.forEach(variant => {
                 if (variant.image && !imageSet.has(variant.image)) {
                     imageSet.add(variant.image);
@@ -672,14 +502,12 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
         if (!product) return "Price not available";
         if (selectedVariant && product.variants) {
             const variant = product.variants.find(v => v.id === selectedVariant);
-            if (variant && variant.price) return `₱${parseFloat(variant.price).toLocaleString()}`;
+            if (variant?.price) return `₱${parseFloat(variant.price).toLocaleString()}`;
         }
         if (product.price_range?.min && product.price_range?.max) {
-            if (product.price_range.min === product.price_range.max) {
+            if (product.price_range.min === product.price_range.max)
                 return `₱${parseFloat(product.price_range.min).toLocaleString()}`;
-            } else {
-                return `₱${parseFloat(product.price_range.min).toLocaleString()} - ₱${parseFloat(product.price_range.max).toLocaleString()}`;
-            }
+            return `₱${parseFloat(product.price_range.min).toLocaleString()} - ₱${parseFloat(product.price_range.max).toLocaleString()}`;
         }
         return "Price not available";
     };
@@ -716,9 +544,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             <AlertCircle className="w-8 h-8 sm:w-12 sm:h-12 text-red-500 mx-auto mb-3 sm:mb-4" />
                             <h2 className="text-lg sm:text-xl font-semibold mb-2">Error Loading Product</h2>
                             <p className="text-muted-foreground text-sm sm:text-base">{error}</p>
-                            <Button variant="outline" className="mt-4" onClick={() => fetchProductData()}>
-                                Try Again
-                            </Button>
+                            <Button variant="outline" className="mt-4" onClick={fetchProductData}>Try Again</Button>
                         </CardContent>
                     </Card>
                 </div>
@@ -735,9 +561,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             <Package className="w-8 h-8 sm:w-12 sm:h-12 text-gray-400 mx-auto mb-3 sm:mb-4" />
                             <h2 className="text-lg sm:text-xl font-semibold mb-2">Product Not Found</h2>
                             <p className="text-muted-foreground text-sm sm:text-base">The requested product could not be found.</p>
-                            <Button variant="outline" className="mt-4" onClick={() => window.location.href = '/seller/products'}>
-                                Back to Products
-                            </Button>
+                            <Button variant="outline" className="mt-4" onClick={() => window.location.href = '/seller/products'}>Back to Products</Button>
                         </CardContent>
                     </Card>
                 </div>
@@ -759,6 +583,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             </div>
                         </div>
                     )}
+
                     {product.is_removed && (
                         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                             <div className="flex items-center gap-3">
@@ -773,6 +598,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             </div>
                         </div>
                     )}
+
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
                             <a href="/seller" className="hover:text-primary hover:underline flex items-center gap-1">
@@ -786,6 +612,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                 {product.name}
                             </span>
                         </nav>
+
                         {availableActions.length > 0 && (
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -816,6 +643,8 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             </DropdownMenu>
                         )}
                     </div>
+
+                    {/* ── rest of the layout is unchanged ─────────────────────────────────── */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
                         <div className="lg:h-[800px]">
                             <Card className="h-full">
@@ -827,10 +656,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                     {carouselImages.map((image) => (
                                                         <CarouselItem key={image.id} className="h-full">
                                                             <div className="h-full flex items-center justify-center relative">
-                                                                <div
-                                                                    className="aspect-square w-full rounded-lg overflow-hidden cursor-pointer"
-                                                                    onClick={() => setSelectedImage(image.src)}
-                                                                >
+                                                                <div className="aspect-square w-full rounded-lg overflow-hidden cursor-pointer" onClick={() => setSelectedImage(image.src)}>
                                                                     <img
                                                                         src={image.src || "/api/placeholder/600/400"}
                                                                         alt={image.type === 'variant' ? image.variantTitle || 'Variant image' : product.name}
@@ -879,48 +705,31 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                 </CardContent>
                             </Card>
                         </div>
+
                         <div className="lg:h-[800px]">
                             <Card className="h-full flex flex-col">
                                 <CardContent className="p-3 sm:p-4 flex-1 flex flex-col min-h-0">
                                     <div className="flex-shrink-0">
                                         <div className="flex flex-col xs:flex-row xs:items-start justify-between gap-3">
                                             <div className="flex-1 min-w-0">
-                                                <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight break-words">
-                                                    {product.name}
-                                                </h1>
+                                                <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight break-words">{product.name}</h1>
                                                 <div className="flex flex-wrap items-center gap-2 mt-2">
                                                     {getUploadStatusBadge(product.upload_status)}
                                                     {getConditionBadge(product.condition)}
-                                                    {product.category && (
-                                                        <Badge variant="outline" className="bg-blue-50">{product.category.name}</Badge>
-                                                    )}
-                                                    {product.category_admin && (
-                                                        <Badge variant="outline" className="bg-purple-50">Admin: {product.category_admin.name}</Badge>
-                                                    )}
-                                                    {product.is_removed && (
-                                                        <Badge variant="destructive" className="animate-pulse">
-                                                            <XCircle className="w-3 h-3 mr-1" />Removed
-                                                        </Badge>
-                                                    )}
-                                                    {product.status === 'Suspended' && (
-                                                        <Badge variant="destructive">
-                                                            <Ban className="w-3 h-3 mr-1" />Suspended
-                                                        </Badge>
-                                                    )}
+                                                    {product.category && <Badge variant="outline" className="bg-blue-50">{product.category.name}</Badge>}
+                                                    {product.category_admin && <Badge variant="outline" className="bg-purple-50">Admin: {product.category_admin.name}</Badge>}
+                                                    {product.is_removed && <Badge variant="destructive" className="animate-pulse"><XCircle className="w-3 h-3 mr-1" />Removed</Badge>}
+                                                    {product.status === 'Suspended' && <Badge variant="destructive"><Ban className="w-3 h-3 mr-1" />Suspended</Badge>}
                                                 </div>
                                             </div>
                                             <div className="text-left xs:text-right">
                                                 <div className="text-xl sm:text-2xl font-bold text-primary">
                                                     {priceDisplay()}
-                                                    {selectedVariant && (
-                                                        <Badge variant="outline" className="ml-2 text-xs align-middle">Selected Variant</Badge>
-                                                    )}
+                                                    {selectedVariant && <Badge variant="outline" className="ml-2 text-xs align-middle">Selected Variant</Badge>}
                                                 </div>
                                                 <div className="flex items-center gap-1 mt-1 xs:justify-end">
                                                     <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
-                                                    <span className="text-xs sm:text-sm text-muted-foreground">
-                                                        {product.favorites_count || 0} favorites
-                                                    </span>
+                                                    <span className="text-xs sm:text-sm text-muted-foreground">{product.favorites_count || 0} favorites</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -943,7 +752,9 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                             )}
                                         </div>
                                     </div>
+
                                     <Separator className="my-4" />
+
                                     <div className="flex-1 overflow-y-auto min-h-0 pr-2 space-y-4">
                                         <div className="grid grid-cols-2 gap-3">
                                             <Tooltip>
@@ -980,6 +791,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                 <span className="font-semibold text-xs text-center">{new Date(product.updated_at).toLocaleDateString()}</span>
                                             </div>
                                         </div>
+
                                         {(product.variant_stats?.low_stock_variants || 0) > 0 && (
                                             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                                                 <div className="flex items-center gap-2">
@@ -1000,23 +812,24 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                 </div>
                                             </div>
                                         )}
+
                                         <Separator />
+
                                         <div>
                                             <h3 className="font-medium text-sm mb-3 flex items-center gap-2">
-                                                <Package className="w-4 h-4" />
-                                                Description
+                                                <Package className="w-4 h-4" />Description
                                             </h3>
                                             <div className="bg-muted/10 p-4 rounded-lg">
                                                 <p className="text-sm leading-relaxed whitespace-pre-line">{product.description}</p>
                                             </div>
                                         </div>
+
                                         {allVariants.length > 0 && (
                                             <>
                                                 <Separator />
                                                 <div>
                                                     <h3 className="font-medium text-sm mb-3 flex items-center gap-2">
-                                                        <Layers className="w-4 h-4" />
-                                                        Product Variants ({allVariants.length})
+                                                        <Layers className="w-4 h-4" />Product Variants ({allVariants.length})
                                                     </h3>
                                                     <div className="space-y-3">
                                                         {allVariants.map((variant) => {
@@ -1032,12 +845,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                                     <div className="flex flex-col sm:flex-row gap-3">
                                                                         {variant.image && (
                                                                             <div className="sm:w-24 sm:h-24 w-full h-32 flex-shrink-0">
-                                                                                <img
-                                                                                    src={variant.image}
-                                                                                    alt={variant.title}
-                                                                                    className="w-full h-full object-cover rounded-md"
-                                                                                    onError={(e) => { (e.target as HTMLImageElement).src = '/api/placeholder/200/200'; }}
-                                                                                />
+                                                                                <img src={variant.image} alt={variant.title} className="w-full h-full object-cover rounded-md" onError={(e) => { (e.target as HTMLImageElement).src = '/api/placeholder/200/200'; }} />
                                                                             </div>
                                                                         )}
                                                                         <div className="flex-1 space-y-2">
@@ -1045,16 +853,14 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                                                 <div>
                                                                                     <h4 className="font-medium text-sm">{variant.title}</h4>
                                                                                     {variant.sku_code && (
-                                                                                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                                                                                            <Hash className="w-3 h-3" />SKU: {variant.sku_code}
-                                                                                        </p>
+                                                                                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1"><Hash className="w-3 h-3" />SKU: {variant.sku_code}</p>
                                                                                     )}
                                                                                 </div>
                                                                                 <Badge variant={isOutOfStock ? "outline" : isLowStock ? "destructive" : "default"} className="shrink-0">
                                                                                     {isOutOfStock ? "Out of stock" : `${variant.quantity} in stock`}
                                                                                 </Badge>
                                                                             </div>
-                                                                            {variant.options && variant.options.length > 0 && (
+                                                                            {variant.options?.length > 0 && (
                                                                                 <div className="flex flex-wrap gap-2">
                                                                                     {variant.options.map((opt, idx) => (
                                                                                         <Badge key={idx} variant="outline" className="bg-gray-50">{opt.name}: {opt.value}</Badge>
@@ -1062,33 +868,19 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                                                 </div>
                                                                             )}
                                                                             <div className="flex items-center gap-3">
-                                                                                <span className="text-base font-semibold text-primary">
-                                                                                    ₱{parseFloat(variant.price || "0").toLocaleString()}
-                                                                                </span>
+                                                                                <span className="text-base font-semibold text-primary">₱{parseFloat(variant.price || "0").toLocaleString()}</span>
                                                                                 {variant.compare_price && parseFloat(variant.compare_price) > 0 && (
                                                                                     <>
-                                                                                        <span className="text-sm text-muted-foreground line-through">
-                                                                                            ₱{parseFloat(variant.compare_price).toLocaleString()}
-                                                                                        </span>
-                                                                                        <Badge variant="secondary" className="bg-green-100">
-                                                                                            Save {Math.round((1 - parseFloat(variant.price || "0") / parseFloat(variant.compare_price)) * 100)}%
-                                                                                        </Badge>
+                                                                                        <span className="text-sm text-muted-foreground line-through">₱{parseFloat(variant.compare_price).toLocaleString()}</span>
+                                                                                        <Badge variant="secondary" className="bg-green-100">Save {Math.round((1 - parseFloat(variant.price || "0") / parseFloat(variant.compare_price)) * 100)}%</Badge>
                                                                                     </>
                                                                                 )}
                                                                             </div>
                                                                             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                                                                                {variant.weight && (
-                                                                                    <span className="flex items-center gap-1"><Scale className="w-3 h-3" />{variant.weight} {variant.weight_unit}</span>
-                                                                                )}
-                                                                                {variant.usage_period && (
-                                                                                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Used: {variant.usage_period} {variant.usage_unit}</span>
-                                                                                )}
-                                                                                {variant.allow_swap && (
-                                                                                    <Badge variant="outline" className="text-xs">Swap available ({variant.swap_type})</Badge>
-                                                                                )}
-                                                                                {variant.is_refundable && (
-                                                                                    <Badge variant="outline" className="text-xs text-green-600">Refundable ({variant.refund_days} days)</Badge>
-                                                                                )}
+                                                                                {variant.weight && <span className="flex items-center gap-1"><Scale className="w-3 h-3" />{variant.weight} {variant.weight_unit}</span>}
+                                                                                {variant.usage_period && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Used: {variant.usage_period} {variant.usage_unit}</span>}
+                                                                                {variant.allow_swap && <Badge variant="outline" className="text-xs">Swap available ({variant.swap_type})</Badge>}
+                                                                                {variant.is_refundable && <Badge variant="outline" className="text-xs text-green-600">Refundable ({variant.refund_days} days)</Badge>}
                                                                             </div>
                                                                         </div>
                                                                     </div>
@@ -1104,6 +896,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             </Card>
                         </div>
                     </div>
+
                     <Accordion type="single" collapsible className="w-full" defaultValue="product-details">
                         <AccordionItem value="product-details">
                             <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
@@ -1112,52 +905,18 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             <AccordionContent>
                                 <div className="space-y-4">
                                     <div className="grid grid-cols-1 xs:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 p-4 sm:p-6">
-                                        <div>
-                                            <p className="text-xs sm:text-sm text-muted-foreground">Total Stock</p>
-                                            <p className="font-medium text-sm sm:text-base">{product.variant_stats?.total_stock || product.quantity || 0} units</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs sm:text-sm text-muted-foreground">Category</p>
-                                            <p className="font-medium text-sm sm:text-base">{product.category?.name || "No Category"}</p>
-                                        </div>
-                                        {product.category_admin && (
-                                            <div>
-                                                <p className="text-xs sm:text-sm text-muted-foreground">Admin Category</p>
-                                                <p className="font-medium text-sm sm:text-base">{product.category_admin.name}</p>
-                                            </div>
-                                        )}
-                                        <div>
-                                            <p className="text-xs sm:text-sm text-muted-foreground">Condition</p>
-                                            <p className="font-medium text-sm sm:text-base">{product.condition}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs sm:text-sm text-muted-foreground">Created</p>
-                                            <p className="font-medium text-xs sm:text-sm">{new Date(product.created_at).toLocaleDateString()}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs sm:text-sm text-muted-foreground">Last Updated</p>
-                                            <p className="font-medium text-xs sm:text-sm">{new Date(product.updated_at).toLocaleDateString()}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs sm:text-sm text-muted-foreground">Refund Policy</p>
-                                            <p className="font-medium text-sm sm:text-base">{product.is_refundable ? `Refundable (${product.refund_days} days)` : "Non-refundable"}</p>
-                                        </div>
+                                        <div><p className="text-xs sm:text-sm text-muted-foreground">Total Stock</p><p className="font-medium text-sm sm:text-base">{product.variant_stats?.total_stock || product.quantity || 0} units</p></div>
+                                        <div><p className="text-xs sm:text-sm text-muted-foreground">Category</p><p className="font-medium text-sm sm:text-base">{product.category?.name || "No Category"}</p></div>
+                                        {product.category_admin && <div><p className="text-xs sm:text-sm text-muted-foreground">Admin Category</p><p className="font-medium text-sm sm:text-base">{product.category_admin.name}</p></div>}
+                                        <div><p className="text-xs sm:text-sm text-muted-foreground">Condition</p><p className="font-medium text-sm sm:text-base">{product.condition}</p></div>
+                                        <div><p className="text-xs sm:text-sm text-muted-foreground">Created</p><p className="font-medium text-xs sm:text-sm">{new Date(product.created_at).toLocaleDateString()}</p></div>
+                                        <div><p className="text-xs sm:text-sm text-muted-foreground">Last Updated</p><p className="font-medium text-xs sm:text-sm">{new Date(product.updated_at).toLocaleDateString()}</p></div>
+                                        <div><p className="text-xs sm:text-sm text-muted-foreground">Refund Policy</p><p className="font-medium text-sm sm:text-base">{product.is_refundable ? `Refundable (${product.refund_days} days)` : "Non-refundable"}</p></div>
                                         {product.is_removed && (
                                             <>
-                                                <div>
-                                                    <p className="text-xs sm:text-sm text-muted-foreground">Removal Status</p>
-                                                    <p className="font-medium text-sm sm:text-base text-red-600">Removed</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-xs sm:text-sm text-muted-foreground">Removed At</p>
-                                                    <p className="font-medium text-xs sm:text-sm">{product.removed_at ? new Date(product.removed_at).toLocaleString() : "Unknown"}</p>
-                                                </div>
-                                                {product.removal_reason && (
-                                                    <div className="col-span-3">
-                                                        <p className="text-xs sm:text-sm text-muted-foreground">Removal Reason</p>
-                                                        <p className="font-medium text-sm sm:text-base">{product.removal_reason}</p>
-                                                    </div>
-                                                )}
+                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Removal Status</p><p className="font-medium text-sm sm:text-base text-red-600">Removed</p></div>
+                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Removed At</p><p className="font-medium text-xs sm:text-sm">{product.removed_at ? new Date(product.removed_at).toLocaleString() : "Unknown"}</p></div>
+                                                {product.removal_reason && <div className="col-span-3"><p className="text-xs sm:text-sm text-muted-foreground">Removal Reason</p><p className="font-medium text-sm sm:text-base">{product.removal_reason}</p></div>}
                                             </>
                                         )}
                                     </div>
@@ -1170,6 +929,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                 </div>
                             </AccordionContent>
                         </AccordionItem>
+
                         <AccordionItem value="reviews-ratings">
                             <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
                                 <div className="flex items-center gap-2">
@@ -1199,30 +959,27 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                         </div>
                                     </div>
                                     <div className="space-y-3">
-                                        {product.reviews && product.reviews.length > 0 ? (
-                                            product.reviews.map((review) => (
-                                                <div key={review.id} className="border rounded-lg p-4">
-                                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-2">
-                                                        <div className="flex items-center gap-1">
-                                                            {[1, 2, 3, 4, 5].map((star) => (
-                                                                <Star key={star} className={`w-3 h-3 ${star <= review.rating ? "fill-yellow-400 text-yellow-400" : "text-gray-300"}`} />
-                                                            ))}
-                                                        </div>
-                                                        <span className="text-xs sm:text-sm font-medium">
-                                                            {review.customer?.username || review.customer?.first_name || "Anonymous"}
-                                                        </span>
-                                                        <span className="text-xs text-muted-foreground">{new Date(review.created_at).toLocaleDateString()}</span>
+                                        {product.reviews?.length > 0 ? product.reviews.map((review) => (
+                                            <div key={review.id} className="border rounded-lg p-4">
+                                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-2">
+                                                    <div className="flex items-center gap-1">
+                                                        {[1, 2, 3, 4, 5].map((star) => (
+                                                            <Star key={star} className={`w-3 h-3 ${star <= review.rating ? "fill-yellow-400 text-yellow-400" : "text-gray-300"}`} />
+                                                        ))}
                                                     </div>
-                                                    <p className="text-xs sm:text-sm">{review.comment || "No comment provided"}</p>
+                                                    <span className="text-xs sm:text-sm font-medium">{review.customer?.username || review.customer?.first_name || "Anonymous"}</span>
+                                                    <span className="text-xs text-muted-foreground">{new Date(review.created_at).toLocaleDateString()}</span>
                                                 </div>
-                                            ))
-                                        ) : (
+                                                <p className="text-xs sm:text-sm">{review.comment || "No comment provided"}</p>
+                                            </div>
+                                        )) : (
                                             <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">No reviews yet for this product.</p>
                                         )}
                                     </div>
                                 </div>
                             </AccordionContent>
                         </AccordionItem>
+
                         <AccordionItem value="shop-information">
                             <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
                                 <div className="flex items-center gap-2"><Store className="w-4 h-4 sm:w-5 sm:h-5" />Shop Information</div>
@@ -1242,30 +999,16 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                 <div className="min-w-0">
                                                     <h3 className="font-semibold text-sm sm:text-base break-words">{product.shop.name}</h3>
                                                     <div className="flex flex-wrap items-center gap-2 mt-1">
-                                                        <Badge variant={product.shop.verified ? "default" : "secondary"} className="w-fit">
-                                                            {product.shop.verified ? "Verified" : "Unverified"}
-                                                        </Badge>
+                                                        <Badge variant={product.shop.verified ? "default" : "secondary"} className="w-fit">{product.shop.verified ? "Verified" : "Unverified"}</Badge>
                                                         {product.shop.is_suspended && <Badge variant="destructive" className="w-fit">Suspended</Badge>}
                                                     </div>
                                                 </div>
                                             </div>
                                             <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
-                                                <div>
-                                                    <p className="text-xs sm:text-sm text-muted-foreground">Contact Number</p>
-                                                    <p className="font-medium text-sm sm:text-base">{product.shop.contact_number || "Not provided"}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-xs sm:text-sm text-muted-foreground">Total Sales</p>
-                                                    <p className="font-medium text-sm sm:text-base">₱{parseFloat(product.shop.total_sales || "0").toLocaleString()}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-xs sm:text-sm text-muted-foreground">Location</p>
-                                                    <p className="font-medium text-sm sm:text-base">{product.shop.street}, {product.shop.barangay}, {product.shop.city}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-xs sm:text-sm text-muted-foreground">Member Since</p>
-                                                    <p className="font-medium text-xs sm:text-sm">{new Date(product.shop.created_at).toLocaleDateString()}</p>
-                                                </div>
+                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Contact Number</p><p className="font-medium text-sm sm:text-base">{product.shop.contact_number || "Not provided"}</p></div>
+                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Total Sales</p><p className="font-medium text-sm sm:text-base">₱{parseFloat(product.shop.total_sales || "0").toLocaleString()}</p></div>
+                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Location</p><p className="font-medium text-sm sm:text-base">{product.shop.street}, {product.shop.barangay}, {product.shop.city}</p></div>
+                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Member Since</p><p className="font-medium text-xs sm:text-sm">{new Date(product.shop.created_at).toLocaleDateString()}</p></div>
                                             </div>
                                         </>
                                     ) : (
@@ -1274,6 +1017,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                 </div>
                             </AccordionContent>
                         </AccordionItem>
+
                         {product.boost && (
                             <AccordionItem value="boost-info">
                                 <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
@@ -1288,30 +1032,16 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                             </div>
                                             {product.boost.plan && (
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                                    <div>
-                                                        <p className="text-xs text-muted-foreground">Plan Price</p>
-                                                        <p className="font-medium">₱{parseFloat(product.boost.plan.price).toLocaleString()}</p>
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-xs text-muted-foreground">Duration</p>
-                                                        <p className="font-medium">{product.boost.plan.duration} {product.boost.plan.time_unit}</p>
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-xs text-muted-foreground">Start Date</p>
-                                                        <p className="font-medium text-sm">{product.boost.start_date ? new Date(product.boost.start_date).toLocaleDateString() : "N/A"}</p>
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-xs text-muted-foreground">End Date</p>
-                                                        <p className="font-medium text-sm">{product.boost.end_date ? new Date(product.boost.end_date).toLocaleDateString() : "N/A"}</p>
-                                                    </div>
+                                                    <div><p className="text-xs text-muted-foreground">Plan Price</p><p className="font-medium">₱{parseFloat(product.boost.plan.price).toLocaleString()}</p></div>
+                                                    <div><p className="text-xs text-muted-foreground">Duration</p><p className="font-medium">{product.boost.plan.duration} {product.boost.plan.time_unit}</p></div>
+                                                    <div><p className="text-xs text-muted-foreground">Start Date</p><p className="font-medium text-sm">{product.boost.start_date ? new Date(product.boost.start_date).toLocaleDateString() : "N/A"}</p></div>
+                                                    <div><p className="text-xs text-muted-foreground">End Date</p><p className="font-medium text-sm">{product.boost.end_date ? new Date(product.boost.end_date).toLocaleDateString() : "N/A"}</p></div>
                                                 </div>
                                             )}
                                         </div>
                                         {product.pending_boost && (
                                             <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                                                <p className="text-sm text-yellow-800">
-                                                    Pending boost request submitted on {new Date(product.pending_boost.created_at || "").toLocaleDateString()}
-                                                </p>
+                                                <p className="text-sm text-yellow-800">Pending boost request submitted on {new Date(product.pending_boost.created_at || "").toLocaleDateString()}</p>
                                             </div>
                                         )}
                                     </div>
@@ -1319,6 +1049,8 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             </AccordionItem>
                         )}
                     </Accordion>
+
+                    {/* Full-screen image lightbox */}
                     {selectedImage && (
                         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setSelectedImage(null)}>
                             <div className="relative max-w-4xl max-h-[90vh]">
@@ -1329,7 +1061,16 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             </div>
                         </div>
                     )}
+
+                    {/* Action dialogs (archive / restore / remove / delete draft) */}
                     {isMobile ? renderMobileDialog() : renderDesktopDialog()}
+                    <EditProductDialog
+                        open={editDialogOpen}
+                        onOpenChange={setEditDialogOpen}
+                        product={product as any}
+                        userId={user.user_id ?? ''}
+                        onSuccess={handleProductEdited}
+                    />
                 </div>
             </TooltipProvider>
         </UserProvider>
