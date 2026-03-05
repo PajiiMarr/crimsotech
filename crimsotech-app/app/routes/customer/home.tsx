@@ -262,7 +262,7 @@ const getProductPrice = (product: Product): string => {
     return "FREE GIFT";
   }
   
-  return "Price unavailable";
+  return "FREE GIFT";
 }
 
 // ----------------------------

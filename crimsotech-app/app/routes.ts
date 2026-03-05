@@ -74,6 +74,7 @@ export default [
         route("seller-product-list", "routes/seller/seller-product-list.tsx"), 
         route("seller-boosts", "routes/seller/seller-boosts.tsx"), 
         route("seller-boosts/:boostPlanId", "routes/seller/select-boost/seller-select-boost-product.tsx"), 
+        route("seller-product/:productId", "routes/seller/view_product/view_product.tsx"), 
         route("seller-boosts/pay-boost/:boostPlanId", "routes/seller/select-boost/pay-boosting.tsx"), 
         route("seller-create-product", "routes/seller/seller-create-product.tsx"), 
         route("seller-order-list", "routes/seller/seller-order-list.tsx"), 

@@ -9,7 +9,8 @@ import {
   ScrollView,
   Image,
   Linking,
-  Platform
+  Platform,
+  Alert
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';

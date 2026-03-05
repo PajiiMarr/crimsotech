@@ -15706,6 +15706,123 @@ class SellerDashboard(viewsets.ViewSet):
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
+
+    @action(detail=True, methods=['put'], url_path='update_product')
+    def update_product(self, request, pk=None):
+        """
+        Update basic product fields from the seller edit form.
+        Editable: name, description, condition, upload_status,
+                  is_refundable, refund_days, category_admin_id
+        """
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            product = Product.objects.select_related('category_admin').get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ownership check
+        if str(product.customer.customer_id) != str(user_id):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Collect update fields
+        update_fields = []
+
+        name = request.data.get('name', '').strip()
+        if name:
+            if len(name) > 100:
+                return Response({"error": "Name cannot exceed 100 characters"}, status=status.HTTP_400_BAD_REQUEST)
+            product.name = name
+            update_fields.append('name')
+
+        description = request.data.get('description', '').strip()
+        if description:
+            if len(description) > 1000:
+                return Response({"error": "Description cannot exceed 1000 characters"}, status=status.HTTP_400_BAD_REQUEST)
+            product.description = description
+            update_fields.append('description')
+
+        condition = request.data.get('condition')
+        valid_conditions = ['Like New', 'New', 'Refurbished', 'Used - Excellent', 'Used - Good']
+        if condition:
+            if condition not in valid_conditions:
+                return Response({"error": f"Invalid condition. Choose from: {', '.join(valid_conditions)}"}, status=status.HTTP_400_BAD_REQUEST)
+            product.condition = condition
+            update_fields.append('condition')
+
+        upload_status = request.data.get('upload_status')
+        valid_statuses = ['draft', 'published', 'archived']
+        if upload_status:
+            if upload_status not in valid_statuses:
+                return Response({"error": f"Invalid upload_status. Choose from: {', '.join(valid_statuses)}"}, status=status.HTTP_400_BAD_REQUEST)
+            product.upload_status = upload_status
+            update_fields.append('upload_status')
+
+        # Refund
+        is_refundable = request.data.get('is_refundable')
+        if is_refundable is not None:
+            if isinstance(is_refundable, bool):
+                product.is_refundable = is_refundable
+            else:
+                product.is_refundable = str(is_refundable).lower() in ('true', '1', 'yes')
+            update_fields.append('is_refundable')
+
+        refund_days = request.data.get('refund_days')
+        if refund_days is not None:
+            try:
+                refund_days_int = int(refund_days)
+                if refund_days_int < 0:
+                    return Response({"error": "refund_days cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
+                product.refund_days = refund_days_int
+                update_fields.append('refund_days')
+            except (ValueError, TypeError):
+                return Response({"error": "Invalid refund_days value"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Category admin
+        category_admin_id = request.data.get('category_admin_id')
+        if category_admin_id is not None:
+            if category_admin_id == '' or category_admin_id is None:
+                product.category_admin = None
+                update_fields.append('category_admin')
+            else:
+                try:
+                    import uuid as _uuid
+                    _uuid.UUID(str(category_admin_id))
+                    cat = Category.objects.filter(id=category_admin_id, shop__isnull=True).first()
+                    if not cat:
+                        return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
+                    product.category_admin = cat
+                    update_fields.append('category_admin')
+                except (ValueError, TypeError):
+                    return Response({"error": "Invalid category_admin_id format"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not update_fields:
+            return Response({"error": "No fields to update"}, status=status.HTTP_400_BAD_REQUEST)
+
+        update_fields.append('updated_at')
+        product.save(update_fields=update_fields)
+
+        return Response({
+            "success": True,
+            "message": "Product updated successfully",
+            "product": {
+                "id": str(product.id),
+                "name": product.name,
+                "description": product.description,
+                "condition": product.condition,
+                "upload_status": product.upload_status,
+                "is_refundable": product.is_refundable,
+                "refund_days": product.refund_days,
+                "category_admin": {
+                    "id": str(product.category_admin.id),
+                    "name": product.category_admin.name,
+                } if product.category_admin else None,
+            }
+        }, status=status.HTTP_200_OK)
+
+        
     @action(detail=False, methods=['get'], url_path='global-categories')    
     def get_global_categories(self, request):
         """
@@ -16804,6 +16921,220 @@ class SellerProducts(viewsets.ModelViewSet):
                 'error': f'Image prediction failed: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['get'], url_path='get_product')
+    def get_product(self, request, pk=None):
+        try:
+            product = Product.objects.select_related(
+                'shop', 'customer__customer', 'category', 'category_admin'
+            ).prefetch_related(
+                'variants', 'productmedia_set', 'reviews__customer__customer'
+            ).get(pk=pk)
+
+            user_id = request.query_params.get('user_id')
+            if not user_id or str(product.customer.customer_id) != str(user_id):
+                return Response({
+                    "success": False,
+                    "error": "You don't have permission to view this product"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            variants_data = []
+            for variant in product.variants.all():
+                options = []
+                if variant.option_ids and variant.option_map:
+                    try:
+                        if isinstance(variant.option_ids, list) and isinstance(variant.option_map, dict):
+                            for opt_id in variant.option_ids:
+                                if opt_id in variant.option_map:
+                                    opt = variant.option_map[opt_id]
+                                    options.append({
+                                        "id": opt_id,
+                                        "name": opt.get("name", ""),
+                                        "value": opt.get("value", ""),
+                                        "title": opt.get("title", "")
+                                    })
+                    except:
+                        pass
+
+                variants_data.append({
+                    "id": str(variant.id),
+                    "title": variant.title,
+                    "sku_code": variant.sku_code,
+                    "price": str(variant.price) if variant.price else None,
+                    "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                    "quantity": variant.quantity,
+                    "weight": str(variant.weight) if variant.weight else None,
+                    "weight_unit": variant.weight_unit,
+                    "critical_trigger": variant.critical_trigger,
+                    "is_active": variant.is_active,
+                    "is_refundable": variant.is_refundable,
+                    "refund_days": variant.refund_days,
+                    "allow_swap": variant.allow_swap,
+                    "swap_type": variant.swap_type,
+                    "original_price": str(variant.original_price) if variant.original_price else None,
+                    "usage_period": variant.usage_period,
+                    "usage_unit": variant.usage_unit,
+                    "depreciation_rate": variant.depreciation_rate,
+                    "minimum_additional_payment": str(variant.minimum_additional_payment),
+                    "maximum_additional_payment": str(variant.maximum_additional_payment),
+                    "swap_description": variant.swap_description,
+                    "critical_stock": variant.critical_stock,
+                    "image": get_media_url(variant.image) if variant.image else None,
+                    "option_title": variant.option_title,
+                    "option_ids": variant.option_ids,
+                    "option_map": variant.option_map,
+                    "options": options,
+                    "created_at": variant.created_at.isoformat() if variant.created_at else None,
+                    "updated_at": variant.updated_at.isoformat() if variant.updated_at else None,
+                })
+
+            media_data = []
+            for media in product.productmedia_set.all():
+                media_data.append({
+                    "id": str(media.id),
+                    "file_data": get_media_url(media.file_data) if media.file_data else None,
+                    "file_type": media.file_type
+                })
+
+            reviews_data = []
+            total_rating = 0
+            for review in product.reviews.all():
+                reviews_data.append({
+                    "id": str(review.id),
+                    "rating": review.rating,
+                    "comment": review.comment,
+                    "customer": {
+                        "id": str(review.customer.customer.id) if review.customer else None,
+                        "username": review.customer.customer.username if review.customer else None,
+                        "first_name": review.customer.customer.first_name if review.customer else None,
+                        "last_name": review.customer.customer.last_name if review.customer else None,
+                    } if review.customer else None,
+                    "created_at": review.created_at.isoformat() if review.created_at else None,
+                    "updated_at": review.updated_at.isoformat() if review.updated_at else None,
+                })
+                total_rating += review.rating
+
+            avg_rating = total_rating / len(reviews_data) if reviews_data else 0
+
+            active_variants = product.variants.filter(is_active=True)
+            total_stock = sum(v.quantity for v in active_variants)
+            min_price_variant = active_variants.filter(price__isnull=False).order_by('price').first()
+            max_price_variant = active_variants.filter(price__isnull=False).order_by('-price').first()
+            low_stock = active_variants.filter(quantity__lt=5, quantity__gt=0).count()
+            out_of_stock = active_variants.filter(quantity=0).count()
+
+            variant_stats = {
+                "total_variants": product.variants.count(),
+                "active_variants": active_variants.count(),
+                "total_stock": total_stock,
+                "min_price": str(min_price_variant.price) if min_price_variant else None,
+                "max_price": str(max_price_variant.price) if max_price_variant else None,
+                "low_stock_variants": low_stock,
+                "out_of_stock_variants": out_of_stock
+            }
+
+            favorites_count = product.favorites_set.count()
+
+            product_data = {
+                "id": str(product.id),
+                "name": product.name,
+                "description": product.description,
+                "quantity": total_stock,
+                "price_range": {
+                    "min": str(min_price_variant.price) if min_price_variant else None,
+                    "max": str(max_price_variant.price) if max_price_variant else None
+                },
+                "upload_status": product.upload_status,
+                "status": product.status,
+                "condition": product.condition,
+                "is_refundable": product.is_refundable,
+                "refund_days": product.refund_days,
+                "created_at": product.created_at.isoformat() if product.created_at else None,
+                "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+                "is_removed": product.is_removed,
+                "removal_reason": product.removal_reason,
+                "removed_at": product.removed_at.isoformat() if product.removed_at else None,
+                "active_report_count": 0,
+                "favorites_count": favorites_count,
+                "average_rating": avg_rating,
+                "total_reviews": len(reviews_data),
+                "shop": {
+                    "id": str(product.shop.id) if product.shop else None,
+                    "name": product.shop.name if product.shop else None,
+                    "shop_picture": get_media_url(product.shop.shop_picture) if product.shop and product.shop.shop_picture else None,
+                    "verified": product.shop.verified if product.shop else None,
+                    "city": product.shop.city if product.shop else None,
+                    "barangay": product.shop.barangay if product.shop else None,
+                    "street": product.shop.street if product.shop else None,
+                    "contact_number": product.shop.contact_number if product.shop else None,
+                    "total_sales": str(product.shop.total_sales) if product.shop else None,
+                    "created_at": product.shop.created_at.isoformat() if product.shop else None,
+                    "is_suspended": product.shop.is_suspended if product.shop else None,
+                } if product.shop else None,
+                "customer": {
+                    "id": str(product.customer.customer.id) if product.customer else None,
+                    "username": product.customer.customer.username if product.customer else None,
+                    "email": product.customer.customer.email if product.customer else None,
+                    "first_name": product.customer.customer.first_name if product.customer else None,
+                    "last_name": product.customer.customer.last_name if product.customer else None,
+                    "contact_number": product.customer.customer.contact_number if product.customer else None,
+                    "product_limit": product.customer.product_limit if product.customer else None,
+                    "current_product_count": product.customer.current_product_count if product.customer else None,
+                } if product.customer else None,
+                "category": {
+                    "id": str(product.category.id) if product.category else None,
+                    "name": product.category.name if product.category else None,
+                } if product.category else None,
+                "category_admin": {
+                    "id": str(product.category_admin.id) if product.category_admin else None,
+                    "name": product.category_admin.name if product.category_admin else None,
+                } if product.category_admin else None,
+                "media": media_data,
+                "variants": variants_data,
+                "reviews": reviews_data,
+                "variant_stats": variant_stats,
+                "reports": {
+                    "active": 0,
+                    "resolved": 0,
+                    "total": 0,
+                    "active_reports": []
+                }
+            }
+
+            return Response({
+                "success": True,
+                "product": product_data,
+                "message": "Product retrieved successfully"
+            }, status=status.HTTP_200_OK)
+
+        except Product.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": "Product not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error getting product: {str(e)}")
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['delete'], url_path='delete_product')
+    def delete_product(self, request, pk=None):
+        user_id = request.query_params.get('user_id')
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            product = Product.objects.get(pk=pk)
+            if str(product.customer.customer_id) != str(user_id):
+                return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+            if product.upload_status != 'draft':
+                return Response({"error": "Only draft products can be deleted"}, status=status.HTTP_400_BAD_REQUEST)
+            product.delete()
+            return Response({"success": True, "message": "Draft deleted successfully"}, status=status.HTTP_200_OK)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -21498,55 +21829,58 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=False, methods=['GET'])
-    def get_order_details(self, request):
+    
+    @action(detail=False, methods=['get'], url_path='get_order_details/(?P<order_id>[^/.]+)')
+    def get_order_details(self, request, order_id=None):
         """
-        Get order details for payment page
+        Get order details by order ID
         """
-        order_id = request.query_params.get('order_id')
-        
-        if not order_id:
-            return Response({
-                'success': False,
-                'error': 'Order ID is required'
-            }, status=400)
-        
         try:
-            order = get_object_or_404(
-                Order.objects.select_related(
-                    'user',
-                    'shipping_address'
-                ).prefetch_related(
-                    'payment_set'
-                ),
-                order=order_id
-            )
+            # Try to find the order by its UUID
+            order = get_object_or_404(Order, order=order_id)
             
-            payment = order.payment_set.first()
-            payment_status = 'paid' if payment and payment.status == 'success' else 'pending'
-            
-            order_details = {
+            # You can customize what data you want to return
+            order_data = {
                 'order_id': str(order.order),
-                'total_amount': float(order.total_amount),
+                'status': order.status,
+                'approval': order.approval,
+                'total_amount': str(order.total_amount),
                 'payment_method': order.payment_method,
-                'status': payment_status,
-                'created_at': order.created_at.isoformat(),
-                'order_status': order.status,
                 'delivery_method': order.delivery_method,
-                'shipping_address': order.delivery_address_text if order.delivery_address_text else None
+                'delivery_address': order.delivery_address_text,
+                'created_at': order.created_at,
+                'updated_at': order.updated_at,
+                'user': {
+                    'id': str(order.user.id),
+                    'username': order.user.username,
+                    'email': order.user.email,
+                    'first_name': order.user.first_name,
+                    'last_name': order.user.last_name,
+                }
             }
             
-            return Response({
-                'success': True,
-                'order': order_details
-            })
+            # If you want to include shipping address details
+            if order.shipping_address:
+                order_data['shipping_address'] = {
+                    'recipient_name': order.shipping_address.recipient_name,
+                    'recipient_phone': order.shipping_address.recipient_phone,
+                    'full_address': order.shipping_address.get_full_address(),
+                    'address_type': order.shipping_address.address_type,
+                }
             
-        except (ValueError, Exception) as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-    
+            return Response(order_data, status=status.HTTP_200_OK)
+            
+        except Order.DoesNotExist:
+            return Response(
+                {'error': f'Order with ID {order_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
     @action(detail=False, methods=['POST'])
     def add_receipt(self, request):
         try:

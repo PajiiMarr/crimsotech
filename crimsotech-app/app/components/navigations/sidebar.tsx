@@ -111,13 +111,13 @@ const menuItems = [
       { title: "ComGift", url: "/comgift", icon: Gift, roles: ["customer"] },
     ]
   },
-  {
-    group: "Settings",
-    children: [
-      { title: "Subscription Plans", url: "/subscription-plan", icon: PhilippinePeso, roles: ["customer"] },
-      { title: "Notification", url: "/notifications", icon: Bell, roles: ["customer"] },
-    ]
-  },
+  // {
+  //   group: "Settings",
+  //   children: [
+  //     { title: "Subscription Plans", url: "/subscription-plan", icon: PhilippinePeso, roles: ["customer"] },
+  //     { title: "Notification", url: "/notifications", icon: Bell, roles: ["customer"] },
+  //   ]
+  // },
 
   // RIDER
   {
