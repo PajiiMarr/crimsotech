@@ -399,7 +399,7 @@ export default function ArrangeShipment() {
             [
               {
                 text: "OK",
-                onPress: () => router.push('/customer/personal-listing/orders?tab=processing')
+                // onPress: () => router.push('/customer/personal-listing/orders?tab=processing')
               }
             ]
           );
@@ -418,7 +418,7 @@ export default function ArrangeShipment() {
           [
             {
               text: "OK",
-              onPress: () => router.push('/customer/personal-listing/orders?tab=processing')
+              // onPress: () => router.push('/customer/personal-listing/orders?tab=processing')
             }
           ]
         );

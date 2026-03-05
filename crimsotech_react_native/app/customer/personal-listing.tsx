@@ -1,6 +1,6 @@
+// app/customer/personal-listing.tsx
 import React from "react";
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -21,165 +21,163 @@ import {
   RefreshCw,
   History,
 } from "lucide-react-native";
-import { useRouter } from "expo-router"; // Import the router hook
+import { useRouter } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
 import CustomerLayout from "./CustomerLayout";
 
 export default function PersonalListingPage() {
   const { userRole } = useAuth();
-  const router = useRouter(); // Initialize the router
+  const router = useRouter();
 
   // Navigate to OrderPage and pass the tab name
-  const goToOrders = (tabName) => {
+  const goToOrders = (tabName: string) => {
     router.push({
-      pathname: "/customer/orders", // Adjust path to match your folder structure
-      params: { tab: tabName }, // Pass the tab name as a parameter
+      pathname: "/customer/orders",
+      params: { tab: tabName },
     });
   };
 
   if (userRole && userRole !== "customer") {
     return (
-      <SafeAreaView style={styles.center}>
+      <View style={styles.center}>
         <Text style={styles.message}>Not authorized to view this page</Text>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <CustomerLayout>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.mainTitle}>Personal Listing</Text>
+    <CustomerLayout>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <Text style={styles.mainTitle}>Personal Listing</Text>
 
-          {/* My Orders Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>My Orders</Text>
-              <TouchableOpacity
-                style={styles.viewAllBtn}
-                onPress={() => goToOrders("To Process")}
-              >
-                <Text style={styles.viewAllText}>View all</Text>
-                <ChevronRight size={16} color="#9CA3AF" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.iconRow}>
-              <IconButton
-                Icon={ClipboardList}
-                label="To Process"
-                onPress={() => goToOrders("To Process")}
-              />
-              <IconButton
-                Icon={Package}
-                label="To Ship"
-                onPress={() => goToOrders("To Ship")}
-              />
-              <IconButton
-                Icon={Truck}
-                label="Shipped"
-                onPress={() => goToOrders("Shipped")}
-              />
-              <IconButton
-                Icon={Undo2}
-                label="Returns"
-                onPress={() => goToOrders("Returns")}
-              />
-              <IconButton
-                Icon={MessageSquare}
-                label="Review"
-                badge={2}
-                onPress={() => goToOrders("Review")}
-              />
-            </View>
+        {/* My Orders Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>My Orders</Text>
+            <TouchableOpacity
+              style={styles.viewAllBtn}
+              onPress={() => goToOrders("To Process")}
+            >
+              <Text style={styles.viewAllText}>View all</Text>
+              <ChevronRight size={16} color="#9CA3AF" />
+            </TouchableOpacity>
           </View>
 
-          {/* My Products Card */}
-          <View style={styles.card}>
-            <Text style={[styles.cardTitle, { marginBottom: 16 }]}>
-              My Products
-            </Text>
-            <View style={styles.productRow}>
-              <TouchableOpacity
-                style={styles.productBox}
-                onPress={() => router.push("/customer/selling-product")}
-              >
-                <View style={styles.productIconCircle}>
-                  <Tag size={20} color="#374151" />
-                </View>
-                <Text style={styles.productText}>Selling Products</Text>
-              </TouchableOpacity>
+          <View style={styles.iconRow}>
+            <IconButton
+              Icon={ClipboardList}
+              label="To Process"
+              onPress={() => goToOrders("To Process")}
+            />
+            <IconButton
+              Icon={Package}
+              label="To Ship"
+              onPress={() => goToOrders("To Ship")}
+            />
+            <IconButton
+              Icon={Truck}
+              label="Shipped"
+              onPress={() => goToOrders("Shipped")}
+            />
+            <IconButton
+              Icon={Undo2}
+              label="Returns"
+              onPress={() => goToOrders("Returns")}
+            />
+            <IconButton
+              Icon={MessageSquare}
+              label="Review"
+              badge={2}
+              onPress={() => goToOrders("Review")}
+            />
+          </View>
+        </View>
 
-              <TouchableOpacity
-                style={styles.productBox}
-                onPress={() => router.push("/customer/gifting-products")}
-              >
-                <View style={styles.productIconCircle}>
-                  <Gift size={20} color="#374151" />
-                </View>
-                <Text style={styles.productText}>Gifting Products</Text>
-              </TouchableOpacity>
-            </View>
+        {/* My Products Card */}
+        <View style={styles.card}>
+          <Text style={[styles.cardTitle, { marginBottom: 16 }]}>
+            My Products
+          </Text>
+          <View style={styles.productRow}>
+            <TouchableOpacity
+              style={styles.productBox}
+              onPress={() => router.push("/customer/selling-product")}
+            >
+              <View style={styles.productIconCircle}>
+                <Tag size={20} color="#374151" />
+              </View>
+              <Text style={styles.productText}>Selling Products</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.productBox}
+              onPress={() => router.push("/customer/gifting-products")}
+            >
+              <View style={styles.productIconCircle}>
+                <Gift size={20} color="#374151" />
+              </View>
+              <Text style={styles.productText}>Gifting Products</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Subscription Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Subscription</Text>
+            <TouchableOpacity
+              style={styles.viewAllBtn}
+              onPress={() => router.push("/customer/subscription-plan")}
+            >
+              <Text style={styles.viewAllText}>Details</Text>
+              <ChevronRight size={16} color="#9CA3AF" />
+            </TouchableOpacity>
           </View>
 
-          {/* Subscription Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Subscription</Text>
-              <TouchableOpacity
-                style={styles.viewAllBtn}
-                onPress={() => router.push("/customer/subscription-plan")}
-              >
-                <Text style={styles.viewAllText}>Details</Text>
-                <ChevronRight size={16} color="#9CA3AF" />
-              </TouchableOpacity>
-            </View>
+          <View style={styles.subsRow}>
+            <TouchableOpacity
+              style={styles.subsItem}
+              onPress={() => router.push("/customer/subscription-plan")}
+            >
+              <View style={styles.subsIconSquare}>
+                <Star size={20} color="#374151" />
+              </View>
+              <Text style={styles.subsText}>Subscription Plan</Text>
+            </TouchableOpacity>
 
-            <View style={styles.subsRow}>
-              <TouchableOpacity
-                style={styles.subsItem}
-                onPress={() => router.push("/customer/subscription-plan")}
-              >
-                <View style={styles.subsIconSquare}>
-                  <Star size={20} color="#374151" />
-                </View>
-                <Text style={styles.subsText}>Subscription Plan</Text>
-              </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.subsItem}
+              onPress={() => router.push("/customer/active-plan")}
+            >
+              <View style={styles.subsIconSquare}>
+                <Calendar size={20} color="#374151" />
+              </View>
+              <Text style={styles.subsText}>Active Plan</Text>
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.subsItem}
-                onPress={() => router.push("/customer/active-plan")}
-              >
-                <View style={styles.subsIconSquare}>
-                  <Calendar size={20} color="#374151" />
-                </View>
-                <Text style={styles.subsText}>Active Plan</Text>
-              </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.subsItem}
+              onPress={() => router.push("/customer/renew")}
+            >
+              <View style={styles.subsIconSquare}>
+                <RefreshCw size={20} color="#374151" />
+              </View>
+              <Text style={styles.subsText}>To Renew</Text>
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.subsItem}
-                onPress={() => router.push("/customer/renew")}
-              >
-                <View style={styles.subsIconSquare}>
-                  <RefreshCw size={20} color="#374151" />
-                </View>
-                <Text style={styles.subsText}>To Renew</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.subsItem}
-                onPress={() => router.push("/customer/history")}
-              >
-                <View style={styles.subsIconSquare}>
-                  <History size={20} color="#374151" />
-                </View>
-                <Text style={styles.subsText}>History</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={styles.subsItem}
+              onPress={() => router.push("/customer/history")}
+            >
+              <View style={styles.subsIconSquare}>
+                <History size={20} color="#374151" />
+              </View>
+              <Text style={styles.subsText}>History</Text>
+            </TouchableOpacity>
           </View>
-        </ScrollView>
-      </CustomerLayout>
-    </SafeAreaView>
+        </View>
+      </ScrollView>
+    </CustomerLayout>
   );
 }
 
@@ -214,10 +212,9 @@ const IconButton: React.FC<IconButtonProps> = ({
 );
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F9FAFB" },
-  scrollContent: { padding: 16 },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
   message: { fontSize: 16, color: "#6B7280" },
+  scrollContent: { padding: 16 },
   mainTitle: {
     fontSize: 24,
     fontWeight: "800",

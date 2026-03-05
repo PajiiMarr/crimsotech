@@ -1,9 +1,11 @@
+// app/customer/my-products.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import AxiosInstance from '../../contexts/axios';
 import CustomerLayout from './CustomerLayout';
+import { Ionicons } from '@expo/vector-icons';
 
 type ProductImage = {
   url?: string;
@@ -46,7 +48,7 @@ const getProductImage = (product: Product) => {
   return null;
 };
 
-export default function Products() {
+export default function MyProducts() {
   const { user } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,7 +96,7 @@ export default function Products() {
           <Image source={{ uri: imageUrl }} style={styles.image} />
         ) : (
           <View style={styles.imagePlaceholder}>
-            <Text style={styles.imagePlaceholderText}>No Image</Text>
+            <Ionicons name="image-outline" size={30} color="#9CA3AF" />
           </View>
         )}
         <View style={styles.cardBody}>
@@ -111,39 +113,90 @@ export default function Products() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <CustomerLayout disableScroll>
-        {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color="#F97316" />
-            <Text style={styles.loadingText}>Loading products...</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={products}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            contentContainerStyle={styles.listContent}
-            onRefresh={onRefresh}
-            refreshing={refreshing}
-            ListEmptyComponent={
-              <View style={styles.center}>
-                <Text style={styles.emptyText}>No products available.</Text>
-              </View>
-            }
-          />
-        )}
-      </CustomerLayout>
-    </SafeAreaView>
+    <CustomerLayout disableScroll>
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#EE4D2D" />
+          <Text style={styles.loadingText}>Loading products...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={products}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          ListHeaderComponent={
+            <View style={styles.header}>
+              <Text style={styles.title}>My Products</Text>
+              <TouchableOpacity 
+                style={styles.addButton}
+                // onPress={() => router.push('/products')}
+              >
+                <Ionicons name="add" size={24} color="#FFFFFF" />
+                <Text style={styles.addButtonText}>Add Product</Text>
+              </TouchableOpacity>
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="cube-outline" size={60} color="#E0E0E0" />
+              <Text style={styles.emptyText}>No products yet</Text>
+              <Text style={styles.emptySubtext}>Start adding your products to sell!</Text>
+              <TouchableOpacity 
+                style={styles.emptyAddButton}
+                // onPress={() => router.push('/customer/add-product')}
+              >
+                <Text style={styles.emptyAddButtonText}>Add Your First Product</Text>
+              </TouchableOpacity>
+            </View>
+          }
+        />
+      )}
+    </CustomerLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8F9FA' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  center: { 
+    flex: 1, 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 24,
+    minHeight: 400
+  },
   loadingText: { marginTop: 10, color: '#6B7280' },
-  emptyText: { color: '#6B7280', fontSize: 14 },
-  listContent: { padding: 16, paddingBottom: 80 },
+  listContent: { 
+    padding: 16, 
+    paddingBottom: 80 
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingHorizontal: 4,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EE4D2D',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 4,
+  },
+  addButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
   card: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
@@ -152,13 +205,53 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#F3F4F6',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   image: { width: 90, height: 90, backgroundColor: '#E5E7EB' },
-  imagePlaceholder: { width: 90, height: 90, backgroundColor: '#E5E7EB', alignItems: 'center', justifyContent: 'center' },
-  imagePlaceholderText: { fontSize: 11, color: '#9CA3AF' },
+  imagePlaceholder: { 
+    width: 90, 
+    height: 90, 
+    backgroundColor: '#E5E7EB', 
+    alignItems: 'center', 
+    justifyContent: 'center' 
+  },
   cardBody: { flex: 1, padding: 12 },
   name: { fontSize: 14, fontWeight: '700', color: '#111827' },
   shopName: { fontSize: 12, color: '#6B7280', marginTop: 4 },
-  price: { fontSize: 14, fontWeight: '700', color: '#F97316', marginTop: 6 },
+  price: { fontSize: 14, fontWeight: '700', color: '#EE4D2D', marginTop: 6 },
   priceUnavailable: { fontSize: 12, color: '#9CA3AF', marginTop: 6 },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 20,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  emptyAddButton: {
+    backgroundColor: '#EE4D2D',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 24,
+  },
+  emptyAddButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
 });
