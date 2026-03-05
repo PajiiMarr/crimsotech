@@ -42,6 +42,24 @@ import {
 } from 'lucide-react';
 import AxiosInstance from '~/components/axios/Axios';
 
+// Helper function to get full image URL
+const getFullImageUrl = (url: string | null | undefined): string => {
+  if (!url) return '/phon.jpg';
+  
+  // If it's already a full URL, return it
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  
+  // Get the base URL from your API
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  
+  // Ensure the URL starts with a slash
+  const cleanUrl = url.startsWith('/') ? url : `/${url}`;
+  
+  return `${baseUrl}${cleanUrl}`;
+};
+
 // Define interfaces based on backend response
 interface OrderItem {
   checkout_id: string;
@@ -54,7 +72,7 @@ interface OrderItem {
   quantity: number;
   price: string;
   subtotal: string;
-  status: string; // This should match order.status from backend
+  status: string;
   remarks: string;
   purchased_at: string;
   voucher_applied: {
@@ -76,7 +94,7 @@ interface OrderItem {
 
 interface PurchaseOrder {
   order_id: string;
-  status: string; // Order status from Order model
+  status: string;
   total_amount: string;
   payment_method: string;
   delivery_method: string | null;
@@ -184,7 +202,6 @@ const STATUS_CONFIG = {
 
 // Helper function to map backend status to frontend status
 const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
-  // Normalize input to avoid mismatches from casing or stray whitespace
   const normalized = (backendStatus || '').toString().trim().toLowerCase();
 
   switch (normalized) {
@@ -199,9 +216,9 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
     case 'picked_up':
       return 'picked_up';
     case 'delivered':
-      return 'delivered'; // Show delivered UI separately from to_receive
+      return 'delivered';
     case 'completed':
-      return 'completed'; // This will show completed UI in view-order
+      return 'completed';
     case 'cancelled':
       return 'cancelled';
     case 'refunded':
@@ -247,14 +264,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         order.items.forEach((item: OrderItem, index: number) => {
           console.log(`Item ${index} has status: ${item.status}, order status: ${order.status}`);
           
-          // Use ORDER status as the primary status (item.status should match order.status from backend)
           const statusToUse = item.status || order.status || 'pending';
           const mappedStatus = mapStatus(statusToUse);
           
-          // Get image URL from backend or use default
-          const imageUrl = item.primary_image?.url || 
-                          (item.product_images && item.product_images[0]?.url) || 
-                          '/phon.jpg';
+          // FIXED: Get image URL and make it absolute using the helper function
+          const rawImageUrl = item.primary_image?.url || 
+                            (item.product_images && item.product_images[0]?.url);
+          const imageUrl = getFullImageUrl(rawImageUrl);
           
           const purchaseItem: PurchaseItem = {
             id: `${order.order_id}-${index}`,
@@ -274,7 +290,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
             can_review: item.can_review || false
           };
 
-          // Add reason for cancelled or return/refund items
           if (item.status === 'cancelled' && item.remarks) {
             purchaseItem.reason = item.remarks;
           }
@@ -282,7 +297,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           purchaseItems.push(purchaseItem);
         });
       } else {
-        // If order has no items, still create a purchase item with order info
         const purchaseItem: PurchaseItem = {
           id: order.order_id,
           order_id: order.order_id,
@@ -320,7 +334,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   } catch (error) {
     console.error('Error fetching purchases:', error);
     
-    // Return empty data on error
     return {
       user: {
         id: user?.user_id || '',
@@ -372,15 +385,10 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
 
       const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
 
-      // Processing tab:
-      // - Non-pickup: pending or in_progress
-      // - Pickup (Cash on Pickup + Pickup from Store): pending, in_progress or ready_for_pickup
       if ((status === 'pending' || status === 'in_progress') || (isPickupCash && status === 'ready_for_pickup')) {
         counts.processing++;
       }
 
-      // Shipped tab:
-      // Includes shipping flows and pickup completion/picked states
       const rawOrderStatus = (item.order?.status || '').toString().trim().toLowerCase();
       if (
         status === 'to_ship' ||
@@ -393,12 +401,10 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
         counts.shipped++;
       }
 
-      // Rate tab (keep showing items eligible for rating regardless of moved tab policy)
       if (status === 'completed' && item.can_review) {
         counts.rate++;
       }
 
-      // Returns tab (cancelled or return_refund)
       if (status === 'cancelled' || status === 'return_refund') {
         counts.returns++;
       }
@@ -408,7 +414,6 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
   }, [purchaseItems]);
 
   useEffect(() => {
-    // Apply filters whenever search or activeTab changes
     let filtered = purchaseItems;
     
     if (search) {
@@ -427,7 +432,6 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
             const deliveryMethod = (item.order.delivery_method || '').toString().toLowerCase();
             const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
 
-            // For pickup orders using Cash on Pickup + Pickup from Store, include ready_for_pickup in processing
             if (isPickupCash) {
               return item.status === 'pending' || item.status === 'in_progress' || item.status === 'ready_for_pickup';
             }
@@ -450,7 +454,6 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
           });
           break;
         case 'rate':
-          // Show completed items that can be rated (keep this as a separate view for ratings)
           filtered = filtered.filter(item => 
             item.status === 'completed' && item.can_review
           );
@@ -529,7 +532,6 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
   const getActionButtons = (item: PurchaseItem) => {
     const status = item.status;
     
-    // Processing items (pending/in_progress) - Show Cancel button
     if (status === 'pending' || status === 'in_progress') {
       return (
         <Button
@@ -544,7 +546,6 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
       );
     }
     
-    // Shipped items (to_ship) - Show Track button
     if (status === 'to_ship') {
       return (
         <Button
@@ -559,37 +560,7 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
       );
     }
     
-    // Delivered items (to_receive) - Show Track and Refund buttons
-    if (status === 'to_receive') {
-      return (
-        <>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-            title="Track Order"
-            onClick={() => navigate(`/track-order/${item.order_id}`)}
-          >
-            <Truck className="w-3 h-3" />
-          </Button>
-          {item.is_refundable && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-              title="Request Refund"
-              onClick={() => navigate(`/request-refund-return/${item.order_id}?product_id=${item.product_id}`)}
-            >
-              <RefreshCcw className="w-3 h-3 mr-1" />
-              <span className="text-xs">Refund</span>
-            </Button>
-          )}
-        </>
-      );
-    }
-
-    // Delivered items (delivered) - same UI as to_receive but separate status
-    if (status === 'delivered') {
+    if (status === 'to_receive' || status === 'delivered') {
       return (
         <>
           <Button
@@ -617,25 +588,21 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
       );
     }
     
-    // Completed items - Show Rate button if applicable
-    if (status === 'completed') {
-      if (item.can_review) {
-        return (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
-            title="Rate Product"
-            onClick={() => navigate(`/product-rate?productId=${item.product_id}&orderId=${item.order_id}`)}
-          >
-            <MessageSquare className="w-3 h-3 mr-1" />
-            <span className="text-xs">Rate</span>
-          </Button>
-        );
-      }
+    if (status === 'completed' && item.can_review) {
+      return (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
+          title="Rate Product"
+          onClick={() => navigate(`/product-rate?productId=${item.product_id}&orderId=${item.order_id}`)}
+        >
+          <MessageSquare className="w-3 h-3 mr-1" />
+          <span className="text-xs">Rate</span>
+        </Button>
+      );
     }
     
-    // Returns items - Show Details button
     if (status === 'cancelled' || status === 'return_refund') {
       return (
         <Button
@@ -843,17 +810,7 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
                           {getActionButtons(item)}
                           
                           {/* Contact Seller button */}
-                          {item.status !== 'completed' && item.status !== 'cancelled' && item.shop_id && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-6 w-6 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
-                              title="Contact Seller"
-                              onClick={() => navigate(`/chat/seller/${item.shop_id}`)}
-                            >
-                              <MessageCircle className="w-3 h-3" />
-                            </Button>
-                          )}
+                         
                         </div>
                       </div>
                     </CardContent>

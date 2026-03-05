@@ -10,6 +10,13 @@ import { Badge } from '~/components/ui/badge';
 import { Skeleton } from '~/components/ui/skeleton';
 import { Input } from '~/components/ui/input';
 import { Link } from 'react-router';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { 
   Package,
   Clock,
@@ -32,9 +39,13 @@ import {
   ChevronUp,
   Search,
   ShoppingBag,
-  DollarSign
+  DollarSign,
+  Camera,
+  X,
+  Image as ImageIcon,
+  Download
 } from 'lucide-react';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
 import DateRangeFilter from '~/components/ui/date-range-filter';
 
@@ -62,7 +73,7 @@ interface OrderHistoryData {
   recipient_phone: string;
   
   // Delivery details
-  status: 'pending' | 'picked_up' | 'in_progress' | 'delivered' | 'cancelled';
+  status: 'pending' | 'picked_up' | 'in_progress' | 'delivered' | 'completed' | 'cancelled';
   distance_km?: number;
   estimated_minutes?: number;
   actual_minutes?: number;
@@ -104,6 +115,7 @@ interface OrderHistoryData {
 interface HistoryMetrics {
   total_deliveries: number;
   delivered_count: number;
+  completed_count: number;
   cancelled_count: number;
   total_earnings: number;
   avg_delivery_time: number;
@@ -117,6 +129,16 @@ interface HistoryMetrics {
     earnings_growth?: number;
     rating_growth?: number;
   };
+}
+
+interface Proof {
+  id: string;
+  file_url: string;
+  file_name: string;
+  file_type: string;
+  uploaded_at: string;
+  proof_type: string;
+  delivery_id: string;
 }
 
 interface LoaderData {
@@ -154,6 +176,11 @@ const STATUS_CONFIG = {
     label: 'Delivered', 
     color: 'bg-green-100 text-green-800',
     icon: CheckCircle
+  },
+  completed: { 
+    label: 'Completed', 
+    color: 'bg-green-100 text-green-800',
+    icon: Award
   },
   cancelled: { 
     label: 'Cancelled', 
@@ -203,6 +230,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
     const [metrics, setMetrics] = useState<HistoryMetrics>({
       total_deliveries: 0,
       delivered_count: 0,
+      completed_count: 0,
       cancelled_count: 0,
       total_earnings: 0,
       avg_delivery_time: 0,
@@ -222,6 +250,14 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
       end: new Date(),
       rangeType: 'monthly' as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
     });
+
+    // State for proof modal
+    const [showProofModal, setShowProofModal] = useState(false);
+    const [selectedProofs, setSelectedProofs] = useState<Proof[]>([]);
+    const [selectedProofIndex, setSelectedProofIndex] = useState(0);
+    const [loadingProofs, setLoadingProofs] = useState(false);
+    const [currentDeliveryId, setCurrentDeliveryId] = useState<string | null>(null);
+    const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
     const [activeTab, setActiveTab] = useState<'active' | 'completed' | 'cancelled'>('active');
 
@@ -259,6 +295,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
           setMetrics(response.data.metrics || {
             total_deliveries: 0,
             delivered_count: 0,
+            completed_count: 0,
             cancelled_count: 0,
             total_earnings: 0,
             avg_delivery_time: 0,
@@ -276,6 +313,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
         setMetrics({
           total_deliveries: 0,
           delivered_count: 0,
+          completed_count: 0,
           cancelled_count: 0,
           total_earnings: 0,
           avg_delivery_time: 0,
@@ -288,6 +326,73 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
       } finally {
         setIsLoading(false);
       }
+    };
+
+    // Fetch proofs for a delivery
+    const fetchDeliveryProofs = async (deliveryId: string) => {
+  setLoadingProofs(true);
+  try {
+    const response = await AxiosInstance.get(`/rider-proof/delivery/${deliveryId}/proofs/`, {
+      headers: { 'X-User-Id': user.user_id }
+    });
+    
+    if (response.data?.success) {
+      // The API returns full Supabase URLs in file_url
+      const proofs = response.data.proofs || [];
+        console.log('Proofs with URLs:', proofs.map((p: Proof) => p.file_url)); // Should be full URLs
+        setSelectedProofs(proofs);
+      setSelectedProofIndex(0);
+      setShowProofModal(true);
+    }
+  } catch (error) {
+    console.error('Error fetching proofs:', error);
+  } finally {
+    setLoadingProofs(false);
+  }
+};
+
+    // Ensure URL is absolute
+    const ensureAbsoluteUrl = (url: string): string => {
+      if (!url) return '';
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+      }
+      // If it's a relative URL, prepend the API base URL
+      const baseUrl = import.meta.env.VITE_API_URL || window.location.origin;
+      if (url.startsWith('/')) {
+        return `${baseUrl}${url}`;
+      }
+      return `${baseUrl}/${url}`;
+    };
+
+    // Handle image error
+    const handleImageError = (proofId: string) => {
+      setImageErrors(prev => ({ ...prev, [proofId]: true }));
+    };
+
+    // Handle next/previous proof
+    const handleNextProof = () => {
+      if (selectedProofIndex < selectedProofs.length - 1) {
+        setSelectedProofIndex(selectedProofIndex + 1);
+      }
+    };
+
+    const handlePrevProof = () => {
+      if (selectedProofIndex > 0) {
+        setSelectedProofIndex(selectedProofIndex - 1);
+      }
+    };
+
+    // Download image
+    const handleDownloadImage = (proof: Proof) => {
+      if (!proof.file_url) return;
+      
+      const link = document.createElement('a');
+      link.href = proof.file_url;
+      link.download = proof.file_name || `proof-${proof.id}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     };
 
     // Get status badge (matching active orders)
@@ -346,8 +451,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
     // Filter table data by selected tab
     const filteredTableData = useMemo(() => {
       const activeStatuses = ['pending', 'accepted', 'picked_up', 'in_progress'];
-      const completedStatuses = ['delivered'];
-      const cancelledStatuses = ['cancelled'];
+      const completedStatuses = ['delivered', 'completed']; // Include both delivered and completed
 
       let filtered = historyData;
       
@@ -359,7 +463,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
           filtered = historyData.filter(d => completedStatuses.includes(d.status));
           break;
         case 'cancelled':
-          filtered = historyData.filter(d => cancelledStatuses.includes(d.status));
+          filtered = historyData.filter(d => d.status === 'cancelled');
           break;
       }
 
@@ -380,8 +484,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
     // Get tab count
     const getTabCount = (tabId: string) => {
       const activeStatuses = ['pending', 'accepted', 'picked_up', 'in_progress'];
-      const completedStatuses = ['delivered'];
-      const cancelledStatuses = ['cancelled'];
+      const completedStatuses = ['delivered', 'completed'];
 
       switch (tabId) {
         case 'active':
@@ -389,7 +492,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
         case 'completed':
           return historyData.filter(d => completedStatuses.includes(d.status)).length;
         case 'cancelled':
-          return historyData.filter(d => cancelledStatuses.includes(d.status)).length;
+          return historyData.filter(d => d.status === 'cancelled').length;
         default:
           return 0;
       }
@@ -459,7 +562,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                                   <p className="text-lg font-bold mt-1">{metrics.total_deliveries}</p>
                                   <div className="flex gap-1 text-[10px] text-muted-foreground mt-1">
                                     <span className="flex items-center gap-0.5">
-                                      <CheckCircle className="w-2 h-2 text-green-500" /> {metrics.delivered_count}
+                                      <CheckCircle className="w-2 h-2 text-green-500" /> {metrics.delivered_count + metrics.completed_count}
                                     </span>
                                     <span className="flex items-center gap-0.5">
                                       <AlertCircle className="w-2 h-2 text-red-500" /> {metrics.cancelled_count}
@@ -744,18 +847,26 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                                                   </Link>
                                                 </Button>
                                                 
-                                                {/* Only show Add Proof/Proofs button for delivered orders */}
-                                                {delivery.status === 'delivered' && (
+                                                {/* Show View Proof button for completed/delivered orders */}
+                                                {(delivery.status === 'delivered' || delivery.status === 'completed') && (
                                                   <Button
                                                     size="sm"
                                                     variant="outline"
                                                     className="h-6 px-2 text-[10px]"
-                                                    asChild
+                                                    onClick={() => fetchDeliveryProofs(delivery.id)}
+                                                    disabled={loadingProofs && currentDeliveryId === delivery.id}
                                                   >
-                                                    <Link to={`/rider/delivery/${delivery.id}/add-proof`}>
-                                                      <Package className="w-2.5 h-2.5 mr-1" />
-                                                      {(delivery.proofs_count || 0) > 0 ? 'Proofs' : 'Add Proof'}
-                                                    </Link>
+                                                    {loadingProofs && currentDeliveryId === delivery.id ? (
+                                                      <span className="flex items-center gap-1">
+                                                        <span className="animate-spin">⚪</span>
+                                                        Loading...
+                                                      </span>
+                                                    ) : (
+                                                      <>
+                                                        <Camera className="w-2.5 h-2.5 mr-1" />
+                                                        View Proof {(delivery.proofs_count || 0) > 0 && `(${delivery.proofs_count})`}
+                                                      </>
+                                                    )}
                                                   </Button>
                                                 )}
                                               </div>
@@ -771,6 +882,161 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                     </Card>
                 </div>
             </SidebarLayout>
+
+            {/* Proof of Delivery Modal */}
+            <Dialog open={showProofModal} onOpenChange={setShowProofModal}>
+              <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Camera className="w-5 h-5" />
+                    Proof of Delivery
+                    {selectedProofs.length > 0 && (
+                      <span className="text-sm font-normal text-gray-500 ml-2">
+                        {selectedProofIndex + 1} of {selectedProofs.length}
+                      </span>
+                    )}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {selectedProofs.length > 0 && selectedProofs[selectedProofIndex]?.proof_type && (
+                      <>Type: {selectedProofs[selectedProofIndex].proof_type}</>
+                    )}
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="flex-1 overflow-y-auto py-4">
+                  {loadingProofs ? (
+                    <div className="flex flex-col items-center justify-center h-64">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-4"></div>
+                      <p className="text-sm text-gray-500">Loading proofs...</p>
+                    </div>
+                  ) : selectedProofs.length > 0 ? (
+                    <div className="space-y-4">
+                      {/* Main Image */}
+                      <div className="relative bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center" style={{ minHeight: '400px' }}>
+                        {selectedProofs[selectedProofIndex]?.file_url && !imageErrors[selectedProofs[selectedProofIndex].id] ? (
+                          <>
+                            <img 
+                              key={selectedProofs[selectedProofIndex].id}
+                              src={selectedProofs[selectedProofIndex].file_url}
+                              alt={`Proof ${selectedProofIndex + 1}`}
+                              className="max-w-full max-h-[500px] object-contain"
+                              onError={() => handleImageError(selectedProofs[selectedProofIndex].id)}
+                              loading="lazy"
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="absolute top-2 right-2 bg-white/90 hover:bg-white"
+                              onClick={() => handleDownloadImage(selectedProofs[selectedProofIndex])}
+                            >
+                              <Download className="w-4 h-4" />
+                            </Button>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-64">
+                            <ImageIcon className="w-12 h-12 text-gray-300 mb-2" />
+                            <p className="text-sm text-gray-500">Image not available</p>
+                            {selectedProofs[selectedProofIndex]?.file_url && (
+                              <Button
+                                size="sm"
+                                variant="link"
+                                className="mt-2"
+                                onClick={() => window.open(selectedProofs[selectedProofIndex].file_url, '_blank')}
+                              >
+                                Open in new tab
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Thumbnail Grid */}
+                      {selectedProofs.length > 1 && (
+                        <div className="grid grid-cols-6 gap-2 mt-4">
+                          {selectedProofs.map((proof, index) => (
+                            <button
+                              key={proof.id}
+                              onClick={() => setSelectedProofIndex(index)}
+                              className={`relative aspect-square rounded-md overflow-hidden border-2 ${
+                                index === selectedProofIndex ? 'border-blue-500' : 'border-transparent hover:border-gray-300'
+                              }`}
+                            >
+                              {proof.file_url && !imageErrors[proof.id] ? (
+                                <img 
+                                  src={proof.file_url}
+                                  alt={`Thumbnail ${index + 1}`}
+                                  className="w-full h-full object-cover"
+                                  onError={() => handleImageError(proof.id)}
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+                                  <ImageIcon className="w-4 h-4 text-gray-400" />
+                                </div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Proof Details */}
+                      <div className="bg-gray-50 rounded-lg p-4 text-sm">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-gray-500 text-xs">Uploaded At</p>
+                            <p className="font-medium">
+                              {selectedProofs[selectedProofIndex]?.uploaded_at 
+                                ? formatDate(selectedProofs[selectedProofIndex].uploaded_at)
+                                : 'N/A'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 text-xs">File Type</p>
+                            <p className="font-medium">{selectedProofs[selectedProofIndex]?.file_type || 'N/A'}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-gray-500 text-xs">File Name</p>
+                            <p className="font-medium text-xs break-all">
+                              {selectedProofs[selectedProofIndex]?.file_name || 'N/A'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Navigation Buttons */}
+                      {selectedProofs.length > 1 && (
+                        <div className="flex justify-between items-center mt-4">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handlePrevProof}
+                            disabled={selectedProofIndex === 0}
+                          >
+                            Previous
+                          </Button>
+                          <span className="text-xs text-gray-500">
+                            {selectedProofIndex + 1} / {selectedProofs.length}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleNextProof}
+                            disabled={selectedProofIndex === selectedProofs.length - 1}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-64">
+                      <Camera className="w-12 h-12 text-gray-300 mb-2" />
+                      <p className="text-sm text-gray-500">No proofs available for this delivery</p>
+                    </div>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
         </UserProvider>
     )
 }

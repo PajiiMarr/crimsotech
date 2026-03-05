@@ -841,18 +841,18 @@ export default function CartPage() {
 
   if (authLoading || loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <CustomerLayout>
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#F97316" />
           <Text style={styles.loadingText}>Loading cart...</Text>
         </View>
-      </SafeAreaView>
+      </CustomerLayout>
     );
   }
 
   if (cartStores.length === 0) {
     return (
-      <SafeAreaView style={styles.container}>
+      <CustomerLayout>
         <View style={styles.center}>
           <View style={styles.emptyIconContainer}>
             <MaterialIcons name="shopping-cart" size={48} color="#F97316" />
@@ -863,42 +863,40 @@ export default function CartPage() {
           </Text>
           <TouchableOpacity 
             style={styles.shopButton}
-            onPress={() => router.push('/')}
+            onPress={() => router.push('/customer/home')}
           >
             <Text style={styles.shopButtonText}>Start Shopping</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </CustomerLayout>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.headerSafeArea}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.shopName}>Shopping Cart</Text>
-            <Text style={styles.pageTitle}>My Items ({allItems.length})</Text>
-          </View>
-          <View style={styles.headerActions}>
+    <CustomerLayout>
+      {/* Cart Header */}
+      <View style={styles.cartHeader}>
+        <View>
+          <Text style={styles.shopName}>Shopping Cart</Text>
+          <Text style={styles.pageTitle}>My Items ({allItems.length})</Text>
+        </View>
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            onPress={() => handleSelectAll(!allSelected)}
+            style={styles.selectAllButton}
+          >
+            <Text style={styles.headerActionText}>
+              {allSelected ? 'Deselect All' : 'Select All'}
+            </Text>
+          </TouchableOpacity>
+          {selectedItems.length > 0 && (
             <TouchableOpacity 
-              onPress={() => handleSelectAll(!allSelected)}
-              style={styles.selectAllButton}
+              onPress={removeSelectedItems}
+              style={styles.removeSelectedButton}
             >
-              <Text style={styles.headerActionText}>
-                {allSelected ? 'Deselect All' : 'Select All'}
-              </Text>
+              <MaterialIcons name="delete-outline" size={20} color="#EF4444" />
             </TouchableOpacity>
-            {selectedItems.length > 0 && (
-              <TouchableOpacity 
-                onPress={removeSelectedItems}
-                style={styles.removeSelectedButton}
-              >
-                <MaterialIcons name="delete-outline" size={20} color="#EF4444" />
-              </TouchableOpacity>
-            )}
-          </View>
+          )}
         </View>
       </View>
 
@@ -927,38 +925,17 @@ export default function CartPage() {
           />
         ))}
 
-        
+        {/* Order Summary */}
+        <OrderSummary
+          subtotal={subtotal}
+          discount={discount}
+          delivery={delivery}
+          itemCount={selectedItems.length}
+          shopCount={selectedShops}
+          onApplyCoupon={() => setCouponModalVisible(true)}
+          onProceedToCheckout={handleCheckout}
+        />
       </ScrollView>
-
-      {/* Footer */}
-      <View style={styles.footer}>
-        <View style={styles.orderSummaryFooter}>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Total</Text>
-            <Text style={styles.summaryValue}>₱{subtotal.toFixed(2)}</Text>
-          </View>
-          <Text style={styles.totalVat}>Including VAT</Text>
-        </View>
-        
-        <TouchableOpacity
-          style={[
-            styles.checkoutButton,
-            selectedItems.length === 0 && styles.checkoutButtonDisabled
-          ]}
-          onPress={handleCheckout}
-          disabled={selectedItems.length === 0}
-        >
-          <MaterialCommunityIcons name="truck-fast-outline" size={20} color="#FFFFFF" />
-          <Text style={styles.checkoutButtonText}>
-            Checkout ({selectedItems.length})
-          </Text>
-        </TouchableOpacity>
-        
-        <View style={styles.footerNotes}>
-          <MaterialIcons name="security" size={14} color="#6B7280" />
-          <Text style={styles.footerNoteText}>Secure checkout • Your payment information is encrypted</Text>
-        </View>
-      </View>
 
       {/* Coupon Modal */}
       <CouponModal
@@ -966,20 +943,17 @@ export default function CartPage() {
         onClose={() => setCouponModalVisible(false)}
         onApply={handleApplyCoupon}
       />
-    </SafeAreaView>
+    </CustomerLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-  },
   center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    minHeight: 400,
   },
   loadingText: {
     marginTop: 12,
@@ -1020,19 +994,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  headerSafeArea: { 
-    backgroundColor: '#FFFFFF', 
-    paddingTop: Platform.OS === 'android' ? 40 : 0,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  header: {
+  cartHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 16,
     backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   },
   shopName: { 
     fontSize: 12, 
@@ -1220,21 +1190,6 @@ const styles = StyleSheet.create({
     color: '#F97316',
     marginBottom: 4,
   },
-  removeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-    backgroundColor: '#FEF2F2',
-    gap: 4,
-  },
-  removeText: {
-    fontSize: 12,
-    color: '#EF4444',
-    fontWeight: '500',
-  },
   shopSummaryContainer: {
     padding: 16,
     backgroundColor: '#FFF7ED',
@@ -1265,6 +1220,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
     marginTop: 16,
+    marginBottom: 20,
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
@@ -1414,77 +1370,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
-  },
-  infoCard: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 16,
-    marginBottom: 100,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#F3F4F6',
-  },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#6B7280',
-    lineHeight: 18,
-  },
-  footer: {
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 8,
-      },
-    }),
-  },
-  orderSummaryFooter: {
-    marginBottom: 12,
-  },
-  checkoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#F97316',
-    paddingVertical: 16,
-    borderRadius: 8,
-  },
-  checkoutButtonDisabled: {
-    opacity: 0.5,
-  },
-  checkoutButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  footerNotes: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 12,
-  },
-  footerNoteText: {
-    fontSize: 11,
-    color: '#6B7280',
   },
   modalOverlay: {
     flex: 1,

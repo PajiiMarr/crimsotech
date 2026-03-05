@@ -85,7 +85,7 @@ interface OrderItem {
   subtotal: string;
   status: string;
   purchased_at: string;
-  primary_image: {
+  primary_image: {  // This should match what backend sends
     url: string;
     file_type: string;
   } | null;
@@ -268,34 +268,35 @@ export default function ViewOrder({ loaderData }: any) {
         console.log("Backend order data:", backendData);
 
         // Transform items to frontend format
-        const items = (backendData.items || []).map((item: OrderItem, index: number) => {
-          const price = Number.parseFloat(item.price) || 0;
-          const subtotal = Number.parseFloat(item.subtotal) || 0;
-          const originalPrice = Number.parseFloat(item.original_price) || price * 1.1;
-          
-          return {
-            id: `${backendData.order?.id || orderId}-${index}`,
-            product_id: item.product_id,
-            checkout_id: item.checkout_id,
-            name: item.product_name,
-            description: item.product_description,
-            variant: item.product_variant,
-            price: price,
-            original_price: originalPrice,
-            quantity: item.quantity,
-            subtotal: subtotal,
-            shop_name: item.shop_info?.name || "Unknown Shop",
-            shop_id: item.shop_info?.id || null,
-            shop_picture: item.shop_info?.picture || null,
-            image_url: item.primary_image?.url || "/phon.jpg",
-            product_images: item.product_images || [],
-            is_refundable: item.is_refundable,
-            can_review: item.can_review,
-            can_return: item.can_return,
-            return_deadline: item.return_deadline,
-            purchased_at: item.purchased_at,
-          };
-        });
+       const items = (backendData.items || []).map((item: OrderItem, index: number) => {
+  // Safely access primary_image
+  const primaryImageUrl = item.primary_image?.url || 
+                         (item.product_images && item.product_images[0]?.url) || 
+                         '/phon.jpg';
+  
+  return {
+    id: `${backendData.order?.id || orderId}-${index}`,
+    product_id: item.product_id,
+    checkout_id: item.checkout_id,
+    name: item.product_name,
+    description: item.product_description,
+    variant: item.product_variant,
+    price: Number.parseFloat(item.price) || 0,
+    original_price: Number.parseFloat(item.original_price) || 0,
+    quantity: item.quantity,
+    subtotal: Number.parseFloat(item.subtotal) || 0,
+    shop_name: item.shop_info?.name || "Unknown Shop",
+    shop_id: item.shop_info?.id || null,
+    shop_picture: item.shop_info?.picture || null,
+    image_url: primaryImageUrl,  // Use the safely accessed URL
+    product_images: item.product_images || [],
+    is_refundable: item.is_refundable,
+    can_review: item.can_review,
+    can_return: item.can_return,
+    return_deadline: item.return_deadline,
+    purchased_at: item.purchased_at,
+  };
+});
 
         const computedSubtotal = items.reduce((sum: number, i: any) => sum + (i.subtotal || 0), 0);
         const total = Number.parseFloat(backendData.order_summary?.total || "0") || computedSubtotal;
