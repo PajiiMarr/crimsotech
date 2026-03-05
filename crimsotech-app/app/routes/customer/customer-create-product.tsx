@@ -6,6 +6,7 @@ import { cleanInput } from '~/clean/clean';
 import AxiosInstance from '~/components/axios/Axios';
 import CreateProductForm from '~/components/customer/customer-create-product-form';
 import { Button } from '~/components/ui/button';
+import { useMemo } from 'react';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -72,9 +73,9 @@ export async function action({ request }: Route.ActionArgs) {
   console.log('this is a formdata: ', formData);
 
   // Get basic product fields
-  const name = String(formData.get("name"));
-  const description = String(formData.get("description"));
-  const condition = String(formData.get("condition"));
+  const name = String(formData.get("name") || "");
+  const description = String(formData.get("description") || "");
+  const condition = String(formData.get("condition") || "");
   const category_admin_id = String(formData.get("category_admin_id") || "");
   const category_admin_name = String(formData.get("category_admin_name") || "");
 
@@ -314,6 +315,13 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
   const { user, globalCategories, modelClasses } = loaderData;
   const errors: FormErrors = actionData?.errors || {};
 
+  // Memoize the props to prevent unnecessary re-renders
+  const formProps = useMemo(() => ({
+    globalCategories,
+    modelClasses,
+    errors
+  }), [globalCategories, modelClasses, errors]);
+
   return (
     <UserProvider user={user}>
       <div className="mx-auto max-w-7xl space-y-8 px-4 py-8">
@@ -331,11 +339,7 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
         
         <div className="grid grid-cols-12 gap-8">
           <div className="col-span-12">
-            <CreateProductForm 
-              globalCategories={globalCategories}
-              modelClasses={modelClasses}
-              errors={errors}
-            />
+            <CreateProductForm {...formProps} />
           </div>
         </div>
       </div>
