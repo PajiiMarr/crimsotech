@@ -22322,8 +22322,34 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             ) 
 
-    
 class PurchasesBuyer(viewsets.ViewSet):
+    # Add this helper method at the beginning of the class
+    def _auto_complete_if_needed(self, order):
+        """Auto-complete order if delivered for 7+ days"""
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Only process delivered orders that aren't completed
+        if order.status != 'delivered' or order.completed_at:
+            return False
+        
+        # Get delivery record
+        delivery = Delivery.objects.filter(order=order).first()
+        if not delivery or not delivery.delivered_at:
+            return False
+        
+        # Check if 7 days have passed
+        seven_days_ago = timezone.now() - timedelta(days=7)
+        if delivery.delivered_at <= seven_days_ago:
+            order.status = 'completed'
+            order.completed_at = timezone.now()
+            order.save(update_fields=['status', 'completed_at'])
+            return True
+        
+        return False
+
+    
+
     @action(detail=False, methods=['get'])
     def user_purchases(self, request):
         user_id = request.headers.get('X-User-Id')
@@ -22361,6 +22387,10 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'shipping_address'
             ).order_by('-created_at')
             
+            # AUTO-COMPLETE CHECK
+            for order in orders:
+                self._auto_complete_if_needed(order)
+            
             # Get related payments and deliveries in bulk
             order_ids = list(orders.values_list('order', flat=True))
             payments = Payment.objects.filter(order_id__in=order_ids)
@@ -22389,10 +22419,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                             order.completed_at = delivery_completed_at
                         else:
                             order.completed_at = timezone.now()
-                        # Save only the completed_at field to avoid unintended updates
                         order.save(update_fields=['completed_at'])
                     except Exception as _e:
-                        # Log but don't break the response building
                         print(f"DEBUG: Failed to set completed_at for order {order.order}: {_e}")
 
                 # Get delivery address
@@ -22404,7 +22432,7 @@ class PurchasesBuyer(viewsets.ViewSet):
 
                 order_data = {
                     'order_id': str(order.order),
-                    'status': order.status,  # From Order table
+                    'status': order.status,
                     'total_amount': str(order.total_amount),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
@@ -22418,9 +22446,15 @@ class PurchasesBuyer(viewsets.ViewSet):
                 }
                 
                 # Process all checkouts for this order
+                # Process all checkouts for this order
+                # In your user_purchases method, when processing items
                 for checkout in order.checkout_set.all():
                     if checkout.cart_item and checkout.cart_item.product:
                         product = checkout.cart_item.product
+                        
+                        # Use the ProductSerializer to get the image data
+                        product_serializer = ProductSerializer(product, context={'request': request})
+                        product_data = product_serializer.data
                         
                         # Get variant information if available
                         variant = checkout.cart_item.variant
@@ -22430,38 +22464,37 @@ class PurchasesBuyer(viewsets.ViewSet):
                         variant_price = str(variant_price_value)
                         variant_sku = variant.sku_code if variant else None
                         
-                        # Get product media (images)
-                        product_images = []
-                        for media in product.productmedia_set.all():
-                            if media.file_data:
-                                try:
-                                    url = media.file_data.url
-                                    if request:
-                                        url = request.build_absolute_uri(url)
-                                    product_images.append({
-                                        'id': str(media.id),
-                                        'url': url,
-                                        'file_type': media.file_type
-                                    })
-                                except ValueError:
-                                    # If file doesn't exist, skip it
-                                    continue
-                        
-                        # Get primary image (first image)
-                        primary_image = product_images[0] if product_images else None
+                        # Get product images from serializer
+                        product_images = product_data.get('media_files', [])
+                        primary_image = product_data.get('primary_image')
                         
                         # Check if user has reviewed this product
                         has_reviewed = False
                         try:
-                            # First check if user has a Customer profile
                             customer_profile = Customer.objects.get(customer=user)
                             has_reviewed = Review.objects.filter(
                                 customer=customer_profile,
                                 product=product
                             ).exists()
                         except Customer.DoesNotExist:
-                            # User doesn't have a customer profile yet
                             has_reviewed = False
+                        
+                        # Get shop picture
+                        shop_picture_url = None
+                        if product.shop and product.shop.shop_picture:
+                            try:
+                                shop_picture_url = product.shop.shop_picture.url
+                                if request:
+                                    shop_picture_url = request.build_absolute_uri(shop_picture_url)
+                            except Exception:
+                                shop_picture_url = None
+                        
+                        # Check if item is refundable from variant or product
+                        is_refundable = False
+                        if variant and hasattr(variant, 'is_refundable'):
+                            is_refundable = variant.is_refundable
+                        else:
+                            is_refundable = getattr(product, 'is_refundable', False)
                         
                         item_data = {
                             'checkout_id': str(checkout.id),
@@ -22476,7 +22509,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'variant_sku': variant_sku,
                             'shop_id': str(product.shop.id) if product.shop else None,
                             'shop_name': product.shop.name if product.shop else None,
-                            'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
+                            'shop_picture': shop_picture_url,
                             'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
                             'quantity': checkout.quantity,
                             'price': variant_price,
@@ -22485,13 +22518,14 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                             'product_images': product_images,
-                            'primary_image': primary_image,
+                            'primary_image': primary_image,  # Now this will be properly populated
                             'voucher_applied': {
                                 'id': str(checkout.voucher.id),
                                 'name': checkout.voucher.name,
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
-                            'can_review': not has_reviewed and order.status == 'delivered'
+                            'can_review': not has_reviewed and order.status == 'delivered',
+                            'is_refundable': is_refundable
                         }
                         order_data['items'].append(item_data)
                     else:
@@ -22533,13 +22567,11 @@ class PurchasesBuyer(viewsets.ViewSet):
                         order_data['refund_reason'] = refund_obj.reason
                         order_data['refund_reject_code'] = refund_obj.reject_reason_code
                         order_data['refund_reject_details'] = refund_obj.reject_reason_details
-                        # also include dispute info if present
                         dr = DisputeRequest.objects.filter(refund_id=refund_obj).first()
                         if dr:
                             order_data['dispute_reason'] = dr.reason or dr.description
                             order_data['dispute_status'] = dr.status
                 except Exception:
-                    # ignore if models not importable for some reason
                     pass
 
                 purchases.append(order_data)
@@ -22646,6 +22678,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        # AUTO-COMPLETE CHECK
+        self._auto_complete_if_needed(order)
+        
         # Get payment and delivery for this order
         payment = Payment.objects.filter(order_id=order.order).first()
         delivery = Delivery.objects.filter(order_id=order.order).first()
@@ -22671,22 +22706,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                 variant_price = str(variant_price_value)
                 variant_sku = variant.sku_code if variant else None
                 
-                # Get product media (images)
+                # Get product media (images) - UPDATED to use get_media_url
                 product_images = []
                 for media in product.productmedia_set.all():
                     if media.file_data:
-                        try:
-                            url = media.file_data.url
-                            if request:
-                                url = request.build_absolute_uri(url)
+                        url = get_media_url(media.file_data, request)
+                        if url:
                             product_images.append({
                                 'id': str(media.id),
                                 'url': url,
                                 'file_type': media.file_type
                             })
-                        except ValueError:
-                            # If file doesn't exist, skip it
-                            continue
                 
                 # Get primary image (first image)
                 primary_image = product_images[0] if product_images else None
@@ -22694,15 +22724,18 @@ class PurchasesBuyer(viewsets.ViewSet):
                 # Check if user has reviewed this product
                 has_reviewed = False
                 try:
-                    # First check if user has a Customer profile
                     customer_profile = Customer.objects.get(customer=user)
                     has_reviewed = Review.objects.filter(
                         customer=customer_profile,
                         product=product
                     ).exists()
                 except Customer.DoesNotExist:
-                    # User doesn't have a customer profile yet
                     has_reviewed = False
+                
+                # Get shop picture using get_media_url
+                shop_picture_url = None
+                if product.shop and product.shop.shop_picture:
+                    shop_picture_url = get_media_url(product.shop.shop_picture, request)
                 
                 item_data = {
                     'checkout_id': str(checkout.id),
@@ -22717,7 +22750,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'variant_sku': variant_sku,
                     'shop_id': str(product.shop.id) if product.shop else None,
                     'shop_name': product.shop.name if product.shop else None,
-                    'shop_picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop and product.shop.shop_picture else None,
+                    'shop_picture': shop_picture_url,
                     'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
                     'quantity': checkout.quantity,
                     'price': variant_price,
@@ -22793,7 +22826,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # ensure user exists and is valid
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
@@ -22816,7 +22848,9 @@ class PurchasesBuyer(viewsets.ViewSet):
             logger.exception('view_order_detail order lookup failed: %s', exc)
             return Response({'error': 'Invalid order identifier'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # wrap the remainder of the logic so errors log properly instead of bubbling
+        # AUTO-COMPLETE CHECK
+        self._auto_complete_if_needed(order)
+        
         try:
             # Get payment and delivery details
             payment = Payment.objects.filter(order_id=order.order).first()
@@ -22829,7 +22863,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             elif order.delivery_address_text:
                 delivery_address = order.delivery_address_text
             
-            # Prefer a full_name field if available, else compose from first/last name, else fallback to username
+            # Prefer a full_name field if available
             full_name = None
             if hasattr(user, 'full_name') and user.full_name:
                 full_name = user.full_name
@@ -22841,7 +22875,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Prepare shipping information
             shipping_info = {
                 'logistics_carrier': order.delivery_method if order.delivery_method else 'Standard Delivery',
-                # Order.order is a UUID — convert to string before slicing to avoid TypeError
                 'tracking_number': f"PH{order.created_at.strftime('%y%m%d')}{str(order.order)[:6].upper()}" if order.order else None,
                 'delivery_method': order.delivery_method,
                 'estimated_delivery': (order.created_at + timedelta(days=3)).strftime('%m/%d/%Y') if order.created_at else None,
@@ -22886,85 +22919,82 @@ class PurchasesBuyer(viewsets.ViewSet):
                             variant_original_price = '0.0'
                     variant_is_refundable = variant.is_refundable if variant else getattr(product, 'is_refundable', False)
                     
-                    # guard against null total_amount
                     subtotal += float(checkout.total_amount or 0)
                     
-                    # Get product media (images)
-                    product_images = []
-                    for media in product.productmedia_set.all():
-                        if media.file_data:
-                            try:
-                                url = media.file_data.url
-                                if request:
-                                    url = request.build_absolute_uri(url)
-                                product_images.append({
-                                    'id': str(media.id),
-                                    'url': url,
-                                    'file_type': media.file_type
-                                })
-                            except ValueError:
-                                continue
+                    # FIXED: Use ProductSerializer to get properly formatted images (like in user_purchases)
+                    product_serializer = ProductSerializer(product, context={'request': request})
+                    product_data = product_serializer.data
                     
-                    primary_image = product_images[0] if product_images else None
-                
-                # Get shop information
-                shop_info = {}
-                if product.shop:
-                    shop_info = {
-                        'id': str(product.shop.id),
-                        'name': product.shop.name,
-                        'picture': request.build_absolute_uri(product.shop.shop_picture.url) if product.shop.shop_picture else None,
-                        'description': product.shop.description if hasattr(product.shop, 'description') else '',
-                        # Use related_name 'products' on Shop model
-                        'items_count': product.shop.products.count() if product.shop else 0,
-                        'followers_count': 178000,  # Placeholder - you should add this field to Shop model
-                        'is_choices': True,  # Placeholder logic
-                        'is_new': True,  # Placeholder logic
-                    }
-                
-                # Check if user has reviewed this product
-                has_reviewed = False
-                try:
-                    customer_profile = Customer.objects.get(customer=user)
-                    has_reviewed = Review.objects.filter(
-                        customer=customer_profile,
-                        product=product
-                    ).exists()
-                except Customer.DoesNotExist:
+                    # Get product images from serializer
+                    product_images = product_data.get('media_files', [])
+                    primary_image = product_data.get('primary_image')
+                    
+                    # Get shop information
+                    shop_info = {}
+                    if product.shop:
+                        shop_picture_url = None
+                        if product.shop.shop_picture:
+                            try:
+                                shop_picture_url = product.shop.shop_picture.url
+                                if request:
+                                    shop_picture_url = request.build_absolute_uri(shop_picture_url)
+                            except Exception:
+                                shop_picture_url = None
+                        
+                        shop_info = {
+                            'id': str(product.shop.id),
+                            'name': product.shop.name,
+                            'picture': shop_picture_url,
+                            'description': product.shop.description if hasattr(product.shop, 'description') else '',
+                            'items_count': product.shop.products.count() if product.shop else 0,
+                            'followers_count': 178000,
+                            'is_choices': True,
+                            'is_new': True,
+                        }
+                    
+                    # Check if user has reviewed this product
                     has_reviewed = False
-                
-                item_data = {
-                    'checkout_id': str(checkout.id),
-                    'product_id': str(product.id),
-                    'product_name': product.name,
-                    'product_description': product.description,
-                    'variant_id': str(variant.id) if variant else None,
-                    'product_variant': variant_title,
-                    'variant_sku': variant.sku_code if variant else None,
-                    'quantity': checkout.quantity,
-                    'price': variant_price,
-                    'original_price': variant_original_price,
-                    'subtotal': str(checkout.total_amount or '0.00'),
-                    'status': order.status,
-                    'purchased_at': checkout.created_at.isoformat(),
-                    'product_images': product_images,
-                    'primary_image': primary_image,
-                    'shop_info': shop_info,
-                    'can_review': not has_reviewed and order.status == 'delivered',
-                    'can_return': order.status == 'delivered' and not has_reviewed,  # Only if delivered and not reviewed
-                    'is_refundable': variant_is_refundable,
-                    'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
-                }
-                items_data.append(item_data)
-        
+                    try:
+                        customer_profile = Customer.objects.get(customer=user)
+                        has_reviewed = Review.objects.filter(
+                            customer=customer_profile,
+                            product=product
+                        ).exists()
+                    except Customer.DoesNotExist:
+                        has_reviewed = False
+                    
+                    item_data = {
+                        'checkout_id': str(checkout.id),
+                        'product_id': str(product.id),
+                        'product_name': product.name,
+                        'product_description': product.description,
+                        'variant_id': str(variant.id) if variant else None,
+                        'product_variant': variant_title,
+                        'variant_sku': variant.sku_code if variant else None,
+                        'quantity': checkout.quantity,
+                        'price': variant_price,
+                        'original_price': variant_original_price,
+                        'subtotal': str(checkout.total_amount or '0.00'),
+                        'status': order.status,
+                        'purchased_at': checkout.created_at.isoformat(),
+                        'product_images': product_images,
+                        'primary_image': primary_image,
+                        'shop_info': shop_info,
+                        'can_review': not has_reviewed and order.status == 'delivered',
+                        'can_return': order.status == 'delivered' and not has_reviewed,
+                        'is_refundable': variant_is_refundable,
+                        'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
+                    }
+                    items_data.append(item_data)
+            
             # Calculate order summary
             order_summary = {
                 'subtotal': str(subtotal),
-                'shipping_fee': '0.00',  # You should add shipping_fee field to Order model
-                'tax': str(float(subtotal) * 0.12),  # 12% VAT - adjust as needed
-                'discount': '0.00',  # You should add discount field to Order model
+                'shipping_fee': '0.00',
+                'tax': str(float(subtotal) * 0.12),
+                'discount': '0.00',
                 'total': str(order.total_amount),
-                'payment_fee': '0.00',  # Add payment fee if applicable
+                'payment_fee': '0.00',
             }
             
             # Prepare response
@@ -22983,11 +23013,11 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'delivery_notes': delivery.notes if delivery else None,
                     'delivery_date': (
                         (getattr(delivery, 'delivery_date', None)
-                         or getattr(delivery, 'delivered_at', None)
-                         or getattr(delivery, 'updated_at', None)).isoformat()
+                        or getattr(delivery, 'delivered_at', None)
+                        or getattr(delivery, 'updated_at', None)).isoformat()
                         if delivery and (getattr(delivery, 'delivery_date', None)
-                                         or getattr(delivery, 'delivered_at', None)
-                                         or getattr(delivery, 'updated_at', None))
+                                        or getattr(delivery, 'delivered_at', None)
+                                        or getattr(delivery, 'updated_at', None))
                         else None
                     ),
                 },
@@ -23012,10 +23042,10 @@ class PurchasesBuyer(viewsets.ViewSet):
             
             return Response(response_data)
         
-        # catch any unexpected errors during assembly
         except Exception as exc:
             logger.exception('Unhandled exception in view_order_detail for order %s user %s: %s', pk, user_id, exc)
             return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     
     def _get_status_display(self, status):
         status_map = {
@@ -23132,7 +23162,7 @@ class PurchasesBuyer(viewsets.ViewSet):
 
     @action(detail=True, methods=['patch'], url_path='complete')
     def complete(self, request, pk=None):
-        """Buyer can mark picked up order as completed."""
+        """Buyer can mark delivered order as completed."""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({'success': False, 'message': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -23145,20 +23175,40 @@ class PurchasesBuyer(viewsets.ViewSet):
         if str(order.user.id) != str(user_id):
             return Response({'success': False, 'message': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
-        if order.status != 'picked_up':
-            return Response({'success': False, 'message': 'Order is not in picked up state'}, status=status.HTTP_400_BAD_REQUEST)
+        # Allow completion from either 'delivered' or 'picked_up' status
+        if order.status not in ['delivered', 'picked_up']:
+            return Response({
+                'success': False, 
+                'message': f'Order is not in a completable state. Current status: {order.status}'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            from django.utils import timezone
+            from datetime import timedelta
+            
+            # Update order status to completed
             order.status = 'completed'
             order.completed_at = timezone.now()
             order.save(update_fields=['status', 'completed_at'])
 
-            Delivery.objects.filter(order=order).update(status='delivered', delivered_at=timezone.now())
+            # Update delivery status to delivered if it exists
+            delivery = Delivery.objects.filter(order=order).first()
+            if delivery:
+                delivery.status = 'completed'
+                delivery.delivered_at = timezone.now()
+                delivery.save(update_fields=['status', 'delivered_at'])
 
-            return Response({'success': True, 'message': 'Order marked as completed'}, status=status.HTTP_200_OK)
+            return Response({
+                'success': True, 
+                'message': 'Order marked as completed successfully'
+            }, status=status.HTTP_200_OK)
+            
         except Exception as e:
             logger.exception('Error marking order as completed: %s', e)
-            return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({
+                'success': False, 
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['get'], url_path='shipping-timeline')
     def shipping_timeline(self, request, pk=None):
@@ -24918,34 +24968,16 @@ class ProofManagementViewSet(viewsets.ViewSet):
             return Response({"success": False, "error": "Delivery not found or not assigned to you"}, status=status.HTTP_404_NOT_FOUND)
         
         proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
-        proofs_data = []
-        for proof in proofs:
-            # Get file URL
-            file_url = None
-            if proof.file_data:
-                try:
-                    file_url = proof.file_data.url
-                    if file_url and file_url.startswith('/'):
-                        file_url = request.build_absolute_uri(file_url)
-                except Exception as e:
-                    print(f"Error getting file URL for proof {proof.id}: {e}")
-                    file_url = None
-            
-            file_name = None
-            if proof.file_data:
-                file_name = proof.file_data.name.split('/')[-1] if '/' in proof.file_data.name else proof.file_data.name
-            
-            proofs_data.append({
-                "id": str(proof.id),
-                "proof_type": proof.proof_type,
-                "file_type": proof.file_type,
-                "file_name": file_name or f"proof_{proof.id}",
-                "file_url": file_url,
-                "uploaded_at": proof.uploaded_at.isoformat(),
-                "delivery_id": str(proof.delivery.id)
-            })
         
-        return Response({"success": True, "delivery_id": str(delivery.id), "total_proofs": len(proofs_data), "all_proofs": proofs_data})
+        # Use serializer
+        serializer = ProofSerializer(proofs, many=True, context={'request': request})
+        
+        return Response({
+            "success": True, 
+            "delivery_id": str(delivery.id), 
+            "total_proofs": len(proofs), 
+            "all_proofs": serializer.data
+        })
 
     @action(detail=False, methods=['get'], url_path='get_delivery_proofs_by_order')
     def get_delivery_proofs_by_order(self, request):
@@ -24953,41 +24985,28 @@ class ProofManagementViewSet(viewsets.ViewSet):
         order_id = request.GET.get('order_id')
         if not order_id:
             return Response({"success": False, "error": "order_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             order_uuid = uuid.UUID(str(order_id))
         except (ValueError, AttributeError):
             return Response({"success": False, "error": "Invalid order_id format"}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             order = Order.objects.get(order=order_uuid)
         except Order.DoesNotExist:
             return Response({"success": False, "error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
 
         proofs_qs = Proof.objects.filter(delivery__order=order).order_by('-uploaded_at')
-        proofs_data = []
-        for proof in proofs_qs:
-            file_url = None
-            if proof.file_data:
-                try:
-                    file_url = proof.file_data.url
-                    if file_url and file_url.startswith('/'):
-                        file_url = request.build_absolute_uri(file_url)
-                except Exception as e:
-                    print(f"Error getting file URL for proof {proof.id}: {e}")
-                    file_url = None
-            file_name = None
-            if proof.file_data:
-                file_name = proof.file_data.name.split('/')[-1] if '/' in proof.file_data.name else proof.file_data.name
-
-            proofs_data.append({
-                "id": str(proof.id),
-                "file_name": file_name,
-                "file_type": proof.file_type,
-                "file_url": file_url,
-                "uploaded_at": proof.uploaded_at.isoformat(),
-                "delivery_id": str(proof.delivery.id)
-            })
-
-        return Response({"success": True, "order_id": str(order_id), "total_proofs": len(proofs_data), "proofs": proofs_data})
+        
+        # Use serializer
+        serializer = ProofSerializer(proofs_qs, many=True, context={'request': request})
+        
+        return Response({
+            "success": True, 
+            "order_id": str(order_id), 
+            "total_proofs": len(proofs_qs), 
+            "proofs": serializer.data
+        })
     
     @action(detail=False, methods=['post'])
     def upload_proofs(self, request):
@@ -35253,9 +35272,19 @@ class RiderProofViewSet(viewsets.ViewSet):
         Returns:
         - List of proofs for the delivery
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("="*50)
+        logger.info("get_delivery_proofs called")
+        logger.info(f"delivery_id: {delivery_id}")
+        
         # Get the authenticated rider
         rider = self._get_rider(request)
+        logger.info(f"rider: {rider}")
+        
         if not rider:
+            logger.error("Rider not found or unauthorized")
             return Response(
                 {"success": False, "error": "Rider not found or unauthorized"},
                 status=status.HTTP_404_NOT_FOUND
@@ -35264,53 +35293,49 @@ class RiderProofViewSet(viewsets.ViewSet):
         # Validate delivery_id
         try:
             delivery_uuid = uuid.UUID(delivery_id)
-        except (ValueError, AttributeError):
+            logger.info(f"delivery_uuid: {delivery_uuid}")
+        except (ValueError, AttributeError) as e:
+            logger.error(f"Invalid delivery ID format: {e}")
             return Response(
                 {"success": False, "error": "Invalid delivery ID format"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         # Get the delivery and verify it belongs to this rider
-        delivery = get_object_or_404(
-            Delivery,
-            id=delivery_uuid,
-            rider=rider
-        )
+        try:
+            delivery = Delivery.objects.get(id=delivery_uuid, rider=rider)
+            logger.info(f"delivery found: {delivery.id}")
+        except Delivery.DoesNotExist:
+            logger.error(f"Delivery not found: {delivery_uuid}")
+            return Response(
+                {"success": False, "error": "Delivery not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
         
-        # Get all proofs for this delivery, ordered by upload time (newest first)
+        # Get all proofs for this delivery
         proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+        logger.info(f"proofs count: {proofs.count()}")
         
-        # Prepare response (make URLs absolute if needed)
-        proofs_data = []
-        for proof in proofs:
-            file_url = None
-            if proof.file_data:
-                file_url = proof.file_data.url
-                # if url is relative (doesn't start with http), convert to absolute
-                if file_url and not file_url.lower().startswith('http'):
-                    # ensure it begins with '/'
-                    if not file_url.startswith('/'):
-                        file_url = '/' + file_url
-                    file_url = request.build_absolute_uri(file_url)
-            proofs_data.append({
-                "id": str(proof.id),
-                "delivery_id": str(proof.delivery.id),
-                "order_id": str(proof.delivery.order.order) if proof.delivery.order else None,
-                "proof_type": proof.proof_type,
-                "proof_type_display": proof.get_proof_type_display(),
-                "file_url": file_url,
-                "file_type": proof.file_type,
-                "uploaded_at": proof.uploaded_at,
-                "file_name": os.path.basename(proof.file_data.name) if proof.file_data else None,
-                "file_size": proof.file_data.size if proof.file_data else 0
-            })
-        
-        return Response({
-            "success": True,
-            "delivery_id": str(delivery.id),
-            "total_proofs": len(proofs_data),
-            "proofs": proofs_data
-        }, status=status.HTTP_200_OK)
+        # Use serializer
+        try:
+            serializer = ProofSerializer(proofs, many=True, context={'request': request})
+            logger.info("serializer created successfully")
+            
+            data = serializer.data
+            logger.info(f"serializer.data length: {len(data)}")
+            
+            return Response({
+                "success": True,
+                "delivery_id": str(delivery.id),
+                "total_proofs": len(proofs),
+                "proofs": data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error in serializer: {e}", exc_info=True)
+            return Response(
+                {"success": False, "error": f"Serializer error: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
     @action(detail=False, methods=['post'], url_path='upload/(?P<delivery_id>[^/.]+)')

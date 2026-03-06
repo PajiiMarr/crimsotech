@@ -11,7 +11,7 @@ export default function BottomTab() {
     { name: 'Home', icon: 'home-outline', route: '/customer/home' },
     { name: 'Favorite', icon: 'heart-outline', route: '/customer/favorite' },
     { name: 'Cart', icon: 'cart-outline', route: '/customer/cart' },
-    { name: 'Purchases', icon: 'bag-outline', route: '/customer/profile' },
+    { name: 'Purchases', icon: 'bag-outline', route: '/customer/purchases' },
     { name: 'Returns', icon: 'repeat-outline', route: '/customer/Returns' },
     { name: 'Profile', icon: 'person-outline', route: '/customer/profile' },
   ] as const;

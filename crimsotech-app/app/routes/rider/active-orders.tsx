@@ -27,9 +27,13 @@ import {
   ChevronDown,
   ChevronUp,
   Search,
-  ShoppingBag
+  ShoppingBag,
+  Camera,
+  X,
+  Image as ImageIcon,
+  Upload
 } from 'lucide-react';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
 import DateRangeFilter from '~/components/ui/date-range-filter';
 import {
@@ -44,6 +48,14 @@ import {
   AlertDialogTrigger,
 } from "~/components/ui/alert-dialog";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
+import {
   Drawer,
   DrawerClose,
   DrawerContent,
@@ -54,6 +66,9 @@ import {
   DrawerTrigger,
 } from "~/components/ui/drawer";
 import { Input } from '~/components/ui/input';
+import { Textarea } from '~/components/ui/textarea';
+import { Label } from '~/components/ui/label';
+import { ScrollArea } from '~/components/ui/scroll-area';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -121,6 +136,19 @@ interface Metrics {
   today_deliveries: number;
   week_earnings: number;
   has_data: boolean;
+}
+
+interface Proof {
+  id: string;
+  delivery_id: string;
+  order_id: string | null;
+  proof_type: string;
+  proof_type_display: string;
+  file_url: string;
+  file_type: string;
+  uploaded_at: string;
+  file_name: string;
+  file_size: number;
 }
 
 interface LoaderData {
@@ -223,6 +251,14 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     rangeType: 'weekly' as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
   });
 
+  // State for proof of delivery modal
+  const [showProofModal, setShowProofModal] = useState(false);
+  const [proofImages, setProofImages] = useState<string[]>([]);
+  const [proofFiles, setProofFiles] = useState<File[]>([]);
+  const [uploadingProofs, setUploadingProofs] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Minimalist tabs for rider active orders (Pending / To Process)
   const [activeTab, setActiveTab] = useState<'pending' | 'to_process'>('pending');
   const [expandedDeliveries, setExpandedDeliveries] = useState<Set<string>>(new Set());
@@ -291,6 +327,159 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     }
   };
 
+  // Handle delivery action with proof of delivery
+  // Handle delivery action with proof of delivery
+const handleDeliverWithProof = async () => {
+  if (!selectedDelivery) return;
+
+  if (proofImages.length === 0) {
+    alert('Please take at least one photo as proof of delivery');
+    return;
+  }
+
+  try {
+    setUploadingProofs(true);
+    setUploadProgress(0);
+
+    // Upload each proof image
+    for (let i = 0; i < proofFiles.length; i++) {
+      const file = proofFiles[i];
+      const formData = new FormData();
+      formData.append('proof_type', 'delivery');
+      formData.append('file', file);
+
+      // 🔍 DEBUG: Log file info before upload
+      console.log('🔍 UPLOAD DEBUG ==================');
+      console.log('File name:', file.name);
+      console.log('File size:', file.size, 'bytes');
+      console.log('File type:', file.type);
+      console.log('Delivery ID:', selectedDelivery.id);
+      console.log('Upload URL:', `/rider-proof/upload/${selectedDelivery.id}/`);
+      
+      // Log FormData contents (for debugging)
+      for (let pair of (formData as any).entries()) {
+        console.log('FormData:', pair[0], pair[1]);
+      }
+
+      const response = await AxiosInstance.post(
+        `/rider-proof/upload/${selectedDelivery.id}/`,
+        formData,
+        {
+          headers: {
+            'X-User-Id': user.user_id,
+            'Content-Type': 'multipart/form-data'
+          }
+        }
+      );
+
+      // 🔍 DEBUG: Log server response
+      console.log('✅ UPLOAD RESPONSE ==================');
+      console.log('Response status:', response.status);
+      console.log('Response data:', response.data);
+      
+      if (response.data && response.data.success) {
+        console.log('Proof uploaded successfully!');
+        console.log('File URL from server:', response.data.proof?.file_url);
+        console.log('File path in DB:', response.data.proof?.file_name);
+      }
+
+      setUploadProgress(((i + 1) / proofFiles.length) * 100);
+    }
+
+    // After all proofs are uploaded, mark as delivered
+    const deliverFormData = new FormData();
+    deliverFormData.append('delivery_id', selectedDelivery.id);
+    if (selectedDelivery.order?.order_id) {
+      deliverFormData.append('order_id', selectedDelivery.order.order_id);
+    }
+
+    const deliverResponse = await AxiosInstance.post(
+      '/rider-orders-active/deliver_order/',
+      deliverFormData,
+      {
+        headers: {
+          'X-User-Id': user.user_id,
+        }
+      }
+    );
+
+    // 🔍 DEBUG: Log delivery response
+    console.log('📦 DELIVERY RESPONSE ==================');
+    console.log('Delivery response:', deliverResponse.data);
+
+    if (deliverResponse.data.success) {
+      // Refresh data
+      await fetchDeliveryData();
+      // Close modal
+      setShowProofModal(false);
+      setProofImages([]);
+      setProofFiles([]);
+      setSelectedDelivery(null);
+      setActionType(null);
+      alert('Order delivered successfully with proof!');
+      // redirect to history page
+      navigate('/rider/orders/history');
+    } else {
+      alert(deliverResponse.data.error || 'Failed to mark order as delivered');
+    }
+  } catch (error: any) {
+    console.error('❌ ERROR ==================');
+    console.error('Error uploading proofs or marking delivery:', error);
+    console.error('Error response:', error.response?.data);
+    console.error('Error status:', error.response?.status);
+    console.error('Error headers:', error.response?.headers);
+    
+    // Try to get more details about the error
+    if (error.response?.data) {
+      console.error('Server error details:', error.response.data);
+    }
+    
+    alert(error.response?.data?.error || 'Failed to complete delivery');
+  } finally {
+    setUploadingProofs(false);
+    setUploadProgress(0);
+  }
+};
+
+  // Handle camera capture
+  const handleCameraCapture = () => {
+    if (proofImages.length >= 6) {
+      alert('Maximum 6 photos allowed');
+      return;
+    }
+
+    // Create a hidden file input for camera capture
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment'; // Use rear camera
+    input.multiple = false;
+
+    input.onchange = (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      if (target.files && target.files[0]) {
+        const file = target.files[0];
+        const reader = new FileReader();
+        
+        reader.onload = (readerEvent) => {
+          const result = readerEvent.target?.result as string;
+          setProofImages(prev => [...prev, result]);
+          setProofFiles(prev => [...prev, file]);
+        };
+        
+        reader.readAsDataURL(file);
+      }
+    };
+
+    input.click();
+  };
+
+  // Handle remove image
+  const handleRemoveImage = (index: number) => {
+    setProofImages(prev => prev.filter((_, i) => i !== index));
+    setProofFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
   // Handle action confirmation
   const confirmAction = async () => {
     if (!selectedDelivery || !actionType) return;
@@ -305,23 +494,14 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
       }
     }
 
+    // For pickup action, proceed with normal confirmation
     try {
       setIsActionLoading(true);
 
-      const endpoint = actionType === 'pickup'
-        ? '/rider-orders-active/pickup_order/'
-        : '/rider-orders-active/deliver_order/';
+      const endpoint = '/rider-orders-active/pickup_order/';
 
-        // Debug: print the payload we'll send
       console.debug('[RiderAction] sending', { actionType, deliveryId: selectedDelivery.id, deliveryStatus: selectedDelivery.status, riderUserId: user.user_id });
 
-      // Pause in devtools so you can inspect `selectedDelivery` and the outgoing payload
-      if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-        // eslint-disable-next-line no-debugger
-        debugger;
-      }
-
-      // Use FormData to ensure proper data format — include both delivery_id and order_id as a fallback
       const formData = new FormData();
       formData.append('delivery_id', selectedDelivery.id);
       if (selectedDelivery.order?.order_id) {
@@ -331,7 +511,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
       const response = await AxiosInstance.post(endpoint, formData, {
         headers: {
           'X-User-Id': user.user_id,
-          // FormData will set the correct content type automatically
         }
       });
       console.debug('[RiderAction] response', response.data);
@@ -343,11 +522,7 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
         setShowActionDialog(false);
         setSelectedDelivery(null);
         setActionType(null);
-        alert(`Order ${actionType === 'pickup' ? 'picked up' : 'delivered'} successfully!`);
-        // if delivery just marked, redirect to history page
-        if (actionType === 'deliver') {
-          navigate('/rider/orders/history');
-        }
+        alert(`Order picked up successfully!`);
       } else {
         // Show server-provided message when available
         alert(response.data.error || `Failed to ${actionType} order`);
@@ -370,11 +545,11 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     setShowActionDialog(true);
   };
 
-  // Handle delivery action
+  // Handle delivery action - now directly opens proof modal without confirmation
   const handleDeliverClick = (delivery: Delivery) => {
     setSelectedDelivery(delivery);
     setActionType('deliver');
-    setShowActionDialog(true);
+    setShowProofModal(true); // Directly open proof modal
   };
 
   // Accept a delivery (calls backend accept_order endpoint)
@@ -677,20 +852,18 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
             )}
           </div>
 
-          {/* Action Confirmation Dialog/Drawer */}
-          {selectedDelivery && actionType && (
+          {/* Pickup Action Confirmation Dialog */}
+          {selectedDelivery && actionType === 'pickup' && (
             <AlertDialog open={showActionDialog} onOpenChange={setShowActionDialog}>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle className="flex items-center gap-2">
-                    {actionType === 'pickup' ? <Package className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
-                    {actionType === 'pickup' ? 'Pick Up Order' : 'Deliver Order'}
+                    <Package className="w-4 h-4" />
+                    Pick Up Order
                   </AlertDialogTitle>
                   <AlertDialogDescription className="space-y-3">
                     <p className="text-xs">
-                      {actionType === 'pickup' 
-                        ? 'Are you sure you want to mark this order as picked up?' 
-                        : 'Are you sure you want to mark this order as delivered?'}
+                      Are you sure you want to mark this order as picked up?
                     </p>
                     <div className="bg-muted p-2 rounded space-y-1 text-xs">
                       <div className="flex justify-between">
@@ -715,14 +888,108 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                   <AlertDialogAction
                     onClick={confirmAction}
                     disabled={isActionLoading}
-                    className={`text-xs h-7 ${actionType === 'pickup' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}`}
+                    className="text-xs h-7 bg-blue-600 hover:bg-blue-700"
                   >
-                    {isActionLoading ? "Processing..." : actionType === 'pickup' ? 'Yes, Pick Up' : 'Yes, Deliver'}
+                    {isActionLoading ? "Processing..." : 'Yes, Pick Up'}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           )}
+
+          {/* Proof of Delivery Modal - Opens directly when Deliver is clicked */}
+          <Dialog open={showProofModal} onOpenChange={setShowProofModal}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Camera className="w-5 h-5" />
+                  Proof of Delivery
+                </DialogTitle>
+                <DialogDescription>
+                  Take up to 6 photos as proof of delivery. Photos are taken in real-time using your camera.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                {/* Image Grid */}
+                <div className="grid grid-cols-3 gap-2">
+                  {proofImages.map((image, index) => (
+                    <div key={index} className="relative aspect-square rounded-md overflow-hidden border">
+                      <img 
+                        src={image} 
+                        alt={`Proof ${index + 1}`} 
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        onClick={() => handleRemoveImage(index)}
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                        disabled={uploadingProofs}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {proofImages.length < 6 && (
+                    <button
+                      onClick={handleCameraCapture}
+                      disabled={uploadingProofs}
+                      className="aspect-square rounded-md border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 hover:border-gray-400 transition-colors disabled:opacity-50"
+                    >
+                      <Camera className="w-6 h-6 text-gray-400" />
+                      <span className="text-[10px] text-gray-500">Take Photo</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Progress Bar */}
+                {uploadingProofs && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span>Uploading proofs...</span>
+                      <span>{Math.round(uploadProgress)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-green-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Info Text */}
+                <p className="text-xs text-gray-500">
+                  {proofImages.length}/6 photos taken. All photos are uploaded in real-time.
+                </p>
+              </div>
+
+              <DialogFooter className="sm:justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setShowProofModal(false);
+                    setProofImages([]);
+                    setProofFiles([]);
+                    setSelectedDelivery(null);
+                    setActionType(null);
+                  }}
+                  disabled={uploadingProofs}
+                  className="text-xs h-8"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleDeliverWithProof}
+                  disabled={proofImages.length === 0 || uploadingProofs}
+                  className="text-xs h-8 bg-green-600 hover:bg-green-700"
+                >
+                  {uploadingProofs ? 'Uploading...' : `Confirm Delivery (${proofImages.length} photo${proofImages.length !== 1 ? 's' : ''})`}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {/* Active Deliveries */}
           <Card>
@@ -977,8 +1244,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                                     </Link>
                                   </Button>
                                 )}
-                                
-
                               </div>
                             </div>
                           </CardContent>

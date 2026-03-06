@@ -1,3 +1,4 @@
+import os
 from rest_framework import serializers
 from .models import *
 from django.contrib.auth.hashers import make_password
@@ -1126,3 +1127,122 @@ class UserPaymentDetailSerializer(serializers.ModelSerializer):
             if len(acc_num) > 4:
                 data['account_number'] = '*' * (len(acc_num) - 4) + acc_num[-4:]
         return data
+# Import the get_media_url function from wherever it is
+# For example:
+# from your_app.utils import get_media_url
+# or
+# from .serializers import get_media_url
+class ProofSerializer(serializers.ModelSerializer):
+    """
+    Complete serializer for Proof model with full image/media handling
+    """
+    # Custom fields for better frontend display
+    file_url = serializers.SerializerMethodField()
+    file_name = serializers.SerializerMethodField()
+    file_size_display = serializers.SerializerMethodField()
+    delivery_order_id = serializers.SerializerMethodField()
+    formatted_uploaded_at = serializers.SerializerMethodField()
+    proof_type_display = serializers.CharField(source='get_proof_type_display', read_only=True)
+    
+    class Meta:
+        model = Proof
+        fields = [
+            'id',
+            'delivery',
+            'delivery_order_id',
+            'proof_type',
+            'proof_type_display',
+            'file_data',
+            'file_url',
+            'file_name',
+            'file_type',
+            # 'file_size',  # ← REMOVE THIS LINE - model doesn't have this field
+            'file_size_display',
+            'uploaded_at',
+            'formatted_uploaded_at'
+        ]
+        read_only_fields = ['id', 'uploaded_at', 'file_type']  # Also remove file_size from here
+    
+    def get_file_url(self, obj):
+        """Get URL for the file using the same method as ProductMedia"""
+        try:
+            if obj.file_data:
+                # Use the same method that works for ProductMedia
+                return get_media_url(obj.file_data)
+            return None
+        except Exception as e:
+            print(f"Error in get_file_url for proof {obj.id}: {e}")
+            return None
+    
+    def get_file_name(self, obj):
+        """Extract filename from file_data"""
+        if obj.file_data and hasattr(obj.file_data, 'name'):
+            return os.path.basename(obj.file_data.name)
+        return None
+    
+    def get_file_size_display(self, obj):
+        """Convert file size to human-readable format"""
+        if obj.file_data and hasattr(obj.file_data, 'size'):
+            size_bytes = obj.file_data.size
+            if size_bytes < 1024:
+                return f"{size_bytes} B"
+            elif size_bytes < 1024 * 1024:
+                return f"{size_bytes / 1024:.1f} KB"
+            else:
+                return f"{size_bytes / (1024 * 1024):.1f} MB"
+        return None
+    
+    def get_delivery_order_id(self, obj):
+        """Get the order ID associated with this delivery"""
+        if obj.delivery and obj.delivery.order:
+            return str(obj.delivery.order.order)
+        return None
+    
+    def get_formatted_uploaded_at(self, obj):
+        """Format the uploaded_at timestamp"""
+        if obj.uploaded_at:
+            return obj.uploaded_at.strftime("%Y-%m-%d %H:%M:%S")
+        return None
+    
+    def validate_file_data(self, value):
+        """Validate file on upload"""
+        if value:
+            # Check file size (max 10MB)
+            max_size = 10 * 1024 * 1024
+            if value.size > max_size:
+                raise serializers.ValidationError("File size too large. Maximum size is 10MB.")
+            
+            # Check file extension
+            allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.pdf', '.heic', '.heif']
+            ext = os.path.splitext(value.name)[1].lower()
+            if ext not in allowed_extensions:
+                raise serializers.ValidationError(
+                    f"Invalid file type. Allowed types: {', '.join(allowed_extensions)}"
+                )
+        return value
+    
+    def to_representation(self, instance):
+        """Customize the output representation"""
+        data = super().to_representation(instance)
+        
+        # Remove raw file_data from response to keep it clean
+        if 'file_data' in data:
+            del data['file_data']
+        
+        # Add thumbnail hint for images
+        if data.get('file_type') in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif']:
+            data['is_image'] = True
+        else:
+            data['is_image'] = False
+        
+        return data
+    
+    def create(self, validated_data):
+        """Custom create method to set file_type automatically"""
+        file_obj = validated_data.get('file_data')
+        if file_obj:
+            # Extract file extension and set as file_type
+            ext = os.path.splitext(file_obj.name)[1].lower().replace('.', '')
+            validated_data['file_type'] = ext
+        
+        return super().create(validated_data)
