@@ -15709,99 +15709,111 @@ class SellerProducts(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['put'], url_path='update_product')
     def update_product(self, request, pk=None):
-        """
-        Update basic product fields from the seller edit form.
-        Editable: name, description, condition, upload_status,
-                  is_refundable, refund_days, category_admin_id
-        """
         user_id = request.data.get('user_id')
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
             product = Product.objects.select_related('category_admin').get(pk=pk)
         except Product.DoesNotExist:
             return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Ownership check
         if str(product.customer.customer_id) != str(user_id):
             return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
 
-        # Collect update fields
-        update_fields = []
+        # ── Validate required fields before touching the DB ───────────────────
+        errors = {}
 
         name = request.data.get('name', '').strip()
-        if name:
-            if len(name) > 100:
-                return Response({"error": "Name cannot exceed 100 characters"}, status=status.HTTP_400_BAD_REQUEST)
-            product.name = name
-            update_fields.append('name')
+        if not name:
+            errors['name'] = "Product name is required."
+        elif len(name) > 100:
+            errors['name'] = "Name cannot exceed 100 characters."
 
         description = request.data.get('description', '').strip()
-        if description:
-            if len(description) > 1000:
-                return Response({"error": "Description cannot exceed 1000 characters"}, status=status.HTTP_400_BAD_REQUEST)
-            product.description = description
-            update_fields.append('description')
+        if not description:
+            errors['description'] = "Description is required."
+        elif len(description) > 1000:
+            errors['description'] = "Description cannot exceed 1000 characters."
 
         condition = request.data.get('condition')
         valid_conditions = ['Like New', 'New', 'Refurbished', 'Used - Excellent', 'Used - Good']
-        if condition:
-            if condition not in valid_conditions:
-                return Response({"error": f"Invalid condition. Choose from: {', '.join(valid_conditions)}"}, status=status.HTTP_400_BAD_REQUEST)
-            product.condition = condition
-            update_fields.append('condition')
+        if not condition:
+            errors['condition'] = "Condition is required."
+        elif condition not in valid_conditions:
+            errors['condition'] = f"Invalid condition. Choose from: {', '.join(valid_conditions)}"
 
         upload_status = request.data.get('upload_status')
         valid_statuses = ['draft', 'published', 'archived']
-        if upload_status:
-            if upload_status not in valid_statuses:
-                return Response({"error": f"Invalid upload_status. Choose from: {', '.join(valid_statuses)}"}, status=status.HTTP_400_BAD_REQUEST)
-            product.upload_status = upload_status
-            update_fields.append('upload_status')
+        if upload_status and upload_status not in valid_statuses:
+            errors['upload_status'] = f"Invalid upload_status. Choose from: {', '.join(valid_statuses)}"
 
-        # Refund
         is_refundable = request.data.get('is_refundable')
         if is_refundable is not None:
             if isinstance(is_refundable, bool):
-                product.is_refundable = is_refundable
+                is_refundable_bool = is_refundable
             else:
-                product.is_refundable = str(is_refundable).lower() in ('true', '1', 'yes')
-            update_fields.append('is_refundable')
+                is_refundable_bool = str(is_refundable).lower() in ('true', '1', 'yes')
+        else:
+            is_refundable_bool = product.is_refundable
 
         refund_days = request.data.get('refund_days')
+        refund_days_int = None
         if refund_days is not None:
             try:
                 refund_days_int = int(refund_days)
                 if refund_days_int < 0:
-                    return Response({"error": "refund_days cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
-                product.refund_days = refund_days_int
-                update_fields.append('refund_days')
+                    errors['refund_days'] = "refund_days cannot be negative."
+                elif is_refundable_bool and refund_days_int < 1:
+                    errors['refund_days'] = "Refund window must be at least 1 day when product is refundable."
             except (ValueError, TypeError):
-                return Response({"error": "Invalid refund_days value"}, status=status.HTTP_400_BAD_REQUEST)
+                errors['refund_days'] = "Invalid refund_days value."
 
-        # Category admin
         category_admin_id = request.data.get('category_admin_id')
-        if category_admin_id is not None:
-            if category_admin_id == '' or category_admin_id is None:
-                product.category_admin = None
-                update_fields.append('category_admin')
-            else:
-                try:
-                    import uuid as _uuid
-                    _uuid.UUID(str(category_admin_id))
-                    cat = Category.objects.filter(id=category_admin_id, shop__isnull=True).first()
-                    if not cat:
-                        return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
-                    product.category_admin = cat
-                    update_fields.append('category_admin')
-                except (ValueError, TypeError):
-                    return Response({"error": "Invalid category_admin_id format"}, status=status.HTTP_400_BAD_REQUEST)
+        cat_obj = None
+        if category_admin_id:
+            try:
+                import uuid as _uuid
+                _uuid.UUID(str(category_admin_id))
+                cat_obj = Category.objects.filter(id=category_admin_id, shop__isnull=True).first()
+                if not cat_obj:
+                    errors['category_admin_id'] = "Category not found."
+            except (ValueError, TypeError):
+                errors['category_admin_id'] = "Invalid category_admin_id format."
 
-        if not update_fields:
-            return Response({"error": "No fields to update"}, status=status.HTTP_400_BAD_REQUEST)
+        if errors:
+            return Response({"error": "Validation failed", "fields": errors}, status=status.HTTP_400_BAD_REQUEST)
 
-        update_fields.append('updated_at')
+        # ── Apply updates ─────────────────────────────────────────────────────
+        update_fields = ['updated_at']
+
+        product.name = name
+        update_fields.append('name')
+
+        product.description = description
+        update_fields.append('description')
+
+        product.condition = condition
+        update_fields.append('condition')
+
+        if upload_status:
+            product.upload_status = upload_status
+            update_fields.append('upload_status')
+
+        if is_refundable is not None:
+            product.is_refundable = is_refundable_bool
+            update_fields.append('is_refundable')
+
+        if refund_days_int is not None:
+            product.refund_days = refund_days_int
+            update_fields.append('refund_days')
+
+        if category_admin_id == '':
+            product.category_admin = None
+            update_fields.append('category_admin')
+        elif cat_obj:
+            product.category_admin = cat_obj
+            update_fields.append('category_admin')
+
         product.save(update_fields=update_fields)
 
         return Response({
@@ -15822,6 +15834,290 @@ class SellerProducts(viewsets.ModelViewSet):
             }
         }, status=status.HTTP_200_OK)
 
+
+    @action(detail=True, methods=['put'], url_path='variants/bulk_update')
+    def bulk_update_variants(self, request, pk=None):
+        """
+        Bulk update variants for a product.
+        Validates all variants before persisting any changes.
+        """
+        user_id = request.data.get('user_id') or request.query_params.get('user_id')
+        try:
+            product = Product.objects.get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if str(product.customer.customer_id) != str(user_id) if user_id else False:
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        variants_payload = request.data.get('variants', [])
+        if not isinstance(variants_payload, list) or len(variants_payload) == 0:
+            return Response({"error": "At least one variant is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from decimal import Decimal, InvalidOperation
+
+        # ── Validate all variants first ───────────────────────────────────────
+        all_errors = {}
+
+        for i, v in enumerate(variants_payload):
+            label = v.get('title', '').strip() or f"Variant {i + 1}"
+            errs = {}
+
+            if not v.get('title', '').strip():
+                errs['title'] = "Title is required."
+
+            qty = v.get('quantity')
+            try:
+                qty_int = int(qty)
+                if qty_int < 0:
+                    errs['quantity'] = "Quantity cannot be negative."
+            except (ValueError, TypeError):
+                errs['quantity'] = "Invalid quantity."
+
+            price = v.get('price')
+            if price is None:
+                errs['price'] = "Calculated price is required."
+            else:
+                try:
+                    price_dec = Decimal(str(price))
+                    if price_dec < 0:
+                        errs['price'] = "Price cannot be negative."
+                except InvalidOperation:
+                    errs['price'] = "Invalid price value."
+
+            original_price = v.get('original_price')
+            if original_price is not None and original_price != '':
+                try:
+                    op = Decimal(str(original_price))
+                    if op < 0:
+                        errs['original_price'] = "Original price cannot be negative."
+                except InvalidOperation:
+                    errs['original_price'] = "Invalid original_price value."
+
+            usage_period = v.get('usage_period')
+            if usage_period is not None and usage_period != '':
+                try:
+                    up = float(usage_period)
+                    if up < 0:
+                        errs['usage_period'] = "Usage period cannot be negative."
+                except (ValueError, TypeError):
+                    errs['usage_period'] = "Invalid usage_period value."
+
+            dep_rate = v.get('depreciation_rate')
+            if dep_rate is not None and dep_rate != '':
+                try:
+                    dr = float(dep_rate)
+                    if not (0 <= dr <= 100):
+                        errs['depreciation_rate'] = "Depreciation rate must be between 0 and 100."
+                except (ValueError, TypeError):
+                    errs['depreciation_rate'] = "Invalid depreciation_rate value."
+
+            usage_unit = v.get('usage_unit')
+            if usage_unit and usage_unit not in ('weeks', 'months', 'years'):
+                errs['usage_unit'] = "usage_unit must be weeks, months, or years."
+
+            weight_unit = v.get('weight_unit')
+            if weight_unit and weight_unit not in ('g', 'kg', 'lb', 'oz'):
+                errs['weight_unit'] = "weight_unit must be g, kg, lb, or oz."
+
+            is_ref = v.get('is_refundable', False)
+            if isinstance(is_ref, bool):
+                is_ref_bool = is_ref
+            else:
+                is_ref_bool = str(is_ref).lower() in ('true', '1', 'yes')
+
+            if is_ref_bool:
+                rd = v.get('refund_days', 0)
+                try:
+                    if int(rd) < 1:
+                        errs['refund_days'] = "Refund days must be at least 1 when variant is refundable."
+                except (ValueError, TypeError):
+                    errs['refund_days'] = "Invalid refund_days value."
+
+            allow_swap = v.get('allow_swap', False)
+            if isinstance(allow_swap, bool):
+                allow_swap_bool = allow_swap
+            else:
+                allow_swap_bool = str(allow_swap).lower() in ('true', '1', 'yes')
+
+            if allow_swap_bool and v.get('swap_type') == 'swap_plus_payment':
+                try:
+                    min_pay = Decimal(str(v.get('minimum_additional_payment', 0)))
+                    max_pay = Decimal(str(v.get('maximum_additional_payment', 0)))
+                    if min_pay < 0:
+                        errs['minimum_additional_payment'] = "Min additional payment cannot be negative."
+                    if max_pay < min_pay:
+                        errs['maximum_additional_payment'] = "Max additional payment must be ≥ min."
+                except InvalidOperation:
+                    errs['minimum_additional_payment'] = "Invalid payment values."
+
+            if errs:
+                all_errors[label] = errs
+
+        if all_errors:
+            return Response({
+                "error": "Variant validation failed",
+                "fields": all_errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # ── Persist changes ───────────────────────────────────────────────────
+        updated = []
+        not_found = []
+
+        for v in variants_payload:
+            variant_id = v.get('id')
+            if not variant_id:
+                continue
+            try:
+                variant = Variants.objects.get(id=variant_id, product=product)
+            except Variants.DoesNotExist:
+                not_found.append(str(variant_id))
+                continue
+
+            update_fields = ['updated_at']
+
+            def _set(field, value, cast=None):
+                if value is not None and value != '':
+                    setattr(variant, field, cast(value) if cast else value)
+                    update_fields.append(field)
+
+            variant.title = v.get('title', variant.title)
+            update_fields.append('title')
+
+            _set('sku_code', v.get('sku_code'))
+            _set('price', v.get('price'), lambda x: Decimal(str(x)))
+            _set('quantity', v.get('quantity'), int)
+            _set('weight', v.get('weight'), lambda x: Decimal(str(x)))
+            _set('weight_unit', v.get('weight_unit'))
+            _set('critical_trigger', v.get('critical_trigger'), int)
+            _set('critical_stock', v.get('critical_stock'), int)
+            _set('original_price', v.get('original_price'), lambda x: Decimal(str(x)))
+            _set('usage_period', v.get('usage_period'), float)
+            _set('usage_unit', v.get('usage_unit'))
+            _set('depreciation_rate', v.get('depreciation_rate'), float)
+            _set('swap_description', v.get('swap_description'))
+            _set('minimum_additional_payment', v.get('minimum_additional_payment'), lambda x: Decimal(str(x)))
+            _set('maximum_additional_payment', v.get('maximum_additional_payment'), lambda x: Decimal(str(x)))
+
+            for bool_field in ('is_active', 'is_refundable', 'allow_swap'):
+                val = v.get(bool_field)
+                if val is not None:
+                    setattr(variant, bool_field, val if isinstance(val, bool) else str(val).lower() in ('true', '1', 'yes'))
+                    update_fields.append(bool_field)
+
+            _set('refund_days', v.get('refund_days'), int)
+
+            swap_type = v.get('swap_type')
+            if swap_type in ('direct_swap', 'swap_plus_payment'):
+                variant.swap_type = swap_type
+                update_fields.append('swap_type')
+
+            variant.save(update_fields=list(dict.fromkeys(update_fields)))
+            updated.append(str(variant.id))
+
+        return Response({
+            "success": True,
+            "message": f"{len(updated)} variant(s) updated successfully.",
+            "updated": updated,
+            **({"not_found": not_found} if not_found else {}),
+        }, status=status.HTTP_200_OK)
+        
+
+    @action(detail=True, methods=['get', 'post'], url_path='media')
+    def media(self, request, pk=None):
+        try:
+            product = Product.objects.get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ownership check
+        user_id = request.data.get('user_id') or request.query_params.get('user_id')
+        if user_id and str(product.customer.customer_id) != str(user_id):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        if request.method == 'GET':
+            media_items = product.productmedia_set.all()
+            return Response({
+                "success": True,
+                "media": [
+                    {
+                        "id": str(m.id),
+                        "file_data": get_media_url(m.file_data) if m.file_data else None,
+                        "file_type": m.file_type,
+                    }
+                    for m in media_items
+                ]
+            }, status=status.HTTP_200_OK)
+
+        # POST — upload new image
+        file = request.FILES.get('file')
+        if not file:
+            return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        media_obj = ProductMedia.objects.create(
+            product=product,
+            file_data=file,
+            file_type=file.content_type or 'image/jpeg',
+        )
+        return Response({
+            "success": True,
+            "media": {
+                "id": str(media_obj.id),
+                "file_data": get_media_url(media_obj.file_data) if media_obj.file_data else None,
+                "file_type": media_obj.file_type,
+            }
+        }, status=status.HTTP_201_CREATED)
+
+
+    @action(detail=True, methods=['delete'], url_path='media/(?P<media_id>[^/.]+)')
+    def delete_media(self, request, pk=None, media_id=None):
+        try:
+            product = Product.objects.get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        user_id = request.query_params.get('user_id')
+        if user_id and str(product.customer.customer_id) != str(user_id):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            media_obj = ProductMedia.objects.get(id=media_id, product=product)
+        except ProductMedia.DoesNotExist:
+            return Response({"error": "Media not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        media_obj.delete()
+        return Response({"success": True, "message": "Media deleted"}, status=status.HTTP_200_OK)
+
+
+    @action(detail=True, methods=['post', 'delete'], url_path='variants/(?P<variant_id>[^/.]+)/image')
+    def variant_image(self, request, pk=None, variant_id=None):
+        try:
+            product = Product.objects.get(pk=pk)
+            variant = Variants.objects.get(id=variant_id, product=product)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Variants.DoesNotExist:
+            return Response({"error": "Variant not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        user_id = request.data.get('user_id') or request.query_params.get('user_id')
+        if user_id and str(product.customer.customer_id) != str(user_id):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        if request.method == 'DELETE':
+            variant.image.delete(save=True)
+            return Response({"success": True, "message": "Variant image removed"}, status=status.HTTP_200_OK)
+
+        # POST
+        file = request.FILES.get('image')
+        if not file:
+            return Response({"error": "No image provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        variant.image = file
+        variant.save(update_fields=['image', 'updated_at'])
+        return Response({
+            "success": True,
+            "image": get_media_url(variant.image) if variant.image else None,
+        }, status=status.HTTP_200_OK)
         
     @action(detail=False, methods=['get'], url_path='global-categories')    
     def get_global_categories(self, request):
