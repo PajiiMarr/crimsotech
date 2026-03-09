@@ -11,10 +11,9 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
-  TextInput,
   ScrollView
 } from 'react-native';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import RoleGuard from '../guards/RoleGuard';
@@ -103,19 +102,19 @@ const STATUS_CONFIG = {
     label: 'Pending', 
     color: '#F59E0B',
     bgColor: '#FEF3C7',
-    icon: 'clock-outline'
+    icon: 'schedule'
   },
   to_ship: { 
     label: 'Processing', 
     color: '#F59E0B',
     bgColor: '#FEF3C7',
-    icon: 'clock-outline'
+    icon: 'schedule'
   },
   processing: {
     label: 'Processing',
     color: '#F59E0B',
     bgColor: '#FEF3C7',
-    icon: 'clock-outline'
+    icon: 'schedule'
   },
   ready_for_pickup: { 
     label: 'Ready for Pickup', 
@@ -173,7 +172,7 @@ const STATUS_CONFIG = {
   }
 };
 
-// Tabs configuration
+// Tabs configuration - fixed sizes
 const STATUS_TABS = [
   { id: 'all', label: 'All' },
   { id: 'pending', label: 'Pending' },
@@ -188,7 +187,6 @@ export default function PersonalOrderListing() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('all');
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [availableActions, setAvailableActions] = useState<Record<string, string[]>>({});
@@ -371,22 +369,6 @@ export default function PersonalOrderListing() {
     }
   };
 
-  const formatDateTime = (dateString?: string) => {
-    if (!dateString) return '';
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch {
-      return '';
-    }
-  };
-
   const formatCurrency = (amount: number) => {
     return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
   };
@@ -402,20 +384,7 @@ export default function PersonalOrderListing() {
   };
 
   const getFilteredOrders = () => {
-    let filtered = orders.filter(order => {
-      if (!searchTerm) return true;
-      const searchLower = searchTerm.toLowerCase();
-      const buyerName = formatBuyerName(order.buyer).toLowerCase();
-      
-      return (
-        buyerName.includes(searchLower) ||
-        order.order_id.toLowerCase().includes(searchLower) ||
-        order.buyer.email.toLowerCase().includes(searchLower) ||
-        order.items.some(item => 
-          item.cart_item?.product?.name?.toLowerCase().includes(searchLower)
-        )
-      );
-    });
+    let filtered = orders;
 
     if (activeTab !== 'all') {
       switch (activeTab) {
@@ -475,8 +444,8 @@ export default function PersonalOrderListing() {
 
   // Handle arrange shipment navigation
   const handleArrangeShipment = (orderId: string) => {
-    router.push(`/customer/arrange-shipment?orderId=${orderId}`);
-  };
+  router.push(`/customer/arrange-shipment?orderId=${orderId}&userId=${userId}`);
+};
 
   // Handle view offer
   const handleViewOffer = (orderId: string) => {
@@ -555,25 +524,6 @@ export default function PersonalOrderListing() {
         }
       ]
     );
-  };
-
-  // Handle mark as picked up
-  const handlePickedUp = async (orderId: string) => {
-    try {
-      const response = await AxiosInstance.patch(
-        `/customer-order-list/${orderId}/update_status/`,
-        { action_type: 'picked_up' },
-        { params: { user_id: userId } }
-      );
-      
-      if (response.data.success) {
-        Alert.alert('Success', response.data.message || 'Order marked as picked up');
-        fetchOrders();
-      }
-    } catch (error: any) {
-      console.error('Error marking as picked up:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to update order');
-    }
   };
 
   const openActionModal = (order: Order) => {
@@ -897,64 +847,10 @@ export default function PersonalOrderListing() {
   }
 
   return (
-      <RoleGuard allowedRoles={['customer']}>
+    <RoleGuard allowedRoles={['customer']}>
       <CustomerLayout disableScroll={true}>
         <View style={styles.container}>
-          {/* Header */}
-          {/* <View style={styles.header}>
-            <Text style={styles.title}>Personal Listing Orders</Text>
-            <Text style={styles.subtitle}>Manage orders from buyers for your personal listings</Text>
-          </View> */}
-
-          {/* Stats Cards */}
-          {/* <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            style={styles.statsScroll}
-            contentContainerStyle={styles.statsContainer}
-          >
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>{stats.all}</Text>
-              <Text style={styles.statLabel}>Total Orders</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statNumber, { color: '#F59E0B' }]}>{stats.pending}</Text>
-              <Text style={styles.statLabel}>Pending</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statNumber, { color: '#F59E0B' }]}>{stats.processing}</Text>
-              <Text style={styles.statLabel}>Processing</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statNumber, { color: '#3B82F6' }]}>{stats.shipped}</Text>
-              <Text style={styles.statLabel}>Shipped</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statNumber, { color: '#10B981' }]}>{stats.completed}</Text>
-              <Text style={styles.statLabel}>Completed</Text>
-            </View>
-          </ScrollView> */}
-
-          {/* Search Bar */}
-          {/* <View style={styles.searchContainer}>
-            <View style={styles.searchBar}>
-              <MaterialIcons name="search" size={16} color="#9CA3AF" />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search orders by ID, buyer, or product..."
-                placeholderTextColor="#9CA3AF"
-                value={searchTerm}
-                onChangeText={setSearchTerm}
-              />
-              {searchTerm.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchTerm('')}>
-                  <MaterialIcons name="close" size={16} color="#9CA3AF" />
-                </TouchableOpacity>
-              )}
-            </View>
-          </View> */}
-
-          {/* Tabs */}
+          {/* Tabs - Fixed size, no stats or search */}
           <ScrollView 
             horizontal 
             showsHorizontalScrollIndicator={false}
@@ -1135,86 +1031,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666'
   },
-  header: {
-    marginTop: 16,
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  statsScroll: {
-    marginBottom: 16,
-  },
-  statsContainer: {
-    paddingRight: 16,
-  },
-  statCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 12,
-    marginRight: 8,
-    minWidth: 100,
-    borderWidth: 1,
-    borderColor: '#F3F4F6',
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 4,
-  },
-  searchContainer: {
-    marginBottom: 16,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 13,
-    color: '#111827',
-    padding: 0,
-  },
   tabsScroll: {
+    marginTop: 16,
     marginBottom: 16,
   },
   tabsContainer: {
     paddingRight: 16,
+    gap: 8,
   },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
     backgroundColor: '#F3F4F6',
-    marginRight: 8,
-    gap: 4,
+    marginRight: 0,
+    gap: 6,
+    minWidth: 80, // Fixed minimum width
+    height: 36, // Fixed height
   },
   activeTab: {
     backgroundColor: '#F97316',
   },
   tabLabel: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     color: '#6B7280',
   },
@@ -1226,12 +1068,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 6,
     paddingVertical: 2,
+    minWidth: 20,
+    alignItems: 'center',
   },
   activeTabBadge: {
     backgroundColor: '#FFFFFF',
   },
   tabBadgeText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '600',
     color: '#6B7280',
   },

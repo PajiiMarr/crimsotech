@@ -1237,8 +1237,8 @@ export default function RequestRefundPage() {
               order.status === 'completed' ? 'check-circle' :
               order.status === 'delivered' ? 'package-variant' :
               order.status === 'shipped' ? 'truck' :
-              order.status === 'processing' || order.status === 'pending' ? 'clock-outline' :
-              order.status === 'cancelled' ? 'close-circle' : 'clock-outline'
+              order.status === 'processing' || order.status === 'pending' ? 'schedule' :
+              order.status === 'cancelled' ? 'close' : 'schedule'
             } 
             size={14} 
             color={
