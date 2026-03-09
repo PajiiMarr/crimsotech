@@ -30,27 +30,58 @@ export function meta(): Route.MetaDescriptors {
   return [{ title: "Seller | Product List" }];
 }
 
+// Define the types that match the edit-product component exactly
 interface Variant {
   id: string;
   title: string;
-  image: string | null;
+  option_title?: string | null;
+  option_ids?: any;
+  option_map?: any;
+  sku_code?: string | null;
+  price?: number | null;
+  compare_price?: number | null;
+  quantity: number;
+  weight?: number | null;
+  weight_unit: string;
+  critical_trigger?: number | null;
+  is_active: boolean;
+  is_refundable: boolean;
+  refund_days: number;
+  allow_swap: boolean;
+  swap_type: string;
+  original_price?: number | null;
+  usage_period?: number | null;
+  usage_unit?: string | null;
+  depreciation_rate?: number | null;
+  minimum_additional_payment: number;
+  maximum_additional_payment: number;
+  swap_description?: string | null;
+  image?: string | null;
+  critical_stock?: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface Product {
   id: string;
   name: string;
   description: string;
-  total_stock: number;
-  starting_price: string | null;
-  status: string;
   condition: string;
   upload_status: string;
+  status: string;
   is_refundable: boolean;
   refund_days: number;
-  shop: { id: string; name: string } | null;
   category_admin: { id: string; name: string } | null;
   category: { id: string; name: string } | null;
+  total_stock: number;
+  starting_price: string | null;
   variants?: Variant[];
+  media?: Array<{
+    id: string;
+    file_data: string | null;
+    file_type: string;
+  }>;
+  shop?: { id: string; name: string } | null;
   created_at: string;
   updated_at: string;
   is_removed?: boolean;
