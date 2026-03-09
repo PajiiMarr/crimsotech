@@ -6,7 +6,7 @@ import { cleanInput } from '~/clean/clean';
 import AxiosInstance from '~/components/axios/Axios';
 import CreateProductForm from '~/components/customer/customer-create-product-form';
 import { Button } from '~/components/ui/button';
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -315,12 +315,25 @@ export default function CreateProduct({ loaderData, actionData }: Route.Componen
   const { user, globalCategories, modelClasses } = loaderData;
   const errors: FormErrors = actionData?.errors || {};
 
-  // Memoize the props to prevent unnecessary re-renders
+  // Memoize the props with stable references to prevent infinite loops
   const formProps = useMemo(() => ({
-    globalCategories,
-    modelClasses,
-    errors
-  }), [globalCategories, modelClasses, errors]);
+    globalCategories: globalCategories || [],
+    modelClasses: modelClasses || [],
+    errors: errors || {}
+  }), [
+    JSON.stringify(globalCategories), 
+    JSON.stringify(modelClasses), 
+    JSON.stringify(errors)
+  ]);
+
+  // Log to debug
+  useEffect(() => {
+    console.log('CreateProduct rendered with props:', {
+      globalCategoriesCount: globalCategories?.length,
+      modelClassesCount: modelClasses?.length,
+      errorsCount: Object.keys(errors).length
+    });
+  }, []);
 
   return (
     <UserProvider user={user}>

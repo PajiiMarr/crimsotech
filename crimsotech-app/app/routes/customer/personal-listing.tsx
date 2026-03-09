@@ -63,6 +63,8 @@ interface Product {
     is_active: boolean
     image?: string | null
   }>
+  // ADD THIS LINE
+  primary_image?: string | null
   created_at: string
   updated_at: string
   is_removed?: boolean
@@ -163,37 +165,53 @@ export default function PersonalListings() {
           console.log('Products received:', response.data.products)
           
           const mappedProducts = (response.data.products || []).map((p: any) => {
-            console.log('Processing product:', p)
-            
-            // Calculate total stock from variants
-            let totalStock = 0
-            if (p.variants && Array.isArray(p.variants)) {
-              totalStock = p.variants.reduce((sum: number, v: any) => {
-                return sum + (parseInt(v.quantity) || 0)
-              }, 0)
-            } else if (p.total_stock) {
-              totalStock = parseInt(p.total_stock) || 0
-            } else if (p.quantity) {
-              totalStock = parseInt(p.quantity) || 0
-            }
-            
-            return {
-              id: p.id,
-              name: p.name,
-              description: p.description,
-              total_stock: totalStock,
-              status: p.status || 'active',
-              upload_status: p.upload_status || 'draft',
-              condition: p.condition || 'New',
-              category: p.category || null,
-              category_admin: p.category_admin || null,
-              variants: p.variants || [],
-              created_at: p.created_at,
-              updated_at: p.updated_at,
-              is_removed: p.is_removed,
-              removal_reason: p.removal_reason
-            }
-          })
+  console.log('Processing product:', p)
+  
+  // Calculate total stock from variants
+  let totalStock = 0
+  if (p.variants && Array.isArray(p.variants)) {
+    totalStock = p.variants.reduce((sum: number, v: any) => {
+      return sum + (parseInt(v.quantity) || 0)
+    }, 0)
+  } else if (p.total_stock) {
+    totalStock = parseInt(p.total_stock) || 0
+  } else if (p.quantity) {
+    totalStock = parseInt(p.quantity) || 0
+  }
+  
+  // ADD THIS BLOCK - Get primary image
+  let primaryImage = null
+  if (p.primary_image?.url) {
+    primaryImage = p.primary_image.url
+  } else if (p.media_files && Array.isArray(p.media_files) && p.media_files.length > 0) {
+    const firstMedia = p.media_files[0]
+    primaryImage = firstMedia.file_url || firstMedia.file_data || null
+  } else if (p.variants && Array.isArray(p.variants)) {
+    const variantWithImage = p.variants.find((v: any) => v.image)
+    if (variantWithImage) {
+      primaryImage = variantWithImage.image
+    }
+  }
+  
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    total_stock: totalStock,
+    status: p.status || 'active',
+    upload_status: p.upload_status || 'draft',
+    condition: p.condition || 'New',
+    category: p.category || null,
+    category_admin: p.category_admin || null,
+    variants: p.variants || [],
+    // ADD THIS LINE
+    primary_image: primaryImage,
+    created_at: p.created_at,
+    updated_at: p.updated_at,
+    is_removed: p.is_removed,
+    removal_reason: p.removal_reason
+  }
+})
 
           console.log('Final mapped products:', mappedProducts)
           setProducts(mappedProducts)
@@ -334,13 +352,13 @@ export default function PersonalListings() {
       cell: ({ row }) => {
         const product = row.original
         // Get first variant image if available
-        const variantImage = product.variants?.find(v => v.image)?.image
+        const productImage = product.primary_image || product.variants?.find(v => v.image)?.image
         return (
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center overflow-hidden">
-              {variantImage ? (
+              {productImage ? (
                 <img 
-                  src={variantImage} 
+                  src={productImage} 
                   alt={product.name}
                   className="h-full w-full object-cover"
                 />
