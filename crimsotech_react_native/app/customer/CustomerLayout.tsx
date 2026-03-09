@@ -32,7 +32,8 @@ export default function CustomerLayout({
       '/customer/comgift',
       '/customer/Returns',
       '/customer/product-listing',
-      '/customer/order-lists'
+      '/customer/order-lists',
+      '/customer/listing-returns'
     ];
 
     const isManagement = managementRoutePrefixes.some(prefix => pathname.startsWith(prefix));

@@ -11,7 +11,7 @@ import {
 import RoleGuard from '../guards/RoleGuard';
 import CustomerLayout from './CustomerLayout';
 
-export default function giftListing() {
+export default function listingReturns() {
 
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -48,7 +48,7 @@ export default function giftListing() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <Text>Comgift</Text>
+        <Text>Listing Returns</Text>
       </CustomerLayout>
     </RoleGuard>
   );

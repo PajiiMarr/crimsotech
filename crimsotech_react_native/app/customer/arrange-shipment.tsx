@@ -1,3 +1,4 @@
+// app/customer/arrange-shipment.tsx
 import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
@@ -11,8 +12,8 @@ import {
   Alert,
   Modal,
   FlatList,
-  Image,
   RefreshControl,
+  Platform
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
@@ -31,7 +32,6 @@ import {
   AlertCircle,
   Box,
   Weight,
-  Ruler,
   Home,
   Check,
   Handshake,
@@ -46,11 +46,9 @@ import {
   Award,
   Car,
   Bike,
-  Zap,
   Target,
   Tag,
   Send,
-  Percent,
   Info,
   Calculator,
   Loader2,
@@ -96,10 +94,14 @@ interface OrderItem {
     price: number;
     weight?: number;
     dimensions?: string;
-    shop: {
+    seller: {
       id: string;
       name: string;
+      username: string;
+      first_name: string;
+      last_name: string;
       address: string;
+      phone: string;
     };
   };
   quantity: number;
@@ -107,35 +109,66 @@ interface OrderItem {
 }
 
 interface OrderData {
-  order_id: string;
-  user: {
-    id: string;
-    username: string;
-    email: string;
-    first_name: string;
-    last_name: string;
-    phone?: string;
+  success: boolean;
+  message: string;
+  data: {
+    order_id: string;
+    buyer: {
+      id: string;
+      username: string;
+      email: string;
+      first_name: string;
+      last_name: string;
+      phone?: string;
+    };
+    delivery_address: string;
+    address_details: {
+      street: string;
+      city: string;
+      province: string;
+      postal_code: string;
+      country: string;
+      contact_person: string;
+      contact_phone: string;
+      notes?: string;
+    };
+    items: OrderItem[];
+    total_amount: number;
+    payment_method: string;
+    created_at: string;
+    current_status: string;
+    seller_info: {
+      id: string;
+      name: string;
+      username: string;
+      address: string;
+      phone: string;
+    };
   };
-  delivery_address: string;
-  address_details: {
-    street: string;
-    city: string;
-    province: string;
-    postal_code: string;
-    country: string;
-    contact_person: string;
-    contact_phone: string;
-    notes?: string;
-  };
-  items: OrderItem[];
-  total_amount: number;
-  payment_method: string;
-  created_at: string;
-  current_status: string;
-  shop_info: {
-    id: string;
-    name: string;
-    address: string;
+}
+
+interface RidersResponse {
+  success: boolean;
+  message: string;
+  data: Rider[];
+}
+
+interface OfferResponse {
+  success: boolean;
+  message: string;
+  data: {
+    order_id: string;
+    delivery_id: string;
+    rider_name: string;
+    offer_amount: number;
+    offer_type: string;
+    delivery_notes: string;
+    status: string;
+    submitted_at: string;
+    seller_info: {
+      id: string;
+      name: string;
+    };
   };
 }
 
@@ -192,7 +225,7 @@ const deliveryMethods: DeliveryMethod[] = [
   },
   {
     id: "choose_rider",
-    name: "Choose Your Rider",
+    name: "Choose a Rider",
     description: "Select from available verified riders and make an offer",
     icon: <UserCircle width={32} height={32} color="#374151" />,
     cost: 50.00,
@@ -237,7 +270,7 @@ export default function ArrangeShipment() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [order, setOrder] = useState<OrderData | null>(null);
+  const [order, setOrder] = useState<OrderData['data'] | null>(null);
   const [riders, setRiders] = useState<Rider[]>([]);
   const [selectedMethod, setSelectedMethod] = useState<string>("choose_rider");
   const [selectedRider, setSelectedRider] = useState<string>("");
@@ -266,13 +299,13 @@ export default function ArrangeShipment() {
       setLoading(true);
       
       // Get order details
-      const orderResponse = await AxiosInstance.get(`/arrange-shipment/${orderId}/get_order_details/`, {
-        params: { shop_id: userId }
+      const orderResponse = await AxiosInstance.get(`/customer-arrange-shipment/${orderId}/get_order_details/`, {
+        params: { user_id: userId }
       });
 
       // Get available riders
-      const ridersResponse = await AxiosInstance.get(`/arrange-shipment/${orderId}/get_available_riders/`, {
-        params: { shop_id: userId }
+      const ridersResponse = await AxiosInstance.get(`/customer-arrange-shipment/${orderId}/get_available_riders/`, {
+        params: { user_id: userId }
       });
 
       setOrder(orderResponse.data.data);
@@ -328,6 +361,7 @@ export default function ArrangeShipment() {
   };
 
   const selectedRiderData = riders.find(r => r.id === selectedRider);
+  const selectedMethodData = deliveryMethods.find(method => method.id === selectedMethod);
 
   // Update offer amount when rider changes
   useEffect(() => {
@@ -375,9 +409,9 @@ export default function ArrangeShipment() {
       if (selectedMethod === "choose_rider" && selectedRiderData) {
         // Submit shipment offer
         const response = await AxiosInstance.post(
-          `/arrange-shipment/${orderId}/submit_shipment_offer/`,
+          `/customer-arrange-shipment/${orderId}/submit_shipment_offer/`,
           {
-            shop_id: userId,
+            user_id: userId,
             rider_id: selectedRiderData.rider_id,
             offer_amount: offerAmount,
             offer_type: offerType,
@@ -385,40 +419,44 @@ export default function ArrangeShipment() {
           }
         );
 
-        if (response.data.success) {
+        const offerData: OfferResponse = response.data;
+
+        if (offerData.success) {
           Alert.alert(
             "Success! 🎉",
-            `Delivery Method: Choose Your Rider\n` +
+            `Delivery Method: ${selectedMethodData?.name}\n` +
             `Rider: ${selectedRiderData.user.first_name} ${selectedRiderData.user.last_name}\n` +
             `Your Offer: ${formatCurrency(offerAmount)}\n` +
             `Vehicle: ${selectedRiderData.vehicle_type}\n\n` +
             `✅ Offer sent to rider for review\n` +
             `✅ Rider has 24 hours to accept/decline\n` +
             `✅ You'll be notified of their decision\n` +
-            `✅ If accepted, pickup will be scheduled`,
+            `✅ If accepted, pickup will be scheduled\n` +
+            `\n📧 Notification sent to buyer: ${order?.buyer.email}`,
             [
               {
                 text: "OK",
-                // onPress: () => router.push('/customer/personal-listing/orders?tab=processing')
+                onPress: () => router.push('/customer/order-lists?tab=processing')
               }
             ]
           );
         } else {
-          Alert.alert("Error", response.data.message || "Failed to submit offer");
+          Alert.alert("Error", offerData.message || "Failed to submit offer");
         }
       } else {
         // Seller delivery
         Alert.alert(
           "Success! 🎉",
-          `Delivery Method: Seller Delivery\n\n` +
+          `Delivery Method: ${selectedMethodData?.name}\n\n` +
           `✅ You will coordinate delivery with buyer\n` +
           `✅ Buyer's address has been provided\n` +
           `✅ No delivery fees\n` +
-          `✅ Mark as delivered when complete`,
+          `✅ Mark as delivered when complete\n` +
+          `\n📧 Notification sent to buyer: ${order?.buyer.email}`,
           [
             {
               text: "OK",
-              // onPress: () => router.push('/customer/personal-listing/orders?tab=processing')
+              onPress: () => router.push('/customer/order-lists?tab=processing')
             }
           ]
         );
@@ -541,32 +579,45 @@ export default function ArrangeShipment() {
                 </View>
               ))}
 
-              {/* Buyer & Address Info */}
+              {/* Seller & Buyer Info */}
               <View style={styles.infoGrid}>
+                <View style={styles.infoCard}>
+                  <View style={styles.infoHeader}>
+                    <Store width={14} height={14} color="#6B7280" />
+                    <Text style={styles.infoLabel}>Seller (You)</Text>
+                  </View>
+                  <Text style={styles.infoValue}>{order.seller_info.name}</Text>
+                  <Text style={styles.infoSubvalue}>{order.seller_info.username}</Text>
+                  <Text style={styles.infoSubvalue}>{order.seller_info.phone}</Text>
+                  <Text style={styles.infoSubvalue}>{order.seller_info.address}</Text>
+                </View>
+
                 <View style={styles.infoCard}>
                   <View style={styles.infoHeader}>
                     <User width={14} height={14} color="#6B7280" />
                     <Text style={styles.infoLabel}>Buyer</Text>
                   </View>
                   <Text style={styles.infoValue}>
-                    {order.user.first_name} {order.user.last_name}
+                    {order.buyer.first_name} {order.buyer.last_name}
                   </Text>
-                  <Text style={styles.infoSubvalue}>{order.user.email}</Text>
-                  {order.user.phone && (
-                    <Text style={styles.infoSubvalue}>{order.user.phone}</Text>
+                  <Text style={styles.infoSubvalue}>{order.buyer.email}</Text>
+                  {order.buyer.phone && (
+                    <Text style={styles.infoSubvalue}>{order.buyer.phone}</Text>
                   )}
                 </View>
 
-                <View style={styles.infoCard}>
+                <View style={[styles.infoCard, styles.fullWidthCard]}>
                   <View style={styles.infoHeader}>
                     <MapPin width={14} height={14} color="#6B7280" />
                     <Text style={styles.infoLabel}>Delivery Address</Text>
                   </View>
                   <Text style={styles.infoValue}>{order.address_details.street}</Text>
                   <Text style={styles.infoSubvalue}>
-                    {order.address_details.city}, {order.address_details.province}
+                    {order.address_details.city}, {order.address_details.province} {order.address_details.postal_code}
                   </Text>
-                  <Text style={styles.infoSubvalue}>{order.address_details.postal_code}</Text>
+                  <Text style={styles.infoSubvalue}>
+                    Contact: {order.address_details.contact_person} - {order.address_details.contact_phone}
+                  </Text>
                 </View>
               </View>
             </View>
@@ -832,7 +883,7 @@ export default function ArrangeShipment() {
               <View style={styles.detailItem}>
                 <Text style={styles.detailLabel}>Selected Method</Text>
                 <Text style={styles.detailValue}>
-                  {deliveryMethods.find(m => m.id === selectedMethod)?.name}
+                  {selectedMethodData?.name}
                 </Text>
               </View>
 
@@ -865,7 +916,7 @@ export default function ArrangeShipment() {
               <View style={styles.detailItem}>
                 <Text style={styles.detailLabel}>Timeline</Text>
                 <Text style={styles.detailValue}>
-                  {deliveryMethods.find(m => m.id === selectedMethod)?.estimated_days}
+                  {selectedMethodData?.estimated_days}
                 </Text>
               </View>
             </View>
@@ -903,6 +954,56 @@ export default function ArrangeShipment() {
               )}
             </View>
           </View>
+
+          {/* Delivery Summary */}
+          <View style={styles.deliverySummaryCard}>
+            <View style={styles.summaryHeader}>
+              <Sparkles width={16} height={16} color="#374151" />
+              <Text style={styles.summaryTitle}>Delivery Summary</Text>
+            </View>
+            <View style={styles.summaryMethods}>
+              <View style={[styles.summaryMethod, selectedMethod === "seller_delivery" && styles.summaryMethodSelected]}>
+                <Truck width={12} height={12} color="#6B7280" />
+                <Text style={styles.summaryMethodText}>Seller Delivery</Text>
+                <Text style={styles.summaryMethodDetail}>• You handle transportation • No extra fees • Direct buyer contact</Text>
+              </View>
+              <View style={[styles.summaryMethod, selectedMethod === "choose_rider" && styles.summaryMethodSelected]}>
+                <Handshake width={12} height={12} color="#6B7280" />
+                <Text style={styles.summaryMethodText}>Choose a Rider</Text>
+                <Text style={styles.summaryMethodDetail}>• Make delivery offer (min ₱50) • Rider reviews offer • See ratings & reviews</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Offer Guidelines */}
+          {selectedMethod === "choose_rider" && (
+            <View style={styles.guidelinesCard}>
+              <View style={styles.guidelinesHeader}>
+                <Calculator width={16} height={16} color="#374151" />
+                <Text style={styles.guidelinesTitle}>Offer Guidelines</Text>
+              </View>
+              
+              <View style={styles.guidelinesContent}>
+                <View style={[styles.guidelineItem, styles.guidelineFair]}>
+                  <Text style={[styles.guidelineItemTitle, styles.guidelineFairTitle]}>Fair Offers</Text>
+                  <Text style={[styles.guidelineItemText, styles.guidelineFairText]}>
+                    • Base fee: Rider's starting price{"\n"}
+                    • Fair offer: Base + weight/distance{"\n"}
+                    • Higher offers = faster acceptance
+                  </Text>
+                </View>
+
+                <View style={[styles.guidelineItem, styles.guidelineLow]}>
+                  <Text style={[styles.guidelineItemTitle, styles.guidelineLowTitle]}>Low Offers</Text>
+                  <Text style={[styles.guidelineItemText, styles.guidelineLowText]}>
+                    • Below base fee may be declined{"\n"}
+                    • Minimum offer: ₱50{"\n"}
+                    • Consider item value & distance
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
 
           {/* Action Buttons */}
           <View style={styles.actionButtons}>
@@ -1224,7 +1325,6 @@ const styles = StyleSheet.create({
 
   // Info Grid
   infoGrid: {
-    flexDirection: 'row',
     gap: 8,
     marginTop: 8,
   },
@@ -1233,6 +1333,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
     padding: 12,
     borderRadius: 8,
+  },
+  fullWidthCard: {
+    width: '100%',
   },
   infoHeader: {
     flexDirection: 'row',
@@ -1678,6 +1781,109 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
     marginBottom: 4,
+  },
+
+  // Delivery Summary
+  deliverySummaryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  summaryTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  summaryMethods: {
+    gap: 8,
+  },
+  summaryMethod: {
+    padding: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 6,
+  },
+  summaryMethodSelected: {
+    borderWidth: 1,
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+  },
+  summaryMethodText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  summaryMethodDetail: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
+
+  // Guidelines
+  guidelinesCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  guidelinesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  guidelinesTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  guidelinesContent: {
+    gap: 8,
+  },
+  guidelineItem: {
+    padding: 12,
+    borderRadius: 6,
+  },
+  guidelineFair: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  guidelineFairTitle: {
+    color: '#059669',
+  },
+  guidelineFairText: {
+    color: '#065F46',
+  },
+  guidelineLow: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  guidelineLowTitle: {
+    color: '#D97706',
+  },
+  guidelineLowText: {
+    color: '#92400E',
+  },
+  guidelineItemTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  guidelineItemText: {
+    fontSize: 11,
+    lineHeight: 16,
   },
 
   // Action Buttons

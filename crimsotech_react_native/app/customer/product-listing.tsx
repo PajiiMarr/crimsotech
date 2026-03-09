@@ -472,14 +472,14 @@ export default function PersonalListing() {
       >
         <View style={styles.container}>
           {/* Header */}
-          <View style={styles.header}>
+          {/* <View style={styles.header}>
             <View>
               <Text style={styles.title}>Personal Listings</Text>
               <Text style={styles.subtitle}>
                 Manage your personal product listings (max {PRODUCT_LIMIT} products)
               </Text>
             </View>
-          </View>
+          </View> */}
 
           {/* Limit Alert */}
           {isLimitReached ? (
@@ -501,7 +501,7 @@ export default function PersonalListing() {
           ) : null}
 
           {/* Stats Cards */}
-          <View style={styles.statsContainer}>
+          {/* <View style={styles.statsContainer}>
             <View style={[styles.statsCard, styles.statsCardLarge]}>
               <View style={styles.statsHeader}>
                 <Text style={styles.statsLabel}>Product Limit Usage</Text>
@@ -572,7 +572,7 @@ export default function PersonalListing() {
                 </View>
               </View>
             </View>
-          </View>
+          </View> */}
 
           {/* Add Product Button */}
           <TouchableOpacity
