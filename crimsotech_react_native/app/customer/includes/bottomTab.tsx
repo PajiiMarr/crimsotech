@@ -12,7 +12,7 @@ export default function BottomTab() {
     { name: 'Favorite', icon: 'heart-outline', route: '/customer/favorite' },
     { name: 'Cart', icon: 'cart-outline', route: '/customer/cart' },
     { name: 'Purchases', icon: 'bag-outline', route: '/customer/purchases' },
-    { name: 'Returns', icon: 'repeat-outline', route: '/customer/Returns' },
+    { name: 'Return', icon: 'repeat-outline', route: '/customer/return-refund' },
     { name: 'Profile', icon: 'person-outline', route: '/customer/profile' },
   ] as const;
 

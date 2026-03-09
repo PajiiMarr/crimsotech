@@ -23,29 +23,8 @@ import AxiosInstance from '~/components/axios/Axios';
 
 // Helper function to get full image URL with debug logging
 const getFullImageUrl = (url: string | null | undefined): string => {
-  console.log('getFullImageUrl - input:', url);
-  
-  if (!url) {
-    console.log('getFullImageUrl - no URL, using fallback');
-    return '/phon.jpg';
-  }
-  
-  // If it's already a full URL, return it
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    console.log('getFullImageUrl - already absolute:', url);
-    return url;
-  }
-  
-  // Get the base URL from your API
-  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-  console.log('getFullImageUrl - baseUrl:', baseUrl);
-  
-  // Ensure the URL starts with a slash
-  const cleanUrl = url.startsWith('/') ? url : `/${url}`;
-  const fullUrl = `${baseUrl}${cleanUrl}`;
-  
-  console.log('getFullImageUrl - constructed full URL:', fullUrl);
-  return fullUrl;
+  if (!url) return "/phon.jpg";
+  return url;
 };
 
 export default function ViewDelivered({ orderDetails, formatCurrency, formatDate, onRequestRefund, userId }: any) {
@@ -462,15 +441,46 @@ export default function ViewDelivered({ orderDetails, formatCurrency, formatDate
                 {order.items.filter((i: any) => i.is_refundable).map((it: any) => (
                   <div key={it.checkout_id || it.product_id} className="flex flex-col gap-2 w-full">
                     <div className="text-xs truncate">{it.product_name}</div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full justify-start h-8 text-xs"
-                      onClick={() => onRequestRefund({ orderId: order.id, productId: it.product_id, checkoutId: it.checkout_id })}
-                    >
-                      <CreditCard className="h-3 w-3 mr-1" />
-                      <span className="text-xs">Refund</span>
-                    </Button>
+<Button
+  variant="outline"
+  size="sm"
+  className="w-full justify-start h-8 text-xs"
+  onClick={() => {
+    // Debug log to see what we're working with
+    console.log('Refund button clicked - order object:', order);
+    console.log('Item being refunded:', it);
+    
+    // Get the order ID - try multiple possible locations
+    let orderId = order?.id || order?.order_id || order?.orderId;
+    
+    // If orderId is an object, try to extract the ID
+    if (orderId && typeof orderId === 'object') {
+      console.log('orderId is an object:', orderId);
+      orderId = orderId.id || orderId.order_id || orderId.orderId || JSON.stringify(orderId);
+    }
+    
+    // Convert to string and clean it
+    const cleanOrderId = String(orderId || '').replace(/\.data$/, '');
+    
+    console.log('Clean order ID:', cleanOrderId);
+    console.log('Product ID:', it.product_id);
+    console.log('Checkout ID:', it.checkout_id);
+    
+    if (!cleanOrderId) {
+      console.error('No valid order ID found');
+      return;
+    }
+    
+    onRequestRefund({ 
+      orderId: cleanOrderId, 
+      productId: it.product_id, 
+      checkoutId: it.checkout_id 
+    });
+  }}
+>
+  <CreditCard className="h-3 w-3 mr-1" />
+  <span className="text-xs">Refund</span>
+</Button>
                   </div>
                 ))}
               </div>

@@ -675,11 +675,17 @@ const CustomDropdown = ({
 
 // --- Loader ---
 export async function loader({ params, request, context }: any) {
-  const orderId = params.id;
+  // Clean the ID - remove .data if present
+  let orderId = params.id;
+  if (typeof orderId === 'string') {
+    orderId = orderId.replace(/\.data$/, '');
+    console.log('Cleaned order ID in loader:', orderId);
+  }
   
   // Validate orderId is a valid UUID
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!orderId || !uuidRegex.test(orderId)) {
+    console.error('Invalid order ID after cleaning:', orderId);
     throw new Response('Invalid order ID', { status: 400 });
   }
   
@@ -700,18 +706,39 @@ export async function loader({ params, request, context }: any) {
   await requireRole(request, context, ["isCustomer"]);
 
   try {
-    // Fetch the specific order for the user
-    const response = await AxiosInstance.get(`/purchases-buyer/${orderId}/`, {
+    // FIX: Use the view-order endpoint which has all the detailed data you need
+    console.log(`Fetching order ${orderId} from /purchases-buyer/${orderId}/view-order/`);
+    
+    const response = await AxiosInstance.get(`/purchases-buyer/${orderId}/view-order/`, {
       headers: {
         'X-User-Id': user?.user_id || ''
       }
     });
     
-    // The response is the order data directly
-    const order = response.data;
+    // The response structure from view-order is different
+    const orderData = response.data;
+    
+    // Transform the data to match your component's expected format
+    // The view-order endpoint returns data with order nested inside
+    const transformedOrder = {
+      order_id: orderData.order?.id || orderId,
+      status: orderData.order?.status || 'pending',
+      total_amount: orderData.order_summary?.total || '0',
+      payment_method: orderData.order?.payment_method || '',
+      delivery_method: orderData.order?.delivery_method || '',
+      delivery_address: orderData.delivery_address?.address || '',
+      created_at: orderData.order?.created_at || new Date().toISOString(),
+      payment_status: orderData.order?.payment_status || null,
+      delivery_status: orderData.order?.delivery_status || null,
+      delivery_rider: orderData.order?.delivery_rider || null,
+      items: orderData.items || [],
+      shipping: {
+        method: orderData.shipping_info?.delivery_method || ''
+      }
+    };
 
     return {
-      order,
+      order: transformedOrder,
       user: {
         id: user?.user_id || '',
         name: user?.username || '',
@@ -719,19 +746,18 @@ export async function loader({ params, request, context }: any) {
         isCustomer: true,
       }
     };
+    
   } catch (error: any) {
-    console.error('Error fetching order:', error);
+    console.error('Error fetching order in request-refund-return loader:', error?.message || error);
     
-    // Handle authentication errors
-    if (error.response?.status === 401) {
-      throw new Response('Unauthorized - Please login again', { status: 401 });
+    if (error?.response) {
+      console.error('Axios error response status:', error.response.status);
+      console.error('Axios error response data:', error.response.data);
     }
-    
-    if (error.response?.status === 404) {
-      throw new Response('Order not found', { status: 404 });
-    }
-    
-    throw new Response('Failed to load order. Please try again.', { status: 500 });
+
+    const statusCode = error?.response?.status || 500;
+    const message = error?.response?.data?.error || error?.response?.data?.detail || error?.message || 'Failed to load order.';
+    throw new Response(JSON.stringify({ error: message }), { status: statusCode, headers: { 'Content-Type': 'application/json' } });
   }
 }
 

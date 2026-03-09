@@ -10,7 +10,7 @@ export default function ManagementBottomTab() {
   const tabs = [
     { name: 'Products', icon: 'cube-outline', activeIcon: 'cube', route: '/customer/personal-listing' },
     { name: 'Orders', icon: 'list-outline', activeIcon: 'list', route: '/customer/order-lists' },
-    { name: 'Returns', icon: 'return-up-back-outline', activeIcon: 'return-up-back', route: '/customer/return-refund' },
+    { name: 'Listing Returns', icon: 'return-up-back-outline', activeIcon: 'return-up-back', route: '/customer/listing-return-refund' },
     { name: 'ComGift', icon: 'gift-outline', activeIcon: 'gift', route: '/customer/comgift' },
   ] as const;
 
