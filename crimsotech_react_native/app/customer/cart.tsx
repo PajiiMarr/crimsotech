@@ -1,29 +1,29 @@
 // app/(customer)/cart.tsx
-import React, { useState, useEffect } from 'react';
-import { 
-  SafeAreaView, 
-  View, 
-  Text, 
-  ActivityIndicator, 
-  TouchableOpacity, 
-  ScrollView, 
-  Image, 
-  StyleSheet, 
+import React, { useState, useEffect } from "react";
+import {
+  SafeAreaView,
+  View,
+  Text,
+  ActivityIndicator,
+  TouchableOpacity,
+  ScrollView,
+  Image,
+  StyleSheet,
   Alert,
   RefreshControl,
   TextInput,
   Modal,
-  Platform
-} from 'react-native';
-import { 
-  Ionicons, 
+  Platform,
+} from "react-native";
+import {
+  Ionicons,
   MaterialCommunityIcons,
-  MaterialIcons 
-} from '@expo/vector-icons'; 
-import { router } from 'expo-router';
-import { useAuth } from '../../contexts/AuthContext';
-import CustomerLayout from './CustomerLayout';
-import AxiosInstance from '../../contexts/axios';
+  MaterialIcons,
+} from "@expo/vector-icons";
+import { router } from "expo-router";
+import { useAuth } from "../../contexts/AuthContext";
+import CustomerLayout from "./CustomerLayout";
+import AxiosInstance from "../../contexts/axios";
 
 // ------------------ TYPES based on your API response ------------------
 interface VariantDetails {
@@ -97,22 +97,24 @@ interface CartStore {
 }
 
 // ------------------ CONSTANTS ------------------
-const DELIVERY_FEE = 50.00;
-const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1557821552-17105176677c?w=400&q=80';
+const DELIVERY_FEE = 50.0;
+const FALLBACK_IMAGE =
+  "https://images.unsplash.com/photo-1557821552-17105176677c?w=400&q=80";
 
 // ------------------ HELPER FUNCTIONS ------------------
 const formatImageUrl = (url: string | null | undefined): string | null => {
-  if (!url || url.trim() === '') return null;
+  if (!url || url.trim() === "") return null;
 
-  if (url.startsWith('http://') || url.startsWith('https://')) {
+  if (url.startsWith("http://") || url.startsWith("https://")) {
     return url;
   }
 
-  const baseURL = (AxiosInstance.defaults && AxiosInstance.defaults.baseURL) 
-    ? AxiosInstance.defaults.baseURL.replace(/\/$/, '') 
-    : 'http://localhost:8000';
-  
-  if (url.startsWith('/')) {
+  const baseURL =
+    AxiosInstance.defaults && AxiosInstance.defaults.baseURL
+      ? AxiosInstance.defaults.baseURL.replace(/\/$/, "")
+      : "http://localhost:8000";
+
+  if (url.startsWith("/")) {
     return `${baseURL}${url}`;
   }
 
@@ -121,7 +123,7 @@ const formatImageUrl = (url: string | null | undefined): string | null => {
 
 const resolveCartItemImage = (
   variantDetails: VariantDetails | null,
-  productDetails: ProductDetails
+  productDetails: ProductDetails,
 ): string => {
   if (variantDetails?.image) {
     const resolved = formatImageUrl(variantDetails.image);
@@ -149,20 +151,25 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
     const price = variantDetails?.price ? parseFloat(variantDetails.price) : 0;
     const maxAvailable = variantDetails?.quantity_available ?? 999;
     const image = resolveCartItemImage(variantDetails, productDetails);
-    const subtotal = item.total_price ? parseFloat(item.total_price) : price * item.quantity;
+    const subtotal = item.total_price
+      ? parseFloat(item.total_price)
+      : price * item.quantity;
 
-    const variantLabel = variantDetails?.option_title?.trim() || variantDetails?.title?.trim() || null;
+    const variantLabel =
+      variantDetails?.option_title?.trim() ||
+      variantDetails?.title?.trim() ||
+      null;
 
     return {
       id: item.id,
       product_id: productDetails?.id || item.product,
       variant_id: item.variant,
-      name: productDetails?.name || 'Product',
+      name: productDetails?.name || "Product",
       price,
       quantity: item.quantity,
       image,
-      shop_name: productDetails?.shop_name || 'Store',
-      shop_id: productDetails?.shop_id || '',
+      shop_name: productDetails?.shop_name || "Store",
+      shop_id: productDetails?.shop_id || "",
       selected: true,
       added_at: item.added_at,
       subtotal,
@@ -175,16 +182,16 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
 // ------------------ COMPONENTS ------------------
 
 // Coupon Modal Component
-const CouponModal = ({ 
-  visible, 
-  onClose, 
-  onApply 
-}: { 
-  visible: boolean; 
-  onClose: () => void; 
+const CouponModal = ({
+  visible,
+  onClose,
+  onApply,
+}: {
+  visible: boolean;
+  onClose: () => void;
   onApply: (code: string) => Promise<void>;
 }) => {
-  const [couponCode, setCouponCode] = useState('');
+  const [couponCode, setCouponCode] = useState("");
   const [isApplying, setIsApplying] = useState(false);
 
   const handleApply = async () => {
@@ -192,7 +199,7 @@ const CouponModal = ({
     setIsApplying(true);
     try {
       await onApply(couponCode.trim());
-      setCouponCode('');
+      setCouponCode("");
       onClose();
     } finally {
       setIsApplying(false);
@@ -210,10 +217,7 @@ const CouponModal = ({
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Apply Coupon</Text>
-            <TouchableOpacity 
-              onPress={onClose}
-              style={styles.modalCloseButton}
-            >
+            <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
               <MaterialIcons name="close" size={24} color="#374151" />
             </TouchableOpacity>
           </View>
@@ -240,7 +244,7 @@ const CouponModal = ({
               <TouchableOpacity
                 style={[
                   styles.applyButton,
-                  (!couponCode.trim()) && styles.applyButtonDisabled
+                  !couponCode.trim() && styles.applyButtonDisabled,
                 ]}
                 onPress={handleApply}
                 disabled={!couponCode.trim()}
@@ -275,21 +279,18 @@ const ShopHeader = ({
 }) => {
   return (
     <View style={styles.shopHeader}>
-      <TouchableOpacity 
+      <TouchableOpacity
         onPress={() => onSelectShop(!allSelected)}
         style={styles.shopCheckbox}
       >
-        <View style={[
-          styles.checkbox,
-          allSelected && styles.checkboxChecked
-        ]}>
+        <View style={[styles.checkbox, allSelected && styles.checkboxChecked]}>
           {allSelected && (
             <MaterialIcons name="check" size={16} color="#FFFFFF" />
           )}
         </View>
       </TouchableOpacity>
 
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.shopHeaderContent}
         onPress={onToggleExpand}
         activeOpacity={0.7}
@@ -298,15 +299,18 @@ const ShopHeader = ({
           <MaterialIcons name="storefront" size={20} color="#F97316" />
         </View>
         <View style={styles.shopInfo}>
-          <Text style={styles.shopNameText} numberOfLines={1}>{shopName}</Text>
+          <Text style={styles.shopNameText} numberOfLines={1}>
+            {shopName}
+          </Text>
           <Text style={styles.shopSummary}>
-            {itemCount} {itemCount === 1 ? 'item' : 'items'} • ₱{shopTotal.toFixed(2)}
+            {itemCount} {itemCount === 1 ? "item" : "items"} • ₱
+            {shopTotal.toFixed(2)}
           </Text>
         </View>
-        <MaterialIcons 
-          name={isExpanded ? "keyboard-arrow-up" : "keyboard-arrow-down"} 
-          size={24} 
-          color="#9CA3AF" 
+        <MaterialIcons
+          name={isExpanded ? "keyboard-arrow-up" : "keyboard-arrow-down"}
+          size={24}
+          color="#9CA3AF"
         />
       </TouchableOpacity>
     </View>
@@ -330,8 +334,14 @@ const CartItemComponent = ({
   const [imageError, setImageError] = useState(false);
 
   const handleIncrement = () => {
-    if (item.max_available !== undefined && item.quantity >= item.max_available) {
-      Alert.alert('Maximum Quantity', `Only ${item.max_available} items available`);
+    if (
+      item.max_available !== undefined &&
+      item.quantity >= item.max_available
+    ) {
+      Alert.alert(
+        "Maximum Quantity",
+        `Only ${item.max_available} items available`,
+      );
       return;
     }
     onUpdateQuantity(item.id, item.quantity + 1);
@@ -339,14 +349,14 @@ const CartItemComponent = ({
 
   const handleDecrement = () => {
     if (item.quantity <= 1) {
-      Alert.alert(
-        'Remove Item',
-        'Remove this item from cart?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Remove', style: 'destructive', onPress: () => onRemove(item.id) }
-        ]
-      );
+      Alert.alert("Remove Item", "Remove this item from cart?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => onRemove(item.id),
+        },
+      ]);
       return;
     }
     onUpdateQuantity(item.id, item.quantity - 1);
@@ -354,23 +364,26 @@ const CartItemComponent = ({
 
   return (
     <View style={styles.cartItem}>
-      <TouchableOpacity 
+      <TouchableOpacity
         onPress={() => onSelect(item.id, !item.selected)}
-        style={styles.checkbox}
+        style={{ padding: 4 }} // Add some hit slop/padding instead of the checkbox style
         disabled={isUpdating}
       >
-        <View style={[
-          styles.checkbox,
-          item.selected && styles.checkboxChecked
-        ]}>
+        <View
+          style={[
+            styles.checkbox,
+            { marginRight: 0 }, // Remove margin from the box itself since we might want spacing on container
+            item.selected && styles.checkboxChecked,
+          ]}
+        >
           {item.selected && (
-            <MaterialIcons name="check" size={16} color="#FFFFFF" />
+            <MaterialIcons name="check" size={14} color="#FFFFFF" />
           )}
         </View>
       </TouchableOpacity>
 
-      <Image 
-        source={{ uri: imageError ? FALLBACK_IMAGE : item.image }} 
+      <Image
+        source={{ uri: imageError ? FALLBACK_IMAGE : item.image }}
         style={styles.itemImage}
         onError={() => setImageError(true)}
       />
@@ -380,7 +393,9 @@ const CartItemComponent = ({
           <Text style={styles.itemName} numberOfLines={2}>
             {item.name}
           </Text>
-          <Text style={styles.itemPrice}>₱{(item.price * item.quantity).toFixed(2)}</Text>
+          <Text style={styles.itemPrice}>
+            ₱{(item.price * item.quantity).toFixed(2)}
+          </Text>
         </View>
 
         {item.variant_title && (
@@ -388,38 +403,47 @@ const CartItemComponent = ({
         )}
 
         <View style={styles.itemDetails}>
-          <Text style={styles.itemPriceEach}>₱{item.price.toFixed(2)} each</Text>
+          <Text style={styles.itemPriceEach}>
+            ₱{item.price.toFixed(2)} each
+          </Text>
 
           <View style={styles.quantityControl}>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={handleDecrement}
               style={[styles.qtyBtn, isUpdating && styles.qtyBtnDisabled]}
               disabled={isUpdating}
             >
               <MaterialIcons name="remove" size={16} color="#4B5563" />
             </TouchableOpacity>
-            
+
             {isUpdating ? (
-              <ActivityIndicator size="small" color="#F97316" style={styles.qtyValue} />
+              <ActivityIndicator
+                size="small"
+                color="#F97316"
+                style={styles.qtyValue}
+              />
             ) : (
               <Text style={styles.qtyValue}>{item.quantity}</Text>
             )}
-            
-            <TouchableOpacity 
+
+            <TouchableOpacity
               onPress={handleIncrement}
               style={[styles.qtyBtn, isUpdating && styles.qtyBtnDisabled]}
-              disabled={isUpdating || (item.max_available !== undefined && item.quantity >= item.max_available)}
+              disabled={
+                isUpdating ||
+                (item.max_available !== undefined &&
+                  item.quantity >= item.max_available)
+              }
             >
               <MaterialIcons name="add" size={16} color="#4B5563" />
             </TouchableOpacity>
           </View>
         </View>
 
-        {item.max_available !== undefined && item.quantity >= item.max_available && (
-          <Text style={styles.maxAvailableText}>Max available quantity</Text>
-        )}
-
-      
+        {item.max_available !== undefined &&
+          item.quantity >= item.max_available && (
+            <Text style={styles.maxAvailableText}>Max available quantity</Text>
+          )}
       </View>
     </View>
   );
@@ -445,13 +469,13 @@ const ShopSection = ({
 
   const shopTotal = shop.items.reduce(
     (sum, item) => sum + item.price * item.quantity,
-    0
+    0,
   );
   const allSelected = shop.items.every((item) => item.selected);
   const selectedItems = shop.items.filter((item) => item.selected);
   const selectedTotal = selectedItems.reduce(
     (sum, item) => sum + item.price * item.quantity,
-    0
+    0,
   );
 
   return (
@@ -492,7 +516,9 @@ const ShopSection = ({
             </View>
             <View style={styles.shopSummaryRow}>
               <Text style={styles.shopSummaryLabel}>Subtotal:</Text>
-              <Text style={styles.shopSummaryTotal}>₱{selectedTotal.toFixed(2)}</Text>
+              <Text style={styles.shopSummaryTotal}>
+                ₱{selectedTotal.toFixed(2)}
+              </Text>
             </View>
           </View>
         </>
@@ -523,72 +549,64 @@ const OrderSummary = ({
 
   return (
     <View style={styles.orderSummary}>
-      <View style={styles.sectionHeader}>
-        <View style={styles.sectionIcon}>
-          <MaterialIcons name="receipt" size={24} color="#F97316" />
+      {/* Details Section */}
+      <View style={styles.detailsContainer}>
+        <View style={styles.summaryRowCompact}>
+          <Text style={styles.summaryLabelCompact}>
+            Subtotal ({itemCount} items)
+          </Text>
+          <Text style={styles.summaryValueCompact}>₱{subtotal.toFixed(2)}</Text>
         </View>
-        <View>
-          <Text style={styles.sectionTitle}>Order Summary</Text>
-          <Text style={styles.sectionSubtitle}>Review your order details</Text>
+
+        <View style={styles.summaryRowCompact}>
+          <Text style={styles.summaryLabelCompact}>Delivery Fee</Text>
+          <Text style={styles.summaryValueCompact}>₱{delivery.toFixed(2)}</Text>
         </View>
+
+        {discount > 0 && (
+          <View style={styles.summaryRowCompact}>
+            <Text style={[styles.summaryLabelCompact, { color: "#059669" }]}>
+              Discount
+            </Text>
+            <Text style={[styles.summaryValueCompact, { color: "#059669" }]}>
+              -₱{discount.toFixed(2)}
+            </Text>
+          </View>
+        )}
       </View>
 
-      <View style={styles.summaryRow}>
-        <Text style={styles.summaryLabel}>Items ({itemCount})</Text>
-        <Text style={styles.summaryValue}>₱{subtotal.toFixed(2)}</Text>
-      </View>
+      <View style={styles.summaryDivider} />
 
-      <View style={styles.summaryRow}>
-        <Text style={styles.summaryLabel}>Shops ({shopCount})</Text>
-        <View style={styles.shopBadge}>
-          <Text style={styles.shopBadgeText}>Separate deliveries</Text>
+      {/* Bottom Action Section */}
+      <View style={styles.compactContainer}>
+        <View style={styles.totalInfoContainer}>
+          <Text style={styles.totalLabelCompact}>Total Payment</Text>
+          <View style={styles.totalValueRow}>
+            <Text style={styles.totalCurrency}>₱</Text>
+            <Text style={styles.totalValueCompact}>{total.toFixed(2)}</Text>
+          </View>
         </View>
+
+        <TouchableOpacity
+          style={styles.compactCouponBtn}
+          onPress={onApplyCoupon}
+        >
+          <MaterialIcons name="local-offer" size={16} color="#F97316" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.checkoutBtnCompact,
+            itemCount === 0 && styles.checkoutBtnDisabled,
+          ]}
+          onPress={onProceedToCheckout}
+          disabled={itemCount === 0}
+        >
+          <Text style={styles.checkoutBtnTextCompact}>
+            Checkout ({itemCount})
+          </Text>
+        </TouchableOpacity>
       </View>
-
-      {discount > 0 && (
-        <View style={styles.discountRow}>
-          <Text style={styles.discountLabel}>Discount</Text>
-          <Text style={styles.discountValue}>-₱{discount.toFixed(2)}</Text>
-        </View>
-      )}
-
-      <View style={styles.summaryRow}>
-        <Text style={styles.summaryLabel}>Delivery (estimated)</Text>
-        <Text style={styles.summaryValue}>₱{delivery.toFixed(2)}</Text>
-      </View>
-
-      <View style={styles.divider} />
-
-      <View style={styles.totalRow}>
-        <Text style={styles.totalLabel}>Total</Text>
-        <View style={styles.totalRight}>
-          <Text style={styles.totalValue}>₱{total.toFixed(2)}</Text>
-          <Text style={styles.totalVat}>Including VAT</Text>
-        </View>
-      </View>
-
-      <Text style={styles.shopCountText}>
-        From {shopCount} {shopCount === 1 ? 'shop' : 'shops'}
-      </Text>
-
-      <TouchableOpacity 
-        style={styles.couponButton}
-        onPress={onApplyCoupon}
-      >
-        <MaterialIcons name="local-offer" size={20} color="#F97316" />
-        <Text style={styles.couponButtonText}>Apply Coupon</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.checkoutBtn, itemCount === 0 && styles.checkoutBtnDisabled]}
-        onPress={onProceedToCheckout}
-        disabled={itemCount === 0}
-      >
-        <MaterialCommunityIcons name="truck-fast-outline" size={20} color="#FFF" />
-        <Text style={styles.checkoutBtnText}>
-          Proceed to Checkout ({itemCount})
-        </Text>
-      </TouchableOpacity>
     </View>
   );
 };
@@ -606,27 +624,30 @@ export default function CartPage() {
   const fetchCartCount = async () => {
     if (!userId) return;
     try {
-      const response = await AxiosInstance.get<CartCountResponse>('/cart/count/', {
-        params: { user_id: userId },
-      });
+      const response = await AxiosInstance.get<CartCountResponse>(
+        "/cart/count/",
+        {
+          params: { user_id: userId },
+        },
+      );
       if (response.data.success) {
         setCartCount(response.data.count);
       }
     } catch (err) {
-      console.error('Error fetching cart count:', err);
+      console.error("Error fetching cart count:", err);
     }
   };
 
   const fetchCartData = async () => {
     if (!userId) {
-      Alert.alert('Login Required', 'Please login to view your cart');
+      Alert.alert("Login Required", "Please login to view your cart");
       setLoading(false);
       return;
     }
 
     try {
       setLoading(true);
-      const response = await AxiosInstance.get<CartApiResponse>('/view-cart/', {
+      const response = await AxiosInstance.get<CartApiResponse>("/view-cart/", {
         params: { user_id: userId },
       });
 
@@ -647,7 +668,7 @@ export default function CartPage() {
             acc[item.shop_id].items.push(item);
             return acc;
           },
-          {}
+          {},
         );
 
         const storesArray: CartStore[] = Object.values(groupedItems);
@@ -657,18 +678,18 @@ export default function CartPage() {
         setCartCount(0);
       }
     } catch (error: any) {
-      console.error('Error fetching cart:', error);
-      
-      let errorMessage = 'Failed to load cart items';
+      console.error("Error fetching cart:", error);
+
+      let errorMessage = "Failed to load cart items";
       if (error.response?.status === 404) {
-        errorMessage = 'Cart is empty';
+        errorMessage = "Cart is empty";
       } else if (error.response?.status === 401) {
-        errorMessage = 'Please login to view your cart';
+        errorMessage = "Please login to view your cart";
       } else if (!error.response) {
-        errorMessage = 'Network error. Please check your connection.';
+        errorMessage = "Network error. Please check your connection.";
       }
-      
-      Alert.alert('Error', errorMessage);
+
+      Alert.alert("Error", errorMessage);
       setCartStores([]);
     } finally {
       setLoading(false);
@@ -698,35 +719,40 @@ export default function CartPage() {
       });
 
       if (response.data.success) {
-        setCartStores(prev => prev.map(store => ({
-          ...store,
-          items: store.items.map(item => 
-            item.id === itemId 
-              ? { 
-                  ...item, 
-                  quantity: newQuantity,
-                  subtotal: item.price * newQuantity 
-                } 
-              : item
-          )
-        })));
-        
+        setCartStores((prev) =>
+          prev.map((store) => ({
+            ...store,
+            items: store.items.map((item) =>
+              item.id === itemId
+                ? {
+                    ...item,
+                    quantity: newQuantity,
+                    subtotal: item.price * newQuantity,
+                  }
+                : item,
+            ),
+          })),
+        );
+
         fetchCartCount();
       } else {
-        Alert.alert('Error', response.data.error || 'Failed to update quantity');
+        Alert.alert(
+          "Error",
+          response.data.error || "Failed to update quantity",
+        );
       }
     } catch (error: any) {
-      console.error('Error updating quantity:', error);
-      
-      let errorMessage = 'Failed to update quantity';
+      console.error("Error updating quantity:", error);
+
+      let errorMessage = "Failed to update quantity";
       if (error.response?.data?.error) {
         errorMessage = error.response.data.error;
         if (error.response.data.available_quantity) {
           errorMessage += `. Only ${error.response.data.available_quantity} available.`;
         }
       }
-      
-      Alert.alert('Error', errorMessage);
+
+      Alert.alert("Error", errorMessage);
       fetchCartData();
     } finally {
       setUpdatingId(null);
@@ -738,104 +764,119 @@ export default function CartPage() {
 
     setUpdatingId(itemId);
     try {
-      const response = await AxiosInstance.delete(`/view-cart/delete/${itemId}/`, {
-        data: { user_id: userId },
-      });
+      const response = await AxiosInstance.delete(
+        `/view-cart/delete/${itemId}/`,
+        {
+          data: { user_id: userId },
+        },
+      );
 
       if (response.data.success) {
-        setCartStores(prev => {
+        setCartStores((prev) => {
           const newStores = prev
-            .map(store => ({
+            .map((store) => ({
               ...store,
-              items: store.items.filter(item => item.id !== itemId)
+              items: store.items.filter((item) => item.id !== itemId),
             }))
-            .filter(store => store.items.length > 0);
-          
-          setCartCount(newStores.reduce((acc, store) => acc + store.items.length, 0));
+            .filter((store) => store.items.length > 0);
+
+          setCartCount(
+            newStores.reduce((acc, store) => acc + store.items.length, 0),
+          );
           return newStores;
         });
       } else {
-        Alert.alert('Error', response.data.error || 'Failed to remove item');
+        Alert.alert("Error", response.data.error || "Failed to remove item");
       }
     } catch (error) {
-      console.error('Error removing item:', error);
-      Alert.alert('Error', 'Failed to remove item. Please try again.');
+      console.error("Error removing item:", error);
+      Alert.alert("Error", "Failed to remove item. Please try again.");
     } finally {
       setUpdatingId(null);
     }
   };
 
   const removeSelectedItems = async () => {
-    const selectedIds = selectedItems.map(item => item.id);
+    const selectedIds = selectedItems.map((item) => item.id);
     if (selectedIds.length === 0) return;
 
     Alert.alert(
-      'Remove Items',
+      "Remove Items",
       `Remove ${selectedIds.length} selected item(s) from cart?`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Remove',
-          style: 'destructive',
+          text: "Remove",
+          style: "destructive",
           onPress: async () => {
-            await Promise.all(selectedIds.map(id => removeItem(id)));
-          }
-        }
-      ]
+            await Promise.all(selectedIds.map((id) => removeItem(id)));
+          },
+        },
+      ],
     );
   };
 
   const handleSelectItem = (id: string, checked: boolean) => {
-    setCartStores(prev => prev.map(store => ({
-      ...store,
-      items: store.items.map(item => 
-        item.id === id ? { ...item, selected: checked } : item
-      )
-    })));
+    setCartStores((prev) =>
+      prev.map((store) => ({
+        ...store,
+        items: store.items.map((item) =>
+          item.id === id ? { ...item, selected: checked } : item,
+        ),
+      })),
+    );
   };
 
   const handleSelectShop = (shopId: string, checked: boolean) => {
-    setCartStores(prev => prev.map(store => 
-      store.shop_id === shopId 
-        ? { 
-            ...store, 
-            items: store.items.map(item => ({ ...item, selected: checked }))
-          } 
-        : store
-    ));
+    setCartStores((prev) =>
+      prev.map((store) =>
+        store.shop_id === shopId
+          ? {
+              ...store,
+              items: store.items.map((item) => ({
+                ...item,
+                selected: checked,
+              })),
+            }
+          : store,
+      ),
+    );
   };
 
   const handleSelectAll = (checked: boolean) => {
-    setCartStores(prev => prev.map(store => ({
-      ...store,
-      items: store.items.map(item => ({ ...item, selected: checked }))
-    })));
+    setCartStores((prev) =>
+      prev.map((store) => ({
+        ...store,
+        items: store.items.map((item) => ({ ...item, selected: checked })),
+      })),
+    );
   };
 
   const handleApplyCoupon = async (code: string) => {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    Alert.alert('Success', `Coupon "${code}" applied successfully!`);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    Alert.alert("Success", `Coupon "${code}" applied successfully!`);
   };
 
-  const allItems = cartStores.flatMap(store => store.items);
-  const selectedItems = allItems.filter(item => item.selected);
-  const selectedShops = new Set(selectedItems.map(item => item.shop_id)).size;
-  
+  const allItems = cartStores.flatMap((store) => store.items);
+  const selectedItems = allItems.filter((item) => item.selected);
+  const selectedShops = new Set(selectedItems.map((item) => item.shop_id)).size;
+
   const subtotal = selectedItems.reduce(
     (sum, item) => sum + item.price * item.quantity,
-    0
+    0,
   );
   const discount = 0;
   const delivery = selectedItems.length > 0 ? DELIVERY_FEE : 0;
-  const allSelected = allItems.length > 0 && allItems.every(item => item.selected);
+  const allSelected =
+    allItems.length > 0 && allItems.every((item) => item.selected);
 
   const handleCheckout = () => {
     if (selectedItems.length === 0) {
-      Alert.alert('No Items Selected', 'Please select items to checkout');
+      Alert.alert("No Items Selected", "Please select items to checkout");
       return;
     }
 
-    const selectedIds = selectedItems.map(item => item.id).join(',');
+    const selectedIds = selectedItems.map((item) => item.id).join(",");
     router.push(`/customer/checkout?selected=${selectedIds}`);
   };
 
@@ -861,9 +902,9 @@ export default function CartPage() {
           <Text style={styles.emptyText}>
             Add items from your favorite shops to get started
           </Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.shopButton}
-            onPress={() => router.push('/customer/home')}
+            onPress={() => router.push("/customer/home")}
           >
             <Text style={styles.shopButtonText}>Start Shopping</Text>
           </TouchableOpacity>
@@ -873,59 +914,66 @@ export default function CartPage() {
   }
 
   return (
-    <CustomerLayout>
-      {/* Cart Header */}
-      <View style={styles.cartHeader}>
-        <View>
-          <Text style={styles.shopName}>Shopping Cart</Text>
-          <Text style={styles.pageTitle}>My Items ({allItems.length})</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity 
-            onPress={() => handleSelectAll(!allSelected)}
-            style={styles.selectAllButton}
-          >
-            <Text style={styles.headerActionText}>
-              {allSelected ? 'Deselect All' : 'Select All'}
-            </Text>
-          </TouchableOpacity>
-          {selectedItems.length > 0 && (
-            <TouchableOpacity 
-              onPress={removeSelectedItems}
-              style={styles.removeSelectedButton}
+    <CustomerLayout disableScroll={true}>
+      <View style={{ flex: 1 }}>
+        {/* Cart Header */}
+        <View style={styles.cartHeader}>
+          <View>
+            <Text style={styles.shopName}>Shopping Cart</Text>
+            <Text style={styles.pageTitle}>My Items ({allItems.length})</Text>
+          </View>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              onPress={() => handleSelectAll(!allSelected)}
+              style={styles.selectAllButton}
             >
-              <MaterialIcons name="delete-outline" size={20} color="#EF4444" />
+              <Text style={styles.headerActionText}>
+                {allSelected ? "Deselect All" : "Select All"}
+              </Text>
             </TouchableOpacity>
-          )}
+            {selectedItems.length > 0 && (
+              <TouchableOpacity
+                onPress={removeSelectedItems}
+                style={styles.removeSelectedButton}
+              >
+                <MaterialIcons
+                  name="delete-outline"
+                  size={20}
+                  color="#EF4444"
+                />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
-      </View>
 
-      <ScrollView 
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
-            onRefresh={onRefresh}
-            colors={['#F97316']}
-            tintColor="#F97316"
-          />
-        }
-      >
-        {/* Shop Sections */}
-        {cartStores.map((store) => (
-          <ShopSection
-            key={store.shop_id}
-            shop={store}
-            onUpdateQuantity={updateQuantity}
-            onRemove={removeItem}
-            onSelectItem={handleSelectItem}
-            onSelectShop={handleSelectShop}
-            updatingId={updatingId}
-          />
-        ))}
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={["#F97316"]}
+              tintColor="#F97316"
+            />
+          }
+          contentContainerStyle={{ paddingBottom: 100 }}
+        >
+          {/* Shop Sections */}
+          {cartStores.map((store) => (
+            <ShopSection
+              key={store.shop_id}
+              shop={store}
+              onUpdateQuantity={updateQuantity}
+              onRemove={removeItem}
+              onSelectItem={handleSelectItem}
+              onSelectShop={handleSelectShop}
+              updatingId={updatingId}
+            />
+          ))}
+        </ScrollView>
 
-        {/* Order Summary */}
+        {/* Order Summary - Floating/Fixed at bottom */}
         <OrderSummary
           subtotal={subtotal}
           discount={discount}
@@ -935,7 +983,7 @@ export default function CartPage() {
           onApplyCoupon={() => setCouponModalVisible(true)}
           onProceedToCheckout={handleCheckout}
         />
-      </ScrollView>
+      </View>
 
       {/* Coupon Modal */}
       <CouponModal
@@ -950,76 +998,76 @@ export default function CartPage() {
 const styles = StyleSheet.create({
   center: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     padding: 20,
     minHeight: 400,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   emptyIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#FFF7ED',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#FFF7ED",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 12,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 8,
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 6,
   },
   emptyText: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginBottom: 24,
+    fontSize: 13,
+    color: "#6B7280",
+    textAlign: "center",
+    marginBottom: 16,
     paddingHorizontal: 40,
-    lineHeight: 20,
+    lineHeight: 18,
   },
   shopButton: {
-    backgroundColor: '#F97316',
-    paddingHorizontal: 32,
-    paddingVertical: 14,
+    backgroundColor: "#F97316",
+    paddingHorizontal: 24,
+    paddingVertical: 10,
     borderRadius: 8,
   },
   shopButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
   },
   cartHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#FFFFFF',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#F3F4F6",
   },
-  shopName: { 
-    fontSize: 12, 
-    fontWeight: '700', 
-    color: '#9CA3AF', 
-    letterSpacing: 1, 
-    textTransform: 'uppercase' 
+  shopName: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#9CA3AF",
+    letterSpacing: 1,
+    textTransform: "uppercase",
   },
-  pageTitle: { 
-    fontSize: 24, 
-    fontWeight: '800', 
-    color: '#111827', 
-    marginTop: 2 
+  pageTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#111827",
+    marginTop: 2,
   },
   headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
   },
   selectAllButton: {
@@ -1027,374 +1075,325 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   headerActionText: {
-    fontSize: 13,
-    color: '#F97316',
-    fontWeight: '600',
+    fontSize: 12,
+    color: "#F97316",
+    fontWeight: "600",
   },
   removeSelectedButton: {
-    padding: 8,
-    backgroundColor: '#FEF2F2',
-    borderRadius: 8,
+    padding: 6,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 6,
   },
   scrollView: {
     flex: 1,
   },
   shopSection: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 12,
+    backgroundColor: "#FFFFFF",
+    marginHorizontal: 12,
+    marginTop: 8,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
-    overflow: 'hidden',
+    borderColor: "#F3F4F6",
+    overflow: "hidden",
     ...Platform.select({
       ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
         shadowOpacity: 0.05,
-        shadowRadius: 4,
+        shadowRadius: 2,
       },
       android: {
-        elevation: 2,
+        elevation: 1,
       },
     }),
   },
   shopHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#FAFAFA',
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 10,
+    backgroundColor: "#FAFAFA",
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#F3F4F6",
   },
   shopCheckbox: {
-    marginRight: 12,
+    marginRight: 8,
   },
   shopHeaderContent: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   shopIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    backgroundColor: '#FFF7ED',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    backgroundColor: "#FFF7ED",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 8,
   },
   shopInfo: {
     flex: 1,
   },
   shopNameText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 2,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 1,
   },
   shopSummary: {
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 11,
+    color: "#6B7280",
   },
   itemsContainer: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
   },
   cartItem: {
-    flexDirection: 'row',
-    paddingVertical: 16,
+    flexDirection: "row",
+    paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#F3F4F6",
   },
   checkbox: {
-    width: 20,
-    height: 20,
+    width: 18,
+    height: 18,
     borderRadius: 4,
     borderWidth: 2,
-    borderColor: '#D1D5DB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
+    borderColor: "#D1D5DB",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
   },
   checkboxChecked: {
-    backgroundColor: '#F97316',
-    borderColor: '#F97316',
+    backgroundColor: "#F97316",
+    borderColor: "#F97316",
   },
   itemImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
+    width: 60,
+    height: 60,
+    borderRadius: 6,
+    backgroundColor: "#F3F4F6",
   },
   itemContent: {
     flex: 1,
-    marginLeft: 12,
+    marginLeft: 10,
   },
   itemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 2,
   },
   itemName: {
     flex: 1,
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#111827",
     marginRight: 8,
   },
   itemPrice: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#F97316',
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#F97316",
   },
   variantText: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 8,
+    fontSize: 11,
+    color: "#6B7280",
+    marginBottom: 6,
   },
   itemDetails: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
   },
   itemPriceEach: {
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 11,
+    color: "#6B7280",
   },
   quantityControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
   },
   qtyBtn: {
-    padding: 6,
-    paddingHorizontal: 10,
+    padding: 4,
+    paddingHorizontal: 8,
   },
   qtyBtnDisabled: {
     opacity: 0.5,
   },
   qtyValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    minWidth: 30,
-    textAlign: 'center',
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#111827",
+    minWidth: 24,
+    textAlign: "center",
   },
   maxAvailableText: {
-    fontSize: 11,
-    color: '#F97316',
-    marginBottom: 4,
+    fontSize: 10,
+    color: "#F97316",
+    marginBottom: 2,
   },
   shopSummaryContainer: {
-    padding: 16,
-    backgroundColor: '#FFF7ED',
+    padding: 12,
+    backgroundColor: "#FFF7ED",
     borderTopWidth: 1,
-    borderTopColor: '#FED7AA',
+    borderTopColor: "#FED7AA",
   },
   shopSummaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 2,
   },
   shopSummaryLabel: {
-    fontSize: 12,
-    color: '#4B5563',
+    fontSize: 11,
+    color: "#4B5563",
   },
   shopSummaryValue: {
-    fontSize: 12,
-    color: '#4B5563',
-    fontWeight: '500',
+    fontSize: 11,
+    color: "#4B5563",
+    fontWeight: "500",
   },
   shopSummaryTotal: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#F97316',
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#F97316",
   },
   orderSummary: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 16,
-    marginBottom: 20,
-    padding: 16,
-    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: "#F3F4F6",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingBottom: Platform.OS === "ios" ? 24 : 12, // Reduced padding
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
     ...Platform.select({
       ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: -2 }, // Subtler shadow
+        shadowOpacity: 0.08,
         shadowRadius: 4,
       },
       android: {
-        elevation: 2,
+        elevation: 12,
       },
     }),
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  sectionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFF7ED',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  sectionSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  detailsContainer: {
     marginBottom: 8,
   },
-  summaryLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  summaryValue: {
-    fontSize: 14,
-    color: '#111827',
-    fontWeight: '500',
-  },
-  shopBadge: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  shopBadgeText: {
-    fontSize: 10,
-    color: '#92400E',
-    fontWeight: '600',
-  },
-  discountRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#F0FDF4',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-    marginBottom: 8,
-  },
-  discountLabel: {
-    fontSize: 14,
-    color: '#059669',
-  },
-  discountValue: {
-    fontSize: 14,
-    color: '#059669',
-    fontWeight: '700',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E5E7EB',
-    marginVertical: 12,
-  },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  summaryRowCompact: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginBottom: 4,
   },
-  totalLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  totalRight: {
-    alignItems: 'flex-end',
-  },
-  totalValue: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  totalVat: {
+  summaryLabelCompact: {
     fontSize: 11,
-    color: '#6B7280',
-    marginTop: 2,
+    color: "#6B7280",
   },
-  shopCountText: {
+  summaryValueCompact: {
+    fontSize: 11,
+    color: "#374151",
+    fontWeight: "500",
+  },
+  summaryDivider: {
+    height: 1,
+    backgroundColor: "#E5E7EB",
+    marginBottom: 8,
+  },
+  compactContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  totalInfoContainer: {
+    flex: 1,
+    marginRight: 8,
+  },
+  totalLabelCompact: {
+    fontSize: 10,
+    color: "#6B7280",
+    marginBottom: 0,
+  },
+  totalValueRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+  },
+  totalCurrency: {
     fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 16,
+    fontWeight: "600",
+    color: "#F97316",
+    marginRight: 2,
   },
-  couponButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#FFF7ED',
-    paddingVertical: 14,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  couponButtonText: {
-    fontSize: 14,
-    color: '#F97316',
-    fontWeight: '600',
-  },
-  checkoutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#F97316',
-    paddingVertical: 16,
-    borderRadius: 8,
-  },
-  checkoutBtnDisabled: {
-    opacity: 0.5,
-  },
-  checkoutBtnText: {
+  totalValueCompact: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontWeight: "700",
+    color: "#F97316",
+  },
+  savedText: {
+    fontSize: 9,
+    color: "#059669",
+  },
+  compactCouponBtn: {
+    marginRight: 10,
+    padding: 6,
+    backgroundColor: "#FFF7ED",
+    borderRadius: 6,
+  },
+  compactCouponText: {
+    fontSize: 10,
+    color: "#F97316",
+    fontWeight: "600",
+    marginLeft: 4,
+  },
+  checkoutBtnCompact: {
+    backgroundColor: "#F97316",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 120,
+  },
+  checkoutBtnTextCompact: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
   },
   modalContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '80%',
+    maxHeight: "80%",
   },
   modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#F3F4F6",
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
+    fontWeight: "700",
+    color: "#111827",
   },
   modalCloseButton: {
     padding: 4,
@@ -1404,33 +1403,33 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   couponInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
     borderRadius: 8,
     paddingHorizontal: 12,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: "#F9FAFB",
   },
   couponInput: {
     flex: 1,
     paddingVertical: 12,
     paddingHorizontal: 8,
     fontSize: 14,
-    color: '#111827',
+    color: "#111827",
   },
   applyButton: {
-    backgroundColor: '#F97316',
+    backgroundColor: "#F97316",
     paddingVertical: 16,
     borderRadius: 8,
-    alignItems: 'center',
+    alignItems: "center",
   },
   applyButtonDisabled: {
     opacity: 0.5,
   },
   applyButtonText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
 });
