@@ -14765,12 +14765,13 @@ class CustomerProducts(viewsets.ViewSet):
 
         products = (
             Product.objects
-            .filter(shop=shop_id)            # WHERE shop_id = ?
+            .filter(shop=shop_id)
             .order_by('name')
             .select_related('shop', 'category')
         )
 
-        serializer = ProductSerializer(products, many=True)
+        # Add context={'request': request} to the serializer
+        serializer = ProductSerializer(products, many=True, context={'request': request})
 
         return Response({
             'success': True,
