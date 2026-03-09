@@ -15707,6 +15707,86 @@ class SellerDashboard(viewsets.ViewSet):
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
+    @action(detail=False, methods=['put'], url_path='update_product_status')
+    def update_product_status(self, request):
+        product_id = request.data.get('product_id')
+        user_id = request.data.get('user_id')
+        action_type = request.data.get('action_type')
+
+        if not all([product_id, user_id, action_type]):
+            return Response(
+                {"error": "product_id, user_id, and action_type are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            product = Product.objects.get(pk=product_id)
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if str(product.customer.customer_id) != str(user_id):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        if action_type == 'archive':
+            if product.upload_status != 'published':
+                return Response(
+                    {"error": "Only published products can be archived"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            product.upload_status = 'archived'
+            product.save(update_fields=['upload_status', 'updated_at'])
+            return Response({"success": True, "message": "Product archived successfully"}, status=status.HTTP_200_OK)
+
+        elif action_type == 'restore':
+            if product.upload_status != 'archived':
+                return Response(
+                    {"error": "Only archived products can be restored"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            product.upload_status = 'published'
+            product.save(update_fields=['upload_status', 'updated_at'])
+            return Response({"success": True, "message": "Product restored successfully"}, status=status.HTTP_200_OK)
+
+        elif action_type == 'restoreRemoved':
+            if not product.is_removed:
+                return Response(
+                    {"error": "Product is not removed"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            product.is_removed = False
+            product.removal_reason = None
+            product.removed_at = None
+            product.save(update_fields=['is_removed', 'removal_reason', 'removed_at', 'updated_at'])
+            return Response({"success": True, "message": "Product restored successfully"}, status=status.HTTP_200_OK)
+
+        elif action_type == 'remove':
+            reason = request.data.get('reason', '').strip()
+            if not reason:
+                return Response(
+                    {"error": "A reason is required to remove a product"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            from django.utils import timezone
+            product.is_removed = True
+            product.removal_reason = reason
+            product.removed_at = timezone.now()
+            product.save(update_fields=['is_removed', 'removal_reason', 'removed_at', 'updated_at'])
+            return Response({"success": True, "message": "Product removed successfully"}, status=status.HTTP_200_OK)
+
+        elif action_type == 'deleteDraft':
+            if product.upload_status != 'draft':
+                return Response(
+                    {"error": "Only draft products can be deleted"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            product.delete()
+            return Response({"success": True, "message": "Draft deleted successfully"}, status=status.HTTP_200_OK)
+
+        else:
+            return Response(
+                {"error": f"Unknown action_type: {action_type}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )    
 
     @action(detail=True, methods=['put'], url_path='update_product')
     def update_product(self, request, pk=None):
