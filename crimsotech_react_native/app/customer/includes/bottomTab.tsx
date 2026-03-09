@@ -19,13 +19,17 @@ export default function BottomTab() {
   return (
     <View style={styles.tabContainer}>
       {tabs.map((tab) => {
-        const isActive = pathname === tab.route;
+        const isActive = pathname.startsWith(tab.route); // fix dynamic routes
         const iconName = tab.name === 'Favorite' ? (isActive ? 'heart' : tab.icon) : tab.icon;
         return (
           <TouchableOpacity
             key={tab.name}
             style={styles.tabButton}
-            onPress={() => router.push(tab.route as any)}
+            onPress={() => {
+              if (!pathname.startsWith(tab.route)) {
+                router.push(tab.route as any);
+              }
+            }}
           >
             <Ionicons name={iconName as any} size={24} color={isActive ? '#EE4D2D' : '#666'} />
             <Text style={[styles.tabLabel, isActive && styles.activeLabel]}>{tab.name}</Text>
@@ -40,11 +44,11 @@ const styles = StyleSheet.create({
   tabContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    backgroundColor: 'transparent', // match page background to avoid visible white bar
+    backgroundColor: 'transparent',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
     paddingVertical: Platform.OS === 'ios' ? 12 : 8,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 16, // slightly reduced bottom padding
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
   },
   tabButton: { alignItems: 'center' },
   tabLabel: { fontSize: 10, color: '#666', marginTop: 2 },

@@ -50,6 +50,20 @@ import {
   DollarSign
 } from 'lucide-react';
 
+// --- Helper function to get full image URL ---
+const getFullImageUrl = (url: string | null | undefined): string => {
+  if (!url) return '/phon.jpg';
+  
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const cleanUrl = url.startsWith('/') ? url : `/${url}`;
+  
+  return `${baseUrl}${cleanUrl}`;
+};
+
 // --- Types ---
 interface OrderItem {
   checkout_id: string;
@@ -71,6 +85,14 @@ interface OrderItem {
     code: string;
   } | null;
   can_review: boolean;
+  primary_image?: {
+    url: string;
+    file_type: string;
+  } | null;
+  product_images?: Array<{
+    url: string;
+    file_type: string;
+  }>;
 }
 
 interface PurchaseOrder {
@@ -85,6 +107,9 @@ interface PurchaseOrder {
   delivery_status: string | null;
   delivery_rider: string | null;
   items: OrderItem[];
+  shipping?: {
+    method: string;
+  };
 }
 
 interface RefundType {
@@ -1416,7 +1441,7 @@ export default function RequestReturnRefund({ loaderData }: any) {
                 </div>
               )}
 
-              {/* Order Items Selection */}
+              {/* Order Items Selection - FIXED: Added product images and proper seller/shop name */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-sm font-medium flex items-center gap-1">
@@ -1436,60 +1461,76 @@ export default function RequestReturnRefund({ loaderData }: any) {
                   </Alert>
                 ) : (
                   <div className="space-y-3">
-                    {order.items.map((item: OrderItem) => (
-                      <div
-                        key={item.checkout_id}
-                        onClick={() => handleItemSelect(item.checkout_id)}
-                        className={`flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all ${
-                          selectedItems.includes(item.checkout_id)
-                            ? 'border-blue-500 bg-blue-50 shadow-sm'
-                            : 'border-gray-200 hover:bg-gray-50 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="relative">
-                          <div className="w-16 h-16 flex-shrink-0">
-                            <img
-                              src="/phon.jpg" // Default image
-                              alt={item.product_name}
-                              className="w-full h-full object-cover rounded border"
-                            />
-                          </div>
-                          <div className={`absolute -top-1 -right-1 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                    {order.items.map((item: OrderItem) => {
+                      // Get the seller name: use seller_username for personal listings, shop_name for shop listings
+                      const sellerDisplayName = item.seller_username || item.shop_name || 'Unknown Seller';
+                      
+                      // Get the image URL from primary_image or product_images
+                      let imageUrl = '/phon.jpg';
+                      if (item.primary_image?.url) {
+                        imageUrl = getFullImageUrl(item.primary_image.url);
+                      } else if (item.product_images && item.product_images.length > 0) {
+                        imageUrl = getFullImageUrl(item.product_images[0].url);
+                      }
+                      
+                      return (
+                        <div
+                          key={item.checkout_id}
+                          onClick={() => handleItemSelect(item.checkout_id)}
+                          className={`flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all ${
                             selectedItems.includes(item.checkout_id)
-                              ? 'bg-blue-500 border-white'
-                              : 'bg-white border-gray-300'
-                          }`}>
+                              ? 'border-blue-500 bg-blue-50 shadow-sm'
+                              : 'border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="relative">
+                            <div className="w-16 h-16 flex-shrink-0">
+                              <img
+                                src={imageUrl}
+                                alt={item.product_name}
+                                className="w-full h-full object-cover rounded border"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = '/phon.jpg';
+                                }}
+                              />
+                            </div>
+                            <div className={`absolute -top-1 -right-1 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                              selectedItems.includes(item.checkout_id)
+                                ? 'bg-blue-500 border-white'
+                                : 'bg-white border-gray-300'
+                            }`}>
+                              {selectedItems.includes(item.checkout_id) && (
+                                <CheckCircle className="h-3 w-3 text-white" />
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{item.product_name}</p>
+                            <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                              <span>Qty: {item.quantity}</span>
+                              <span>•</span>
+                              <span className="truncate">Seller: {sellerDisplayName}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                              <span>Price: {formatCurrency(item.price)} each</span>
+                            </div>
+                            {item.remarks && (
+                              <p className="text-xs text-blue-600 mt-1 italic">{item.remarks}</p>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <div className="font-medium text-sm">
+                              {formatCurrency(item.subtotal)}
+                            </div>
                             {selectedItems.includes(item.checkout_id) && (
-                              <CheckCircle className="h-3 w-3 text-white" />
+                              <Badge variant="outline" className="text-xs mt-1 bg-green-50 text-green-700 border-green-200">
+                                Selected
+                              </Badge>
                             )}
                           </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{item.product_name}</p>
-                          <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                            <span>Qty: {item.quantity}</span>
-                            <span>•</span>
-                            <span className="truncate">Shop: {item.shop_name || 'Unknown'}</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                            <span>Price: {formatCurrency(item.price)} each</span>
-                          </div>
-                          {item.remarks && (
-                            <p className="text-xs text-blue-600 mt-1 italic">{item.remarks}</p>
-                          )}
-                        </div>
-                        <div className="text-right">
-                          <div className="font-medium text-sm">
-                            {formatCurrency(item.subtotal)}
-                          </div>
-                          {selectedItems.includes(item.checkout_id) && (
-                            <Badge variant="outline" className="text-xs mt-1 bg-green-50 text-green-700 border-green-200">
-                              Selected
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1704,8 +1745,6 @@ export default function RequestReturnRefund({ loaderData }: any) {
                   {/* Payment Method Form */}
                   {getPaymentForm()}
 
-
-
                   {/* Voucher/Replacement Information */}
                   {selectedRefundMethod?.type === 'voucher' && (
                     <div className="mt-4 bg-purple-50 border border-purple-200 rounded-lg p-4">
@@ -1880,8 +1919,8 @@ export default function RequestReturnRefund({ loaderData }: any) {
               </div>
               <Separator className="my-2" />
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Order Total:</span>
-                <span className="font-medium">{formatCurrency(order.total_amount)}</span>
+                <span className="text-muted-foreground">{selectedItems.length === 1 ? 'Product Price:' : selectedItems.length > 1 ? 'Selected Items Total:' : 'Product Price:'}</span>
+                <span className="font-medium">{selectedItems.length === 1 ? formatCurrency(selectedItemsDetails[0]?.price || 0) : selectedItems.length > 1 ? formatCurrency(fullAmount) : formatCurrency(order.items[0]?.price || 0)}</span>
               </div>
             </CardContent>
           </Card>

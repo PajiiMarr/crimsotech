@@ -39,7 +39,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   let modelClasses: string[] = [];
   
   try {
-    const categoriesResponse = await AxiosInstance.get('/customer-products-viewset/global-categories/');
+    const categoriesResponse = await AxiosInstance.get('/customer-products/global-categories/');
     if (categoriesResponse.data.success) {
       globalCategories = categoriesResponse.data.categories || [];
     }

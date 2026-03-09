@@ -1,3 +1,4 @@
+// app/customer/request-refund.tsx
 import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
@@ -13,6 +14,7 @@ import {
   FlatList,
   ActivityIndicator,
   Dimensions,
+  Platform
 } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -23,7 +25,7 @@ import AxiosInstance from '../../contexts/axios';
 
 const { width, height } = Dimensions.get('window');
 
-// Types - Matching your web types
+// Types - Matching web types
 interface OrderItem {
   checkout_id: string;
   product_id: string;
@@ -50,13 +52,16 @@ interface PurchaseOrder {
   status: string;
   total_amount: string;
   payment_method: string;
+  delivery_method: string | null;
   delivery_address: string;
   created_at: string;
   payment_status: string | null;
   delivery_status: string | null;
-  delivery_method: string | null;
   delivery_rider: string | null;
   items: OrderItem[];
+  shipping?: {
+    method: string;
+  };
 }
 
 interface RefundType {
@@ -166,7 +171,7 @@ const refundMethods: RefundMethod[] = [
   {
     id: 'cash_on_hand',
     label: 'Cash on Hand',
-    description: 'Collect cash directly from seller',
+    description: 'Collect cash directly from the seller at pickup',
     icon: 'hand-coin-outline',
     type: 'moneyback',
     allowedRefundTypes: ['return_item', 'keep_item']
@@ -227,9 +232,10 @@ const ProgressBar = ({ progress }: any) => (
 
 export default function RequestRefundPage() {
   const { userRole, userId } = useAuth();
-  const { orderId } = useLocalSearchParams();
+  const { orderId, productId } = useLocalSearchParams();
   const router = useRouter();
   const decodedOrderId = orderId ? decodeURIComponent(String(orderId)) : null;
+  const decodedProductId = productId ? decodeURIComponent(String(productId)) : null;
 
   const [order, setOrder] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
@@ -237,7 +243,7 @@ export default function RequestRefundPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Selection states
-  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [selectedItems, setSelectedItems] = useState<string[]>(decodedProductId ? [decodedProductId] : []);
   const [selectedRefundType, setSelectedRefundType] = useState<RefundType | null>(null);
   const [selectedRefundMethod, setSelectedRefundMethod] = useState<RefundMethod | null>(null);
   const [partialAmount, setPartialAmount] = useState('');
@@ -313,8 +319,8 @@ export default function RequestRefundPage() {
     try {
       setLoading(true);
       
-      // FIXED: Using the correct endpoint from your view-order page
-      const response = await AxiosInstance.get(`/purchases-buyer/${decodedOrderId}/`, {
+      // FIXED: Use the view-order endpoint which has all the detailed data (like web)
+      const response = await AxiosInstance.get(`/purchases-buyer/${decodedOrderId}/view-order/`, {
         headers: {
           'X-User-Id': userId,
         },
@@ -326,7 +332,27 @@ export default function RequestRefundPage() {
         return;
       }
 
-      setOrder(response.data);
+      // Transform the data to match your component's expected format (like web)
+      const orderData = response.data;
+      
+      const transformedOrder = {
+        order_id: orderData.order?.id || decodedOrderId,
+        status: orderData.order?.status || 'pending',
+        total_amount: orderData.order_summary?.total || '0',
+        payment_method: orderData.order?.payment_method || '',
+        delivery_method: orderData.order?.delivery_method || '',
+        delivery_address: orderData.delivery_address?.address || '',
+        created_at: orderData.order?.created_at || new Date().toISOString(),
+        payment_status: orderData.order?.payment_status || null,
+        delivery_status: orderData.order?.delivery_status || null,
+        delivery_rider: orderData.order?.delivery_rider || null,
+        items: orderData.items || [],
+        shipping: {
+          method: orderData.shipping_info?.delivery_method || ''
+        }
+      };
+
+      setOrder(transformedOrder);
       setError(null);
     } catch (err: any) {
       console.error('Error fetching order:', err);
@@ -447,7 +473,7 @@ export default function RequestRefundPage() {
   const getAvailableMethods = () => {
     if (!selectedRefundType) return refundMethods;
     
-    const deliveryMethod = (order?.delivery_method || '').toString().toLowerCase();
+    const deliveryMethod = (order?.delivery_method || order?.shipping?.method || '').toString().toLowerCase();
     const isPickup = deliveryMethod.includes('pickup');
 
     return refundMethods.filter(method => 
@@ -496,6 +522,34 @@ export default function RequestRefundPage() {
     setUploadedFiles(uploadedFiles.filter((_, i) => i !== index));
   };
 
+  const isPaymentDetailsValid = () => {
+    if (!selectedRefundMethod) return false;
+    
+    if (selectedRefundMethod.type === 'wallet') {
+      return eWalletDetails.provider && eWalletDetails.accountNumber && 
+             eWalletDetails.accountName && eWalletDetails.contactNumber;
+    }
+    
+    if (selectedRefundMethod.type === 'bank') {
+      return bankDetails.bankName && bankDetails.accountNumber && 
+             bankDetails.accountName && bankDetails.accountType;
+    }
+    
+    // For Money Back: remittance requires details, except for Cash on Hand which doesn't
+    if (selectedRefundMethod.type === 'moneyback') {
+      if (selectedRefundMethod.id === 'cash_on_hand') {
+        return true; // no details needed
+      }
+
+      return remittanceDetails.provider && remittanceDetails.firstName && 
+             remittanceDetails.lastName && remittanceDetails.contactNumber &&
+             remittanceDetails.validIdType && remittanceDetails.validIdNumber;
+    }
+    
+    // For voucher and replace methods, no additional details needed
+    return true;
+  };
+
   const validateForm = () => {
     if (selectedItems.length === 0) {
       return 'Please select at least one item';
@@ -506,6 +560,9 @@ export default function RequestRefundPage() {
     if (!selectedRefundMethod) {
       return 'Please select a refund method';
     }
+    if (!isPaymentDetailsValid()) {
+      return 'Please complete the payment details';
+    }
     if (!returnReason) {
       return 'Please select a reason for return';
     }
@@ -515,30 +572,6 @@ export default function RequestRefundPage() {
     if (selectedRefundType.id === 'keep_item' && parseFloat(partialAmount) > maxPartialAmount) {
       return `Amount cannot exceed ${formatCurrency(maxPartialAmount)}`;
     }
-
-    // Validate payment details
-    if (selectedRefundMethod.type === 'wallet') {
-      if (!eWalletDetails.provider || !eWalletDetails.accountNumber || 
-          !eWalletDetails.accountName || !eWalletDetails.contactNumber) {
-        return 'Please complete all e-wallet details';
-      }
-    }
-
-    if (selectedRefundMethod.type === 'bank') {
-      if (!bankDetails.bankName || !bankDetails.accountNumber || 
-          !bankDetails.accountName || !bankDetails.accountType) {
-        return 'Please complete all bank details';
-      }
-    }
-
-    if (selectedRefundMethod.type === 'moneyback' && selectedRefundMethod.id !== 'cash_on_hand') {
-      if (!remittanceDetails.provider || !remittanceDetails.firstName || 
-          !remittanceDetails.lastName || !remittanceDetails.contactNumber ||
-          !remittanceDetails.validIdType || !remittanceDetails.validIdNumber) {
-        return 'Please complete all remittance details';
-      }
-    }
-
     return null;
   };
 
@@ -629,7 +662,11 @@ export default function RequestRefundPage() {
 
       // Add uploaded files
       uploadedFiles.forEach((file, index) => {
-        formData.append(`evidence_${index}`, file as any);
+        formData.append(`evidence_${index}`, {
+          uri: file.uri,
+          name: file.name,
+          type: file.type,
+        } as any);
       });
 
       // Submit to backend
@@ -724,7 +761,9 @@ export default function RequestRefundPage() {
         onPress={() => handleItemSelect(item.checkout_id)}
         activeOpacity={0.7}
       >
-        <Checkbox checked={isSelected} onPress={() => handleItemSelect(item.checkout_id)} />
+        <View style={[styles.checkbox, isSelected && styles.checkboxChecked]}>
+          {isSelected && <Icon name="check" size={16} color="#fff" />}
+        </View>
         
         <View style={styles.itemImagePlaceholder}>
           <Icon name="package-variant" size={24} color="#6b7280" />
@@ -735,16 +774,22 @@ export default function RequestRefundPage() {
             {item.product_name}
           </Text>
           <Text style={styles.itemShop}>
-            {item.shop_name || 'Unknown Shop'}
+            {item.shop_name || item.seller_username || 'Unknown Shop'}
           </Text>
           <View style={styles.itemMeta}>
             <Text style={styles.itemQuantity}>Qty: {item.quantity}</Text>
             <Text style={styles.itemPrice}>{formatCurrency(item.price)} each</Text>
           </View>
+          {item.remarks && (
+            <Text style={styles.itemRemarks} numberOfLines={1}>{item.remarks}</Text>
+          )}
         </View>
         
         <View style={styles.itemTotal}>
           <Text style={styles.itemTotalText}>{formatCurrency(item.subtotal)}</Text>
+          {isSelected && (
+            <Badge variant="success">Selected</Badge>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -763,12 +808,12 @@ export default function RequestRefundPage() {
         }}
         activeOpacity={0.7}
       >
-        <View style={styles.refundTypeIconContainer}>
+        <View style={[styles.refundTypeIconContainer, isSelected && styles.refundTypeIconContainerSelected]}>
           <Icon name={type.icon} size={24} color={isSelected ? '#fff' : '#4f46e5'} />
         </View>
         <View style={styles.refundTypeContent}>
-          <Text style={styles.refundTypeLabel}>{type.label}</Text>
-          <Text style={styles.refundTypeDescription}>{type.description}</Text>
+          <Text style={[styles.refundTypeLabel, isSelected && styles.refundTypeLabelSelected]}>{type.label}</Text>
+          <Text style={[styles.refundTypeDescription, isSelected && styles.refundTypeDescriptionSelected]}>{type.description}</Text>
         </View>
         {isSelected && (
           <Icon name="check-circle" size={24} color="#10b981" />
@@ -790,12 +835,12 @@ export default function RequestRefundPage() {
         }}
         activeOpacity={0.7}
       >
-        <View style={styles.refundMethodIconContainer}>
+        <View style={[styles.refundMethodIconContainer, isSelected && styles.refundMethodIconContainerSelected]}>
           <Icon name={method.icon} size={24} color={isSelected ? '#fff' : '#4f46e5'} />
         </View>
         <View style={styles.refundMethodContent}>
-          <Text style={styles.refundMethodLabel}>{method.label}</Text>
-          <Text style={styles.refundMethodDescription}>{method.description}</Text>
+          <Text style={[styles.refundMethodLabel, isSelected && styles.refundMethodLabelSelected]}>{method.label}</Text>
+          <Text style={[styles.refundMethodDescription, isSelected && styles.refundMethodDescriptionSelected]}>{method.description}</Text>
         </View>
         {isSelected && (
           <Icon name="check-circle" size={24} color="#10b981" />
@@ -811,79 +856,153 @@ export default function RequestRefundPage() {
     switch (selectedRefundMethod.type) {
       case 'wallet':
         return (
-          <View style={styles.paymentDetailsCard}>
-            <Text style={styles.paymentDetailsTitle}>E-Wallet Details</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Provider (GCash, PayMaya, etc.)"
-              value={eWalletDetails.provider}
-              onChangeText={(text) => setEWalletDetails({...eWalletDetails, provider: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Account Number"
-              value={eWalletDetails.accountNumber}
-              onChangeText={(text) => setEWalletDetails({...eWalletDetails, accountNumber: text})}
-              keyboardType="phone-pad"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Account Name"
-              value={eWalletDetails.accountName}
-              onChangeText={(text) => setEWalletDetails({...eWalletDetails, accountName: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Contact Number"
-              value={eWalletDetails.contactNumber}
-              onChangeText={(text) => setEWalletDetails({...eWalletDetails, contactNumber: text})}
-              keyboardType="phone-pad"
-            />
+          <View style={[styles.paymentDetailsCard, styles.walletCard]}>
+            <View style={styles.paymentDetailsHeader}>
+              <Icon name="wallet-outline" size={20} color="#1e40af" />
+              <Text style={styles.paymentDetailsTitle}>E-Wallet Details</Text>
+            </View>
+            
+            <View style={styles.infoBox}>
+              <Icon name="bell-outline" size={16} color="#1e40af" />
+              <Text style={styles.infoBoxText}>
+                Refunds will be sent to this e-wallet. Ensure details are correct.
+              </Text>
+            </View>
+            
+            <View style={styles.formGrid}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>E-Wallet Provider *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Select provider (GCash, PayMaya, etc.)"
+                  value={eWalletDetails.provider}
+                  onChangeText={(text) => setEWalletDetails({...eWalletDetails, provider: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Account Number *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="09XXXXXXXXX"
+                  value={eWalletDetails.accountNumber}
+                  onChangeText={(text) => setEWalletDetails({...eWalletDetails, accountNumber: text})}
+                  keyboardType="phone-pad"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Account Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="As it appears in the app"
+                  value={eWalletDetails.accountName}
+                  onChangeText={(text) => setEWalletDetails({...eWalletDetails, accountName: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Contact Number *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="09XXXXXXXXX"
+                  value={eWalletDetails.contactNumber}
+                  onChangeText={(text) => setEWalletDetails({...eWalletDetails, contactNumber: text})}
+                  keyboardType="phone-pad"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+            </View>
           </View>
         );
 
       case 'bank':
         return (
-          <View style={styles.paymentDetailsCard}>
-            <Text style={styles.paymentDetailsTitle}>Bank Account Details</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Bank Name"
-              value={bankDetails.bankName}
-              onChangeText={(text) => setBankDetails({...bankDetails, bankName: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Account Number"
-              value={bankDetails.accountNumber}
-              onChangeText={(text) => setBankDetails({...bankDetails, accountNumber: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Account Name"
-              value={bankDetails.accountName}
-              onChangeText={(text) => setBankDetails({...bankDetails, accountName: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Account Type (Savings/Checking)"
-              value={bankDetails.accountType}
-              onChangeText={(text) => setBankDetails({...bankDetails, accountType: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Branch (Optional)"
-              value={bankDetails.branch}
-              onChangeText={(text) => setBankDetails({...bankDetails, branch: text})}
-            />
+          <View style={[styles.paymentDetailsCard, styles.bankCard]}>
+            <View style={styles.paymentDetailsHeader}>
+              <Icon name="credit-card-outline" size={20} color="#166534" />
+              <Text style={styles.paymentDetailsTitle}>Bank Account Details</Text>
+            </View>
+            
+            <View style={styles.infoBox}>
+              <Icon name="bell-outline" size={16} color="#166534" />
+              <Text style={styles.infoBoxText}>
+                Refunds will be transferred to this bank account. Processing may take 3-5 business days. 
+                <Text style={styles.boldText}> A bank transfer fee of ₱50 will be deducted from the refund amount.</Text>
+              </Text>
+            </View>
+            
+            <View style={styles.formGrid}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Bank Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Select bank (BDO, BPI, etc.)"
+                  value={bankDetails.bankName}
+                  onChangeText={(text) => setBankDetails({...bankDetails, bankName: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Account Number *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="000-000-000"
+                  value={bankDetails.accountNumber}
+                  onChangeText={(text) => setBankDetails({...bankDetails, accountNumber: text})}
+                  keyboardType="numeric"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Account Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="As it appears in bank records"
+                  value={bankDetails.accountName}
+                  onChangeText={(text) => setBankDetails({...bankDetails, accountName: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Account Type *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Savings/Checking/Current"
+                  value={bankDetails.accountType}
+                  onChangeText={(text) => setBankDetails({...bankDetails, accountType: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Branch (Optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Bank branch location"
+                  value={bankDetails.branch}
+                  onChangeText={(text) => setBankDetails({...bankDetails, branch: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+            </View>
           </View>
         );
 
       case 'moneyback':
         if (selectedRefundMethod.id === 'cash_on_hand') {
           return (
-            <View style={styles.infoCard}>
-              <Text style={styles.infoCardTitle}>Cash on Hand</Text>
+            <View style={[styles.infoCard, styles.cashOnHandCard]}>
+              <View style={styles.infoCardHeader}>
+                <Icon name="hand-coin-outline" size={20} color="#854d0e" />
+                <Text style={styles.infoCardTitle}>Cash on Hand</Text>
+              </View>
               <Text style={styles.infoCardText}>
                 No payment details required — you will collect cash from the seller at pickup.
               </Text>
@@ -892,52 +1011,142 @@ export default function RequestRefundPage() {
         }
 
         return (
-          <View style={styles.paymentDetailsCard}>
-            <Text style={styles.paymentDetailsTitle}>Remittance Details</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Provider (Palawan, LBC, etc.)"
-              value={remittanceDetails.provider}
-              onChangeText={(text) => setRemittanceDetails({...remittanceDetails, provider: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="First Name"
-              value={remittanceDetails.firstName}
-              onChangeText={(text) => setRemittanceDetails({...remittanceDetails, firstName: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Last Name"
-              value={remittanceDetails.lastName}
-              onChangeText={(text) => setRemittanceDetails({...remittanceDetails, lastName: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Contact Number"
-              value={remittanceDetails.contactNumber}
-              onChangeText={(text) => setRemittanceDetails({...remittanceDetails, contactNumber: text})}
-              keyboardType="phone-pad"
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Valid ID Type"
-              value={remittanceDetails.validIdType}
-              onChangeText={(text) => setRemittanceDetails({...remittanceDetails, validIdType: text})}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Valid ID Number"
-              value={remittanceDetails.validIdNumber}
-              onChangeText={(text) => setRemittanceDetails({...remittanceDetails, validIdNumber: text})}
-            />
+          <View style={[styles.paymentDetailsCard, styles.remittanceCard]}>
+            <View style={styles.paymentDetailsHeader}>
+              <Icon name="cash-multiple" size={20} color="#854d0e" />
+              <Text style={styles.paymentDetailsTitle}>Remittance Details</Text>
+            </View>
+            
+            <View style={styles.infoBox}>
+              <Icon name="bell-outline" size={16} color="#854d0e" />
+              <Text style={styles.infoBoxText}>
+                Money back will be sent via remittance. You'll receive a notification when ready for pickup.
+              </Text>
+            </View>
+            
+            <View style={styles.formGrid}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Remittance Provider *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Palawan, LBC, Cebuana, etc."
+                  value={remittanceDetails.provider}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, provider: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>First Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Given name"
+                  value={remittanceDetails.firstName}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, firstName: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Last Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Surname"
+                  value={remittanceDetails.lastName}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, lastName: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Contact Number *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="09XXXXXXXXX"
+                  value={remittanceDetails.contactNumber}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, contactNumber: text})}
+                  keyboardType="phone-pad"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Valid ID Type *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Driver's License, Passport, etc."
+                  value={remittanceDetails.validIdType}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, validIdType: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Valid ID Number *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="ID number"
+                  value={remittanceDetails.validIdNumber}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, validIdNumber: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroupFull}>
+                <Text style={styles.inputLabel}>Complete Address *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Street, Barangay"
+                  value={remittanceDetails.address}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, address: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>City/Municipality *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="City"
+                  value={remittanceDetails.city}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, city: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Province *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Province"
+                  value={remittanceDetails.province}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, province: text})}
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>ZIP Code</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="0000"
+                  value={remittanceDetails.zipCode}
+                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, zipCode: text})}
+                  keyboardType="numeric"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+            </View>
           </View>
         );
 
       case 'voucher':
         return (
-          <View style={styles.infoCard}>
-            <Text style={styles.infoCardTitle}>Store Voucher</Text>
+          <View style={[styles.infoCard, styles.voucherCard]}>
+            <View style={styles.infoCardHeader}>
+              <Icon name="tag-outline" size={20} color="#6b21a8" />
+              <Text style={styles.infoCardTitle}>Store Voucher</Text>
+            </View>
             <Text style={styles.infoCardText}>
               Vouchers will be sent directly to your notifications and email once approved.
               No additional details required.
@@ -947,8 +1156,11 @@ export default function RequestRefundPage() {
 
       case 'replace':
         return (
-          <View style={styles.infoCard}>
-            <Text style={styles.infoCardTitle}>Replacement</Text>
+          <View style={[styles.infoCard, styles.replacementCard]}>
+            <View style={styles.infoCardHeader}>
+              <Icon name="package-variant-plus" size={20} color="#166534" />
+              <Text style={styles.infoCardTitle}>Replacement</Text>
+            </View>
             <Text style={styles.infoCardText}>
               A replacement item will be shipped once we receive and verify the returned item.
               Please allow 7-14 business days for processing.
@@ -1002,8 +1214,55 @@ export default function RequestRefundPage() {
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Icon name="arrow-left" size={24} color="#374151" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Request Refund</Text>
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>Request Return / Refund</Text>
+          <Text style={styles.headerSubtitle}>Order #{order.order_id}</Text>
+        </View>
         <View style={styles.headerRight} />
+      </View>
+
+      {/* Order Status Badge */}
+      <View style={styles.statusBadgeContainer}>
+        <View style={[styles.statusBadge, 
+          order.status === 'completed' ? styles.statusCompleted :
+          order.status === 'delivered' ? styles.statusDelivered :
+          order.status === 'shipped' ? styles.statusShipped :
+          order.status === 'processing' ? styles.statusProcessing :
+          order.status === 'pending' ? styles.statusPending :
+          order.status === 'cancelled' ? styles.statusCancelled :
+          styles.statusDefault
+        ]}>
+          <Icon 
+            name={
+              order.status === 'completed' ? 'check-circle' :
+              order.status === 'delivered' ? 'package-variant' :
+              order.status === 'shipped' ? 'truck' :
+              order.status === 'processing' || order.status === 'pending' ? 'clock-outline' :
+              order.status === 'cancelled' ? 'close-circle' : 'clock-outline'
+            } 
+            size={14} 
+            color={
+              order.status === 'completed' ? '#059669' :
+              order.status === 'delivered' ? '#2563eb' :
+              order.status === 'shipped' ? '#4f46e5' :
+              order.status === 'processing' ? '#b45309' :
+              order.status === 'pending' ? '#6b7280' :
+              order.status === 'cancelled' ? '#dc2626' : '#6b7280'
+            } 
+          />
+          <Text style={[
+            styles.statusBadgeText,
+            order.status === 'completed' ? styles.statusCompletedText :
+            order.status === 'delivered' ? styles.statusDeliveredText :
+            order.status === 'shipped' ? styles.statusShippedText :
+            order.status === 'processing' ? styles.statusProcessingText :
+            order.status === 'pending' ? styles.statusPendingText :
+            order.status === 'cancelled' ? styles.statusCancelledText :
+            styles.statusDefaultText
+          ]}>
+            {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+          </Text>
+        </View>
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
@@ -1015,31 +1274,69 @@ export default function RequestRefundPage() {
         {/* Order Info */}
         <View style={styles.card}>
           <View style={styles.orderHeader}>
-            <Text style={styles.orderId}>Order #{order.order_id}</Text>
+            <Icon name="shopping-outline" size={20} color="#4f46e5" />
+            <Text style={styles.orderId}>Order Details</Text>
+            <Badge variant="info">{order.items.length} Items</Badge>
           </View>
-          <Text style={styles.orderDate}>{formatDate(order.created_at)}</Text>
           
-          <View style={styles.orderDetails}>
-            <View style={styles.detailRow}>
-              <Icon name="credit-card-outline" size={16} color="#6b7280" />
-              <Text style={styles.detailLabel}>Payment:</Text>
-              <Text style={styles.detailValue}>{order.payment_method}</Text>
+          <View style={styles.orderInfoGrid}>
+            <View style={styles.orderInfoItem}>
+              <View style={styles.orderInfoLabel}>
+                <Icon name="calendar-outline" size={14} color="#6b7280" />
+                <Text style={styles.orderInfoLabelText}>Order Date</Text>
+              </View>
+              <Text style={styles.orderInfoValue}>{formatDate(order.created_at)}</Text>
             </View>
-            <View style={styles.detailRow}>
-              <Icon name="map-marker-outline" size={16} color="#6b7280" />
-              <Text style={styles.detailLabel}>Address:</Text>
-              <Text style={styles.detailValue} numberOfLines={2}>
-                {order.delivery_address}
+            
+            <View style={styles.orderInfoItem}>
+              <View style={styles.orderInfoLabel}>
+                <Icon name="package-outline" size={14} color="#6b7280" />
+                <Text style={styles.orderInfoLabelText}>Total Items</Text>
+              </View>
+              <Text style={styles.orderInfoValue}>{order.items.length} items</Text>
+            </View>
+            
+            <View style={styles.orderInfoItem}>
+              <View style={styles.orderInfoLabel}>
+                <Icon name="credit-card-outline" size={14} color="#6b7280" />
+                <Text style={styles.orderInfoLabelText}>Payment Method</Text>
+              </View>
+              <Text style={styles.orderInfoValue}>{order.payment_method?.toUpperCase() || 'N/A'}</Text>
+            </View>
+            
+            <View style={styles.orderInfoItem}>
+              <View style={styles.orderInfoLabel}>
+                <Icon name="check-circle-outline" size={14} color="#6b7280" />
+                <Text style={styles.orderInfoLabelText}>Payment Status</Text>
+              </View>
+              <Text style={[styles.orderInfoValue, styles.paymentStatusPaid]}>
+                {order.payment_status || 'Paid'}
               </Text>
             </View>
           </View>
+
+          {/* Delivery Info */}
+          {order.delivery_address && (
+            <View style={styles.deliveryInfo}>
+              <Icon name="map-marker-outline" size={16} color="#6b7280" />
+              <View style={styles.deliveryInfoContent}>
+                <Text style={styles.deliveryInfoTitle}>Delivery Address</Text>
+                <Text style={styles.deliveryInfoText}>{order.delivery_address}</Text>
+                {order.delivery_method && (
+                  <Text style={styles.deliveryMethodText}>Method: {order.delivery_method}</Text>
+                )}
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Select Items */}
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Icon name="shopping-outline" size={20} color="#4f46e5" />
-            <Text style={styles.sectionTitle}>Select Items to Return</Text>
+            <View style={styles.sectionTitleContainer}>
+              <Icon name="shopping-outline" size={20} color="#4f46e5" />
+              <Text style={styles.sectionTitle}>Select Items to Return</Text>
+            </View>
             <TouchableOpacity onPress={handleSelectAll}>
               <Text style={styles.selectAllText}>
                 {selectedItems.length === order.items.length ? 'Deselect All' : 'Select All'}
@@ -1047,7 +1344,9 @@ export default function RequestRefundPage() {
             </TouchableOpacity>
           </View>
           
-          {order.items.map(renderOrderItem)}
+          <View style={styles.itemsList}>
+            {order.items.map(renderOrderItem)}
+          </View>
           
           {selectedItems.length > 0 && (
             <View style={styles.selectedSummary}>
@@ -1075,12 +1374,52 @@ export default function RequestRefundPage() {
               <View style={styles.selectedOption}>
                 <Icon name={selectedRefundType.icon} size={18} color="#10b981" />
                 <Text style={styles.selectedOptionText}>{selectedRefundType.label}</Text>
+                <Badge variant={selectedRefundType.id === 'return_item' ? 'info' : selectedRefundType.id === 'keep_item' ? 'warning' : 'purple'}>
+                  {selectedRefundType.id === 'return_item' ? 'Full Refund' : 
+                   selectedRefundType.id === 'keep_item' ? 'Partial Refund' : 'Replacement'}
+                </Badge>
               </View>
             ) : (
               <Text style={styles.placeholderText}>Select refund type</Text>
             )}
             <Icon name="chevron-right" size={20} color="#9ca3af" />
           </View>
+          
+          {selectedRefundType && (
+            <View style={styles.refundTypeInfo}>
+              <Text style={styles.refundTypeInfoText}>
+                {selectedRefundType.id === 'return_item' && (
+                  <>
+                    You'll return the item and receive a full refund of <Text style={styles.boldText}>{formatCurrency(fullAmount)}</Text>.
+                    {selectedRefundMethod && (
+                      <Text>
+                        {breakdown.fee > 0 ? 
+                          ` Fee (${selectedRefundMethod.label}): ${formatCurrency(breakdown.fee)} — You will receive ${formatCurrency(breakdown.finalAmount)}` :
+                          ` You will receive ${formatCurrency(breakdown.finalAmount)}`
+                        }
+                      </Text>
+                    )}
+                  </>
+                )}
+                {selectedRefundType.id === 'keep_item' && (
+                  <>
+                    You'll keep the item and can request up to <Text style={styles.boldText}>{formatCurrency(maxPartialAmount)}</Text> (70% of item value).
+                    {selectedRefundMethod && (
+                      <Text>
+                        {breakdown.fee > 0 ? 
+                          ` Fee (${selectedRefundMethod.label}): ${formatCurrency(breakdown.fee)} — You will receive ${formatCurrency(breakdown.finalAmount)}` :
+                          ` You will receive ${formatCurrency(breakdown.finalAmount)}`
+                        }
+                      </Text>
+                    )}
+                  </>
+                )}
+                {selectedRefundType.id === 'replacement' && (
+                  <>You'll return the item and receive a replacement</>
+                )}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
 
         {/* Refund Method */}
@@ -1098,12 +1437,31 @@ export default function RequestRefundPage() {
                 <View style={styles.selectedOption}>
                   <Icon name={selectedRefundMethod.icon} size={18} color="#10b981" />
                   <Text style={styles.selectedOptionText}>{selectedRefundMethod.label}</Text>
+                  <Badge variant="success">
+                    {selectedRefundMethod.type === 'wallet' ? 'E-Wallet' :
+                     selectedRefundMethod.type === 'bank' ? 'Bank Transfer' :
+                     selectedRefundMethod.type === 'voucher' ? 'Store Voucher' :
+                     selectedRefundMethod.type === 'moneyback' ? 'Remittance' : 'Replacement'}
+                  </Badge>
                 </View>
               ) : (
                 <Text style={styles.placeholderText}>Select refund method</Text>
               )}
               <Icon name="chevron-right" size={20} color="#9ca3af" />
             </View>
+            
+            {selectedRefundMethod && (
+              <View style={styles.refundMethodInfo}>
+                <View style={styles.refundMethodInfoRow}>
+                  <Text style={styles.refundMethodInfoLabel}>Fee:</Text>
+                  <Text style={styles.refundMethodInfoValue}>{formatCurrency(breakdown.fee)}</Text>
+                </View>
+                <View style={styles.refundMethodInfoRow}>
+                  <Text style={styles.refundMethodInfoLabel}>Net:</Text>
+                  <Text style={styles.refundMethodInfoNet}>{formatCurrency(breakdown.finalAmount)}</Text>
+                </View>
+              </View>
+            )}
           </TouchableOpacity>
         )}
 
@@ -1180,6 +1538,7 @@ export default function RequestRefundPage() {
                     onChangeText={setPartialAmount}
                     placeholder={formatCurrency(maxPartialAmount)}
                     keyboardType="decimal-pad"
+                    placeholderTextColor="#9ca3af"
                   />
                 </View>
                 
@@ -1207,7 +1566,7 @@ export default function RequestRefundPage() {
           </View>
           <View style={styles.selectionContent}>
             {returnReason ? (
-              <Text style={styles.selectedOptionText}>
+              <Text style={styles.selectedOptionText} numberOfLines={1}>
                 {returnReason === 'Other' ? customReason : returnReason}
               </Text>
             ) : (
@@ -1215,6 +1574,13 @@ export default function RequestRefundPage() {
             )}
             <Icon name="chevron-right" size={20} color="#9ca3af" />
           </View>
+          
+          {returnReason && returnReason !== 'Other' && (
+            <View style={styles.selectedReasonBadge}>
+              <Icon name="check-circle" size={16} color="#10b981" />
+              <Text style={styles.selectedReasonText}>Selected: {returnReason}</Text>
+            </View>
+          )}
         </TouchableOpacity>
 
         {/* Additional Details */}
@@ -1224,9 +1590,11 @@ export default function RequestRefundPage() {
             style={styles.textArea}
             value={additionalDetails}
             onChangeText={setAdditionalDetails}
-            placeholder="Please provide any additional details about your return request..."
+            placeholder="Please provide any additional details about your return request (e.g., specific issues, photos description)..."
             multiline
             numberOfLines={4}
+            placeholderTextColor="#9ca3af"
+            textAlignVertical="top"
           />
         </View>
 
@@ -1235,7 +1603,7 @@ export default function RequestRefundPage() {
           <Text style={styles.uploadTitle}>Upload Evidence (Optional)</Text>
           <Text style={styles.uploadHint}>Max 4 images, 5MB each</Text>
           
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScrollView}>
             <TouchableOpacity style={styles.uploadButton} onPress={pickImage}>
               <Icon name="camera-plus-outline" size={32} color="#9ca3af" />
               <Text style={styles.uploadButtonText}>Add Photo</Text>
@@ -1249,8 +1617,11 @@ export default function RequestRefundPage() {
                   style={styles.removeImageButton}
                   onPress={() => removeImage(index)}
                 >
-                  <Icon name="close-circle" size={20} color="#ef4444" />
+                  <Icon name="close-circle" size={24} color="#ef4444" />
                 </TouchableOpacity>
+                <View style={styles.imageOverlay}>
+                  <Text style={styles.imageOverlayText}>Evidence {index + 1}</Text>
+                </View>
               </View>
             ))}
           </ScrollView>
@@ -1294,11 +1665,13 @@ export default function RequestRefundPage() {
 
         <TouchableOpacity
           style={[styles.submitButton, 
-            (!selectedItems.length || submitting || !selectedRefundType || !selectedRefundMethod || !returnReason) && 
+            (!selectedItems.length || submitting || !selectedRefundType || !selectedRefundMethod || !returnReason || 
+             (selectedRefundType?.id === 'keep_item' && (!partialAmount || parseFloat(partialAmount) > maxPartialAmount))) && 
             styles.submitButtonDisabled
           ]}
           onPress={handleSubmit}
-          disabled={!selectedItems.length || submitting || !selectedRefundType || !selectedRefundMethod || !returnReason}
+          disabled={!selectedItems.length || submitting || !selectedRefundType || !selectedRefundMethod || !returnReason || 
+                   (selectedRefundType?.id === 'keep_item' && (!partialAmount || parseFloat(partialAmount) > maxPartialAmount))}
         >
           {submitting ? (
             <ActivityIndicator color="#fff" />
@@ -1380,21 +1753,19 @@ export default function RequestRefundPage() {
                   onPress={() => {
                     setReturnReason(item);
                     if (item === 'Other') {
-                      setTimeout(() => {
-                        Alert.prompt(
-                          'Specify Reason',
-                          'Please specify your reason for return:',
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                              text: 'OK',
-                              onPress: (reason) => {
-                                if (reason) setCustomReason(reason);
-                              },
+                      Alert.prompt(
+                        'Specify Reason',
+                        'Please specify your reason for return:',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'OK',
+                            onPress: (reason) => {
+                              if (reason) setCustomReason(reason);
                             },
-                          ]
-                        );
-                      }, 300);
+                          },
+                        ]
+                      );
                     }
                     setShowReasonModal(false);
                   }}
@@ -1437,7 +1808,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 50,
+    paddingTop: Platform.OS === 'ios' ? 50 : 40,
     paddingVertical: 12,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
@@ -1446,16 +1817,87 @@ const styles = StyleSheet.create({
   backButton: {
     padding: 4,
   },
+  headerTitleContainer: {
+    alignItems: 'center',
+  },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#111827',
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
   },
   headerRight: {
     width: 32,
   },
+  statusBadgeContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+  },
+  statusCompleted: {
+    backgroundColor: '#d1fae5',
+  },
+  statusDelivered: {
+    backgroundColor: '#dbeafe',
+  },
+  statusShipped: {
+    backgroundColor: '#e0e7ff',
+  },
+  statusProcessing: {
+    backgroundColor: '#fef3c7',
+  },
+  statusPending: {
+    backgroundColor: '#f3f4f6',
+  },
+  statusCancelled: {
+    backgroundColor: '#fee2e2',
+  },
+  statusDefault: {
+    backgroundColor: '#f3f4f6',
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  statusCompletedText: {
+    color: '#059669',
+  },
+  statusDeliveredText: {
+    color: '#2563eb',
+  },
+  statusShippedText: {
+    color: '#4f46e5',
+  },
+  statusProcessingText: {
+    color: '#b45309',
+  },
+  statusPendingText: {
+    color: '#6b7280',
+  },
+  statusCancelledText: {
+    color: '#dc2626',
+  },
+  statusDefaultText: {
+    color: '#6b7280',
+  },
   scrollView: {
     flex: 1,
+    marginBottom: 80,
   },
   progressSection: {
     backgroundColor: '#fff',
@@ -1492,51 +1934,87 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 16,
     marginHorizontal: 16,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
   },
   orderHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    gap: 8,
+    marginBottom: 12,
   },
   orderId: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111827',
+    flex: 1,
   },
-  orderDate: {
-    fontSize: 14,
-    color: '#6b7280',
+  orderInfoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
     marginBottom: 12,
   },
-  orderDetails: {
-    marginTop: 8,
+  orderInfoItem: {
+    width: '47%',
   },
-  detailRow: {
+  orderInfoLabel: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: 4,
+    marginBottom: 2,
   },
-  detailLabel: {
-    fontSize: 14,
+  orderInfoLabelText: {
+    fontSize: 11,
     color: '#6b7280',
-    marginLeft: 8,
-    marginRight: 4,
-    width: 70,
   },
-  detailValue: {
-    fontSize: 14,
-    color: '#374151',
+  orderInfoValue: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#111827',
+    marginLeft: 18,
+  },
+  paymentStatusPaid: {
+    color: '#059669',
+  },
+  deliveryInfo: {
+    flexDirection: 'row',
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    padding: 12,
+    gap: 8,
+  },
+  deliveryInfoContent: {
     flex: 1,
+  },
+  deliveryInfoTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  deliveryInfoText: {
+    fontSize: 12,
+    color: '#4b5563',
+    lineHeight: 16,
+  },
+  deliveryMethodText: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 4,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1544,17 +2022,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  sectionTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111827',
-    marginLeft: 8,
-    flex: 1,
   },
   selectAllText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#4f46e5',
     fontWeight: '500',
+  },
+  itemsList: {
+    gap: 8,
   },
   orderItem: {
     flexDirection: 'row',
@@ -1562,8 +2046,8 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    borderRadius: 8,
-    marginBottom: 8,
+    borderRadius: 10,
+    backgroundColor: '#fff',
   },
   orderItemSelected: {
     borderColor: '#4f46e5',
@@ -1587,7 +2071,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     backgroundColor: '#f3f4f6',
-    borderRadius: 6,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -1618,8 +2102,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6b7280',
   },
+  itemRemarks: {
+    fontSize: 11,
+    color: '#2563eb',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
   itemTotal: {
-    marginLeft: 12,
+    marginLeft: 8,
+    alignItems: 'flex-end',
+    gap: 4,
   },
   itemTotalText: {
     fontSize: 14,
@@ -1644,25 +2136,75 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111827',
   },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  badgeinfo: {
+    backgroundColor: '#dbeafe',
+  },
+  badgesuccess: {
+    backgroundColor: '#d1fae5',
+  },
+  badgewarning: {
+    backgroundColor: '#fef3c7',
+  },
+  badgedefault: {
+    backgroundColor: '#f3f4f6',
+  },
+  badgepurple: {
+    backgroundColor: '#f3e8ff',
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  badgeTextinfo: {
+    color: '#1e40af',
+  },
+  badgeTextsuccess: {
+    color: '#065f46',
+  },
+  badgeTextwarning: {
+    color: '#b45309',
+  },
+  badgeTextdefault: {
+    color: '#4b5563',
+  },
+  badgeTextpurple: {
+    color: '#6b21a8',
+  },
   selectionCard: {
     backgroundColor: '#fff',
     padding: 16,
     marginHorizontal: 16,
     marginBottom: 12,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
   },
   selectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
     marginBottom: 8,
   },
   selectionTitle: {
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
-    marginLeft: 8,
   },
   selectionContent: {
     flexDirection: 'row',
@@ -1673,20 +2215,63 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    gap: 8,
   },
   selectedOptionText: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#111827',
-    marginLeft: 8,
+    flex: 1,
   },
   placeholderText: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#9ca3af',
     flex: 1,
   },
+  refundTypeInfo: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  refundTypeInfoText: {
+    fontSize: 12,
+    color: '#4b5563',
+    lineHeight: 18,
+  },
+  boldText: {
+    fontWeight: '700',
+    color: '#111827',
+  },
+  refundMethodInfo: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  refundMethodInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  refundMethodInfoLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  refundMethodInfoValue: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#ef4444',
+  },
+  refundMethodInfoNet: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#059669',
+  },
   refundBreakdownCard: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 16,
     marginHorizontal: 16,
     marginBottom: 12,
@@ -1767,22 +2352,22 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   partialAmountLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#6b7280',
     marginBottom: 4,
   },
   partialAmountValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
     color: '#111827',
   },
   partialAmountMax: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#f59e0b',
   },
   partialAmountRequest: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: '#10b981',
   },
@@ -1791,9 +2376,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#d1d5db',
-    borderRadius: 8,
+    borderRadius: 10,
     paddingHorizontal: 12,
     marginTop: 8,
+    backgroundColor: '#f9fafb',
   },
   currencySymbol: {
     fontSize: 16,
@@ -1813,47 +2399,121 @@ const styles = StyleSheet.create({
   },
   paymentDetailsCard: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 16,
     marginHorizontal: 16,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
+  walletCard: {
+    borderColor: '#bfdbfe',
+  },
+  bankCard: {
+    borderColor: '#bbf7d0',
+  },
+  remittanceCard: {
+    borderColor: '#fed7aa',
+  },
+  paymentDetailsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
   paymentDetailsTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111827',
+  },
+  infoBox: {
+    flexDirection: 'row',
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    padding: 12,
     marginBottom: 16,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  infoBoxText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#4b5563',
+    lineHeight: 16,
+  },
+  formGrid: {
+    gap: 12,
+  },
+  inputGroup: {
+    width: '100%',
+  },
+  inputGroupFull: {
+    width: '100%',
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#374151',
+    marginBottom: 4,
   },
   input: {
     borderWidth: 1,
     borderColor: '#d1d5db',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
-    fontSize: 16,
+    fontSize: 14,
     color: '#111827',
-    marginBottom: 12,
+    backgroundColor: '#f9fafb',
   },
   infoCard: {
-    backgroundColor: '#fef3c7',
-    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
     padding: 16,
     marginHorizontal: 16,
     marginBottom: 12,
     borderWidth: 1,
+  },
+  cashOnHandCard: {
     borderColor: '#fde68a',
+    backgroundColor: '#fffbeb',
+  },
+  voucherCard: {
+    borderColor: '#e9d5ff',
+    backgroundColor: '#faf5ff',
+  },
+  replacementCard: {
+    borderColor: '#bbf7d0',
+    backgroundColor: '#f0fdf4',
+  },
+  infoCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
   },
   infoCardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#92400e',
-    marginBottom: 8,
   },
   infoCardText: {
-    fontSize: 14,
-    color: '#92400e',
-    lineHeight: 20,
+    fontSize: 13,
+    color: '#4b5563',
+    lineHeight: 18,
+  },
+  selectedReasonBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#d1fae5',
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 6,
+  },
+  selectedReasonText: {
+    fontSize: 12,
+    color: '#065f46',
+    flex: 1,
   },
   textAreaTitle: {
     fontSize: 16,
@@ -1864,12 +2524,12 @@ const styles = StyleSheet.create({
   textArea: {
     borderWidth: 1,
     borderColor: '#d1d5db',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
-    fontSize: 16,
+    fontSize: 14,
     color: '#111827',
     minHeight: 100,
-    textAlignVertical: 'top',
+    backgroundColor: '#f9fafb',
   },
   uploadTitle: {
     fontSize: 16,
@@ -1878,9 +2538,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   uploadHint: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#6b7280',
     marginBottom: 12,
+  },
+  imageScrollView: {
+    flexDirection: 'row',
   },
   uploadButton: {
     width: 100,
@@ -1888,18 +2551,19 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#d1d5db',
     borderStyle: 'dashed',
-    borderRadius: 8,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+    backgroundColor: '#f9fafb',
   },
   uploadButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#9ca3af',
     marginTop: 4,
   },
   uploadCounter: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#9ca3af',
     marginTop: 2,
   },
@@ -1910,18 +2574,47 @@ const styles = StyleSheet.create({
   uploadedImage: {
     width: 100,
     height: 100,
-    borderRadius: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   removeImageButton: {
     position: 'absolute',
     top: -8,
     right: -8,
     backgroundColor: '#fff',
-    borderRadius: 10,
+    borderRadius: 12,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
+  },
+  imageOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderBottomLeftRadius: 10,
+    borderBottomRightRadius: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  imageOverlayText: {
+    color: '#fff',
+    fontSize: 9,
+    textAlign: 'center',
   },
   policyCard: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 16,
     marginHorizontal: 16,
     marginBottom: 100,
@@ -1931,13 +2624,13 @@ const styles = StyleSheet.create({
   policyHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
     marginBottom: 12,
   },
   policyTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111827',
-    marginLeft: 8,
   },
   policyPoints: {
     marginLeft: 4,
@@ -1946,13 +2639,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginBottom: 8,
+    gap: 8,
   },
   policyText: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginLeft: 8,
+    fontSize: 13,
+    color: '#4b5563',
     flex: 1,
-    lineHeight: 20,
+    lineHeight: 18,
   },
   footer: {
     position: 'absolute',
@@ -1963,11 +2656,17 @@ const styles = StyleSheet.create({
     padding: 16,
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
   errorBanner: {
     flexDirection: 'row',
@@ -1975,23 +2674,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#fef2f2',
     borderWidth: 1,
     borderColor: '#fecaca',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
     marginBottom: 12,
+    gap: 8,
   },
   errorBannerText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#991b1b',
-    marginLeft: 8,
     flex: 1,
   },
   submitButton: {
     backgroundColor: '#4f46e5',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
   },
   submitButtonDisabled: {
     backgroundColor: '#9ca3af',
@@ -2000,7 +2700,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
-    marginLeft: 8,
   },
   modalContainer: {
     flex: 1,
@@ -2009,8 +2708,8 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     maxHeight: height * 0.8,
   },
   modalHeader: {
@@ -2037,13 +2736,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f3ff',
   },
   refundTypeIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#f5f3ff',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+  },
+  refundTypeIconContainerSelected: {
+    backgroundColor: '#4f46e5',
   },
   refundTypeContent: {
     flex: 1,
@@ -2054,9 +2756,15 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 2,
   },
+  refundTypeLabelSelected: {
+    color: '#4f46e5',
+  },
   refundTypeDescription: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#6b7280',
+  },
+  refundTypeDescriptionSelected: {
+    color: '#4f46e5',
   },
   refundMethodCard: {
     flexDirection: 'row',
@@ -2069,13 +2777,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f3ff',
   },
   refundMethodIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#f5f3ff',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+  },
+  refundMethodIconContainerSelected: {
+    backgroundColor: '#4f46e5',
   },
   refundMethodContent: {
     flex: 1,
@@ -2086,9 +2797,15 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 2,
   },
+  refundMethodLabelSelected: {
+    color: '#4f46e5',
+  },
   refundMethodDescription: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#6b7280',
+  },
+  refundMethodDescriptionSelected: {
+    color: '#4f46e5',
   },
   reasonItem: {
     flexDirection: 'row',
@@ -2099,7 +2816,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f3f4f6',
   },
   reasonText: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#374151',
   },
   errorContainer: {
@@ -2116,32 +2833,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   errorMessage: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#6b7280',
     textAlign: 'center',
-    lineHeight: 24,
+    lineHeight: 22,
     marginBottom: 24,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  badgeinfo: {
-    backgroundColor: '#dbeafe',
-  },
-  badgeText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  badgeTextinfo: {
-    color: '#1e40af',
   },
   goBackButton: {
     backgroundColor: '#4f46e5',
     paddingHorizontal: 24,
     paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 10,
   },
   backButtonText: {
     color: '#fff',

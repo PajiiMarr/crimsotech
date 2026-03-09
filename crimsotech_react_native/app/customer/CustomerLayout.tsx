@@ -25,19 +25,18 @@ export default function CustomerLayout({
 
   // Determine interface type based on current route
   useEffect(() => {
-    const managementRoutes = [
+    const managementRoutePrefixes = [
       '/customer/personal-listing',
       '/customer/order-lists',
-      '/customer/return-refund',
+      '/customer/listing-return-refund',
       '/customer/comgift',
-      '/customer/Returns'
+      '/customer/Returns',
+      '/customer/product-listing',
+      '/customer/order-lists'
     ];
-    
-    if (managementRoutes.includes(pathname)) {
-      setInterfaceType('management');
-    } else {
-      setInterfaceType('main');
-    }
+
+    const isManagement = managementRoutePrefixes.some(prefix => pathname.startsWith(prefix));
+    setInterfaceType(isManagement ? 'management' : 'main');
   }, [pathname]);
 
   const handleInterfaceSwitch = () => {

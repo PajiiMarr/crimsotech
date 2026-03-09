@@ -10,6 +10,7 @@ export default function ManagementBottomTab() {
   const tabs = [
     { name: 'Products', icon: 'cube-outline', activeIcon: 'cube', route: '/customer/personal-listing' },
     { name: 'Orders', icon: 'list-outline', activeIcon: 'list', route: '/customer/order-lists' },
+    { name: 'Product Lists', icon: 'cube-outline', activeIcon: 'cube', route: '/customer/product-listing' },
     { name: 'Listing Returns', icon: 'return-up-back-outline', activeIcon: 'return-up-back', route: '/customer/listing-return-refund' },
     { name: 'ComGift', icon: 'gift-outline', activeIcon: 'gift', route: '/customer/comgift' },
   ] as const;
@@ -17,12 +18,16 @@ export default function ManagementBottomTab() {
   return (
     <View style={styles.tabContainer}>
       {tabs.map((tab) => {
-        const isActive = pathname === tab.route;
+        const isActive = pathname.startsWith(tab.route); // fix dynamic routes
         return (
           <TouchableOpacity
             key={tab.name}
             style={styles.tabButton}
-            onPress={() => router.push(tab.route as any)}
+            onPress={() => {
+              if (!pathname.startsWith(tab.route)) {
+                router.push(tab.route as any);
+              }
+            }}
           >
             <Ionicons 
               name={isActive ? tab.activeIcon : tab.icon} 

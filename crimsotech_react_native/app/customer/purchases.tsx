@@ -9,14 +9,11 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
-  TextInput,
   FlatList,
   Alert,
   Platform
 } from 'react-native';
 import {
-  Ionicons,
-  MaterialCommunityIcons,
   MaterialIcons
 } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -98,13 +95,12 @@ interface PurchaseItem {
   can_review: boolean;
 }
 
-// Status tabs configuration - exactly matching web
+// Status tabs configuration
 const STATUS_TABS = [
   { id: 'all', label: 'All' },
   { id: 'processing', label: 'Processing' },
   { id: 'shipped', label: 'Shipped' },
   { id: 'rate', label: 'Rate' },
-  { id: 'returns', label: 'Returns' }
 ];
 
 // Status configuration for badges
@@ -226,18 +222,14 @@ export default function PurchasesPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
   const [orderCounts, setOrderCounts] = useState({
     processing: 0,
     shipped: 0,
     rate: 0,
-    returns: 0,
     all: 0
   });
 
   const fetchPurchases = async () => {
-    if (!userId) return;
-
     try {
       setLoading(true);
       const response = await AxiosInstance.get<PurchasesResponse>('/purchases-buyer/user_purchases/', {
@@ -330,7 +322,8 @@ export default function PurchasesPage() {
         counts.shipped++;
       }
 
-      if (status === 'completed' && item.can_review) {
+      // Rate tab shows ALL completed orders, not just those with can_review
+      if (status === 'completed') {
         counts.rate++;
       }
 
@@ -355,15 +348,6 @@ export default function PurchasesPage() {
 
   const getFilteredItems = () => {
     let filtered = purchaseItems;
-
-    // Apply search filter
-    if (searchQuery) {
-      filtered = filtered.filter(item => 
-        item.product_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.shop_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.order_id.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
 
     // Apply tab filter
     if (activeTab !== 'all') {
@@ -394,8 +378,9 @@ export default function PurchasesPage() {
           });
           break;
         case 'rate':
+          // FIXED: Show ALL completed orders, not just those with can_review
           filtered = filtered.filter(item => 
-            item.status === 'completed' && item.can_review
+            item.status === 'completed'
           );
           break;
         case 'returns':
@@ -444,7 +429,7 @@ export default function PurchasesPage() {
     return (
       <TouchableOpacity 
         style={styles.orderCard}
-        // onPress={() => router.push(`/view-order/${item.order_id}`)}
+        onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}`)}
         activeOpacity={0.7}
       >
         {/* Shop Header */}
@@ -469,9 +454,18 @@ export default function PurchasesPage() {
             </Text>
             
             {/* Variant - if available */}
-            {item.item?.remarks && item.status !== 'cancelled' && (
-              <Text style={styles.variantText}>{item.item.remarks}</Text>
+            {item.item?.remarks && (
+              <View style={styles.infoRow}>
+                <MaterialIcons name="label-outline" size={14} color="#9CA3AF" />
+                <Text style={styles.infoText} numberOfLines={1}>{item.item.remarks}</Text>
+              </View>
             )}
+
+            {/* Payment Method */}
+            <View style={styles.infoRow}>
+              <MaterialIcons name="payment" size={14} color="#9CA3AF" />
+              <Text style={styles.infoText} numberOfLines={1}>{item.order.payment_method}</Text>
+            </View>
 
             {/* Status Badge - Only show if cancelled or return/refund */}
             {(item.status === 'cancelled' || item.status === 'return_refund') && (
@@ -495,7 +489,7 @@ export default function PurchasesPage() {
             <Text style={styles.totalAmount}>{formatCurrency(item.total_amount)}</Text>
           </View>
 
-          {/* Action Buttons */}
+          {/* Action Buttons - Professional border-only style */}
           <View style={styles.actionButtons}>
             {/* Cancel button for processing items */}
             {(item.status === 'pending' || item.status === 'in_progress') && (
@@ -503,7 +497,8 @@ export default function PurchasesPage() {
                 style={[styles.actionButton, styles.cancelButton]}
                 onPress={() => handleCancelOrder(item)}
               >
-                <Text style={styles.cancelButtonText}>Cancel order</Text>
+                <MaterialIcons name="cancel" size={14} color="#EF4444" />
+                <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
             )}
 
@@ -511,20 +506,31 @@ export default function PurchasesPage() {
             {(item.status === 'to_ship' || item.status === 'to_receive' || item.status === 'delivered') && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.trackButton]}
-                // onPress={() => router.push(`/track-order/${item.order_id}`)}
+                // onPress={() => router.push(`/customer/track-order?orderId=${item.order_id}`)}
               >
-                <MaterialIcons name="location-on" size={16} color="#3B82F6" />
+                <MaterialIcons name="location-on" size={14} color="#3B82F6" />
                 <Text style={styles.trackButtonText}>Track</Text>
               </TouchableOpacity>
             )}
 
+            {/* Refund button for delivered items */}
+            {(item.status === 'delivered' || item.status === 'to_receive') && item.is_refundable && (
+              <TouchableOpacity 
+                style={[styles.actionButton, styles.refundButton]}
+                onPress={() => router.push(`/customer/request-refund?orderId=${item.order_id}&productId=${item.product_id}`)}
+              >
+                <MaterialIcons name="refresh" size={14} color="#F97316" />
+                <Text style={styles.refundButtonText}>Refund</Text>
+              </TouchableOpacity>
+            )}
+
             {/* Rate button for completed items */}
-            {item.status === 'completed' && item.can_review && (
+            {item.status === 'completed' && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.rateButton]}
-                // onPress={() => router.push(`/product-rate?productId=${item.product_id}&orderId=${item.order_id}`)}
+                // onPress={() => router.push(`/customer/product-rate?productId=${item.product_id}&orderId=${item.order_id}`)}
               >
-                <MaterialIcons name="star" size={16} color="#F97316" />
+                <MaterialIcons name="star" size={14} color="#F97316" />
                 <Text style={styles.rateButtonText}>Rate</Text>
               </TouchableOpacity>
             )}
@@ -533,10 +539,28 @@ export default function PurchasesPage() {
             {(item.status === 'cancelled' || item.status === 'return_refund') && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.detailsButton]}
-                // onPress={() => router.push(`/customer-view-refund-request/${item.order_id}`)}
+                onPress={() => router.push(`/customer/view-refund?orderId=${item.order_id}`)}
               >
-                <MaterialIcons name="visibility" size={16} color="#6B7280" />
+                <MaterialIcons name="visibility" size={14} color="#6B7280" />
                 <Text style={styles.detailsButtonText}>Details</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Always show View Order button for all other statuses */}
+            {item.status !== 'pending' && 
+             item.status !== 'in_progress' && 
+             item.status !== 'to_ship' && 
+             item.status !== 'to_receive' && 
+             item.status !== 'delivered' && 
+             item.status !== 'completed' && 
+             item.status !== 'cancelled' && 
+             item.status !== 'return_refund' && (
+              <TouchableOpacity 
+                style={[styles.actionButton, styles.viewButton]}
+                onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}`)}
+              >
+                <MaterialIcons name="visibility" size={14} color="#6B7280" />
+                <Text style={styles.viewButtonText}>View</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -568,9 +592,6 @@ export default function PurchasesPage() {
   return (
     <CustomerLayout disableScroll>
       <View style={styles.container}>
-     
-    
-
         {/* Status Tabs */}
         <ScrollView 
           horizontal 
@@ -580,23 +601,25 @@ export default function PurchasesPage() {
         >
           {STATUS_TABS.map((tab) => {
             const isActive = activeTab === tab.id;
+            const count = orderCounts[tab.id as keyof typeof orderCounts] || 0;
 
             return (
               <TouchableOpacity
                 key={tab.id}
-                style={styles.tabPlain}
+                style={[styles.tab, isActive && styles.activeTab]}
                 onPress={() => setActiveTab(tab.id)}
                 activeOpacity={0.7}
               >
-                <View style={styles.tabInner}>
-                  <Text style={[
-                    styles.tabPlainLabel,
-                    isActive && styles.tabPlainLabelActive
-                  ]}>
-                    {tab.label}
-                  </Text>
-                </View>
-                <View style={[styles.tabIndicator, isActive && styles.tabIndicatorActive]} />
+                <Text style={[styles.tabLabel, isActive && styles.activeTabLabel]}>
+                  {tab.label}
+                </Text>
+                {count > 0 && (
+                  <View style={[styles.tabBadge, isActive && styles.activeTabBadge]}>
+                    <Text style={[styles.tabBadgeText, isActive && styles.activeTabBadgeText]}>
+                      {count}
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
             );
           })}
@@ -647,6 +670,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
+    paddingTop: 52, // reserve space for fixed tabs
   },
   loadingContainer: {
     flex: 1,
@@ -659,64 +683,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
   },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: '#111827',
-    padding: 0,
-  },
   tabsScrollView: {
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
+    height: 52,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 30,
   },
   tabsContainer: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
+    paddingVertical: 0,
+    // use horizontal layout spacing via margin on children
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+    minHeight: 52,
   },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 6,
+    paddingRight: 12,
     borderRadius: 16,
     backgroundColor: '#F3F4F6',
-    gap: 4,
+    marginRight: 8,
+    // flexShrink: 0,
+    // minWidth: 100,
+    justifyContent: 'center',
+    height: 36,
+    position: 'relative',
   },
   activeTab: {
     backgroundColor: '#F97316',
@@ -725,48 +725,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: '#6B7280',
+    // allow label to size naturally
+    flexShrink: 0,
+    textAlign: 'center',
+    includeFontPadding: false,
   },
   activeTabLabel: {
     color: '#FFFFFF',
   },
-  /* Plain underline-style tab (mobile sample) */
-  tabPlain: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 18,
-    backgroundColor: 'transparent',
-  },
-  tabInner: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabPlainLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6B7280',
-  },
-  tabPlainLabelActive: {
-    color: '#F97316',
-    fontWeight: '700',
-  },
-  tabIndicator: {
-    height: 3,
-    width: 36,
-    borderRadius: 2,
-    backgroundColor: 'transparent',
-    marginTop: 6,
-    alignSelf: 'center',
-  },
-  tabIndicatorActive: {
-    backgroundColor: '#F97316',
-  },
   tabBadge: {
     backgroundColor: '#E5E7EB',
     borderRadius: 12,
-    paddingHorizontal: 6,
+    paddingHorizontal: 8,
     paddingVertical: 2,
+    height: 20,
+    minWidth: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    right: -8,
+    top: 6,
   },
   activeTabBadge: {
     backgroundColor: '#FFFFFF',
@@ -842,9 +820,16 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 2,
   },
-  variantText: {
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  infoText: {
     fontSize: 12,
     color: '#6B7280',
+    flex: 1,
   },
   statusContainer: {
     marginVertical: 4,
@@ -899,45 +884,65 @@ const styles = StyleSheet.create({
   actionButtons: {
     flexDirection: 'row',
     gap: 8,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 6,
+    borderWidth: 1,
+    backgroundColor: 'transparent',
     gap: 4,
   },
+  viewButton: {
+    borderColor: '#D1D5DB',
+  },
+  viewButtonText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
   cancelButton: {
-    backgroundColor: '#FEE2E2',
+    borderColor: '#FECACA',
   },
   cancelButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '500',
     color: '#EF4444',
   },
   trackButton: {
-    backgroundColor: '#DBEAFE',
+    borderColor: '#BFDBFE',
   },
   trackButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '500',
     color: '#3B82F6',
   },
+  refundButton: {
+    borderColor: '#FED7AA',
+  },
+  refundButtonText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#F97316',
+  },
   rateButton: {
-    backgroundColor: '#FFEDD5',
+    borderColor: '#FED7AA',
   },
   rateButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '500',
     color: '#F97316',
   },
   detailsButton: {
-    backgroundColor: '#F3F4F6',
+    borderColor: '#D1D5DB',
   },
   detailsButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '500',
     color: '#6B7280',
   },
   reasonContainer: {
