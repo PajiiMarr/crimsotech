@@ -989,44 +989,6 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                             </AccordionContent>
                         </AccordionItem>
 
-                        <AccordionItem value="shop-information">
-                            <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
-                                <div className="flex items-center gap-2"><Store className="w-4 h-4 sm:w-5 sm:h-5" />Shop Information</div>
-                            </AccordionTrigger>
-                            <AccordionContent>
-                                <div className="p-4 sm:p-6">
-                                    {product.shop ? (
-                                        <>
-                                            <div className="flex items-center gap-3 mb-4">
-                                                {product.shop.shop_picture ? (
-                                                    <img src={product.shop.shop_picture} alt={product.shop.name} className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover" />
-                                                ) : (
-                                                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-lg flex items-center justify-center">
-                                                        <Store className="w-5 h-5 sm:w-6 sm:h-6 text-muted-foreground" />
-                                                    </div>
-                                                )}
-                                                <div className="min-w-0">
-                                                    <h3 className="font-semibold text-sm sm:text-base break-words">{product.shop.name}</h3>
-                                                    <div className="flex flex-wrap items-center gap-2 mt-1">
-                                                        <Badge variant={product.shop.verified ? "default" : "secondary"} className="w-fit">{product.shop.verified ? "Verified" : "Unverified"}</Badge>
-                                                        {product.shop.is_suspended && <Badge variant="destructive" className="w-fit">Suspended</Badge>}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
-                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Contact Number</p><p className="font-medium text-sm sm:text-base">{product.shop.contact_number || "Not provided"}</p></div>
-                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Total Sales</p><p className="font-medium text-sm sm:text-base">₱{parseFloat(product.shop.total_sales || "0").toLocaleString()}</p></div>
-                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Location</p><p className="font-medium text-sm sm:text-base">{product.shop.street}, {product.shop.barangay}, {product.shop.city}</p></div>
-                                                <div><p className="text-xs sm:text-sm text-muted-foreground">Member Since</p><p className="font-medium text-xs sm:text-sm">{new Date(product.shop.created_at).toLocaleDateString()}</p></div>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">No shop information available.</p>
-                                    )}
-                                </div>
-                            </AccordionContent>
-                        </AccordionItem>
-
                         {product.boost && (
                             <AccordionItem value="boost-info">
                                 <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
