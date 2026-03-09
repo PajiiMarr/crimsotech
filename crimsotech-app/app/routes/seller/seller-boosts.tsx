@@ -13,6 +13,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { 
   Store, 
   Zap, 
@@ -22,13 +29,12 @@ import {
   Calendar, 
   DollarSign,
   Package,
-  ArrowUpDown,
   Image as ImageIcon,
   CheckCircle,
   XCircle,
   MoreVertical,
   Edit,
-  Filter
+  Eye
 } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import { type ColumnDef } from "@tanstack/react-table";
@@ -80,7 +86,7 @@ interface BoostPlan {
   duration: number;
   time_unit: 'hours' | 'days' | 'weeks' | 'months';
   status: 'active' | 'inactive' | 'archived';
-  features: BoostPlanFeature[]; // This expects an array of BoostPlanFeature objects, not strings
+  features: BoostPlanFeature[];
   created_at: string;
   description: string;
   usage_count: number;
@@ -91,7 +97,7 @@ interface BoostPlan {
   color: string;
   icon: string;
   popular: boolean;
-  featuresList?: any[]; // Optional for raw features
+  featuresList?: any[];
 }
 
 interface BoostProduct {
@@ -219,7 +225,6 @@ export async function loader({ request, context}: Route.LoaderArgs): Promise<Loa
   
   await requireRole(request, context, ["isCustomer"]);
   
-  // Get session for authentication
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
   
@@ -264,7 +269,6 @@ function generateFeaturesForPlan(name: string, duration: number, timeUnit: strin
     featureStrings = [...baseFeatures, `${timeDisplay} duration`, 'Boost product visibility'];
   }
   
-  // Convert string features to BoostPlanFeature objects
   return featureStrings.map((feature, index) => ({
     id: `generated-${index}`,
     feature_id: `feature-${index}`,
@@ -350,6 +354,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     archived_plans: 0
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState({
     start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
     end: new Date(),
@@ -369,7 +374,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     try {
       setIsLoading(true);
       
-      // Fetch boosts by status using the user_boosts endpoint
       const boostsResponse = await AxiosInstance.get<UserBoostsResponse>(`/seller-boosts/user/${userId}/`, {
         params: { status: activeStatusFilter !== 'all' ? activeStatusFilter : 'all' }
       });
@@ -385,19 +389,15 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
         });
       }
 
-      // Fetch plans
       const plansResponse = await AxiosInstance.get<BoostPlansResponse>('/seller-boosts/plans/', { 
         params: { status: 'active' } 
       });
 
       if (plansResponse.data.success && plansResponse.data.plans) {
-        // Transform plans to match the BoostPlan interface
         const transformedPlans: BoostPlan[] = plansResponse.data.plans.map((plan: any) => {
-          // Handle features - ensure they match BoostPlanFeature[] type
           let features: BoostPlanFeature[] = [];
           
           if (plan.features && Array.isArray(plan.features)) {
-            // If features are already objects with the right shape
             features = plan.features.map((f: any) => ({
               id: f.id || `feature-${Math.random()}`,
               feature_id: f.feature_id || f.id || '',
@@ -406,7 +406,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
               value: f.value || ''
             }));
           } else {
-            // Generate default features
             features = generateFeaturesForPlan(plan.name, plan.duration, plan.time_unit);
           }
           
@@ -418,7 +417,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
             time_unit: (plan.time_unit as 'hours' | 'days' | 'weeks' | 'months') || 'days',
             status: (plan.status as 'active' | 'inactive' | 'archived') || 'active',
             description: plan.description || generateDescriptionForPlan(plan.name, plan.price, plan.duration, plan.time_unit),
-            features: features, // Now this matches BoostPlanFeature[] type
+            features: features,
             usage_count: plan.usage_count || 0,
             revenue: plan.revenue || 0,
             created_by: plan.created_by || 'Admin',
@@ -446,7 +445,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
         });
       }
 
-      // Calculate metrics from boosts data
       const activeBoosts = boostsResponse.data.boosts?.filter((b: Boost) => b.status === 'active') || [];
       const totalSpent = boostsResponse.data.boosts?.reduce((sum: number, boost: Boost) => {
         if (boost.status === 'active' || boost.status === 'expired') {
@@ -455,7 +453,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
         return sum;
       }, 0) || 0;
 
-      // Count plan usage
       const planUsage: Record<string, number> = {};
       boostsResponse.data.boosts?.forEach((boost: Boost) => {
         if (boost.plan?.name) {
@@ -465,7 +462,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
 
       const mostUsedPlan = Object.entries(planUsage).sort((a, b) => b[1] - a[1])[0]?.[0] || "No boosts";
 
-      // Calculate average duration for active boosts
       const durations = activeBoosts.map((boost: Boost) => boost.days_remaining || 0);
       const avgDuration = durations.length > 0 
         ? Math.round(durations.reduce((a: number, b: number) => a + b, 0) / durations.length) 
@@ -550,6 +546,14 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     }
   };
 
+  const handleViewBoost = (boostId: string) => {
+    navigate(`/seller/seller-boosts/${boostId}`);
+  };
+
+  const handleEditBoost = (boostId: string) => {
+    navigate(`/seller/seller-boosts/${boostId}/edit`);
+  };
+
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('en-PH', {
@@ -595,10 +599,8 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     }
   };
 
-  // Fixed filter configuration with proper typing
   const boostFilterConfig: { [key: string]: { options: string[]; placeholder: string } } = {};
 
-  // Add status filter if there are boosts
   if (boosts.length > 0) {
     const statusOptions = [...new Set(boosts.map(boost => boost.status))];
     boostFilterConfig.status = {
@@ -606,7 +608,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       placeholder: 'Filter by Status'
     };
 
-    // Add plan filter if there are boosts with plans
     const planOptions = [...new Set(boosts.map(boost => boost.plan?.name).filter((name): name is string => !!name))];
     if (planOptions.length > 0) {
       boostFilterConfig.plan = {
@@ -643,6 +644,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     </Card>
   );
 
+  // Updated columns with Actions column matching the product list UI
   const columns: ColumnDef<Boost>[] = [
     {
       accessorKey: "product",
@@ -773,27 +775,51 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       },
     },
     {
-      id: "receipt",
-      header: "Receipt",
+      id: "actions",
+      header: "Actions",
       cell: ({ row }) => {
         const boost = row.original;
-        if (!boost.has_receipt) return <span className="text-xs text-gray-400">No receipt</span>;
-        
+        const isLoading = actionLoading === boost.id;
+
+        const handleAction = (value: string) => {
+          setActionLoading(boost.id);
+          switch (value) {
+            case 'view':
+              handleViewBoost(boost.id);
+              break;
+            case 'edit':
+              handleEditBoost(boost.id);
+              break;
+            case 'receipt':
+              if (boost.receipt_url) {
+                window.open(boost.receipt_url, '_blank');
+              }
+              break;
+          }
+          setActionLoading(null);
+        };
+
         return (
-          <div className="flex items-center gap-1">
-            {boost.receipt_url ? (
-              <a 
-                href={boost.receipt_url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1"
-              >
-                <ImageIcon className="h-3 w-3" />
-                View
-              </a>
-            ) : (
-              <Badge variant="outline" className="text-xs">Uploaded</Badge>
-            )}
+          <div className="flex items-center gap-2">
+            <Link
+              to={`/seller/seller-boosts/${boost.id}`}
+              className="text-primary hover:text-primary/80 transition-colors"
+              title="View Details"
+            >
+              <Eye className="w-5 h-5" />
+            </Link>
+            <Select onValueChange={handleAction} disabled={isLoading}>
+              <SelectTrigger className="w-[130px]">
+                <SelectValue placeholder={isLoading ? "Loading…" : "Actions"} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="view">View Details</SelectItem>
+                <SelectItem value="edit">Edit Boost</SelectItem>
+                {boost.has_receipt && boost.receipt_url && (
+                  <SelectItem value="receipt">View Receipt</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
           </div>
         );
       },
@@ -824,7 +850,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
             isLoading={isLoading}
           />
 
-          {/* Status Tabs */}
           <div className="flex flex-wrap gap-2 border-b pb-2">
             <Button
               variant={activeStatusFilter === 'all' ? 'default' : 'outline'}

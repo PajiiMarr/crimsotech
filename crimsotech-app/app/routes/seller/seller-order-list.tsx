@@ -38,7 +38,15 @@ import {
 } from 'lucide-react';
 import AxiosInstance from '~/components/axios/Axios';
 import { useIsMobile } from '~/hooks/use-mobile';
-import { Sheet, SheetContent, SheetTrigger } from '~/components/ui/sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from '~/components/ui/sheet';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { toast } from 'sonner';
 
 export function meta(): Route.MetaDescriptors {
@@ -255,6 +263,67 @@ const STATUS_TABS = [
   { id: 'reviews', label: 'Reviews', icon: MessageCircle }
 ];
 
+// Confirmation Modal/Sheet Component
+function ConfirmationDialog({ 
+  open, 
+  onOpenChange, 
+  onConfirm, 
+  title, 
+  description,
+  confirmText = "Confirm",
+  cancelText = "Cancel"
+}: { 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void; 
+  onConfirm: () => void; 
+  title: string; 
+  description: string;
+  confirmText?: string;
+  cancelText?: string;
+}) {
+  const isMobile = useIsMobile();
+
+  if (isMobile) {
+    return (
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent side="bottom" className="h-auto">
+          <SheetHeader className="mb-4">
+            <SheetTitle>{title}</SheetTitle>
+            <SheetDescription>{description}</SheetDescription>
+          </SheetHeader>
+          <SheetFooter className="flex flex-col gap-2 sm:flex-col">
+            <Button variant="default" onClick={onConfirm} className="w-full">
+              {confirmText}
+            </Button>
+            <Button variant="outline" onClick={() => onOpenChange(false)} className="w-full">
+              {cancelText}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex gap-2 sm:justify-end">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {cancelText}
+          </Button>
+          <Button variant="default" onClick={onConfirm}>
+            {confirmText}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   const { userId, shopId, orders: initialOrders } = loaderData;
   const [orders, setOrders] = useState<Order[]>(initialOrders);
@@ -265,6 +334,15 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   const [availableActions, setAvailableActions] = useState<Record<string, string[]>>({});
   const [loadingActions, setLoadingActions] = useState<Record<string, boolean>>({});
   const [deliveryStatuses, setDeliveryStatuses] = useState<Record<string, DeliveryInfo>>({});
+  const [confirmationState, setConfirmationState] = useState<{
+    open: boolean;
+    type: 'confirm' | 'cancel' | 'prepare' | null;
+    orderId: string | null;
+  }>({
+    open: false,
+    type: null,
+    orderId: null
+  });
   const navigate = useNavigate();
   const isMobile = useIsMobile();
 
@@ -302,6 +380,9 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         // Clear cached actions when orders refresh
         setAvailableActions({});
         setDeliveryStatuses({});
+        toast.success("Orders refreshed", {
+          description: "Order list has been updated."
+        });
       }
     } catch (error: any) {
       console.error('Error fetching orders:', error);
@@ -358,6 +439,9 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       }
     } catch (error: any) {
       console.error('Error loading available actions:', error);
+      toast.error("Failed to load actions", {
+        description: "Could not load available actions for this order."
+      });
     } finally {
       setLoadingActions(prev => ({ ...prev, [orderId]: false }));
     }
@@ -380,6 +464,9 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           ...prev,
           [orderId]: response.data.data
         }));
+        toast.success("Delivery status updated", {
+          description: "Delivery information has been refreshed."
+        });
       }
     } catch (error: any) {
       // If endpoint doesn't exist or fails, check if order has delivery info
@@ -389,6 +476,10 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           ...prev,
           [orderId]: order.delivery_info!
         }));
+      } else {
+        toast.error("Failed to check delivery status", {
+          description: "Could not retrieve delivery information."
+        });
       }
     }
   };
@@ -663,8 +754,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   };
 
   const handleCancelOrder = async (orderId: string) => {
-    if (!confirm('Are you sure you want to cancel this order?')) return;
-    
     try {
       const response = await AxiosInstance.patch(`/seller-order-list/${orderId}/update_status/`, {
         action_type: 'cancel'
@@ -684,6 +773,20 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       toast.error("Failed to cancel order", {
         description: error.response?.data?.message || "Please try again."
       });
+    }
+  };
+
+  const handleConfirmAction = async () => {
+    if (!confirmationState.orderId || !confirmationState.type) return;
+    
+    setConfirmationState(prev => ({ ...prev, open: false }));
+    
+    if (confirmationState.type === 'confirm') {
+      await handleUpdateStatus(confirmationState.orderId, 'confirm');
+    } else if (confirmationState.type === 'cancel') {
+      await handleCancelOrder(confirmationState.orderId);
+    } else if (confirmationState.type === 'prepare') {
+      await handlePrepareShipment(confirmationState.orderId);
     }
   };
 
@@ -733,10 +836,13 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
             variant="ghost"
             size="sm"
             className="h-6 px-2 text-[10px]"
-            onClick={async (e) => { 
+            onClick={(e) => { 
               e.stopPropagation(); 
-              if (!confirm('Confirm this order?')) return; 
-              await handleUpdateStatus(order.order_id, 'confirm'); 
+              setConfirmationState({
+                open: true,
+                type: 'confirm',
+                orderId: order.order_id
+              });
             }}
             title="Confirm order"
           >
@@ -748,7 +854,20 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
             size="sm"
             className={`h-6 px-2 text-[10px] ${canCancel ? '' : 'opacity-50 cursor-not-allowed text-gray-400'}`}
             disabled={!canCancel}
-            onClick={async (e) => { e.stopPropagation(); if (!canCancel) return; await handleCancelOrder(order.order_id); }}
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              if (!canCancel) {
+                toast.error("Cannot cancel", {
+                  description: "This order cannot be cancelled at this stage."
+                });
+                return;
+              }
+              setConfirmationState({
+                open: true,
+                type: 'cancel',
+                orderId: order.order_id
+              });
+            }}
             title={canCancel ? 'Cancel order' : 'Cannot cancel this order'}
           >
             <Ban className="mr-1 w-3 h-3 text-red-600" /> Cancel
@@ -770,7 +889,10 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-[10px]"
-              onClick={(e) => { e.stopPropagation(); handleArrangeShipment(order.order_id); }}
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                handleArrangeShipment(order.order_id);
+              }}
               title="Arrange shipping"
             >
               <Ship className="mr-1 w-3 h-3 text-blue-600" /> Arrange Shipping
@@ -782,7 +904,20 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
             size="sm"
             className={`h-6 px-2 text-[10px] ${canCancel ? '' : 'opacity-50 cursor-not-allowed text-gray-400'}`}
             disabled={!canCancel}
-            onClick={async (e) => { e.stopPropagation(); if (!canCancel) return; await handleCancelOrder(order.order_id); }}
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              if (!canCancel) {
+                toast.error("Cannot cancel", {
+                  description: "This order cannot be cancelled at this stage."
+                });
+                return;
+              }
+              setConfirmationState({
+                open: true,
+                type: 'cancel',
+                orderId: order.order_id
+              });
+            }}
             title={canCancel ? 'Cancel order' : 'Cannot cancel this order'}
           >
             <Ban className="mr-1 w-3 h-3 text-red-600" /> Cancel
@@ -813,9 +948,13 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       variant="ghost"
                       size="sm"
                       className="h-8 text-sm"
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        await handlePrepareShipment(order.order_id);
+                        setConfirmationState({
+                          open: true,
+                          type: 'prepare',
+                          orderId: order.order_id
+                        });
                       }}
                     >
                       <Package2 className="mr-2 h-4 w-4 text-blue-600" /> Prepare Shipment
@@ -841,9 +980,13 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       variant="ghost"
                       size="sm"
                       className="h-8 text-sm"
-                      onClick={async (e) => { 
+                      onClick={(e) => { 
                         e.stopPropagation(); 
-                        await handleCancelOrder(order.order_id); 
+                        setConfirmationState({
+                          open: true,
+                          type: 'cancel',
+                          orderId: order.order_id
+                        });
                       }}
                     >
                       <Ban className="mr-2 h-4 w-4 text-red-600" /> Cancel
@@ -860,9 +1003,13 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                 variant="ghost"
                 size="sm"
                 className="h-6 px-2 text-[10px]"
-                onClick={async (e) => {
+                onClick={(e) => {
                   e.stopPropagation();
-                  await handlePrepareShipment(order.order_id);
+                  setConfirmationState({
+                    open: true,
+                    type: 'prepare',
+                    orderId: order.order_id
+                  });
                 }}
                 title="Prepare for shipment"
               >
@@ -890,9 +1037,13 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                 variant="ghost"
                 size="sm"
                 className="h-6 px-2 text-[10px]"
-                onClick={async (e) => { 
+                onClick={(e) => { 
                   e.stopPropagation(); 
-                  await handleCancelOrder(order.order_id); 
+                  setConfirmationState({
+                    open: true,
+                    type: 'cancel',
+                    orderId: order.order_id
+                  });
                 }}
                 title="Cancel order"
               >
@@ -1206,13 +1357,34 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     })
                   )}
                 </div>
-
-
               </div>
             )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Confirmation Modal/Sheet */}
+      <ConfirmationDialog
+        open={confirmationState.open}
+        onOpenChange={(open) => setConfirmationState(prev => ({ ...prev, open }))}
+        onConfirm={handleConfirmAction}
+        title={
+          confirmationState.type === 'confirm' ? "Confirm Order" :
+          confirmationState.type === 'cancel' ? "Cancel Order" :
+          confirmationState.type === 'prepare' ? "Prepare Shipment" : ""
+        }
+        description={
+          confirmationState.type === 'confirm' ? "Are you sure you want to confirm this order?" :
+          confirmationState.type === 'cancel' ? "Are you sure you want to cancel this order? This action cannot be undone." :
+          confirmationState.type === 'prepare' ? "Are you sure you want to prepare this order for shipment?" : ""
+        }
+        confirmText={
+          confirmationState.type === 'confirm' ? "Yes, Confirm" :
+          confirmationState.type === 'cancel' ? "Yes, Cancel" :
+          confirmationState.type === 'prepare' ? "Yes, Prepare" : "Confirm"
+        }
+        cancelText="No, Keep"
+      />
     </SidebarLayout>
   );
 }
