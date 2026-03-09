@@ -115,6 +115,7 @@ class Rider(models.Model):
     verified = models.BooleanField(default=False)
     approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_riders')
     approval_date = models.DateTimeField(null=True, blank=True)
+    failed_deliveries_count = models.IntegerField(default=0)
     availability_status = models.CharField(
         max_length=20,
         choices=[

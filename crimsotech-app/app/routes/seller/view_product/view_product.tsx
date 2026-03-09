@@ -199,11 +199,6 @@ const actionConfigs = {
     confirmText: "Go to Edit", variant: "default" as const, icon: Edit,
     needsReason: false, needsSuspensionDays: false,
   },
-  addVariant: {
-    title: "Add Variant", description: "Add a new variant to this product.",
-    confirmText: "Add Variant", variant: "default" as const, icon: Plus,
-    needsReason: false, needsSuspensionDays: false,
-  },
   archive: {
     title: "Archive Product", description: "This will archive the product. It can be restored later if needed.",
     confirmText: "Archive", variant: "outline" as const, icon: Archive,
@@ -247,6 +242,8 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
     const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
     // ── NEW: edit dialog state ───────────────────────────────────────────────
     const [editDialogOpen, setEditDialogOpen] = useState(false);
+    const [carouselKey, setCarouselKey] = useState(0);
+    const [imageCacheBust, setImageCacheBust] = useState<number>(0);
 
     const isMobile = useIsMobile();
     const { toast } = useToast();
@@ -275,9 +272,17 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
         await fetchProductData();
     };
 
-    // ── NEW: apply edits from EditProductDialog directly to local state ──────
     const handleProductEdited = (updated: Partial<ProductData>) => {
         setProduct(prev => prev ? { ...prev, ...updated } : prev);
+        if (!productId) return;
+        AxiosInstance.get(
+            `/seller-products/${productId}/get_product/?user_id=${user.user_id}`
+        ).then((response) => {
+            const fresh: ProductData = response.data.product || response.data;
+            setProduct(fresh);
+            setCarouselKey(k => k + 1);
+            setImageCacheBust(Date.now()); // ← bust browser image cache
+        }).catch(() => {});
     };
 
     const averageRating = product?.average_rating ||
@@ -289,7 +294,6 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
         if (!product) return [];
         const actions = [];
         actions.push({ id: "edit", label: "Edit Product", icon: Edit, variant: "default" as const });
-        actions.push({ id: "addVariant", label: "Add Variant", icon: Plus, variant: "default" as const });
         if (product.upload_status === 'draft') {
             actions.push({ id: "deleteDraft", label: "Delete Draft", icon: Trash2, variant: "destructive" as const });
         } else if (product.upload_status === 'published') {
@@ -606,7 +610,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                 <span className="hidden xs:inline">Dashboard</span>
                             </a>
                             <span>&gt;</span>
-                            <Link to="/seller/products" className="hover:text-primary hover:underline">Products</Link>
+                            <Link to="/seller/seller-product-list" className="hover:text-primary hover:underline">Products</Link>
                             <span>&gt;</span>
                             <span className="text-foreground font-medium truncate max-w-[120px] xs:max-w-[180px] sm:max-w-[250px]">
                                 {product.name}
@@ -647,7 +651,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                     {/* ── rest of the layout is unchanged ─────────────────────────────────── */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
                         <div className="lg:h-[800px]">
-                            <Card className="h-full">
+                            <Card key={carouselKey} className="h-full">
                                 <CardContent className="p-3 sm:p-4 h-full">
                                     {carouselImages.length > 0 ? (
                                         <div className="h-full flex flex-col">
@@ -658,7 +662,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                             <div className="h-full flex items-center justify-center relative">
                                                                 <div className="aspect-square w-full rounded-lg overflow-hidden cursor-pointer" onClick={() => setSelectedImage(image.src)}>
                                                                     <img
-                                                                        src={image.src || "/api/placeholder/600/400"}
+                                                                        src={`${image.src}${image.src.includes('?') ? '&' : '?'}t=${imageCacheBust}`}
                                                                         alt={image.type === 'variant' ? image.variantTitle || 'Variant image' : product.name}
                                                                         className="w-full h-full object-cover"
                                                                         loading="lazy"
@@ -845,7 +849,12 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                                     <div className="flex flex-col sm:flex-row gap-3">
                                                                         {variant.image && (
                                                                             <div className="sm:w-24 sm:h-24 w-full h-32 flex-shrink-0">
-                                                                                <img src={variant.image} alt={variant.title} className="w-full h-full object-cover rounded-md" onError={(e) => { (e.target as HTMLImageElement).src = '/api/placeholder/200/200'; }} />
+                                                                                <img
+                                                                                    src={`${variant.image}${variant.image!.includes('?') ? '&' : '?'}t=${imageCacheBust}`}
+                                                                                    alt={variant.title}
+                                                                                    className="w-full h-full object-cover rounded-md"
+                                                                                    onError={(e) => { (e.target as HTMLImageElement).src = '/api/placeholder/200/200'; }}
+                                                                                />
                                                                             </div>
                                                                         )}
                                                                         <div className="flex-1 space-y-2">
@@ -1062,14 +1071,13 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                         </div>
                     )}
 
-                    {/* Action dialogs (archive / restore / remove / delete draft) */}
                     {isMobile ? renderMobileDialog() : renderDesktopDialog()}
                     <EditProductDialog
                         open={editDialogOpen}
                         onOpenChange={setEditDialogOpen}
                         product={product as any}
                         userId={user.user_id ?? ''}
-                        onSuccess={handleProductEdited}
+                        onSuccess={handleProductEdited as any}
                     />
                 </div>
             </TooltipProvider>
