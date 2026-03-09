@@ -866,42 +866,6 @@ function EditProductForm({
           </div>
         </div>
 
-        {/* Refund policy */}
-        <div className="space-y-3 rounded-lg border p-4 bg-muted/20">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="ep-refundable" className="flex items-center gap-2 cursor-pointer">
-                <RefreshCw className="w-4 h-4 text-muted-foreground" />
-                Refundable
-              </Label>
-              <p className="text-xs text-muted-foreground mt-0.5">Allow buyers to request refunds</p>
-            </div>
-            <Switch
-              id="ep-refundable"
-              checked={form.is_refundable}
-              onCheckedChange={set("is_refundable")}
-              className="data-[state=checked]:bg-orange-600"
-            />
-          </div>
-          {form.is_refundable && (
-            <div className="space-y-1.5">
-              <Label htmlFor="ep-refund-days">
-                Refund Window (days) <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="ep-refund-days"
-                type="number"
-                min={1}
-                max={365}
-                value={form.refund_days}
-                onChange={(e) => set("refund_days")(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                className={`w-32 ${errors.refund_days ? "border-destructive" : ""}`}
-              />
-              {fieldError("refund_days")}
-            </div>
-          )}
-        </div>
-
         {/* ── Variants ────────────────────────────────────────────────────── */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
