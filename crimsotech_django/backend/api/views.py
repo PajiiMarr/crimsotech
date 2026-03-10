@@ -31989,7 +31989,6 @@ class RiderEarningsViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
 class RiderProfileViewSet(viewsets.ViewSet):
     """
     Rider Profile API - Get and update rider personal information
@@ -32022,7 +32021,7 @@ class RiderProfileViewSet(viewsets.ViewSet):
             
             rider = user.rider
             
-            # Return comprehensive profile data
+            # Return comprehensive profile data - aligned with actual model fields
             profile_data = {
                 'user': {
                     'id': str(user.id),
@@ -32030,30 +32029,42 @@ class RiderProfileViewSet(viewsets.ViewSet):
                     'email': user.email,
                     'first_name': user.first_name or '',
                     'last_name': user.last_name or '',
+                    'middle_name': user.middle_name or '',  # Added middle_name
                     'contact_number': user.contact_number or '',
-                    'profile_picture': user.profile_picture.url if user.profile_picture else None,
                     'date_of_birth': user.date_of_birth,
-                    'gender': user.gender,
-                    'bio': user.bio or '',
+                    'age': user.age,  # Added age field
+                    'sex': user.sex or '',  # Changed from 'gender' to 'sex' to match model
                     # Address fields
                     'country': user.country or '',
                     'province': user.province or '',
                     'city': user.city or '',
                     'barangay': user.barangay or '',
                     'street': user.street or '',
+                    'state': user.state or '',  # Added state field
                     'zip_code': user.zip_code or '',
+                    # Status fields
+                    'is_suspended': user.is_suspended,
+                    'suspension_reason': user.suspension_reason,
+                    'suspended_until': user.suspended_until,
+                    'warning_count': user.warning_count,
+                    'last_warning_date': user.last_warning_date,
                 },
                 'rider': {
-                    'id': str(rider.rider),
+                    'id': str(rider.rider_id),  # Changed from rider.rider to rider.rider_id
                     'vehicle_type': rider.vehicle_type or '',
                     'plate_number': rider.plate_number or '',
                     'vehicle_brand': rider.vehicle_brand or '',
                     'vehicle_model': rider.vehicle_model or '',
                     'vehicle_image': rider.vehicle_image.url if rider.vehicle_image else None,
                     'license_number': rider.license_number or '',
+                    'license_image': rider.license_image.url if rider.license_image else None,  # Added license_image
                     'verified': rider.verified,
+                    'failed_deliveries_count': rider.failed_deliveries_count,  # Added failed deliveries count
                     'availability_status': rider.availability_status,
                     'is_accepting_deliveries': rider.is_accepting_deliveries,
+                    'last_status_update': rider.last_status_update,
+                    'approved_by': str(rider.approved_by.id) if rider.approved_by else None,
+                    'approval_date': rider.approval_date,
                 }
             }
             
@@ -32085,24 +32096,27 @@ class RiderProfileViewSet(viewsets.ViewSet):
             rider = user.rider
             data = request.data
             
-            # Update user fields
-            user_fields = ['first_name', 'last_name', 'email', 'contact_number', 
-                          'date_of_birth', 'gender', 'bio', 'country', 'province', 
-                          'city', 'barangay', 'street', 'zip_code']
+            # Update user fields - aligned with model
+            user_fields = [
+                'first_name', 'last_name', 'middle_name', 'email', 'contact_number',
+                'date_of_birth', 'age', 'sex',  # Changed 'gender' to 'sex'
+                'country', 'province', 'city', 'barangay', 'street', 'state', 'zip_code'
+            ]
             
             for field in user_fields:
                 if field in data:
                     setattr(user, field, data[field])
             
-            # Handle profile picture upload
-            if 'profile_picture' in request.FILES:
-                user.profile_picture = request.FILES['profile_picture']
+            # Note: profile_picture field doesn't exist in your model
+            # Remove this line: if 'profile_picture' in request.FILES:
             
             user.save()
             
             # Update rider-specific fields
-            rider_fields = ['vehicle_type', 'plate_number', 'vehicle_brand', 
-                           'vehicle_model', 'license_number']
+            rider_fields = [
+                'vehicle_type', 'plate_number', 'vehicle_brand',
+                'vehicle_model', 'license_number'
+            ]
             
             for field in rider_fields:
                 if field in data:
@@ -32112,9 +32126,13 @@ class RiderProfileViewSet(viewsets.ViewSet):
             if 'vehicle_image' in request.FILES:
                 rider.vehicle_image = request.FILES['vehicle_image']
             
+            # Handle license image upload
+            if 'license_image' in request.FILES:
+                rider.license_image = request.FILES['license_image']
+            
             rider.save()
             
-            # Return updated profile
+            # Return updated profile - without profile_picture
             return Response({
                 'message': 'Profile updated successfully',
                 'user': {
@@ -32123,8 +32141,14 @@ class RiderProfileViewSet(viewsets.ViewSet):
                     'email': user.email,
                     'first_name': user.first_name or '',
                     'last_name': user.last_name or '',
+                    'middle_name': user.middle_name or '',
                     'contact_number': user.contact_number or '',
-                    'profile_picture': user.profile_picture.url if user.profile_picture else None,
+                },
+                'rider': {
+                    'id': str(rider.rider_id),
+                    'vehicle_type': rider.vehicle_type or '',
+                    'plate_number': rider.plate_number or '',
+                    'verified': rider.verified,
                 }
             }, status=status.HTTP_200_OK)
         
@@ -32139,6 +32163,7 @@ class RiderProfileViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+            
 
 class RiderDeliveryActionsViewSet(viewsets.ViewSet):
     """

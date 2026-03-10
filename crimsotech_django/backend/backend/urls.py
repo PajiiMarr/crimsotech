@@ -73,7 +73,7 @@ router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-hist
 router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')
 router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')
 router.register(r'rider-proof', RiderProofViewSet, basename='rider-proof')
-
+router.register(r'rider-profile', RiderProfileViewSet, basename='rider-profile')
 router.register(r'conversation', ConversationViewSet, basename='conversation')
 
 urlpatterns = [
